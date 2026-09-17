@@ -53,8 +53,17 @@ class ScreeningPolicyRequiredError(ScreeningConfigurationError):
     code = "screening_policy_required"
     status_code = 400
     public_message = (
-        "Save an enabled policy with at least one rule or model check under "
-        "Security > Content Screening before enabling new scans."
+        "The saved content screening policy is unavailable. Save Content Screening "
+        "settings again to initialize a missing policy. Existing holds are unchanged."
+    )
+
+
+class ScreeningChecksRequiredError(ScreeningConfigurationError):
+    code = "screening_policy_empty"
+    status_code = 400
+    public_message = (
+        "No active checks are configured for this workspace. Add and save a rule or "
+        "AI check before starting a scan. An empty policy can stay enabled; existing holds are unchanged."
     )
 
 

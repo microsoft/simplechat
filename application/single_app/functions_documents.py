@@ -33,6 +33,7 @@ from content_screening.extraction import (
     is_publication,
 )
 from content_screening.service import (
+    document_requires_screening,
     initial_document_marker,
     prepare_document_deletion,
     prepare_document_upload,
@@ -9719,7 +9720,7 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
     """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
     document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
-    if get_settings().get("enable_content_screening") is True or (document and SCREENING_FIELD in document):
+    if document_requires_screening(document, get_settings()):
         return reprocess_document(
             subject_from_document(document), user_id,
             normalize_document_intelligence_manual_extraction_mode(target_extraction_mode),
@@ -10961,7 +10962,7 @@ def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """Keep screened intake private until its complete, revision-bound decision."""
     document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
-    if get_settings().get("enable_content_screening") is True or (document and SCREENING_FIELD in document):
+    if document_requires_screening(document, get_settings()):
         return process_screened_upload(
             document_id, user_id, temp_file_path, original_filename,
             _process_document_upload_background_impl,

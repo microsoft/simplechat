@@ -21,6 +21,7 @@ from content_screening.contracts import (
     DocumentHeldError,
     Finding,
     InspectionResult,
+    ScreeningChecksRequiredError,
     ScreeningCitationsRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
@@ -42,6 +43,7 @@ from content_screening.extraction import (
     capture_table_source,
     publication_context,
 )
+from content_screening.policies import compose_policy, default_policy, policy_is_active
 
 
 LEASE_SECONDS = 1800
@@ -104,35 +106,64 @@ def _save_scan(repository, scan, **updates):
     return repository.replace({**scan, **updates, "updated_at": _timestamp()}, scan["_etag"])
 
 
-def get_effective_policy(subject, *, repository=None):
-    from content_screening.policies import compose_policy, default_policy, policy_is_active
-
+def initialize_screening_policy(*, repository=None):
+    """Create the first empty baseline without overwriting a concurrent policy."""
     repository = _repository(repository)
     baseline = repository.get_policy("global", "global")
+    if baseline is not None:
+        return baseline
+    policy = {**default_policy(), "enabled": True}
+    try:
+        return repository.save_policy("global", "global", policy, "system-content-screening")
+    except ScreeningConflictError:
+        baseline = repository.get_policy("global", "global")
+        if baseline is None:
+            raise
+        return baseline
+
+
+def get_effective_policy(subject, *, repository=None, require_active=True):
+    repository = _repository(repository)
+    baseline = repository.get_policy("global", "global")
+    if baseline is None:
+        raise ScreeningPolicyRequiredError()
     workspace = repository.get_policy(subject.scope_type, subject.scope_id)
     policy = compose_policy(
-        baseline["policy"] if baseline else default_policy(),
+        baseline["policy"],
         workspace["policy"] if workspace else None,
     )
-    if not policy_is_active(policy):
-        raise ScreeningConfigurationError("An active content screening policy is required.")
+    if require_active and not policy_is_active(policy):
+        raise ScreeningChecksRequiredError()
     return policy
 
 
-def validate_screening_configuration(settings=None, *, repository=None, check_storage=False, proposed_settings=False):
+def document_requires_screening(document, settings=None, *, repository=None):
+    """Persisted enrollment always wins over the absence of checks for new uploads."""
+    if not isinstance(document, dict):
+        raise ScreeningValidationError("The document metadata is unavailable.")
+    if SCREENING_FIELD in document:
+        return True
+    if _settings(settings).get("enable_content_screening") is not True:
+        return False
+    return policy_is_active(get_effective_policy(
+        subject_from_document(document), repository=repository, require_active=False,
+    ))
+
+
+def validate_screening_configuration(settings=None, *, repository=None, check_storage=False,
+                                     proposed_settings=False, allow_missing_policy=False):
     settings = _settings(settings)
     if settings.get("enable_content_screening") is not True:
         return
     if settings.get("enable_enhanced_citations") is not True:
         raise ScreeningCitationsRequiredError()
 
-    from content_screening.policies import compose_policy, default_policy, policy_is_active
-
     repository = _repository(repository)
     baseline = repository.get_policy("global", "global")
-    effective = compose_policy(baseline["policy"] if baseline else default_policy())
-    if not policy_is_active(effective):
+    if baseline is None and not allow_missing_policy:
         raise ScreeningPolicyRequiredError()
+    # Settings preflight may precede first activation; the write initializes the policy.
+    effective = compose_policy(baseline["policy"] if baseline else default_policy())
     if effective.get("ai_checks"):
         from content_screening.model import validate_model_bindings
 
@@ -146,7 +177,7 @@ def validate_screening_configuration(settings=None, *, repository=None, check_st
 
 
 def initial_document_marker(document, settings=None):
-    if _settings(settings).get("enable_content_screening") is not True:
+    if not document_requires_screening(document, settings):
         return None
     subject = subject_from_document(document)
     return {
@@ -378,7 +409,7 @@ def prepare_document_upload(document_id, user_id, temp_file_path, original_filen
                             extraction_mode_override=None):
     settings = _settings()
     document = _document_for_upload(document_id, user_id, group_id, public_workspace_id)
-    if settings.get("enable_content_screening") is not True and SCREENING_FIELD not in document:
+    if not document_requires_screening(document, settings):
         return None
     if settings.get("enable_content_screening") is not True:
         raise DocumentHeldError("Enable content screening before replacing inspected content.")

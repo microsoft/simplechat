@@ -1,8 +1,9 @@
 # test_content_screening_classic.py
 """
 Classic Content Screening policy, hold, review, and remediation workflows.
-Version: 0.261.108
+Version: 0.261.114
 Implemented in: 0.261.106
+Empty-policy scan feedback implemented in: 0.261.114
 
 Uses the existing local/Azure Playwright connection fixture and a closed,
 synthetic API boundary. No application accounts, real documents, secrets,
@@ -496,11 +497,26 @@ def test_classic_single_and_workspace_scan_targets(classic_screening, single_doc
     assert classic_screening.scan_starts == [target]
 
 
-def test_classic_disable_new_scans_preserves_review_holds(classic_screening):
+@pytest.mark.parametrize("dirty_policy", [False, True])
+def test_classic_disable_new_scans_preserves_review_holds(classic_screening, dirty_policy):
     classic_screening.open_admin()
     page = classic_screening.page
-    page.locator("#enable_content_screening").uncheck()
+    if dirty_policy:
+        page.get_by_label("Rule name", exact=True).fill("Keep my policy edits")
+    with page.expect_response(
+        lambda response: response.request.method == "PUT"
+        and response.url.endswith("/api/content-screening/configuration")
+    ) as configuration, page.expect_response(
+        lambda response: response.request.method == "GET"
+        and response.url.endswith("/api/content-screening/policies/global/global")
+    ) as refreshed_policy:
+        page.locator("#enable_content_screening").uncheck()
+    assert configuration.value.status == 200 and configuration.value.json()["enabled"] is False
+    assert refreshed_policy.value.status == 200
     expect(page.locator("#screening-admin-policy")).to_contain_text("New scans are disabled")
+    if dirty_policy:
+        expect(page.get_by_label("Rule name", exact=True)).to_have_value("Keep my policy edits")
+    assert not classic_screening.policy_writes
     assert classic_screening.configuration_writes == [{"enabled": False}]
     assert classic_screening.review["state"] == "pending_review"
     assert classic_screening.decisions == []
@@ -523,6 +539,26 @@ def test_classic_global_scan_requires_server_capability(classic_screening):
     classic_screening.open_admin()
     expect(classic_screening.page.locator("#screening-scan-global")).not_to_be_visible()
     assert classic_screening.scan_starts == []
+
+
+def test_classic_empty_policy_scan_error_explains_checks_without_blocking_settings(classic_screening):
+    ui = classic_screening
+    ui.open_workspace()
+
+    def reject_empty_scan(route):
+        if route.request.method == "POST":
+            route.fulfill(status=400, json={"error": "No active checks.", "code": "screening_policy_empty"})
+        else:
+            route.fallback()
+
+    ui.page.route("**/api/content-screening/scans", reject_empty_scan)
+    ui.page.locator("[data-screening-scan-workspace]").click()
+    confirm_action(ui.page)
+    message = ui.page.locator("[data-screening-workspace-message]")
+    expect(message).to_contain_text("No active checks are configured for this workspace.")
+    expect(message).to_contain_text("An empty policy can stay enabled")
+    expect(message).to_contain_text("existing holds are unchanged")
+    assert not ui.scan_starts and not ui.configuration_writes
 
 
 def test_classic_admin_scan_capability_does_not_grant_private_review(classic_screening):
