@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.113
+Version: 0.261.114
 Implemented in: 0.261.094
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 

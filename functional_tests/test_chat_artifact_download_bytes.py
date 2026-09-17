@@ -1,8 +1,8 @@
 # test_chat_artifact_download_bytes.py
 """
 Functional regressions for authorized generated artifact download bytes.
-Version: 0.261.113
-Implemented in: 0.261.113
+Version: 0.261.114
+Implemented in: 0.261.114
 
 Production route, message/lifecycle authorization, internal blob reader, saved
 analysis/source reader, and response functions execute against isolated storage.
@@ -31,6 +31,8 @@ from test_generated_artifact_lifecycle_authorization import (
     load_operation_helpers,
 )
 from test_saved_analysis_service import read_options, saved, saved_chat  # noqa: F401
+from test_content_screening_access import ScreeningAccessFixture, access as screening_access
+from content_screening.contracts import DocumentHeldError, ScreeningError
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -71,7 +73,7 @@ def artifact_download(saved_chat):
     artifact = {
         "id": ARTIFACT, "conversation_id": CONVERSATION, "role": "file",
         "filename": "review.json", "file_content_source": "blob",
-        "blob_container": "chat-files", "blob_path": "owner/conversation/generated/review.csv",
+        "blob_container": "personal-chat", "blob_path": "owner/conversation-1/generated/review.csv",
         "_etag": "artifact-v1", "metadata": metadata,
     }
     conversations = SnapshotContainer({CONVERSATION: {"id": CONVERSATION, "user_id": "owner"}})
@@ -101,7 +103,7 @@ def artifact_download(saved_chat):
 
     def get_blob_client(*, container, blob):
         reads.append((container, blob))
-        assert (container, blob) == ("chat-files", "owner/conversation/generated/review.csv")
+        assert (container, blob) == ("personal-chat", "owner/conversation-1/generated/review.csv")
 
         def readall():
             if state["failure"]:
@@ -118,12 +120,16 @@ def artifact_download(saved_chat):
         "quote": quote, "secure_filename": secure_filename,
         "Response": Response, "jsonify": jsonify, "request": request,
         "AzureError": AzureError, "ResourceNotFoundError": ResourceNotFoundError,
+        "ScreeningError": ScreeningError,
         "CosmosResourceNotFoundError": FakeNotFound,
         "CLIENTS": {"storage_account_office_docs_client": SimpleNamespace(get_blob_client=get_blob_client)},
         "cosmos_conversations_container": conversations, "cosmos_messages_container": messages,
         "build_conversation_participation_context": participate,
         "assert_generated_file_approval_allows_download": approval,
         "assert_generated_chat_artifact_is_published_for_user": publication["assert_generated_chat_artifact_is_published_for_user"],
+        "assert_evidence_available": screening_access.assert_evidence_available,
+        "assert_current_request_sources_available": screening_access.assert_current_request_sources_available,
+        "read_available_document_bytes": screening_access.read_available_document_bytes,
         "get_current_user_id": lambda: identity["user_id"],
         "log_event": lambda message, **kwargs: logs.append((message, kwargs)),
         "debug_print": lambda *args: None,
@@ -135,10 +141,11 @@ def artifact_download(saved_chat):
     load_definitions("route_enhanced_citations.py", {
         "_get_authorized_chat_artifact_message", "_resolve_generated_artifact_file_name",
         "_normalize_response_file_name", "_build_content_disposition",
-        "_serve_chat_artifact_download", "download_chat_artifact",
+        "_serve_chat_artifact_download", "download_chat_artifact", "enforce_screened_citation_response",
     }, namespace)
     app = Flask(__name__)
     app.add_url_rule("/api/chat_artifacts/download", view_func=namespace["download_chat_artifact"])
+    app.after_request(namespace["enforce_screened_citation_response"])
     return SimpleNamespace(
         client=app.test_client(), artifact=artifact, identity=identity, messages=messages,
         conversations=conversations, reads=reads, state=state, saved=saved_chat,
@@ -167,7 +174,7 @@ def test_download_returns_exact_bytes_and_server_owned_filename(artifact_downloa
     assert "no-store" in response.headers["Cache-Control"]
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert fixture.saved["state"]["resolutions"] >= 2
-    assert fixture.reads == [("chat-files", "owner/conversation/generated/review.csv")]
+    assert fixture.reads == [("personal-chat", "owner/conversation-1/generated/review.csv")]
 
 
 @pytest.mark.parametrize("denial", ["conversation", "source", "approval", "staged", "deleted_parent"])
@@ -255,3 +262,57 @@ def test_modified_blob_bytes_do_not_pass_the_saved_content_digest(artifact_downl
     response = fixture.client.get(DOWNLOAD)
     assert response.status_code == 404
     assert b"Replaced private content" not in response.data
+
+
+@pytest.fixture
+def screened_download(artifact_download):
+    screening = ScreeningAccessFixture()
+    screening.setUp()
+    screening.document["shared_user_ids"] = ["reader,approved"]
+    screening.conversations.documents[CONVERSATION]["user_id"] = "reader"
+    screening.messages.documents[ARTIFACT] = artifact_download.artifact
+    artifact_download.artifact["metadata"][screening_access.PROVENANCE_FIELD] = screening_access.document_provenance(
+        screening.document
+    )
+    try:
+        yield artifact_download, screening
+    finally:
+        screening.doCleanups()
+
+
+def test_cleared_source_artifact_uses_its_bound_chat_bytes(screened_download):
+    fixture, screening = screened_download
+    response = fixture.client.get(DOWNLOAD)
+    assert response.status_code == 200 and response.data == CSV
+    assert screening.personal.reads["document-1"] >= 2
+    assert screening.blob_requests == []
+
+
+@pytest.mark.parametrize("during_read", [False, True])
+def test_genuine_screening_hold_returns_explicit_409_without_artifact_bytes(screened_download, during_read):
+    fixture, screening = screened_download
+    if during_read:
+        fixture.state["after_read"] = screening.hold
+    else:
+        screening.hold()
+    response = fixture.client.get(DOWNLOAD)
+    assert response.status_code == 409
+    assert response.json == {
+        "error": DocumentHeldError.public_message, "error_code": "document_under_review",
+    }
+    assert "attachment" not in response.headers.get("Content-Disposition", "")
+    assert "no-store" in response.headers["Cache-Control"]
+    assert len(fixture.reads) == int(during_read)
+
+
+def test_workspace_linked_artifact_reads_the_admitted_copy_not_the_retained_original(screened_download):
+    fixture, screening = screened_download
+    fixture.artifact["workspace_document_id"] = "document-1"
+    fixture.artifact["metadata"] = {"is_generated_chat_artifact": True}
+    response = fixture.client.get(DOWNLOAD)
+    assert response.status_code == 200 and response.data == screening.content
+    assert 'filename="reviewed.txt"' in response.headers["Content-Disposition"]
+    assert fixture.reads == []
+    assert screening.blob_requests == [(
+        "user-documents", "user-1/document-1/screened/scan-1/reviewed.txt",
+    )]

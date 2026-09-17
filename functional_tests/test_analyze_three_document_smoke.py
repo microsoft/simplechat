@@ -1,8 +1,8 @@
 # test_analyze_three_document_smoke.py
 """
 Fresh three-document Analyze producer, saved-result, and export regression.
-Version: 0.261.113
-Implemented in: 0.261.113
+Version: 0.261.114
+Implemented in: 0.261.114
 
 Original fictional source text passes through the production narrative producer,
 collector, saved section reader, and export builders. Only source I/O and model

@@ -2,11 +2,14 @@
 
 import logging
 
+from content_screening.access import register_document_api_guards
+from content_screening.contracts import ScreeningError
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from content_screening.service import prepare_document_upload
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PUBLIC,
     is_document_access_shadow_validation_enabled,
@@ -61,6 +64,7 @@ def register_route_external_public_documents(bp):
     - POST /external/public_documents/upload
     - DELETE /external/public_documents/<doc_id>
     """
+    register_document_api_guards(bp, user_resolver=lambda: _get_external_request_value("user_id"))
     @bp.route('/external/public_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
@@ -146,6 +150,13 @@ def register_route_external_public_documents(bp):
                     percentage_complete=0
                 )
 
+                prepare_document_upload(
+                    document_id=parent_document_id,
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
+                    original_filename=original_filename,
+                    public_workspace_id=active_workspace_id,
+                )
                 future = current_app.extensions['executor'].submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
@@ -159,7 +170,13 @@ def register_route_external_public_documents(bp):
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
 
             except Exception as e:
-                upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
+                log_event(
+                    "[CONTENT_SCREENING] Workspace upload preparation or queueing failed.",
+                    extra={"document_id": parent_document_id, "scope": "public", "exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                message = e.public_message if isinstance(e, ScreeningError) else "Unable to prepare or queue this upload."
+                upload_errors.append(f"Upload failed for {original_filename}: {message}")
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 

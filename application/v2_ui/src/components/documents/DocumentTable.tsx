@@ -15,6 +15,7 @@
 import { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
+import { isScreeningAvailable } from '../../lib/contentScreening';
 import type {
     DocumentQuery,
     DocumentSortField,
@@ -113,7 +114,8 @@ export function DocumentTable({
 }) {
     const activeColumns = DOCUMENT_COLUMNS.filter((column) => columns.includes(column.id));
     const selectedIds = new Set(selection.ids);
-    const allSelected = documents.length > 0 && documents.every((item) => selectedIds.has(documentId(item)));
+    const selectable = documents.filter(isScreeningAvailable);
+    const allSelected = selectable.length > 0 && selectable.every((item) => selectedIds.has(documentId(item)));
     const someSelected = selection.ids.length > 0 && !allSelected;
 
     const selectAllRef = useRef<HTMLInputElement>(null);
@@ -134,6 +136,7 @@ export function DocumentTable({
                             ref={selectAllRef}
                             type="checkbox"
                             checked={allSelected}
+                            disabled={selectable.length === 0}
                             onChange={onToggleSelectAll}
                             aria-label="Select all documents on this page"
                             className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent)]"
@@ -182,6 +185,7 @@ export function DocumentTable({
             <tbody>
                 {documents.map((document) => {
                     const id = documentId(document);
+                    const available = isScreeningAvailable(document);
                     const selected = selectedIds.has(id);
                     const { primary, secondary } = documentDisplayName(document);
                     const tags = normalizeTags(document.tags);
@@ -190,17 +194,17 @@ export function DocumentTable({
                     return (
                         <tr
                             key={id}
-                            draggable
+                            draggable={available}
                             onDragStart={(event) => onDragStart(event, id)}
                             onClick={(event) =>
-                                onSelect(
+                                available ? onSelect(
                                     id,
                                     event.shiftKey
                                         ? 'range'
                                         : event.ctrlKey || event.metaKey
                                           ? 'toggle'
                                           : 'replace',
-                                )
+                                ) : onOpen(document)
                             }
                             onDoubleClick={() => onOpen(document)}
                             aria-selected={selected}
@@ -213,6 +217,8 @@ export function DocumentTable({
                                 <input
                                     type="checkbox"
                                     checked={selected}
+                                    disabled={!available}
+                                    title={available ? undefined : 'Held sources cannot be selected for ordinary use.'}
                                     onClick={(event) => event.stopPropagation()}
                                     onChange={(event) =>
                                         onSelect(
@@ -241,9 +247,17 @@ export function DocumentTable({
                                                 <div className="flex min-w-0 items-center gap-2">
                                                     <DocumentIcon document={document} />
                                                     <div className="min-w-0">
-                                                        <div className="truncate text-text-1">
+                                                        <button
+                                                            type="button"
+                                                            className="max-w-full truncate text-left text-text-1 hover:underline"
+                                                            aria-label={`Details for ${primary}`}
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                onOpen(document);
+                                                            }}
+                                                        >
                                                             {primary}
-                                                        </div>
+                                                        </button>
                                                         {secondary ? (
                                                             <div className="truncate text-xs text-text-3">
                                                                 {secondary}

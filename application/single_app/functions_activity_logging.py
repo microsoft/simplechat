@@ -10,9 +10,27 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
+from azure.cosmos.exceptions import CosmosResourceExistsError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from config import cosmos_activity_logs_container
+
+
+def _create_activity_record(record, idempotency_key=None):
+    if idempotency_key is not None:
+        if not isinstance(idempotency_key, str) or not idempotency_key or len(idempotency_key) > 512:
+            raise ValueError("The activity idempotency key is invalid.")
+        record["id"] = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"simplechat:{record['activity_type']}:{record['user_id']}:{idempotency_key}",
+        ))
+    try:
+        cosmos_activity_logs_container.create_item(body=record)
+    except CosmosResourceExistsError:
+        if idempotency_key is None:
+            raise
+        return cosmos_activity_logs_container.read_item(item=record["id"], partition_key=record["user_id"])
+    return record
 
 
 def coerce_activity_log_user_id(user_id: Any) -> str:
@@ -779,8 +797,10 @@ def log_document_creation_transaction(
     abstract: Optional[str] = None,
     group_id: Optional[str] = None,
     public_workspace_id: Optional[str] = None,
-    additional_metadata: Optional[dict] = None
-) -> None:
+    additional_metadata: Optional[dict] = None,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Optional[dict]:
     """
     Log comprehensive document creation transaction to activity_logs container.
     This creates a permanent record of the document creation that persists even if the document is deleted.
@@ -808,8 +828,6 @@ def log_document_creation_transaction(
     """
     
     try:
-        import uuid
-        
         # Create comprehensive activity log record
         activity_record = {
             'id': str(uuid.uuid4()),
@@ -852,30 +870,31 @@ def log_document_creation_transaction(
             activity_record['additional_metadata'] = additional_metadata
             
         # Save to activity_logs container for permanent record
-        cosmos_activity_logs_container.create_item(body=activity_record)
+        activity_record = _create_activity_record(activity_record, idempotency_key)
         
         # Also log to Application Insights for monitoring
         log_event(
-            message=f"Document creation transaction logged: {file_name} ({file_type}) for user {user_id}",
-            extra=activity_record,
+            message="[ACTIVITY_LOGGING] Document creation transaction recorded.",
+            extra={"document_id": document_id, "workspace_type": workspace_type},
             level=logging.INFO
         )
         debug_print(f"Logged document creation transaction: {document_id} for user {user_id}")
+        return activity_record
 
         
     except Exception as e:
         # Log error but don't break the document creation flow
         log_event(
-            message=f"Error logging document creation transaction: {str(e)}",
+            message="[ACTIVITY_LOGGING] Document creation transaction could not be recorded.",
             extra={
                 'user_id': user_id,
                 'document_id': document_id,
                 'workspace_type': workspace_type,
-                'error': str(e)
+                'error_type': type(e).__name__
             },
             level=logging.ERROR
         )
-        debug_print(f"Error logging document creation transaction for user {user_id}: {str(e)}")
+        return None
 
 
 def log_document_deletion_transaction(
@@ -1063,8 +1082,10 @@ def log_token_usage(
     message_id: Optional[str] = None,
     group_id: Optional[str] = None,
     public_workspace_id: Optional[str] = None,
-    additional_context: Optional[dict] = None
-) -> None:
+    additional_context: Optional[dict] = None,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Optional[dict]:
     """
     Log token usage to activity_logs container for easy reporting and analytics.
     Supports both embedding tokens (document processing) and chat tokens (conversations).
@@ -1087,8 +1108,6 @@ def log_token_usage(
     """
     
     try:
-        import uuid
-        
         # Create token usage activity log record
         activity_record = {
             'id': str(uuid.uuid4()),
@@ -1130,29 +1149,30 @@ def log_token_usage(
             activity_record['additional_context'] = additional_context
             
         # Save to activity_logs container
-        cosmos_activity_logs_container.create_item(body=activity_record)
+        activity_record = _create_activity_record(activity_record, idempotency_key)
         
         # Also log to Application Insights for monitoring
         log_event(
-            message=f"Token usage logged: {token_type} - {total_tokens} tokens ({model})",
+            message=f"[ACTIVITY_LOGGING] Token usage recorded: {token_type} - {total_tokens} tokens.",
             extra=activity_record,
             level=logging.INFO
         )
         debug_print(f"Logged token usage: {token_type} - {total_tokens} tokens for user {user_id}")
+        return activity_record
         
     except Exception as e:
         # Log error but don't break the flow
         log_event(
-            message=f"Error logging token usage: {str(e)}",
+            message="[ACTIVITY_LOGGING] Token usage could not be recorded.",
             extra={
                 'user_id': user_id,
                 'token_type': token_type,
                 'total_tokens': total_tokens,
-                'error': str(e)
+                'error_type': type(e).__name__
             },
             level=logging.ERROR
         )
-        debug_print(f"Error logging token usage for user {user_id}: {str(e)}")
+        return None
 
 
 def log_conversation_creation(

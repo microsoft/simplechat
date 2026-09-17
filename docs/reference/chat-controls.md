@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.113"
+version: "0.261.114"
 ---
 
 ## How to use this reference
@@ -27,7 +27,7 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ### React V2 navigation on narrow screens
 
-Since **0.261.113**, **Expand navigation** opens the navigation rail above the
+Since **0.261.114**, **Expand navigation** opens the navigation rail above the
 chat on screens narrower than 768 pixels. **Collapse navigation**, Escape, or
 the shaded **Close navigation** backdrop closes it. Choosing a destination or
 conversation also closes the mobile rail. These actions do not change the

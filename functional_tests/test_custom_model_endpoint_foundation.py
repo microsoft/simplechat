@@ -1,8 +1,9 @@
 # test_custom_model_endpoint_foundation.py
 """
 Functional tests for the Custom endpoint foundation.
-Version: 0.261.107
+Version: 0.261.113
 Implemented in: 0.261.107
+Semantic Kernel screening/workflow guard merge coverage: 0.261.113
 
 Exercise registry contracts, URL/address policy, DNS pinning, authentication,
 normalization, safe diagnostics, and real SDK requests against mock transports.
@@ -27,6 +28,11 @@ import httpx
 import pytest
 from flask import Flask, jsonify, request
 from openai import AsyncOpenAI
+from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.contents import ChatHistory
+from semantic_kernel.functions import kernel_function
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,14 +41,18 @@ sys.path.insert(0, str(APP))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 # Application imports follow the path setup so standalone execution uses this worktree.
+from content_screening import access as screening_access
+from content_screening.contracts import DocumentHeldError
 import functions_model_endpoint_auth as endpoint_auth
 import functions_model_endpoint_diagnostics as diagnostics
 import functions_model_endpoint_validation as validation
+import functions_workflow_context as workflow_context
 import model_endpoint_clients as clients
 from functions_model_endpoint_providers import get_model_endpoint_provider, get_model_endpoint_provider_ui_options
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from test_model_endpoint_normalization_backend import _load_functions_settings_module, _restore_modules
 from test_v2_admin_model_endpoints_api import _load_persistence_helper
+from test_workflow_context_budget import ToolCallingCompletion
 
 
 def endpoint_record(api_type="openai", auth_type="api_key"):
@@ -453,6 +463,91 @@ def test_normalization_merge_and_admin_user_projections_keep_the_contract():
         assert "auth" not in public and "connection" not in public and "management" not in public
     finally:
         _restore_modules(originals)
+
+
+@pytest.mark.parametrize("registration_index", range(3))
+@pytest.mark.parametrize("blocked_by", [None, "screening", "budget"])
+def test_loader_registration_preserves_screening_and_workflow_tool_round_guards(
+    monkeypatch, registration_index, blocked_by,
+):
+    """Run all merged registration paths with the real SK automatic tool loop."""
+    source = ast.parse((APP / "semantic_kernel_loader.py").read_text(encoding="utf-8"))
+    registrations = []
+    for node in ast.walk(source):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list):
+            continue
+        for index, statement in enumerate(body[:-1]):
+            if (
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Call)
+                and isinstance(statement.value.func, ast.Name)
+                and statement.value.func.id == "wrap_workflow_chat_service"
+            ):
+                registrations.append([statement, body[index + 1]])
+    registrations.sort(key=lambda statements: statements[0].lineno)
+    assert len(registrations) == 3
+    monkeypatch.setattr(workflow_context, "resolve_model_token_limits", lambda *args, **kwargs: {
+        "context_window_tokens": 4096, "max_input_tokens": None, "max_output_tokens": 512,
+        "tokenizer": "cl100k_base", "source": "catalog", "model_id": "fixture-model", "status": "known",
+    })
+    held = False
+
+    def verify_sources():
+        if held:
+            raise DocumentHeldError()
+
+    monkeypatch.setattr(screening_access, "assert_current_request_sources_available", verify_sources)
+    original = ToolCallingCompletion(ai_model_id="fixture-model", service_id="loader-model", api_key="test-only")
+    kernel = Kernel()
+
+    @kernel_function(name="load", description="Read the full inventory.")
+    def load() -> str:
+        nonlocal held
+        held = blocked_by == "screening"
+        return "inventory " * (10000 if blocked_by == "budget" else 1)
+
+    kernel.add_function(plugin_name="evidence", function=load)
+    history = ChatHistory()
+    history.add_user_message("Review the inventory using the evidence tool.")
+    settings = PromptExecutionSettings()
+    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=3)
+    agent_config = {
+        "model_metadata": {"modelName": "fixture-model", "id": "agent-model"},
+        "deployment": "agent-deployment", "model_provider": "new_foundry",
+    }
+    orchestrator_config = {
+        "model_metadata": {"modelName": "fixture-model", "id": "orchestrator-model"},
+        "deployment": "orchestrator-deployment", "model_provider": "aoai",
+    }
+    namespace = {
+        "chat_service": original, "kernel": kernel,
+        "agent_config": agent_config, "orchestrator_config": orchestrator_config,
+        "guard_chat_service": screening_access.guard_chat_service,
+        "wrap_workflow_chat_service": workflow_context.wrap_workflow_chat_service,
+    }
+    workflow = {}
+    with workflow_context.workflow_context_budget_scope(workflow):
+        exec(compile(
+            ast.Module(body=registrations[registration_index], type_ignores=[]),
+            str(APP / "semantic_kernel_loader.py"), "exec",
+        ), namespace)
+        service = namespace["chat_service"]
+        expected_config = orchestrator_config if registration_index == 2 else agent_config
+        assert service.model_metadata == expected_config["model_metadata"]
+        assert service.provider == expected_config["model_provider"]
+        assert kernel.get_service(service_id="loader-model") is service
+        if blocked_by:
+            error = DocumentHeldError if blocked_by == "screening" else workflow_context.WorkflowContextBudgetError
+            with pytest.raises(error):
+                asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
+            assert original.request_count == 1
+        else:
+            messages = asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
+            assert messages[-1].content == "Finished."
+            assert original.request_count == 2
+    if blocked_by == "budget":
+        assert workflow["context_budget"]["decision"] == "blocked"
 
 
 @pytest.fixture

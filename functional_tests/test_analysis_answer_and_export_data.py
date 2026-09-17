@@ -1,7 +1,7 @@
 # test_analysis_answer_and_export_data.py
 """
 Functional tests for readable Analyze answers and authoritative export values.
-Version: 0.261.109
+Version: 0.261.113
 Implemented in: 0.261.109
 
 Display text is not the data handoff, and intermediate notes cannot replace
@@ -32,6 +32,7 @@ from test_workflow_result_contract import SerializedSections
 
 
 exports = import_app_module("functions_generated_file_exports")
+workflow_execution = import_app_module("functions_workflow_execution")
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 
 
@@ -183,6 +184,7 @@ def test_workflow_explanation_exports_keep_the_original_source_restrictions(save
     noop = lambda *args, **kwargs: None
     namespace = {
         "uuid": uuid,
+        "assert_workflow_execution_owned": workflow_execution.assert_workflow_execution_owned,
         "workflow_saved_analysis_descriptor": saved.workflow_saved_analysis_descriptor,
         "saved_analysis_context": saved.saved_analysis_context,
         "get_analysis_export_rows": exports.get_analysis_export_rows,

@@ -1,7 +1,7 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.113
+Version: 0.261.114
 Implemented in: 0.261.109
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.
@@ -16,6 +16,7 @@ Run: .\\.venv\\Scripts\\python.exe -m pytest .\\ui_tests\\test_chat_saved_analys
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,9 +49,11 @@ EXPLANATION = "This explains the saved review, without a new source pass."
 @pytest.fixture(scope="session")
 def analysis_assets():
     hb.ensure_bundle()
-    styles = list((BUILD / "assets").glob("*.css"))
+    index = BUILD / "index.html"
+    assert index.is_file(), "Build the V2 UI into ui_tests/artifacts/saved-analysis first."
+    styles = re.findall(r'<link\b[^>]*href="([^"]+\.css)"', index.read_text(encoding="utf-8"))
     assert styles, "Run the existing V2 build command in this test's header to produce production CSS."
-    return styles[0]
+    return BUILD / "assets" / styles[0].rsplit("/", 1)[-1]
 
 
 class AnalysisApi:
@@ -240,17 +243,22 @@ class AnalysisApi:
         route.fulfill(status=404, json={"error": "Unexpected test endpoint."})
 
 
+@pytest.fixture
+def analysis_api_factory():
+    return AnalysisApi
+
+
 @pytest.fixture(params=["classic", "v2"])
-def analysis_ui(request, page, analysis_client, analysis_assets):
+def analysis_ui(request, page, analysis_client, analysis_assets, analysis_api_factory):
     renderer = request.param
     errors = []
-    api = AnalysisApi(analysis_client, analysis_assets)
+    api = analysis_api_factory(analysis_client, analysis_assets)
     page.route("**/*", api.handle)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.set_viewport_size({"width": 1280, "height": 900})
 
-    def mount(*, history=True, orchestration=False, shell=False):
-        if renderer == "v2":
+    def mount(*, history=True, orchestration=False, shell=False, renderer_override=None):
+        if (renderer_override or renderer) == "v2":
             page.goto(f"{ORIGIN}/harness.html")
             page.add_style_tag(url="/assets/chat.css")
             page.wait_for_function("() => Boolean(window.OrchHarness)")

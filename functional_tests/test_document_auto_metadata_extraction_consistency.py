@@ -2,7 +2,7 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.241.111
+Version: 0.261.106
 Implemented in: 0.241.110
 
 This test ensures upload processing runs final metadata extraction consistently
@@ -13,6 +13,7 @@ import ast
 import os
 import re
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,7 +66,11 @@ def test_dispatcher_owns_final_metadata_extraction():
     print('Testing centralized upload metadata extraction...')
 
     module_ast, source = parse_functions_documents()
-    dispatcher = get_function(module_ast, 'process_document_upload_background')
+    entry = get_function(module_ast, 'process_document_upload_background')
+    entry_calls = {call_name(node) for node in ast.walk(entry) if isinstance(node, ast.Call)}
+    assert 'process_screened_upload' in entry_calls
+    assert '_process_document_upload_background_impl' in entry_calls
+    dispatcher = get_function(module_ast, '_process_document_upload_background_impl')
     dispatcher_calls = [node for node in ast.walk(dispatcher) if isinstance(node, ast.Call)]
     dispatcher_call_names = [call_name(call) for call in dispatcher_calls]
 
@@ -182,10 +187,7 @@ def test_config_version_bumped_for_auto_metadata_fix():
     """Verify config.py version was bumped for this fix."""
     print('Testing config version bump...')
 
-    config_source = read_file(CONFIG_FILE)
-    version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
-    assert version_match, 'Could not find VERSION in config.py'
-    assert version_match.group(1) == '0.241.111', 'Expected config.py version 0.241.111'
+    assert_app_version_at_least('0.241.111')
 
     print('Config version bump passed')
     return True

@@ -14,6 +14,8 @@ from html import escape as _escape_html
 from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup, NavigableString, Tag
+from content_screening.access import public_history_messages
+from content_screening.contracts import DocumentHeldError
 from config import *
 from flask import jsonify, make_response, request
 from functions_appinsights import log_event
@@ -659,6 +661,7 @@ def _build_export_entry(
     filtered_messages = _filter_messages_for_export(raw_messages)
     filtered_messages = sanitize_saved_analysis_messages(filtered_messages, user_id)
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
+    filtered_messages = public_history_messages(filtered_messages, user_id)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
     raw_thoughts = [] if is_collaboration_conversation(conversation) else get_thoughts_for_conversation(conversation.get('id'), user_id)
@@ -681,9 +684,9 @@ def _build_export_entry(
             transcript_index += 1
             message_transcript_index = transcript_index
 
-        unavailable_analysis = is_saved_analysis_unavailable(message)
-        thoughts = [] if unavailable_analysis else thoughts_by_message.get(message.get('id'), [])
-        if not unavailable_analysis and not thoughts and is_collaboration_conversation(conversation):
+        unavailable_content = message.get("content_unavailable") or is_saved_analysis_unavailable(message)
+        thoughts = [] if unavailable_content else thoughts_by_message.get(message.get('id'), [])
+        if not unavailable_content and not thoughts and is_collaboration_conversation(conversation):
             collaboration_thoughts = get_accessible_collaboration_message_thoughts(
                 conversation,
                 message,
@@ -2205,6 +2208,10 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
         hydrated_messages = hydrate_agent_citations_from_artifacts([message], artifact_payload_map)
         if hydrated_messages:
             message = hydrated_messages[0]
+
+    message = public_history_messages([message], user_id)[0]
+    if message.get("content_unavailable"):
+        raise DocumentHeldError()
 
     if message.get('role') == 'assistant':
         message = _attach_generated_image_proposal_assets(

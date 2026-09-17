@@ -1,8 +1,8 @@
 # test_v2_artifact_download_cors.py
 """
 Functional regression for separately hosted V2 artifact attachment headers.
-Version: 0.261.113
-Implemented in: 0.261.113
+Version: 0.261.114
+Implemented in: 0.261.114
 
 The production response hook must expose Content-Disposition to the exact
 configured frontend origin without granting other origins credentialed access.

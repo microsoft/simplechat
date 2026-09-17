@@ -1,4 +1,18 @@
 # route_backend_chats.py
+from content_screening.access import (
+    refresh_workspace_attachment,
+    PROVENANCE_FIELD,
+    assert_current_request_sources_available,
+    assert_document_available,
+    assert_document_chunks_available,
+    assert_evidence_available,
+    current_request_source_provenance,
+    document_provenance,
+    filter_available_results,
+    guard_chat_service,
+    guard_model_callable,
+)
+from content_screening.contracts import DocumentHeldError, ScreeningError, document_is_available
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget
 from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
 from semantic_kernel import Kernel
@@ -527,6 +541,8 @@ def _prepare_conversation_context_for_invocation(
     model_endpoint_id=None,
     selected_agent=None,
 ):
+    assert_evidence_available([conversation_history, agent_citations])
+    assert_current_request_sources_available()
     agent_fields = _get_conversation_context_agent_fields(selected_agent)
     context_snapshot = build_conversation_context_snapshot(
         user_metadata,
@@ -570,7 +586,10 @@ def _create_chat_completion_with_reasoning(create_callable, params, model_name, 
             request_params.pop('reasoning_effort', None)
         else:
             request_params['reasoning_effort'] = effective
-    response, resolution = create_completion_with_reasoning(create_callable, request_params, model_name)
+    response, resolution = create_completion_with_reasoning(
+        guard_model_callable(create_callable, request_params.get("messages")),
+        request_params, model_name,
+    )
     if previous_resolution is not None:
         resolution['requested_effort'] = previous_resolution.get('requested_effort')
         resolution['adjustment_reason'] = (
@@ -1378,6 +1397,8 @@ def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, 
 def _is_search_ready_chat_upload_workspace_document(document_item):
     if not isinstance(document_item, dict):
         return False
+    if not document_is_available(document_item):
+        return False
     if document_item.get('chat_upload_link_state') == 'unlinked':
         return False
     if document_item.get('search_visibility_state') == 'archived':
@@ -1477,6 +1498,18 @@ def _resolve_conversation_task_documents(
 
         result['linked_count'] += 1
         if not action_allowed:
+            seen_document_ids.add(document_id)
+            continue
+
+        try:
+            document_item = assert_document_available(
+                document_item, user_id=user_id, purpose="chat_upload",
+            )
+        except ScreeningError:
+            if candidate_id_set:
+                raise
+            result['pending_count'] += 1
+            result['pending_document_ids'].append(document_id)
             seen_document_ids.add(document_id)
             continue
 
@@ -1726,6 +1759,7 @@ def _is_assigned_knowledge_inventory_request(user_message):
 
 def _build_assigned_knowledge_inventory_aug_message(user_id, assigned_knowledge_filters, user_message):
     active_documents = resolve_assigned_knowledge_active_documents(user_id, assigned_knowledge_filters)
+    active_documents = filter_available_results(active_documents, user_id=user_id)
     web_sources = (assigned_knowledge_filters.get('web_sources') or []) if isinstance(assigned_knowledge_filters, dict) else []
     document_lines = []
     for index, document in enumerate(active_documents, start=1):
@@ -2457,7 +2491,8 @@ def _resolve_prior_turn_history_window(settings=None):
 
 def _read_recent_assistant_messages(conversation_id, message_limit):
     query = (
-        f'SELECT TOP {int(message_limit)} c.id, c.conversation_id, c.role, c.content, c.metadata, c.agent_citations FROM c '
+        f'SELECT TOP {int(message_limit)} c.id, c.conversation_id, c.role, c.content, '
+        'c.metadata, c.agent_citations, c.hybrid_citations FROM c '
         'WHERE c.conversation_id = @conversation_id AND c.role = @role '
         'ORDER BY c.timestamp DESC'
     )
@@ -2657,6 +2692,7 @@ def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
             normalized_conversation_id,
             _resolve_prior_turn_history_window(settings),
         )
+        assert_evidence_available(assistant_messages, normalized_user_id, cached=True)
         selected_citations = select_prior_turn_action_citations(
             assistant_messages,
         )[:PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT]
@@ -2677,7 +2713,10 @@ def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
             artifact_payload = artifact_payload_map.get(str(citation.get('artifact_id') or ''))
             stored_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
             resolved_citations.append(stored_citation if isinstance(stored_citation, dict) else citation)
+        assert_evidence_available([assistant_messages, resolved_citations], normalized_user_id, cached=True)
         return resolved_citations
+    except ScreeningError:
+        raise
     except Exception as exc:
         log_event(
             '[GENERATED_FILE_EXPORT] Could not reuse earlier action results',
@@ -3721,6 +3760,23 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
     return authorized_context
 
 
+def _persist_screened_assistant(message, user_id):
+    """Persist provenance, and discard an in-flight result if its source changed."""
+    assert_current_request_sources_available(user_id)
+    sources = current_request_source_provenance()
+    if sources:
+        message.setdefault("metadata", {})["screening_sources"] = sources
+    result = cosmos_messages_container.upsert_item(message)
+    try:
+        assert_current_request_sources_available(user_id)
+    except ScreeningError:
+        cosmos_messages_container.delete_item(
+            item=message["id"], partition_key=message["conversation_id"],
+        )
+        raise
+    return result
+
+
 def _resolve_chat_selected_document_metadata(document_id, user_id=None, document_scope='personal',
                                             active_group_id=None, active_group_ids=None,
                                             active_public_workspace_id=None,
@@ -3811,7 +3867,13 @@ def _resolve_chat_selected_document_metadata(document_id, user_id=None, document
         if not doc_results:
             continue
 
-        doc_info = dict(doc_results[0])
+        fresh_document = assert_document_available(
+            doc_results[0], user_id=user_id, purpose="selection",
+        )
+        doc_info = {
+            field: fresh_document.get(field)
+            for field in ("id", "file_name", "title", "group_id", "public_workspace_id")
+        }
         doc_info['source_hint'] = resolution_query['source_hint']
         return doc_info
 
@@ -6972,7 +7034,7 @@ async def _generate_tabular_structured_output_entries(
             chat_history.add_user_message(batch_prompt)
 
             execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output')
-            result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+            result = await guard_chat_service(chat_service).get_chat_message_contents(chat_history, execution_settings)
             if result:
                 _publish_tabular_response_token_usage(
                     result[0],
@@ -10558,11 +10620,13 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
     reviewer_settings = AzureChatPromptExecutionSettings(service_id="tabular-analysis")
 
     try:
-        reviewer_result = await chat_service.get_chat_message_contents(
+        reviewer_result = await guard_chat_service(chat_service).get_chat_message_contents(
             review_history,
             reviewer_settings,
             kernel=kernel,
         )
+    except ScreeningError:
+        raise
     except Exception as reviewer_error:
         log_event(
             f"[TABULAR_SK_ANALYSIS] Reviewer recovery call failed: {reviewer_error}",
@@ -11857,7 +11921,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             service_id="tabular-analysis",
             model_context=model_context,
         )
-        kernel.add_service(chat_service)
+        kernel.add_service(guard_chat_service(chat_service))
 
         # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
         source_context = build_tabular_analysis_source_context(
@@ -12500,7 +12564,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             result = None
             synthesis_exception = None
             try:
-                result = await chat_service.get_chat_message_contents(
+                result = await guard_chat_service(chat_service).get_chat_message_contents(
                     chat_history, execution_settings, kernel=kernel
                 )
                 if result:
@@ -12508,6 +12572,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         result[0],
                         token_usage_callback,
                     )
+            except ScreeningError:
+                raise
             except Exception as exc:
                 synthesis_exception = exc
                 log_event(
@@ -12991,6 +13057,7 @@ def _execute_mixed_source_tabular_evidence(
                 selection_mode,
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
+                user_id=user_id,
             ),
             'system_messages': [],
             'agent_citations': [],
@@ -13206,6 +13273,7 @@ def _execute_mixed_source_tabular_evidence(
         execute=execute_tabular,
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
+        user_id=user_id,
     )
     return {
         'evidence_envelopes': evidence_envelopes,
@@ -16012,7 +16080,7 @@ def register_route_backend_chats(bp):
         try:
             if analysis_checkpoints is not None:
                 assert_analysis_attempt_current(analysis_checkpoints)
-            cosmos_messages_container.upsert_item(assistant_doc)
+            _persist_screened_assistant(assistant_doc, user_id)
             if analysis_checkpoints is not None:
                 assert_analysis_attempt_current(analysis_checkpoints)
             raise_if_mixed_source_cancelled(
@@ -16020,7 +16088,7 @@ def register_route_backend_chats(bp):
                 'finalization',
                 request_correlation_id=request_correlation_id,
             )
-        except (MixedSourceCancellationError, AnalysisWorkUnitConflictError, AnalysisResultUnavailable) as exc:
+        except (MixedSourceCancellationError, AnalysisWorkUnitConflictError, AnalysisResultUnavailable, ScreeningError) as exc:
             try:
                 cosmos_messages_container.delete_item(
                     item=assistant_message_id,
@@ -16038,6 +16106,10 @@ def register_route_backend_chats(bp):
                 document_generated_analysis_artifacts + document_generated_tabular_outputs,
                 compact_citations=prepared_agent_citations,
             )
+            if isinstance(exc, ScreeningError):
+                return {
+                    'error': exc.public_message, 'error_code': exc.code, 'conversation_id': conversation_id,
+                }, exc.status_code
             if thought_tracker.enabled:
                 thought_tracker.add_thought(
                     'cancellation',
@@ -18065,7 +18137,9 @@ def register_route_backend_chats(bp):
 
                                 try:
                                     # Use the already initialized gpt_client and gpt_model
-                                    summary_response_search = gpt_client.chat.completions.create(
+                                    summary_response_search = guard_model_callable(
+                                        gpt_client.chat.completions.create, last_messages_asc, user_id,
+                                    )(
                                         model=gpt_model,
                                         messages=[
                                             {"role": "system", "content": "Summarize recent conversation context for search query rewriting."},
@@ -18807,6 +18881,7 @@ def register_route_backend_chats(bp):
                     mode='chat',
                     telemetry_settings=settings,
                     request_correlation_id=mixed_source_request_correlation_id,
+                    user_id=user_id,
                 )
                 system_messages_for_augmentation.append(mixed_source_handoff)
                 mixed_source_coverage = mixed_source_handoff.get(
@@ -19505,6 +19580,7 @@ def register_route_backend_chats(bp):
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
 
             async def run_sk_call(callable_obj, *args, **kwargs):
+                assert_current_request_sources_available(user_id)
                 log_event(
                     f"Running Semantic Kernel callable: {callable_obj.__name__}",
                     extra={
@@ -20078,7 +20154,9 @@ def register_route_backend_chats(bp):
                                         settings_obj.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=20)
 
                                     async def run_chatcompletion():
-                                        return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
+                                        result = await guard_chat_service(chat_service).get_chat_message_contents(chat_hist, settings_obj)
+                                        assert_current_request_sources_available(user_id)
+                                        return result
 
                                     chat_result = asyncio.run(run_chatcompletion())
                                     if chat_result and hasattr(chat_result[0], 'content'):
@@ -20503,7 +20581,7 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
-            cosmos_messages_container.upsert_item(assistant_doc)
+            _persist_screened_assistant(assistant_doc, user_id)
 
             if selected_agent and agent_name:
                 log_agent_run(
@@ -20664,6 +20742,8 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except FoundryAgentUserAuthenticationRequired as auth_error:
             return jsonify(_agent_authentication_required_payload(auth_error)), 403
         except Exception as e:
@@ -22869,6 +22949,7 @@ def register_route_backend_chats(bp):
                         mode='chat',
                         telemetry_settings=settings,
                         request_correlation_id=mixed_source_request_correlation_id,
+                        user_id=user_id,
                     )
                     system_messages_for_augmentation.append(mixed_source_handoff)
                     mixed_source_coverage = mixed_source_handoff.get(
@@ -23805,7 +23886,7 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
-                        cosmos_messages_container.upsert_item(assistant_doc)
+                        _persist_screened_assistant(assistant_doc, user_id)
                         if token_usage_data and token_usage_data.get('total_tokens') is not None:
                             try:
                                 log_token_usage(
@@ -23988,6 +24069,7 @@ def register_route_backend_chats(bp):
                                         yield finalize_cancelled_agent_stream_response()
                                         return
 
+                                    assert_current_request_sources_available(user_id)
                                     if stream_selected_agent_type in ('foundry_workflow', 'new_foundry'):
                                         foundry_stream_metadata = {
                                             'conversation_id': conversation_id,
@@ -24025,6 +24107,7 @@ def register_route_backend_chats(bp):
                                         except StopAsyncIteration:
                                             break
 
+                                        assert_current_request_sources_available(user_id)
                                         response_metadata = getattr(response, 'metadata', None)
                                         if isinstance(response_metadata, dict):
                                             usage = response_metadata.get('usage')
@@ -24277,6 +24360,7 @@ def register_route_backend_chats(bp):
                             )
 
                         for chunk in stream:
+                            assert_current_request_sources_available(user_id)
                             if stream_cancel_requested():
                                 yield finalize_cancelled_stream_response()
                                 return
@@ -24579,7 +24663,7 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
-                    cosmos_messages_container.upsert_item(assistant_doc)
+                    _persist_screened_assistant(assistant_doc, user_id)
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
                         'finalization',
@@ -24741,6 +24825,10 @@ def register_route_backend_chats(bp):
                     )
                     yield f"data: {json.dumps(final_data)}\n\n"
 
+                except ScreeningError as error:
+                    accumulated_content = ""
+                    yield f"data: {json.dumps({'error': error.public_message, 'error_code': error.code, 'status_code': error.status_code})}\n\n"
+                    return
                 except MixedSourceCancellationError:
                     if mixed_source_manifest:
                         try:
@@ -24866,7 +24954,7 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
-                            cosmos_messages_container.upsert_item(assistant_doc)
+                            _persist_screened_assistant(assistant_doc, user_id)
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
                             initialize_conversation_used_document_tracking(
@@ -25027,7 +25115,7 @@ def register_route_backend_chats(bp):
         run_status = get_tabular_generated_output_run_status(user_id, run_id)
         if not run_status:
             return jsonify({'error': 'Tabular generated-output run not found'}), 404
-        return jsonify({'success': True, 'run': run_status})
+        return jsonify({'success': True, 'run': run_status}), 200, {"Cache-Control": "no-store, private"}
 
     @bp.route('/api/tabular/generated-output/runs/<run_id>/resume', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -26636,7 +26724,9 @@ def assess_history_only_answerability(gpt_client, gpt_model, conversation_histor
     assessment_messages.extend(conversation_history_for_api or [])
     assessment_messages.append({'role': 'user', 'content': assessment_prompt})
 
-    assessment_response = gpt_client.chat.completions.create(
+    assessment_response = guard_model_callable(
+        gpt_client.chat.completions.create, conversation_history_for_api,
+    )(
         model=gpt_model,
         messages=assessment_messages,
         max_tokens=180,
@@ -26688,6 +26778,7 @@ def should_apply_history_grounding_message(
 
 
 def build_assistant_history_content_with_citations(message, content):
+    assert_evidence_available(message, cached=True)
     base_content = str(content or '').strip()
     citation_sections = []
 
@@ -26821,6 +26912,11 @@ def emit_history_context_debug(history_debug_info, conversation_id):
     )
 
 
+def _refresh_workspace_linked_history_message(message):
+    """Do not reuse attachment text or vision metadata replaced by remediation."""
+    return refresh_workspace_attachment(message, get_current_user_id())
+
+
 def build_conversation_history_segments(
     all_messages,
     conversation_history_limit,
@@ -26848,6 +26944,19 @@ def build_conversation_history_segments(
 
     recent_messages = ordered_messages[-num_recent_messages:] if num_recent_messages else []
     older_messages_to_summarize = ordered_messages[:num_older_messages]
+    reused_messages = recent_messages + (older_messages_to_summarize if enable_summarize_older_messages else [])
+    assert_evidence_available([
+        message for message in reused_messages
+        if message.get("role") == "assistant"
+        and (message.get("metadata") or {}).get("thread_info", {}).get("active_thread") is not False
+        and not (message.get("metadata") or {}).get("masked")
+    ], cached=True)
+    assert_evidence_available([
+        message for message in recent_messages
+        if message.get("workspace_document_id")
+        and (message.get("metadata") or {}).get("thread_info", {}).get("active_thread") is not False
+        and not (message.get("metadata") or {}).get("masked")
+    ])
 
     summarized_message_refs = []
     skipped_inactive_message_refs = []
@@ -26892,7 +27001,9 @@ def build_conversation_history_segments(
         if message_texts_older:
             summary_prompt_older += "\n".join(message_texts_older)
             try:
-                summary_response_older = gpt_client.chat.completions.create(
+                summary_response_older = guard_model_callable(
+                    gpt_client.chat.completions.create, older_messages_to_summarize,
+                )(
                     model=gpt_model,
                     messages=[
                         {"role": "system", "content": "Summarize older conversation context for future chat turns."},
@@ -26903,6 +27014,8 @@ def build_conversation_history_segments(
                 )
                 summary_of_older = summary_response_older.choices[0].message.content.strip()
                 debug_print(f"Generated summary: {summary_of_older}")
+            except ScreeningError:
+                raise
             except Exception as exc:
                 debug_print(f"Error summarizing older conversation history: {exc}")
                 summary_of_older = ""
@@ -26937,6 +27050,9 @@ def build_conversation_history_segments(
             skipped_masked_message_refs.append(_format_history_message_ref(message))
             continue
 
+        message = _refresh_workspace_linked_history_message(message)
+        role = message.get("role")
+        content = message.get("content")
         masked_ranges = metadata.get('masked_ranges', [])
         if masked_ranges and content:
             content = remove_masked_content(content, masked_ranges)

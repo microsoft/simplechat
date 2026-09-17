@@ -4,6 +4,8 @@
 !application/
 !application/single_app/
 !application/single_app/**
+!application/v2_ui/
+!application/v2_ui/**
 !docker-customization/
 !docker-customization/**
 

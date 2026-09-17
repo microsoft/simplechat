@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.114)**
+
+#### Bug Fixes
+
+*   **Analyze Planning And Retry**
+    *   Retry on an unsaved planning question reuses its original prompt, model or agent, documents, scope, and approval mode instead of sending a temporary message ID to the saved-message API.
+    *   Pinned documents no longer force an additional Search step that can invalidate an Analyze plan. Explicit Search selections and source-access requirements remain enforced.
+    *   Invalid plans stay explicit failures; safe diagnostics distinguish provider, normalization, and selected-requirement failures without switching models.
+    *   (Ref: `Composer.tsx`, `orchestrationController.ts`, `chatStore.ts`, `functions_orchestration_planner.py`)
+
+*   **Authorized Analyze Downloads**
+    *   Generated chat CSV and Markdown files use the artifact byte reader rather than a workspace-only citation reader. Conversation, source, screening, approval, and publication checks remain enforced before and after reading.
+    *   Real screening holds return their explicit status, while workspace-linked files use the active admitted representation. Changed references or recorded content hashes prevent delivery.
+    *   Both interfaces keep failed downloads in chat instead of navigating to an error page. Separately hosted V2 frontends retain access to attachment filenames through the configured exact-origin CORS policy.
+    *   (Ref: `route_enhanced_citations.py`, `chat-messages.js`, `GeneratedArtifactCard.tsx`, `endpoints.ts`, `app.py`)
+
+#### User Interface Enhancements
+
+*   **Readable Analyze Results On Mobile**
+    *   Expanded navigation overlays the chat on narrow screens without changing desktop preferences. Escape, the backdrop, navigation, and Share/People actions close it appropriately.
+    *   Smaller-screen conversation drawers stay within the chat width, long artifact names wrap, and wide tables scroll locally.
+    *   (Ref: `AppShell.tsx`, `Sidebar.tsx`, `ConversationDrawer.tsx`, [Analyze stabilization and validation boundaries](fixes/ANALYZE_STABILIZATION_FIX.md))
+
 ### **(v0.261.105)**
 
 #### New Features
