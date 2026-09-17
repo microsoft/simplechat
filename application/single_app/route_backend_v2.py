@@ -90,11 +90,16 @@ from functions_image_edit import resolve_image_edit_capability
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
+    EMBEDDINGS_CAPABILITY,
+    EMBEDDING_MIGRATION_VERSION,
+    EMBEDDING_MIGRATION_VERSION_KEY,
+    EMBEDDING_SELECTION_KEY,
     EMPTY_MODEL_SELECTION,
     IMAGE_MIGRATION_VERSION,
     IMAGE_MIGRATION_VERSION_KEY,
     IMAGE_SELECTION_KEY,
     build_capability_model_catalog,
+    embedding_settings_use_connections,
     filter_model_endpoints_by_capability,
     get_capability_definition,
     is_capability_enabled,
@@ -103,7 +108,13 @@ from functions_ai_connections import (
     resolve_capability_model_selection,
     supports_model_capability,
 )
-from functions_ai_connection_migration import MIGRATION_NOTICE_KEY
+from functions_ai_connection_migration import EMBEDDING_MIGRATION_NOTICE_KEY, MIGRATION_NOTICE_KEY
+from functions_embedding_compatibility import (
+    embedding_compatibility_status,
+    preflight_embedding_settings,
+    read_embedding_settings,
+)
+from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
@@ -158,6 +169,12 @@ from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_model_capabilities import resolve_model_vision_support
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoint,
+    validate_custom_model_endpoints,
+)
 from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
@@ -417,15 +434,18 @@ def _build_capabilities(settings):
     like a settings key to everything that reads the application's surface, including the
     documentation inventory. It is reported separately instead.
 
-    Computed from the raw settings and reduced to an enum, so no deployment detail beyond the
-    model's name reaches the browser.
+    Computed from raw settings, then reduced to safe operation metadata. Connection URLs,
+    authentication, provider payloads and internal model-routing paths never reach the browser.
     """
     capability = resolve_image_edit_capability(settings)
     return {
         "image_edit": {
-            "mode": capability["mode"],
-            "model_name": capability["model_name"],
-            "reason": capability["reason"],
+            key: capability[key]
+            for key in (
+                "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
+                "availability", "availability_reason", "editing", "masking",
+                "sizes", "qualities", "backgrounds",
+            )
         },
     }
 
@@ -776,9 +796,29 @@ def register_route_backend_v2(bp):
 
 def _load_global_model_endpoints(settings=None):
     """Read the stored global model endpoints as a list."""
-    source = settings if isinstance(settings, dict) else get_settings()
+    source = get_settings() if settings is None else settings
+    if not isinstance(source, dict):
+        raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
     endpoints = source.get("model_endpoints", [])
     return endpoints if isinstance(endpoints, list) else []
+
+
+def _ai_connection_error_response(error):
+    """Map safe configuration errors without exposing provider or storage exceptions."""
+    if error.code in {
+        "embedding_rebuild_required",
+        "embedding_profile_mismatch",
+        "embedding_profile_changed",
+        "embedding_dimensions_mismatch",
+        "embedding_schema_update_required",
+        "settings_conflict",
+    }:
+        status = 409
+    elif error.code in {"embedding_compatibility_unavailable", "settings_unavailable"}:
+        status = 503
+    else:
+        status = 400
+    return jsonify({"error": error.public_message, "code": error.code}), status
 
 
 # The classic single-endpoint model catalogs. Each is stored as
@@ -917,6 +957,11 @@ def _persist_global_model_endpoints(normalized, existing):
     This mirrors what the classic admin form does on submit, so an endpoint saved from
     either interface ends up stored identically.
     """
+    settings = read_embedding_settings()
+    if not isinstance(settings, dict):
+        raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
+    preflight_embedding_settings(settings, {**settings, "model_endpoints": normalized})
+    validate_custom_model_endpoints(normalized, settings)
     existing_by_id = {
         endpoint.get("id"): endpoint
         for endpoint in existing
@@ -929,11 +974,11 @@ def _persist_global_model_endpoints(normalized, existing):
             endpoint.get("id"),
             scope="global",
             existing_endpoint=existing_by_id.get(endpoint.get("id")),
+            stage_new_secrets=True,
         )
         for endpoint in normalized
     ]
 
-    settings = get_settings()
     updates = {"model_endpoints": saved_endpoints}
     multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
 
@@ -966,6 +1011,22 @@ def _persist_global_model_endpoints(normalized, existing):
             updates[IMAGE_SELECTION_KEY] = resolved_image
             notices = dict(settings.get("ai_connection_default_notices") or {})
             notices["image_generation"] = image_reason or "The image default was cleared."
+            updates["ai_connection_default_notices"] = notices
+
+    if embedding_settings_use_connections(settings):
+        resolved_embedding, embedding_reason = resolve_capability_model_selection(
+            settings.get(EMBEDDING_SELECTION_KEY), saved_endpoints, EMBEDDINGS_CAPABILITY
+        )
+        if resolved_embedding != settings.get(EMBEDDING_SELECTION_KEY):
+            updates[EMBEDDING_SELECTION_KEY] = resolved_embedding
+            notices = dict(
+                updates.get("ai_connection_default_notices")
+                or settings.get("ai_connection_default_notices") or {}
+            )
+            notices[EMBEDDINGS_CAPABILITY] = (
+                embedding_reason
+                or "The embedding default was cleared. Select a compatible embedding model in AI Connections."
+            )
             updates["ai_connection_default_notices"] = notices
 
     # Obsolete credentials remain usable until their dependent settings commit.
@@ -1273,17 +1334,45 @@ def register_route_backend_v2_admin(bp):
         server-rendered form does -- not just the ones the schema declares, so a redacted
         key reaching the payload some other way cannot land as the placeholder either.
         """
-        payload = request.get_json(silent=True) or {}
-        updates = payload.get("settings")
+        payload = request.get_json(silent=True)
+        updates = payload.get("settings") if isinstance(payload, dict) else None
 
         if not isinstance(updates, dict) or not updates:
             return jsonify({"error": "No settings supplied"}), 400
 
+        # These values are not scalar form fields. Only the validated capability API
+        # and the server-side compatibility guard may change them.
+        protected_keys = {
+            EMBEDDING_SELECTION_KEY,
+            EMBEDDING_VECTOR_PROFILE_KEY,
+            EMBEDDING_MIGRATION_VERSION_KEY,
+            EMBEDDING_MIGRATION_NOTICE_KEY,
+        } & updates.keys()
+        if protected_keys:
+            return jsonify({
+                "error": "Embedding defaults must be managed through AI Connections.",
+                "field_errors": {
+                    key: "Use the embedding capability default API; vector provenance is managed by the server."
+                    for key in sorted(protected_keys)
+                },
+            }), 400
+
         try:
             current_settings = get_settings()
+            if not isinstance(current_settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
             normalized, errors, warnings = normalize_admin_settings_updates(
                 updates, current_settings
             )
+            for key in ('allow_private_custom_model_endpoints', 'allow_insecure_custom_model_endpoints'):
+                if key in updates and not isinstance(updates[key], bool):
+                    errors[key] = "Custom network permissions must be true or false."
+            ca_path_key = 'custom_model_endpoint_ca_bundle_path'
+            if ca_path_key in updates:
+                if not isinstance(updates[ca_path_key], str):
+                    errors[ca_path_key] = "The CA bundle must be a deployment-mounted file path."
+                else:
+                    normalized[ca_path_key] = updates[ca_path_key].strip()
 
             if errors:
                 log_event(
@@ -1325,9 +1414,11 @@ def register_route_backend_v2_admin(bp):
 
             # After the secret pass, so the derived endpoints this adds -- whose own
             # secrets are already stored through Key Vault -- are not run through it.
+            preflight_embedding_settings(current_settings, {**current_settings, **normalized})
             _seed_connections_on_first_enable(normalized, current_settings)
 
-            update_settings(normalized)
+            if not update_settings(normalized):
+                return jsonify({"error": "Failed to update settings"}), 500
             log_event(
                 f"[V2_ADMIN_SETTINGS] Updated {len(normalized)} setting(s): "
                 f"{', '.join(sorted(normalized.keys()))}",
@@ -1358,6 +1449,8 @@ def register_route_backend_v2_admin(bp):
                 ),
                 200,
             )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_SETTINGS] Failed to update settings: {exc}",
@@ -1386,7 +1479,9 @@ def register_route_backend_v2_admin(bp):
         The dispatcher is shared with ``/api/admin/settings/test_connection`` so both
         interfaces support exactly the same set of tests.
         """
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Connection test payload must be an object."}), 400
 
         test_type = str(payload.get("test_type") or "").strip()
         if not test_type:
@@ -1565,20 +1660,32 @@ def register_route_backend_v2_admin(bp):
     def v2_admin_list_model_endpoints():
         """Return every global model endpoint, with secrets stripped."""
         try:
-            endpoints = _load_global_model_endpoints()
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            endpoints = _load_global_model_endpoints(settings)
             return (
                 jsonify(
                     {
                         "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
                         "multi_endpoint_enabled": bool(
-                            get_settings().get("enable_multi_model_endpoints", False)
+                            settings.get("enable_multi_model_endpoints", False)
                         ),
-                        "migration": get_settings().get(MIGRATION_NOTICE_KEY),
-                        "default_notices": get_settings().get("ai_connection_default_notices", {}),
+                        "migration": settings.get(MIGRATION_NOTICE_KEY),
+                        "embedding_migration": settings.get(EMBEDDING_MIGRATION_NOTICE_KEY),
+                        "default_notices": settings.get("ai_connection_default_notices", {}),
+                        "custom_api_types": get_model_endpoint_provider_ui_options(),
+                        "custom_network_policy": {
+                            "allow_private_custom_model_endpoints": settings.get("allow_private_custom_model_endpoints") is True,
+                            "allow_insecure_custom_model_endpoints": settings.get("allow_insecure_custom_model_endpoints") is True,
+                            "custom_model_endpoint_ca_bundle_path": settings.get("custom_model_endpoint_ca_bundle_path") or "",
+                        },
                     }
                 ),
                 200,
             )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to list model endpoints: {exc}",
@@ -1619,7 +1726,9 @@ def register_route_backend_v2_admin(bp):
             )
             return _model_endpoint_response(saved, endpoint_id, 201)
         except AIConnectionError as exc:
-            return jsonify({"error": exc.public_message, "code": exc.code}), 400
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to create model endpoint: {exc}",
@@ -1641,6 +1750,8 @@ def register_route_backend_v2_admin(bp):
 
             sanitized = sanitize_model_endpoints_for_frontend([endpoint])
             return jsonify({"endpoint": sanitized[0] if sanitized else {}}), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to read model endpoint: {exc}",
@@ -1689,7 +1800,9 @@ def register_route_backend_v2_admin(bp):
             )
             return _model_endpoint_response(saved, current.get("id"), 200)
         except AIConnectionError as exc:
-            return jsonify({"error": exc.public_message, "code": exc.code}), 400
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to update model endpoint: {exc}",
@@ -1729,6 +1842,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return jsonify({"success": True}), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to delete model endpoint: {exc}",
@@ -1809,22 +1924,56 @@ def register_route_backend_v2_admin(bp):
 
     def _capability_model_payload(settings, capability):
         definition = get_capability_definition(capability)
+        endpoints = _load_global_model_endpoints(settings)
         selection, reason = resolve_capability_model_selection(
             settings.get(definition.selection_key),
-            _load_global_model_endpoints(settings),
+            endpoints,
             capability,
         )
         enabled = is_capability_enabled(settings, capability)
         if capability == "chat" and not enabled:
             selection = dict(EMPTY_MODEL_SELECTION)
-        return {
+        choices = build_capability_model_catalog(endpoints, capability)
+        if capability == EMBEDDINGS_CAPABILITY:
+            compatible_choices = []
+            for choice in choices:
+                reference = {
+                    key: choice[key] for key in ("endpoint_id", "model_id", "provider")
+                }
+                try:
+                    profile = resolve_embedding_profile({
+                        **settings, EMBEDDING_SELECTION_KEY: reference,
+                    })
+                except AIConnectionError as exc:
+                    if selection == reference:
+                        selection = dict(EMPTY_MODEL_SELECTION)
+                        reason = exc.public_message
+                    continue
+                compatible_choices.append({
+                    **choice,
+                    "embedding_policy": {
+                        key: profile.policy[key]
+                        for key in choice.get("embedding_policy", {})
+                        if key in profile.policy
+                    },
+                })
+            choices = compatible_choices
+        notices = settings.get("ai_connection_default_notices")
+        notices = notices if isinstance(notices, dict) else {}
+        payload = {
             "capability": capability,
             "selection": selection,
-            "choices": build_capability_model_catalog(_load_global_model_endpoints(settings), capability),
-            "reason": reason or (settings.get("ai_connection_default_notices") or {}).get(capability),
+            "choices": choices,
+            "reason": reason or notices.get(capability),
             "enabled": enabled,
-            "migration": settings.get(MIGRATION_NOTICE_KEY),
+            "migration": settings.get(
+                EMBEDDING_MIGRATION_NOTICE_KEY
+                if capability == EMBEDDINGS_CAPABILITY else MIGRATION_NOTICE_KEY
+            ),
         }
+        if capability == EMBEDDINGS_CAPABILITY:
+            payload["compatibility"] = embedding_compatibility_status(settings)
+        return payload
 
     @bp.route("/api/v2/admin/capability-models/<capability>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -1833,11 +1982,24 @@ def register_route_backend_v2_admin(bp):
     def v2_admin_get_capability_model(capability):
         """Read a task-specific reference and its eligible shared model choices."""
         if capability not in CAPABILITY_DEFINITIONS:
-            return jsonify({"error": "This AI capability is not implemented."}), 404
-        settings = get_settings()
-        if not isinstance(settings, dict):
+            return jsonify({
+                "error": "This AI capability is not implemented.",
+                "code": "unsupported_capability",
+            }), 404
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            return jsonify(_capability_model_payload(settings, capability)), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Capability defaults could not be read",
+                extra={"capability": capability, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({"error": "AI connection settings are unavailable."}), 503
-        return jsonify(_capability_model_payload(settings, capability)), 200
 
     @bp.route("/api/v2/admin/capability-models/<capability>", methods=["PUT"])
     @swagger_route(security=get_auth_security())
@@ -1846,44 +2008,105 @@ def register_route_backend_v2_admin(bp):
     def v2_admin_set_capability_model(capability):
         """Store only a validated, globally authorized capability/model reference."""
         if capability not in CAPABILITY_DEFINITIONS:
-            return jsonify({"error": "This AI capability is not implemented."}), 404
+            return jsonify({
+                "error": "This AI capability is not implemented.",
+                "code": "unsupported_capability",
+            }), 404
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or not isinstance(payload.get("selection"), dict):
-            return jsonify({"error": "Supply the model selection as an object."}), 400
-        settings = get_settings()
-        if not isinstance(settings, dict):
-            return jsonify({"error": "AI connection settings are unavailable."}), 503
-        definition = get_capability_definition(capability)
-        requested = normalize_capability_selection(payload["selection"])
-        clearing = not requested["endpoint_id"] and not requested["model_id"]
-        if capability == "chat" and not clearing and not settings.get("enable_multi_model_endpoints"):
-            return jsonify({"error": "Turn on Use connections for chat before selecting its default."}), 400
-        resolved, reason = resolve_capability_model_selection(
-            requested, _load_global_model_endpoints(settings), capability
-        )
-        if not clearing and not resolved["endpoint_id"]:
-            return jsonify({"error": reason or "Choose a connection and a compatible enabled model."}), 400
-        notices = dict(settings.get("ai_connection_default_notices") or {})
-        notices.pop(capability, None)
-        updates = {definition.selection_key: resolved, "ai_connection_default_notices": notices}
-        if capability == "image_generation":
-            updates[IMAGE_MIGRATION_VERSION_KEY] = IMAGE_MIGRATION_VERSION
-            previous_notice = settings.get(MIGRATION_NOTICE_KEY)
-            imported_count = (
-                previous_notice.get("imported_connections", 0)
-                if isinstance(previous_notice, dict) else 0
+            return _ai_connection_error_response(AIConnectionError(
+                "Supply the model selection as an object.", "invalid_model_selection",
+            ))
+        if any(
+            payload["selection"].get(key) is not None
+            and not isinstance(payload["selection"][key], str)
+            for key in ("endpoint_id", "model_id", "provider")
+        ):
+            return _ai_connection_error_response(AIConnectionError(
+                "Model selection identifiers must be text.", "invalid_model_selection",
+            ))
+        try:
+            settings = (
+                read_embedding_settings() if capability == EMBEDDINGS_CAPABILITY
+                else get_settings()
             )
-            updates[MIGRATION_NOTICE_KEY] = {
-                "status": "complete",
-                "imported_connections": imported_count if isinstance(imported_count, int) else 0,
-                "message": "Image generation is managed through AI Connections.",
-            }
-        if not update_settings(updates):
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            definition = get_capability_definition(capability)
+            requested = normalize_capability_selection(payload["selection"])
+            clearing = not requested["endpoint_id"] and not requested["model_id"]
+            if bool(requested["endpoint_id"]) != bool(requested["model_id"]):
+                raise AIConnectionError(
+                    "Choose a connection and its model, or clear both identifiers.",
+                    "invalid_model_selection",
+                )
+            if capability == "chat" and not clearing and not settings.get("enable_multi_model_endpoints"):
+                raise AIConnectionError(
+                    "Turn on Use connections for chat before selecting its default.",
+                    "capability_disabled",
+                )
+            resolved, reason = resolve_capability_model_selection(
+                requested, _load_global_model_endpoints(settings), capability
+            )
+            if not clearing and not resolved["endpoint_id"]:
+                raise AIConnectionError(
+                    reason or "Choose a connection and a compatible enabled model.",
+                    "invalid_model_selection",
+                )
+            notices = settings.get("ai_connection_default_notices")
+            notices = dict(notices) if isinstance(notices, dict) else {}
+            notices.pop(capability, None)
+            updates = {definition.selection_key: resolved, "ai_connection_default_notices": notices}
+            if capability in ("image_generation", EMBEDDINGS_CAPABILITY):
+                is_embedding = capability == EMBEDDINGS_CAPABILITY
+                migration_version_key = (
+                    EMBEDDING_MIGRATION_VERSION_KEY if is_embedding else IMAGE_MIGRATION_VERSION_KEY
+                )
+                migration_notice_key = (
+                    EMBEDDING_MIGRATION_NOTICE_KEY if is_embedding else MIGRATION_NOTICE_KEY
+                )
+                updates[migration_version_key] = (
+                    EMBEDDING_MIGRATION_VERSION if is_embedding else IMAGE_MIGRATION_VERSION
+                )
+                previous_notice = settings.get(migration_notice_key)
+                imported_count = (
+                    previous_notice.get("imported_connections", 0)
+                    if isinstance(previous_notice, dict) else 0
+                )
+                updates[migration_notice_key] = {
+                    "status": "complete",
+                    "imported_connections": (
+                        imported_count if type(imported_count) is int else 0
+                    ),
+                    "message": (
+                        "Embeddings are managed through AI Connections."
+                        if is_embedding else "Image generation is managed through AI Connections."
+                    ),
+                }
+            if capability == EMBEDDINGS_CAPABILITY and not clearing:
+                profile = resolve_embedding_profile({**settings, **updates})
+                validate_custom_model_endpoint(profile.binding.endpoint, settings)
+            if not update_settings(updates):
+                return jsonify({"error": "The default model could not be stored."}), 500
+            log_event("[AI_CONNECTIONS] Capability default updated", extra={"capability": capability})
+            updated = (
+                read_embedding_settings() if capability == EMBEDDINGS_CAPABILITY
+                else {**settings, **updates}
+            )
+            if not isinstance(updated, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            return jsonify(_capability_model_payload(updated, capability)), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Capability default could not be stored",
+                extra={"capability": capability, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({"error": "The default model could not be stored."}), 500
-        log_event("[AI_CONNECTIONS] Capability default updated", extra={"capability": capability})
-        updated = dict(settings)
-        updated.update(updates)
-        return jsonify(_capability_model_payload(updated, capability)), 200
 
     # ---------------------------------------------------------------------
     # Default chat model
@@ -2037,16 +2260,24 @@ def register_route_backend_v2_admin(bp):
         admin page never depends on Azure Resource Manager being reachable. Refreshing
         the list is a deliberate action, exactly as it is on the classic page.
         """
-        catalog_kind = MODEL_CATALOG_KINDS.get(str(kind or "").strip().lower())
+        kind = str(kind or "").strip().lower()
+        catalog_kind = MODEL_CATALOG_KINDS.get(kind)
         if catalog_kind is None:
             return jsonify({"error": "Unknown model selection."}), 404
 
         try:
             settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
             if kind == "image" and image_settings_use_connections(settings):
                 return jsonify({
                     "error": "Image models are now selected through AI Connections.",
                     "code": "image_catalog_migrated",
+                }), 409
+            if kind == "embedding" and embedding_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Embedding models are now selected through AI Connections.",
+                    "code": "embedding_catalog_migrated",
                 }), 409
             selected, available = _read_model_catalog(
                 settings, catalog_kind["settings_key"]
@@ -2062,6 +2293,8 @@ def register_route_backend_v2_admin(bp):
                 ),
                 200,
             )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_MODEL_SELECTION] Failed to read the {kind} catalog: {exc}",
@@ -2076,7 +2309,8 @@ def register_route_backend_v2_admin(bp):
     @admin_required
     def v2_admin_set_model_selection(kind):
         """Store the deployment catalog and the single deployment in use."""
-        catalog_kind = MODEL_CATALOG_KINDS.get(str(kind or "").strip().lower())
+        kind = str(kind or "").strip().lower()
+        catalog_kind = MODEL_CATALOG_KINDS.get(kind)
         if catalog_kind is None:
             return jsonify({"error": "Unknown model selection."}), 404
 
@@ -2086,11 +2320,18 @@ def register_route_backend_v2_admin(bp):
 
         settings_key = catalog_kind["settings_key"]
         try:
-            settings = get_settings()
+            settings = read_embedding_settings() if kind == "embedding" else get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
             if kind == "image" and image_settings_use_connections(settings):
                 return jsonify({
                     "error": "Image models are now selected through AI Connections.",
                     "code": "image_catalog_migrated",
+                }), 409
+            if kind == "embedding" and embedding_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Embedding models are now selected through AI Connections.",
+                    "code": "embedding_catalog_migrated",
                 }), 409
             _selected, stored_available = _read_model_catalog(settings, settings_key)
             catalog, error = normalize_model_catalog(payload, stored_available)
@@ -2118,6 +2359,8 @@ def register_route_backend_v2_admin(bp):
                 ),
                 200,
             )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_MODEL_SELECTION] Failed to store the {kind} catalog: {exc}",

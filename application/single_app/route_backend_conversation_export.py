@@ -63,6 +63,8 @@ from functions_image_messages import (
     is_external_image_url,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,

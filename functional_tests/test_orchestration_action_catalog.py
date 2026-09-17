@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """Functional coverage for governed orchestration action discovery and resolution.
 
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Exercises the real catalog and governance decisions with isolated storage,
 membership, and Key Vault seams. No Azure calls or plugin initialization occur.
+Trusted remote MCP origins and retired transport exclusion were integrated in 0.261.122.
 """
 
 import base64
@@ -454,6 +455,77 @@ class ActionCatalogTests(unittest.TestCase):
         self.containers["global"].read_item.assert_called_once_with(
             item="shared-id", partition_key="shared-id",
         )
+
+    def test_remote_mcp_origin_survives_plain_keyvault_results_in_every_scope(self):
+        action_manifests = importlib.import_module("functions_action_manifest")
+        seen = []
+
+        def keyvault_names(manifest, **options):
+            seen.append((action_manifests.get_action_origin(manifest), options))
+            return deepcopy(dict(manifest))
+
+        self.keyvault.keyvault_plugin_get_helper.side_effect = keyvault_names
+        for scope, scope_id in (
+            ("personal", "actor"), ("group", "group-one"), ("global", "global"),
+        ):
+            with self.subTest(scope=scope):
+                stored = self.store(
+                    scope, type="mcp", endpoint="https://mcp.example.invalid",
+                    additionalFields={"transport": "streamable_http"},
+                    auth={"type": "key", "key": "stored-reference"},
+                    is_global=True,
+                    action_origin={"scope_type": "global", "scope_id": "global"},
+                    runtime_user_id="forged-actor",
+                )
+                stored.update(scope="global", scope_id="forged-scope")
+                manifest = self.resolve(scope)
+                origin = action_manifests.get_action_origin(manifest)
+                self.assertIsInstance(manifest, action_manifests.ScopedActionManifest)
+                self.assertEqual((origin.scope_type, origin.scope_id, origin.action_id),
+                                 (scope, scope_id, "shared-id"))
+                self.assertEqual(seen[-1][0], origin)
+                self.assertEqual(seen[-1][1], {
+                    "scope_value": "shared-id" if scope == "global" else scope_id,
+                    "scope": "user" if scope == "personal" else scope,
+                    "return_type": _SecretReturnType.NAME,
+                })
+                self.assertEqual(manifest["auth"]["key"], "stored-reference")
+                self.assertEqual(manifest["is_global"], scope == "global")
+                self.assertEqual(manifest["scope_id"], scope_id)
+                self.assertNotIn("action_origin", manifest)
+                self.assertNotIn("runtime_user_id", manifest)
+                self.assertEqual(stored["runtime_user_id"], "forged-actor")
+                self.assertEqual(action_manifests.get_action_origin(deepcopy(manifest)), origin)
+        self.identities.hydrate_action_identity_reference.assert_not_called()
+        self.keyvault.retrieve_secret_from_key_vault_by_full_name.assert_not_called()
+
+    def test_retired_mcp_transports_never_enter_the_execution_catalog(self):
+        for action_type in ("mcp", "MCPPlugin", "model_context_protocol"):
+            for fields in (
+                {"endpoint": "https://mcp.example.invalid",
+                 "additionalFields": {"transport": " STDIO "}},
+                {"endpoint": "stdio:legacy-command",
+                 "additionalFields": {"transport": "sse"}},
+            ):
+                with self.subTest(action_type=action_type, fields=fields):
+                    for scope in self.containers:
+                        self.store(scope, type=action_type, **fields)
+                    self.assertEqual(self.discover(), [])
+                    for scope in self.containers:
+                        with self.assertRaises(PermissionError):
+                            self.resolve(scope)
+        self.keyvault.keyvault_plugin_get_helper.assert_not_called()
+
+    def test_mcp_transport_retirement_after_planning_is_rechecked(self):
+        stored = self.store(
+            "personal", type="mcp", endpoint="https://mcp.example.invalid",
+            additionalFields={"transport": "sse"},
+        )
+        reference = self.discover()[0]["action_ref"]
+        stored["additionalFields"]["transport"] = "stdio"
+        with self.assertRaises(PermissionError):
+            self.catalog.resolve_action_manifest("actor", reference, settings=self.settings)
+        self.keyvault.keyvault_plugin_get_helper.assert_not_called()
 
     def test_global_item_governance_is_not_replaced_by_type_governance(self):
         self.store("global")

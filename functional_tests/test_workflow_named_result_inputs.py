@@ -1,7 +1,7 @@
 # test_workflow_named_result_inputs.py
 """
 Functional tests for source-authorized named workflow result inputs.
-Version: 0.261.110
+Version: 0.261.111
 Implemented in: 0.261.107
 
 Final representations retain exact receipts. Partial data requires an explicit
@@ -282,8 +282,8 @@ def test_workflow_validation_does_not_replace_analysis_validation_or_receipts():
     store = SerializedSections()
     manifest, _ = saved(store, state="incomplete", validation="partial")
     separate_validation = {
-        "version": "workflow-validation-v1", "status": "checked", "eligible": False,
-        "reason_codes": ["needs_review"], "counts": {"accepted": 1},
+        "version": 1, "status": "accepted_partial", "eligible": True,
+        "reason_codes": ["producer_coverage_incomplete"], "counts": {"accepted": 1},
     }
     manifest["workflow_validation"] = deepcopy(separate_validation)
     reference = store.save(WORKFLOW, RUN_ID, TASK["id"], manifest)
@@ -295,3 +295,10 @@ def test_workflow_validation_does_not_replace_analysis_validation_or_receipts():
     assert data["accepted_subset_only"] is True
     assert receipt["result_ref"] == reference
     assert manifest["workflow_validation"] == separate_validation
+
+    manifest["workflow_validation"]["eligible"] = False
+    blocked_ref = store.save(WORKFLOW, RUN_ID, TASK["id"], manifest)
+    with pytest.raises(WorkflowResultNotReadyError):
+        load_workflow_task_input(
+            WORKFLOW, RUN_ID, TASK["id"], blocked_ref, allow_partial=True, load_result=store.load,
+        )

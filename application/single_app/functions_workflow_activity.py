@@ -40,7 +40,7 @@ def _normalize_status(value):
         return 'running'
     if normalized_value in {'cancelled', 'canceled'}:
         return 'cancelled'
-    if normalized_value in {'failed', 'error'}:
+    if normalized_value in {'failed', 'error', 'invalid', 'incomplete'}:
         return 'failed'
     if normalized_value in {'completed', 'complete', 'succeeded', 'success', 'done'}:
         return 'completed'
@@ -120,7 +120,7 @@ def _serialize_run(run_record):
                 field: task.get(field)
                 for field in (
                     'task_id', 'task_name', 'task_order', 'status',
-                    'workflow_result', 'context_budget', 'consumed_inputs',
+                    'workflow_result', 'context_budget', 'consumed_inputs', 'workflow_validation',
                 )
             }
             for task in run_record.get('task_results') or []

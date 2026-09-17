@@ -1,17 +1,19 @@
 # test_ai_connections_capabilities.py
 """
 Pure functional tests for shared AI Connections capability and binding contracts.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.108
+Implemented in: 0.261.105
 
 Exercise the real leaf modules and shipped catalog without Flask, settings-store,
 Azure, or inference clients. Each test loads private module instances and restores
 sys.modules, isolating catalog caches, capability definitions, and client factories.
+Provider-qualified image profiles and Custom endpoint coverage were added in 0.261.107.
 """
 
 import copy
 import importlib.util
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -39,11 +41,18 @@ class IsolatedConnectionsTestCase(unittest.TestCase):
         self.capabilities = _load_module(
             "functions_model_capabilities", "functions_model_capabilities.py"
         )
+        self.embedding_policy = _load_module(
+            "functions_embedding_policy", "functions_embedding_policy.py"
+        )
+        self.image_capabilities = _load_module(
+            "functions_image_capabilities", "functions_image_capabilities.py"
+        )
         self.connections = _load_module(
             "_test_ai_connections_capabilities", "functions_ai_connections.py"
         )
         self.chat = self.connections.CHAT_CAPABILITY
         self.images = self.connections.IMAGE_GENERATION_CAPABILITY
+        self.embeddings = self.connections.EMBEDDINGS_CAPABILITY
         self.empty_selection = {
             "endpoint_id": "",
             "model_id": "",
@@ -62,13 +71,20 @@ class IsolatedConnectionsTestCase(unittest.TestCase):
         return model
 
     def endpoint(self, endpoint_id="resource-one", models=None, **fields):
+        provider = fields.get("provider", "custom")
+        endpoint_url = "https://api.openai.com/v1"
+        if provider == "aoai":
+            endpoint_url = f"https://{endpoint_id}.openai.azure.com"
+        elif provider in ("aifoundry", "new_foundry"):
+            endpoint_url = f"https://{endpoint_id}.services.ai.azure.com"
         endpoint = {
             "id": endpoint_id,
-            "name": "Team Azure",
-            "provider": "aoai",
+            "name": "Team connection",
+            "provider": provider,
+            "api_type": "openai" if provider == "custom" else "azure_openai",
             "enabled": True,
             "connection": {
-                "endpoint": "https://resource-one.example.invalid/openai",
+                "endpoint": endpoint_url,
                 "api_key": "fixture-api-key",
                 "client_secret": "fixture-client-secret",
                 "key_vault_secret_id": "fixture-vault-secret-reference",
@@ -82,11 +98,11 @@ class IsolatedConnectionsTestCase(unittest.TestCase):
         endpoint.update(fields)
         return endpoint
 
-    def selection(self, endpoint_id="resource-one", model_id="shared-model"):
+    def selection(self, endpoint_id="resource-one", model_id="shared-model", provider="custom"):
         return {
             "endpoint_id": endpoint_id,
             "model_id": model_id,
-            "provider": "aoai",
+            "provider": provider,
         }
 
     def settings(self, endpoints=None):
@@ -121,25 +137,33 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
 
         with mock.patch("builtins.__import__", side_effect=guarded_import):
             _load_module("functions_model_capabilities", "functions_model_capabilities.py")
+            _load_module("functions_embedding_policy", "functions_embedding_policy.py")
+            _load_module("functions_image_capabilities", "functions_image_capabilities.py")
             module = _load_module(
                 "_test_ai_connections_import_boundary", "functions_ai_connections.py"
             )
             self.assertTrue(module.supports_model_capability("gpt-5.6-sol"))
+            self.assertTrue(module.supports_model_capability(
+                "gpt-5.6-sol", self.images, "custom", endpoint=self.endpoint()
+            ))
 
     def test_verified_gpt_models_use_responses_without_native_image_output(self):
         models = (
             "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6",
             "gpt-5.5", "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini",
             "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5",
-            "gpt-5-pro", "gpt-5-nano", "gpt-4o", "gpt-4o-mini",
-            "gpt-4.1", "gpt-4.1-nano", "o3", "o3-mini",
+            "gpt-5-nano", "gpt-4o", "gpt-4o-mini",
+            "gpt-4.1", "gpt-4.1-nano", "o3", "gpt-6-astra",
         )
         for name in models:
             with self.subTest(model=name):
                 flags = self.capabilities.get_model_catalog_capabilities(name)
                 self.assertIs(flags["imageGenerationTool"], True)
                 self.assertIs(flags["generatesImages"], False)
-                support = self.connections.resolve_model_capability(name, self.images)
+                self.assertEqual(flags["imageProfiles"], {"openai": "openai-responses"})
+                support = self.connections.resolve_model_capability(
+                    name, self.images, "custom", endpoint=self.endpoint()
+                )
                 self.assertEqual(
                     support,
                     {"supported": True, "source": "catalog", "reason": "", "api": "responses"},
@@ -148,7 +172,7 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
 
     def test_known_variants_do_not_inherit_parent_tool_support(self):
         models = (
-            "gpt-5-mini", "gpt-4.1-mini", "o1", "o4-mini",
+            "gpt-5-mini", "gpt-5-pro", "gpt-4.1-mini", "o1", "o3-mini", "o4-mini",
             "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex",
             "gpt-5.1-codex-mini", "gpt-5.1-codex-max", "gpt-5-codex",
             "gpt-chat-latest", "gpt-5.3-chat", "gpt-5.2-chat",
@@ -156,8 +180,15 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
         )
         for name in models:
             with self.subTest(model=name):
-                self.assertFalse(self.connections.supports_model_capability(name, self.images))
+                self.assertFalse(self.connections.supports_model_capability(
+                    name, self.images, "custom", endpoint=self.endpoint()
+                ))
                 self.assertTrue(self.connections.supports_model_capability(name, self.chat))
+                self.assert_connection_error(
+                    "model_capability_unavailable",
+                    self.connections.require_model_capability,
+                    name, self.images, "custom", endpoint=self.endpoint(),
+                )
 
     def test_unverified_underlying_variants_cannot_inherit_verified_image_tools(self):
         models = (
@@ -168,7 +199,9 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
             with self.subTest(model=name):
                 model = self.model(model_name=name, deploymentName="arbitrary-deployment")
                 self.assertFalse(
-                    self.connections.supports_model_capability(model, self.images),
+                    self.connections.supports_model_capability(
+                        model, self.images, "custom", endpoint=self.endpoint()
+                    ),
                     "A known prefix does not verify an explicitly named underlying model variant.",
                 )
 
@@ -181,7 +214,8 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
             with self.subTest(model=name):
                 self.assertTrue(
                     self.connections.supports_model_capability(
-                        self.model(model_name=name, deploymentName="production"), self.images
+                        self.model(model_name=name, deploymentName="production"),
+                        self.images, "custom", endpoint=self.endpoint(),
                     )
                 )
 
@@ -192,15 +226,26 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
             toolCalling=True,
             capabilities={"imageGenerationTool": True, "generatesImages": True},
         )
-        description = self.connections.describe_model_capabilities(model)
+        description = self.connections.describe_model_capabilities(
+            model, "custom", endpoint=self.endpoint()
+        )
         self.assertTrue(description["vision"]["supported"])
         self.assertTrue(description[self.chat]["supported"])
         self.assertFalse(description[self.images]["supported"])
         self.assertEqual(description[self.images]["source"], "unknown")
 
     def test_image_tool_support_does_not_require_vision(self):
-        description = self.connections.describe_model_capabilities("o3-mini")
+        model = self.model(
+            model_name="private-image-tool",
+            supportsImageGeneration=True,
+            image_generation_api="responses",
+            supportsVision=False,
+        )
+        description = self.connections.describe_model_capabilities(
+            model, "custom", endpoint=self.endpoint()
+        )
         self.assertTrue(description[self.images]["supported"])
+        self.assertEqual(description[self.images]["source"], "declared")
         self.assertFalse(description["vision"]["supported"])
         self.assertTrue(description[self.chat]["supported"])
 
@@ -211,34 +256,100 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
         ):
             with self.subTest(model=model):
                 self.assertTrue(self.connections.supports_model_capability(model, self.chat))
-                self.assertFalse(self.connections.supports_model_capability(model, self.images))
+                self.assertFalse(self.connections.supports_model_capability(
+                    model, self.images, "custom", endpoint=self.endpoint()
+                ))
                 support = self.connections.resolve_model_capability(model, self.chat)
                 self.assertEqual(support["source"], "legacy")
+
+    def test_reasoning_only_catalog_records_do_not_disable_legacy_chat(self):
+        for name in ("gpt-4", "gpt-4.5", "gpt-35-turbo", "o1-mini", "o1-preview", "o3-pro"):
+            with self.subTest(model=name):
+                catalog = self.capabilities.get_model_catalog_capabilities(name)
+                self.assertIn("reasoningPolicy", catalog)
+                self.assertNotIn("generatesText", catalog)
+                self.assertTrue(self.connections.supports_model_capability(name, self.chat))
+                self.assertFalse(self.connections.supports_model_capability(
+                    name, self.images, "custom", endpoint=self.endpoint()
+                ))
+
+    def test_capability_identity_uses_nonblank_canonical_reasoning_metadata(self):
+        for model in (
+            {"modelName": " ", "behavior_name": "gpt-5.6-luna", "deploymentName": "production"},
+            {"modelName": 17, "behavior_name": "gpt-5.6-luna", "deploymentName": "production"},
+            {"modelName": " ", "deploymentName": "gpt-5.6-luna"},
+        ):
+            with self.subTest(model=model):
+                self.assertTrue(self.connections.supports_model_capability(model, self.chat))
+                self.assertTrue(self.connections.supports_model_capability(
+                    model, self.images, "custom", endpoint=self.endpoint()
+                ))
+        unknown = {
+            "modelName": "unknown-private-model", "behavior_name": "gpt-5.6-luna",
+            "deploymentName": "gpt-5.6-luna",
+        }
+        self.assertFalse(self.connections.supports_model_capability(
+            unknown, self.images, "custom", endpoint=self.endpoint()
+        ))
 
     def test_empty_models_do_not_gain_chat_or_image_support(self):
         for model in (None, {}, "", "  "):
             with self.subTest(model=model):
                 self.assertFalse(self.connections.supports_model_capability(model, self.chat))
-                self.assertFalse(self.connections.supports_model_capability(model, self.images))
+                self.assertFalse(self.connections.supports_model_capability(
+                    model, self.images, "custom", endpoint=self.endpoint()
+                ))
 
     def test_direct_image_families_are_never_chat_or_text_vision_models(self):
-        for name in (
-            "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
-            "dall-e-3", "dalle-3", "dall-e-2", "GPT_IMAGE_1",
-        ):
-            with self.subTest(model=name):
+        image_models = {
+            "custom": (
+                "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+                "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "GPT_IMAGE_1",
+            ),
+            "new_foundry": (
+                "MAI-Image-2.5", "MAI-Image-2.5-Flash", "MAI-Image-2.5-Pro",
+                "MAI-Image-2.6", "MAI-Image-2.6-Flash",
+                "FLUX.2-pro", "FLUX.2-flex", "FLUX.1-Kontext-pro", "FLUX-1.1-pro",
+            ),
+        }
+        for provider, names in image_models.items():
+            for name in names:
+                with self.subTest(model=name, provider=provider):
+                    model = self.model(model_name=name, supportsChat=True, supportsVision=True)
+                    endpoint = self.endpoint(provider=provider, models=[model])
+                    description = self.connections.describe_model_capabilities(
+                        model, provider, endpoint=endpoint
+                    )
+                    self.assertFalse(description[self.chat]["supported"])
+                    self.assertFalse(description["vision"]["supported"])
+                    self.assertTrue(description[self.images]["supported"])
+                    api = "images" if provider == "custom" else "mai" if name.startswith("MAI") else "flux"
+                    self.assertEqual(description[self.images]["api"], api)
+                    self.assert_connection_error(
+                        "model_capability_unavailable",
+                        self.connections.require_model_capability,
+                        model, self.chat, provider, endpoint=endpoint,
+                    )
+
+    def test_retired_image_models_cannot_become_active_defaults(self):
+        for provider in ("custom", "aoai", "aifoundry", "new_foundry"):
+            for name in ("dall-e-3", "dalle-3", "dall-e-2", "dalle-2"):
                 model = self.model(model_name=name, supportsChat=True, supportsVision=True)
-                description = self.connections.describe_model_capabilities(model)
-                self.assertFalse(description[self.chat]["supported"])
-                self.assertFalse(description["vision"]["supported"])
-                self.assertTrue(description[self.images]["supported"])
-                self.assertEqual(description[self.images]["api"], "images")
-                self.assert_connection_error(
-                    "model_capability_unavailable",
-                    self.connections.require_model_capability,
-                    model,
-                    self.chat,
-                )
+                endpoint = self.endpoint(provider=provider, models=[model])
+                with self.subTest(model=name, provider=provider):
+                    description = self.connections.describe_model_capabilities(
+                        model, provider, endpoint=endpoint
+                    )
+                    for capability in (self.chat, "vision", self.images):
+                        self.assertFalse(description[capability]["supported"])
+                    self.assertEqual(
+                        self.connections.build_capability_model_catalog([endpoint], self.images), []
+                    )
+                    self.assert_connection_error(
+                        "model_capability_unavailable",
+                        self.connections.require_model_capability,
+                        model, self.images, provider, endpoint=endpoint,
+                    )
 
     def test_non_chat_model_families_do_not_gain_legacy_chat_support(self):
         for name in ("text-embedding-3-large", "whisper-1", "tts-1"):
@@ -250,50 +361,74 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
         flags = {"generatesText": False, "processesImages": True, "generatesImages": True}
         with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"vendor-image": flags}):
             model = self.model(model_name="vendor-image")
-            support = self.connections.resolve_model_capability(model, self.images)
+            azure = self.endpoint(provider="aoai")
+            support = self.connections.resolve_model_capability(
+                model, self.images, "aoai", endpoint=azure
+            )
             self.assertFalse(support["supported"])
             self.assertEqual(support["source"], "provider")
             self.assertFalse(self.connections.supports_model_capability(model, self.chat))
             declared = {**model, "supportsImageGeneration": True, "image_generation_api": "images"}
             self.assertEqual(
-                self.connections.resolve_model_capability(declared, self.images)["api"],
+                self.connections.resolve_model_capability(
+                    declared, self.images, "custom", endpoint=self.endpoint()
+                )["api"],
                 "images",
             )
+            self.assertFalse(self.connections.supports_model_capability(
+                declared, self.images, "aoai", endpoint=azure
+            ))
 
     def test_shipped_non_openai_image_models_do_not_imply_azure_image_apis(self):
+        foundry_models = {
+            "MAI-Image-2.5": "mai", "MAI-Image-2.5-Flash": "mai",
+            "MAI-Image-2.5-Pro": "mai", "MAI-Image-2.6": "mai",
+            "MAI-Image-2.6-Flash": "mai", "FLUX.2-pro": "flux",
+            "FLUX.2-flex": "flux", "FLUX.1-Kontext-pro": "flux", "FLUX-1.1-pro": "flux",
+        }
         document = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         native_models = [
             model for model in document["models"]
-            if model["provider"] != "openai"
-            and model["capabilities"].get("generatesImages") is True
+            if model.get("provider") != "openai"
+            and model.get("capabilities", {}).get("generatesImages") is True
         ]
         self.assertTrue(native_models)
+        self.assertTrue(set(foundry_models).issubset({model["id"] for model in native_models}))
         for entry in native_models:
             for provider in ("aoai", "aifoundry", "new_foundry"):
                 with self.subTest(model=entry["id"], provider=provider):
                     model = self.model(model_name=entry["id"])
+                    endpoint = self.endpoint(provider=provider, models=[model])
                     support = self.connections.resolve_model_capability(
-                        model, self.images, provider
+                        model, self.images, provider, endpoint=endpoint
                     )
-                    self.assertFalse(support["supported"])
-                    self.assertEqual(support["source"], "provider")
-                    self.assertEqual(support["api"], "")
-                    self.assertTrue(support["reason"])
-                    self.assert_connection_error(
-                        "model_capability_unavailable",
-                        self.connections.require_model_capability,
-                        model,
-                        self.images,
-                        provider,
-                    )
+                    if provider != "aoai" and entry["id"] in foundry_models:
+                        self.assertTrue(support["supported"])
+                        self.assertEqual(support["source"], "catalog")
+                        self.assertEqual(support["api"], foundry_models[entry["id"]])
+                        self.assertIs(self.connections.require_model_capability(
+                            model, self.images, provider, endpoint=endpoint
+                        ), model)
+                    else:
+                        self.assertFalse(support["supported"])
+                        self.assertEqual(support["source"], "provider")
+                        self.assertEqual(support["api"], "")
+                        self.assertTrue(support["reason"])
+                        self.assert_connection_error(
+                            "model_capability_unavailable",
+                            self.connections.require_model_capability,
+                            model, self.images, provider, endpoint=endpoint,
+                        )
 
-    def test_only_boolean_catalog_image_tool_support_is_accepted(self):
-        for flag in (False, "true", 1, None):
+    def test_unqualified_catalog_image_tool_flags_do_not_establish_provider_support(self):
+        for flag in (True, False, "true", 1, None):
             with self.subTest(flag=flag):
                 flags = {"generatesText": True, "imageGenerationTool": flag}
                 with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"test-model": flags}):
                     self.assertFalse(
-                        self.connections.supports_model_capability("test-model", self.images)
+                        self.connections.supports_model_capability(
+                            "test-model", self.images, "custom", endpoint=self.endpoint()
+                        )
                     )
 
     def test_explicit_image_decisions_override_catalog_and_direct_families(self):
@@ -301,7 +436,8 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
             with self.subTest(field=field):
                 for name in ("gpt-5.6-sol", "gpt-image-1"):
                     self.assertFalse(self.connections.supports_model_capability(
-                        self.model(model_name=name, **{field: False}), self.images
+                        self.model(model_name=name, **{field: False}),
+                        self.images, "custom", endpoint=self.endpoint(),
                     ))
                 for route in ("images", "responses"):
                     model = self.model(
@@ -309,18 +445,33 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
                         image_generation_api=route,
                         **{field: True},
                     )
-                    support = self.connections.resolve_model_capability(model, self.images)
+                    support = self.connections.resolve_model_capability(
+                        model, self.images, "custom", endpoint=self.endpoint()
+                    )
                     self.assertTrue(support["supported"])
                     self.assertEqual(support["source"], "declared")
                     self.assertEqual(support["api"], route)
 
-    def test_explicit_unknown_image_support_defaults_to_responses(self):
+    def test_explicit_unknown_image_support_requires_a_compatible_api(self):
         model = self.model(model_name="private-compatible-model", supportsImageGeneration=True)
-        self.assertEqual(
-            self.connections.resolve_model_capability(model, self.images)["api"], "responses"
-        )
+        for route in (None, "", "chat", "mai", "flux"):
+            with self.subTest(route=route):
+                candidate = {**model, "image_generation_api": route}
+                support = self.connections.resolve_model_capability(
+                    candidate, self.images, "custom", endpoint=self.endpoint()
+                )
+                self.assertFalse(support["supported"])
+                self.assertEqual(support["api"], "")
+                self.assert_connection_error(
+                    "model_capability_unavailable",
+                    self.connections.require_model_capability,
+                    candidate, self.images, "custom", endpoint=self.endpoint(),
+                )
+        model["image_generation_api"] = "responses"
         self.assertIs(
-            self.connections.require_model_capability(model, self.images), model
+            self.connections.require_model_capability(
+                model, self.images, "custom", endpoint=self.endpoint()
+            ), model
         )
 
     def test_image_support_cannot_enable_an_unimplemented_provider_adapter(self):
@@ -333,21 +484,177 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
         for provider in ("aoai", "aifoundry", "new_foundry"):
             with self.subTest(provider=provider):
                 self.assertTrue(
-                    self.connections.supports_model_capability(model, self.images, provider)
+                    self.connections.supports_model_capability(
+                        model, self.images, provider, endpoint=self.endpoint(provider=provider)
+                    )
                 )
 
+    def test_azure_chat_models_cannot_override_the_dedicated_image_policy(self):
+        for provider, api_type in (
+            ("aoai", "azure_openai"), ("aifoundry", "azure_openai"),
+            ("new_foundry", "azure_openai"), ("custom", "azure_openai"),
+            ("custom", "openai"),
+        ):
+            for suffix in ("azure.com", "azure.us"):
+                endpoint = self.endpoint(provider=provider, api_type=api_type)
+                endpoint["connection"]["endpoint"] = f"https://resource.openai.{suffix}"
+                endpoint["connection"]["image_provider"] = "openai"
+                for name in ("gpt-5.6-sol", "gpt-4.1", "gpt-6-astra"):
+                    for override in (
+                        {},
+                        {"supportsImageGeneration": True, "image_generation_api": "responses"},
+                        {"supportsImageGeneration": True, "image_generation_api": "images"},
+                    ):
+                        with self.subTest(provider=provider, api_type=api_type, cloud=suffix, model=name, override=override):
+                            model = self.model(
+                                model_name=name,
+                                capabilities={"imageProfiles": {"azure_openai": "azure-images"}},
+                                **override,
+                            )
+                            support = self.connections.resolve_model_capability(
+                                model, self.images, provider, endpoint=endpoint
+                            )
+                            self.assertFalse(support["supported"])
+                            self.assertEqual(support["source"], "policy")
+                            self.assertEqual(support["api"], "")
+                            self.assertIn("dedicated image models", support["reason"])
+                            self.assertTrue(self.connections.supports_model_capability(
+                                model, self.chat, provider, endpoint=endpoint
+                            ))
+                            self.assertFalse(self.connections.supports_model_capability(
+                                model, self.images, provider, endpoint=endpoint
+                            ))
+                            self.assert_connection_error(
+                                "model_capability_unavailable",
+                                self.connections.require_model_capability,
+                                model, self.images, provider, endpoint=endpoint,
+                            )
+
+    def test_endpoint_cloud_is_independent_of_application_and_management_cloud(self):
+        cases = (
+            ("custom", "https://api.openai.com/v1", "gpt-5.6-sol", "openai", "commercial", "documented"),
+            ("aoai", "https://images.openai.azure.com", "gpt-image-1", "azure_openai", "commercial", "documented"),
+            ("aoai", "https://images.openai.azure.us", "gpt-image-1", "azure_openai", "government", "unknown"),
+            ("new_foundry", "https://images.services.ai.azure.us", "MAI-Image-2.6", "foundry", "government", "unknown"),
+            ("aoai", "https://images.example.invalid", "gpt-image-1", "azure_openai", "unknown", "unknown"),
+        )
+        for provider, url, name, service, cloud, availability in cases:
+            for app_cloud in ("AzureCloud", "AzureUSGovernment"):
+                for management_cloud in ("public", "government"):
+                    with self.subTest(provider=provider, endpoint=url, app_cloud=app_cloud, management_cloud=management_cloud):
+                        endpoint = self.endpoint(provider=provider, auth={"management_cloud": management_cloud})
+                        endpoint["connection"]["endpoint"] = url
+                        if cloud != "unknown":
+                            endpoint["connection"]["image_cloud"] = "government" if cloud == "commercial" else "commercial"
+                        original = copy.deepcopy(endpoint)
+                        with mock.patch.dict(os.environ, {"AZURE_ENVIRONMENT": app_cloud}):
+                            support = self.connections.describe_model_capabilities(
+                                self.model(model_name=name), provider, endpoint=endpoint
+                            )[self.images]
+                        self.assertTrue(support["supported"])
+                        self.assertTrue(support["available"])
+                        self.assertEqual(support["provider"], service)
+                        self.assertEqual(support["cloud"], cloud)
+                        self.assertEqual(support["availability"], availability)
+                        self.assertEqual(bool(support["availability_reason"]), availability == "unknown")
+                        self.assertEqual(endpoint, original)
+
+    def test_custom_openai_identity_and_gateway_metadata_are_not_inferred(self):
+        model = self.model()
+        for provider, api_type in (
+            ("custom", ""), ("custom", "anthropic"), ("custom", "gemini"),
+            ("aoai", "openai"), ("openai", "openai"),
+        ):
+            with self.subTest(provider=provider, api_type=api_type):
+                endpoint = self.endpoint(provider=provider, api_type=api_type)
+                endpoint["connection"]["endpoint"] = "https://api.openai.com/v1"
+                endpoint["connection"]["api_type"] = "openai"
+                self.assertFalse(self.connections.supports_model_capability(
+                    model, self.images, provider, endpoint=endpoint
+                ))
+        for hostname in (
+            "gateway.example.invalid", "api.openai.com.example.invalid", "private.api.openai.com",
+        ):
+            with self.subTest(hostname=hostname):
+                endpoint = self.endpoint()
+                endpoint["connection"]["endpoint"] = f"https://{hostname}/v1"
+                original = copy.deepcopy(endpoint)
+                self.assertFalse(self.connections.supports_model_capability(
+                    model, self.images, "custom", endpoint=endpoint
+                ))
+                declared = {**model, "supportsImageGeneration": True, "image_generation_api": "responses"}
+                support = self.connections.resolve_model_capability(
+                    declared, self.images, "custom", endpoint=endpoint
+                )
+                self.assertEqual(support, {
+                    "supported": True, "source": "declared", "reason": "", "api": "responses",
+                })
+                self.assertEqual(endpoint, original)
+                endpoint["connection"]["image_provider"] = "openai"
+                support = self.connections.describe_model_capabilities(
+                    model, "custom", endpoint=endpoint
+                )[self.images]
+                self.assertTrue(support["supported"])
+                self.assertEqual(support["source"], "catalog")
+                self.assertEqual(support["provider"], "openai")
+                self.assertEqual(support["cloud"], "unknown")
+
+    def test_unknown_custom_edits_and_masks_need_separate_declarations(self):
+        for route in ("images", "responses"):
+            for declarations, editing, masking, mode in (
+                ({}, False, False, "regenerate"),
+                ({"supportsImageEditing": True}, True, False, "edit"),
+                ({"supportsImageEditing": True, "supportsImageMasking": True}, True, True, "masked"),
+                ({"supports_image_editing": True, "supports_image_masking": True}, True, True, "masked"),
+            ):
+                with self.subTest(route=route, declarations=declarations):
+                    model = self.model(
+                        model_name="private-compatible-model",
+                        supportsImageGeneration=True, image_generation_api=route, **declarations,
+                    )
+                    support = self.connections.describe_model_capabilities(
+                        model, "custom", endpoint=self.endpoint()
+                    )[self.images]
+                    self.assertTrue(support["supported"])
+                    self.assertEqual(support["source"], "declared")
+                    self.assertEqual(support["api"], route)
+                    self.assertEqual(support["editing"], editing)
+                    self.assertEqual(support["masking"], masking)
+                    self.assertEqual(support["mode"], mode)
+            model = self.model(
+                model_name="private-compatible-model",
+                supportsImageGeneration=True, image_generation_api=route, supportsImageMasking=True,
+            )
+            support = self.connections.describe_model_capabilities(
+                model, "custom", endpoint=self.endpoint()
+            )[self.images]
+            self.assertFalse(support["supported"])
+            self.assertFalse(support["available"])
+            self.assertIn("requires", support["reason"])
+
     def test_catalog_lookup_returns_a_copy(self):
+        self.assertIs(
+            self.image_capabilities.get_model_catalog_capabilities,
+            self.capabilities.get_model_catalog_capabilities,
+        )
         flags = self.capabilities.get_model_catalog_capabilities("gpt-5.6-sol")
         flags["imageGenerationTool"] = False
+        flags["imageProfiles"]["openai"] = "untrusted-profile"
         self.assertTrue(
             self.capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageGenerationTool"]
+        )
+        self.assertEqual(
+            self.capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageProfiles"],
+            {"openai": "openai-responses"},
         )
 
 
 class ModelAvailabilityTests(IsolatedConnectionsTestCase):
     def test_publication_is_distinct_from_technical_capability(self):
         model = self.model(enabled_capabilities=[self.images])
-        description = self.connections.describe_model_capabilities(model)
+        description = self.connections.describe_model_capabilities(
+            model, "custom", endpoint=self.endpoint()
+        )
         self.assertTrue(description[self.chat]["supported"])
         self.assertFalse(description[self.chat]["available"])
         self.assertTrue(description[self.images]["supported"])
@@ -365,7 +672,9 @@ class ModelAvailabilityTests(IsolatedConnectionsTestCase):
             model_name="unknown-chat-model",
             enabled_capabilities=[self.chat, self.images],
         )
-        self.assertFalse(self.connections.supports_model_capability(model, self.images))
+        self.assertFalse(self.connections.supports_model_capability(
+            model, self.images, "custom", endpoint=self.endpoint()
+        ))
         self.assertTrue(self.connections.supports_model_capability(model, self.chat))
 
     def test_empty_publication_and_disabled_models_are_unavailable(self):
@@ -374,19 +683,25 @@ class ModelAvailabilityTests(IsolatedConnectionsTestCase):
             self.model(enabled=False, enabled_capabilities=[self.chat, self.images]),
         ):
             with self.subTest(model=model):
-                description = self.connections.describe_model_capabilities(model)
+                description = self.connections.describe_model_capabilities(
+                    model, "custom", endpoint=self.endpoint()
+                )
                 for capability in (self.chat, self.images):
                     self.assertTrue(description[capability]["supported"])
                     self.assertFalse(description[capability]["available"])
                     self.assertFalse(
-                        self.connections.supports_model_capability(model, capability)
+                        self.connections.supports_model_capability(
+                            model, capability, "custom", endpoint=self.endpoint()
+                        )
                     )
 
     def test_legacy_models_without_publication_fields_stay_enabled(self):
         model = self.model()
         model.pop("enabled")
         for capability in (self.chat, self.images):
-            self.assertTrue(self.connections.supports_model_capability(model, capability))
+            self.assertTrue(self.connections.supports_model_capability(
+                model, capability, "custom", endpoint=self.endpoint()
+            ))
 
     def test_normalization_preserves_unrelated_metadata_without_mutating_input(self):
         model = self.model(
@@ -414,6 +729,9 @@ class ModelAvailabilityTests(IsolatedConnectionsTestCase):
             {"supportsChat": 1},
             {"supportsImageGeneration": "false"},
             {"supportsImageGeneration": None},
+            {"supportsImageEditing": "true"},
+            {"supportsImageMasking": 1},
+            {"supportsImageMasking": True, "supportsImageEditing": False},
             {"enabled_capabilities": "chat"},
             {"enabled_capabilities": None},
             {"enabled_capabilities": [self.chat, "not-implemented"]},
@@ -479,9 +797,12 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
 
     def test_catalog_choices_keep_same_deployment_on_distinct_resources(self):
         endpoints = [
-            self.endpoint("resource-b", name="Zebra resource"),
-            self.endpoint("resource-a", name="Alpha resource"),
+            self.endpoint("resource-b", name="Zebra resource", provider="aoai",
+                          models=[self.model(model_name="gpt-image-1")]),
+            self.endpoint("resource-a", name="Alpha resource", provider="aoai",
+                          models=[self.model(model_name="gpt-image-1")]),
         ]
+        self.assertNotEqual(endpoints[0]["connection"]["endpoint"], endpoints[1]["connection"]["endpoint"])
         choices = self.connections.build_capability_model_catalog(endpoints, self.images)
         self.assertEqual(
             [(choice["endpoint_id"], choice["model_id"]) for choice in choices],
@@ -503,19 +824,28 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
         endpoint = self.endpoint(models=[model], auth={"password": "fixture-password"})
         original = copy.deepcopy(endpoint)
         choices = self.connections.build_capability_model_catalog([endpoint], self.images)
-        description = self.connections.describe_model_capabilities(model)
+        description = self.connections.describe_model_capabilities(
+            model, "custom", endpoint=endpoint
+        )
         self.assertEqual(
             set(choices[0]),
             {"endpoint_id", "model_id", "provider", "connection_name", "label", "deployment_name", "capability"},
         )
         self.assertEqual(
-            set(choices[0]["capability"]), {"supported", "source", "reason", "api"}
+            set(choices[0]["capability"]),
+            {
+                "supported", "source", "reason", "api", "model_name", "publisher",
+                "provider", "provider_label", "cloud", "cloud_label", "availability",
+                "availability_reason", "lifecycle", "editing", "masking", "mode",
+                "sizes", "qualities", "backgrounds", "input_formats", "output_formats",
+                "model_path", "transport", "max_mask_bytes", "min_dimension", "max_pixels",
+            },
         )
         payload = json.dumps({"models": choices, "description": description})
         for secret in (
             "fixture-api-key", "fixture-client-secret", "fixture-vault-secret-reference",
             "fixture-model-secret", "fixture-password", "private_metadata",
-            "resource-one.example.invalid", "operation_settings",
+            "api.openai.com", "operation_settings",
         ):
             self.assertNotIn(secret, payload)
         choices[0]["capability"]["supported"] = False
@@ -537,12 +867,14 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
         self.assertEqual(choices[0]["endpoint_id"], "legacy-id")
         self.assertEqual(choices[0]["model_id"], "gpt-5.6-sol")
 
-    def test_selection_uses_stored_provider_not_caller_connection_data(self):
-        endpoints = [self.endpoint(provider="new_foundry")]
+    def test_selection_uses_stored_connection_and_rejects_forged_provider(self):
+        endpoints = [self.endpoint(
+            provider="new_foundry", models=[self.model(model_name="gpt-image-1")]
+        )]
         selection = {
             "endpoint_id": " resource-one ",
             "model_id": " shared-model ",
-            "provider": "caller-controlled-provider",
+            "provider": "new_foundry",
             "endpoint": "https://untrusted.example.invalid",
             "api_key": "caller-controlled-key",
         }
@@ -557,9 +889,23 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
             "provider": "new_foundry",
         })
         self.assertEqual(selection, original)
+        for provider in ("custom", "aoai", "caller-controlled-provider"):
+            with self.subTest(provider=provider):
+                forged = {**selection, "provider": provider}
+                forged_original = copy.deepcopy(forged)
+                resolved, reason = self.connections.resolve_capability_model_selection(
+                    forged, endpoints, self.images
+                )
+                self.assertEqual(resolved, self.empty_selection)
+                self.assertIn("provider", reason)
+                self.assertNotIn("fixture-api-key", reason)
+                self.assertEqual(forged, forged_original)
 
     def test_invalidated_defaults_clear_without_choosing_another_model(self):
         valid_alternative = self.endpoint("other-resource", models=[self.model("other-model")])
+        self.assertEqual(
+            len(self.connections.build_capability_model_catalog([valid_alternative], self.images)), 1
+        )
         cases = [
             [],
             [self.endpoint(enabled=False)],
@@ -568,13 +914,17 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
             [self.endpoint(models=[self.model(enabled_capabilities=[self.chat])])],
             [self.endpoint(models=[self.model(model_name="unknown-chat-model")])],
             [self.endpoint(provider="unsupported-provider")],
+            [self.endpoint(provider="aoai", models=[self.model(
+                supportsImageGeneration=True, image_generation_api="responses",
+            )])],
         ]
         for endpoints in cases:
             with self.subTest(endpoints=endpoints):
                 endpoints = endpoints + [valid_alternative]
                 original = copy.deepcopy(endpoints)
+                selection = self.selection(provider=endpoints[0]["provider"]) if endpoints[0]["id"] == "resource-one" else self.selection()
                 resolved, reason = self.connections.resolve_capability_model_selection(
-                    self.selection(), endpoints, self.images
+                    selection, endpoints, self.images
                 )
                 self.assertEqual(resolved, self.empty_selection)
                 self.assertTrue(reason)
@@ -609,13 +959,13 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
                 self.assertEqual(self.connections.EMPTY_MODEL_SELECTION, self.empty_selection)
 
     def test_binding_uses_independent_defaults_and_operation_profiles(self):
-        endpoints = [self.endpoint(models=[
+        endpoints = [self.endpoint(provider="aoai", models=[
             self.model("chat-default"),
             self.model("image-default", "gpt-image-1"),
         ])]
         settings = self.settings(endpoints)
-        settings["default_model_selection"] = self.selection(model_id="chat-default")
-        settings["image_generation_model_selection"] = self.selection(model_id="image-default")
+        settings["default_model_selection"] = self.selection(model_id="chat-default", provider="aoai")
+        settings["image_generation_model_selection"] = self.selection(model_id="image-default", provider="aoai")
         original = copy.deepcopy(settings)
         chat = self.connections.resolve_capability_binding(settings, self.chat)
         images = self.connections.resolve_capability_binding(settings, self.images)
@@ -710,7 +1060,7 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
 
 class CapabilityExtensionTests(IsolatedConnectionsTestCase):
     def test_only_implemented_capabilities_and_no_clients_ship_in_the_leaf_registry(self):
-        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images})
+        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images, self.embeddings})
         self.assertEqual(self.connections._CLIENT_FACTORIES, {})
 
     def test_dummy_future_capability_reuses_catalog_binding_and_client_contracts(self):
@@ -951,6 +1301,7 @@ class CatalogMetadataTests(unittest.TestCase):
         self.document = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         self.models = {model["id"]: model for model in self.document["models"]}
         self.sources = {source["id"]: source for source in self.document["sources"]}
+        self.image_profiles = self.document["imageOperationProfiles"]
 
     def test_sources_and_model_identifiers_are_unique_and_resolvable(self):
         self.assertEqual(len(self.models), len(self.document["models"]))
@@ -959,15 +1310,27 @@ class CatalogMetadataTests(unittest.TestCase):
         for model in self.models.values():
             identifiers.extend([model["id"]] + model.get("aliases", []))
             with self.subTest(model=model["id"]):
-                self.assertTrue(model["sourceIds"])
-                self.assertTrue(set(model["sourceIds"]).issubset(self.sources))
-                if "imageGenerationTool" in model["capabilities"]:
+                source_ids = model.get("sourceIds") or model.get("reasoningPolicy", {}).get("sourceIds")
+                self.assertTrue(source_ids)
+                self.assertTrue(set(source_ids).issubset(self.sources))
+                self.assertTrue(
+                    set(model.get("imageProfiles", {}).values()).issubset(self.image_profiles)
+                )
+                if "imageGenerationTool" in model.get("capabilities", {}):
                     self.assertIsInstance(model["capabilities"]["imageGenerationTool"], bool)
         self.assertEqual(len(identifiers), len(set(identifiers)))
+        for profile_id, profile in self.image_profiles.items():
+            with self.subTest(profile=profile_id):
+                self.assertTrue(profile["sourceIds"])
+                self.assertTrue(set(profile["sourceIds"]).issubset(self.sources))
+                self.assertIn(profile["api"], ("images", "responses", "mai", "flux"))
+                self.assertIsInstance(profile["editing"], bool)
+                self.assertIsInstance(profile["masking"], bool)
+                self.assertFalse(profile["masking"] and not profile["editing"])
 
     def test_each_positive_tool_flag_has_a_model_specific_official_source(self):
         for model in self.models.values():
-            if model["capabilities"].get("imageGenerationTool") is not True:
+            if model.get("capabilities", {}).get("imageGenerationTool") is not True:
                 continue
             with self.subTest(model=model["id"]):
                 urls = [urlparse(self.sources[source]["url"]) for source in model["sourceIds"]]
@@ -977,10 +1340,30 @@ class CatalogMetadataTests(unittest.TestCase):
                     for url in urls
                 ))
                 self.assertIs(model["capabilities"]["generatesImages"], False)
-                self.assertIn("azure-openai-responses", model["sourceIds"])
+                if model.get("imageProfiles"):
+                    self.assertEqual(model["imageProfiles"], {"openai": "openai-responses"})
+                    self.assertIn(
+                        "image-profiles-openai-tools",
+                        self.image_profiles["openai-responses"]["sourceIds"],
+                    )
+
+    def test_shared_catalog_entries_retain_image_and_reasoning_metadata(self):
+        for name in ("gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini"):
+            with self.subTest(model=name):
+                self.assertIn("capabilities", self.models[name])
+                self.assertIn("reasoningPolicy", self.models[name])
+                self.assertTrue(self.models[name]["reasoningPolicy"]["sourceIds"])
+        self.assertTrue(self.models["o3-mini"]["capabilities"]["imageGenerationTool"])
+        self.assertNotIn("imageProfiles", self.models["o3-mini"])
+        self.assertNotIn("imageProfiles", self.models["gpt-5-pro"])
+        self.assertFalse(self.models["o3-mini"]["capabilities"]["processesImages"])
+        self.assertEqual(self.models["o3-mini"]["reasoningPolicy"]["status"], "supported")
 
     def test_image_models_distinguish_direct_output_from_hosted_orchestration(self):
-        for name in ("gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"):
+        for name in (
+            "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+            "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+        ):
             with self.subTest(model=name):
                 flags = self.models[name]["capabilities"]
                 self.assertIs(flags["processesText"], True)
@@ -988,6 +1371,9 @@ class CatalogMetadataTests(unittest.TestCase):
                 self.assertIs(flags["generatesImages"], True)
                 self.assertIs(flags["imageGenerationTool"], False)
                 self.assertIs(flags["toolCalling"], False)
+                self.assertEqual(self.models[name]["imageProfiles"], {
+                    "openai": "openai-images", "azure_openai": "azure-images",
+                })
         self.assertIs(self.models["gpt-image-1.5"]["capabilities"]["generatesText"], True)
         for name in ("gpt-image-2", "gpt-image-1", "gpt-image-1-mini"):
             self.assertIs(self.models[name]["capabilities"]["generatesText"], False)
@@ -1001,16 +1387,54 @@ class CatalogMetadataTests(unittest.TestCase):
         self.assertIn("non-functional", notes)
         self.assertIn("azure-openai-images", model["sourceIds"])
         self.assertIn("openai-deprecations", model["sourceIds"])
+        self.assertEqual(model["imageLifecycle"], {
+            "openai": "retired", "azure_openai": "retired",
+        })
+        self.assertNotIn("imageProfiles", model)
 
-    def test_provider_api_and_backend_prerequisites_are_explicit(self):
+    def test_provider_profiles_and_azure_standalone_policy_are_explicit(self):
         notes = " ".join(self.document["coverageNotes"])
         for requirement in (
-            "api.openai.com", "v1 Responses", "2025-04-01-preview",
-            "x-ms-oai-image-generation-deployment", "deployment-free",
-            "-chat-latest",
+            "api.openai.com", "imageProfiles", "dedicated image models",
+            "hosting cloud", "Government", "Unknown is not unavailable", "-chat-latest",
         ):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, notes)
+        self.assertEqual(self.image_profiles["openai-responses"]["api"], "responses")
+        self.assertEqual(self.image_profiles["azure-images"]["api"], "images")
+        self.assertEqual(self.models["gpt-5.6-sol"]["imageProfiles"], {
+            "openai": "openai-responses",
+        })
+        for profile_id, profile in self.image_profiles.items():
+            with self.subTest(profile=profile_id):
+                self.assertEqual(profile["availability"]["government"], "unknown")
+                self.assertEqual(profile["availability"]["commercial"], "documented")
+
+    def test_foundry_image_operations_do_not_inherit_gpt_mask_or_dimension_options(self):
+        mai = self.image_profiles["mai-images"]
+        self.assertEqual(mai["api"], "mai")
+        self.assertTrue(mai["editing"])
+        self.assertFalse(mai["masking"])
+        self.assertEqual(mai["minDimension"], 768)
+        self.assertEqual(mai["maxPixels"], 1_048_576)
+        self.assertEqual(mai["qualities"], [])
+        self.assertEqual(mai["backgrounds"], [])
+        for size in mai["sizes"]:
+            width, height = (int(value) for value in size.split("x"))
+            self.assertGreaterEqual(min(width, height), 768)
+            self.assertLessEqual(width * height, 1_048_576)
+        for profile_id, path, editing in (
+            ("flux-2-pro", "flux-2-pro", True),
+            ("flux-2-flex", "flux-2-flex", True),
+            ("flux-kontext", "flux-kontext-pro", True),
+            ("flux-1.1", "flux-pro-1.1", False),
+        ):
+            with self.subTest(profile=profile_id):
+                profile = self.image_profiles[profile_id]
+                self.assertEqual(profile["api"], "flux")
+                self.assertEqual(profile["modelPath"], path)
+                self.assertEqual(profile["editing"], editing)
+                self.assertFalse(profile["masking"])
 
 
 if __name__ == "__main__":

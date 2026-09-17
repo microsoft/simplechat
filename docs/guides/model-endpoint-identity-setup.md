@@ -184,6 +184,19 @@ the real local editor assets.
 
 ## Understand Discovery Versus Inference
 
+### Embedding inference
+
+Implemented in version **0.261.106**, shared embedding connections use a separate
+operation contract from chat. A Foundry project endpoint cannot route embeddings;
+configure the embedding inference base for that connection explicitly, usually
+the resource URL ending in `/openai/v1/`. Grant inference permissions on that
+resource as well as project/management read permissions for discovery.
+
+OpenAI-compatible custom embedding connections use API keys/tokens and manual
+model entry. They do not acquire Azure tokens or use project discovery. The
+embedding-specific test probes actual vectors; a successful chat or discovery
+request does not prove embedding access. See [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
+
 The modal has two separate behaviors that often require different permissions.
 
 | Modal action | Azure OpenAI provider | Foundry providers |

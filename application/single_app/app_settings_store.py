@@ -5,6 +5,7 @@ import copy
 import json
 import time
 import uuid
+from contextlib import nullcontext
 
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import (
@@ -107,16 +108,18 @@ class AppSettingsStore:
             self._fallback(error)
             return self._read_cosmos()[0]
 
-    def write(self, transform, *, expected_etag=None, defaults=None):
+    def write(self, transform, *, expected_etag=None, defaults=None, write_guard=None):
         """Apply a change to authoritative settings, conditional on the read ETag."""
         try:
-            return self._write(transform, expected_etag=expected_etag, defaults=defaults)
+            return self._write(
+                transform, expected_etag=expected_etag, defaults=defaults, write_guard=write_guard,
+            )
         except RedisError as error:
             raise SettingsUnavailableError(
                 "Unable to confirm the settings save. Reload and verify before retrying."
             ) from error
 
-    def _write(self, transform, *, expected_etag=None, defaults=None, observed_raw=None):
+    def _write(self, transform, *, expected_etag=None, defaults=None, observed_raw=None, write_guard=None):
         marker = None
         session_token = None
         if self.redis_required:
@@ -156,52 +159,64 @@ class AppSettingsStore:
                 # never publish a snapshot that has not passed an ETag check.
                 raise SettingsConflictError("Settings changed. Reload before saving again.")
             candidate = transform(copy.deepcopy(current))
-            candidate = {
-                key: copy.deepcopy(value)
-                for key, value in candidate.items()
-                if key not in COSMOS_METADATA_FIELDS
-            }
-            candidate["id"] = SETTINGS_ID
-            candidate[SETTINGS_REVISION_FIELD] = int(current.get(SETTINGS_REVISION_FIELD, 0)) + 1
-
-            if marker is not None:
-                # Fencing plus Cosmos OCC prevents an expired writer committing
-                # over the replacement writer, even if it resumes much later.
-                raw = self._raw_state()
-                if raw not in (marker, marker.encode("utf-8")):
-                    raise SettingsConflictError("Settings write ownership expired.")
-
             headers = {}
 
             def capture_headers(response_headers, _body):
                 headers.update(response_headers)
 
+            write_conflict = None
             try:
-                if current.get("_etag"):
-                    stored = self.container.replace_item(
-                        item=SETTINGS_ID,
-                        body=candidate,
-                        etag=current["_etag"],
-                        match_condition=MatchConditions.IfNotModified,
-                        session_token=session_token,
-                        response_hook=capture_headers,
-                    )
-                else:
-                    stored = self.container.create_item(body=candidate, response_hook=capture_headers)
-            except (CosmosAccessConditionFailedError, CosmosResourceExistsError):
+                guard_context = (
+                    write_guard(copy.deepcopy(current), candidate)
+                    if write_guard is not None else nullcontext()
+                )
+                with guard_context:
+                    candidate = {
+                        key: copy.deepcopy(value)
+                        for key, value in candidate.items()
+                        if key not in COSMOS_METADATA_FIELDS
+                    }
+                    candidate["id"] = SETTINGS_ID
+                    candidate[SETTINGS_REVISION_FIELD] = int(current.get(SETTINGS_REVISION_FIELD, 0)) + 1
+                    if marker is not None:
+                        # A guard may wait for another resource's fence. Recheck
+                        # ownership after that wait, before issuing the Cosmos CAS.
+                        raw = self._raw_state()
+                        if raw not in (marker, marker.encode("utf-8")):
+                            raise SettingsConflictError("Settings write ownership expired.")
+
+                    try:
+                        if current.get("_etag"):
+                            stored = self.container.replace_item(
+                                item=SETTINGS_ID,
+                                body=candidate,
+                                etag=current["_etag"],
+                                match_condition=MatchConditions.IfNotModified,
+                                session_token=session_token,
+                                response_hook=capture_headers,
+                            )
+                        else:
+                            stored = self.container.create_item(body=candidate, response_hook=capture_headers)
+                    except (CosmosAccessConditionFailedError, CosmosResourceExistsError) as error:
+                        write_conflict = error
+                        raise
+
+                    if marker is not None:
+                        ready = json.dumps({
+                            "state": "ready",
+                            "document": dict(stored),
+                            "session_token": headers.get("x-ms-session-token", session_token),
+                        })
+                        if not self._compare_and_set(marker, ready):
+                            raise SettingsUnavailableError(
+                                "The database save completed but shared publication was superseded. Reload to verify."
+                            )
+            except (CosmosAccessConditionFailedError, CosmosResourceExistsError) as error:
+                if error is not write_conflict:
+                    raise
                 if expected_etag is not None:
                     raise SettingsConflictError("Settings changed during the save.")
                 continue
 
-            if marker is not None:
-                ready = json.dumps({
-                    "state": "ready",
-                    "document": dict(stored),
-                    "session_token": headers.get("x-ms-session-token", session_token),
-                })
-                if not self._compare_and_set(marker, ready):
-                    raise SettingsUnavailableError(
-                        "The database save completed but shared publication was superseded. Reload to verify."
-                    )
             return copy.deepcopy(stored)
         raise SettingsConflictError("Settings kept changing; reload and retry.")
