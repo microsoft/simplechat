@@ -3,6 +3,12 @@
 Fixed in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
 
+Reader-contract follow-up fixed in version: **0.261.110**. This preserves the
+foundation's explicit policy selection and boolean-only partial-result opt-in
+when using the newer bounded reader. An empty nested policy cannot silently
+fall back to a top-level policy, and source lineage does not by itself identify
+an original Analyze producer.
+
 ## Issue and root cause
 
 Analyze had several overlapping representations without a consistently selected
