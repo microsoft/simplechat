@@ -226,7 +226,8 @@ decisions, exact identities, selected joins, skip/routing behavior, more than
 consumption lineage beyond 256 ancestors.
 `functional_tests/test_workflow_structured_edges.py` covers real save
 round-trips, limits, missing/null predicates, frozen shared references, gate
-source checks, and invalid-output inspection.
+source checks, invalid-output inspection, and complete paged per-document
+outputs retaining their `document_results` type in legacy and structured reads.
 `functional_tests/test_workflow_structured_publication.py` passes genuine native
 Analyze records through a saved join and the existing publication service,
 including restart without duplicate publication and later source revocation.

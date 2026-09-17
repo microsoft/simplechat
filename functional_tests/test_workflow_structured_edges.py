@@ -9,6 +9,7 @@ fixtures. No workflow, document, model or publication service is invoked live.
 """
 
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,13 @@ from test_workflow_definition_store_integration import load_group_store, load_pe
 from test_workflow_structured_flow import definition, runtime, run_flow  # noqa: F401
 from test_workflow_task_result_handoff import build_inventory_run
 from functions_workflow_results import authorize_workflow_task_result_read, persist_workflow_task_result
+from functions_workflow_results import (
+    _build_task_result, load_workflow_task_input, read_result_records,
+)
+from functions_workflow_identity import workflow_execution_id, workflow_node_identity
+from functions_workflow_node_results import load_workflow_node_input
+from functions_workflow_result_store import load_workflow_node_result
+from test_workflow_result_contract import SerializedSections
 
 
 @pytest.mark.parametrize("scope", ["personal", "group"])
@@ -207,3 +215,44 @@ def test_restart_after_completed_skip_does_not_create_task_attempts(runtime):
     _, calls = run_flow(workflow, store)
     assert not calls and store.read()["admitted_count"] == admitted
     assert store.journal_page("attempt", execution_id=skipped["execution_id"])["items"] == []
+
+
+@pytest.mark.parametrize("version", [1, 3])
+def test_paged_per_document_outputs_retain_their_kind_and_full_values(runtime, version):
+    workflow, _, _, _ = runtime
+    documents = [{
+        "document_id": f"source-{index}",
+        "full_result": {"text": "x" * 140000 + f"END-OF-DOCUMENT-{index}"},
+    } for index in range(2)]
+    identity = (
+        workflow_node_identity(workflow, "run", "yes-node", workflow_execution_id(workflow, "run", "yes-node"), 1, task_id="yes")
+        if version == 3 else {"workflow_id": workflow["id"], "run_id": "run", "task_id": "yes", "attempt": 1}
+    )
+    envelope = _build_task_result(
+        {"reply": "Short preview", "analysis_result": {"per_document": True, "document_results": documents}},
+        identity, "workflow-result-v2" if version == 3 else "workflow-result-v1",
+    )
+    envelope["workflow_validation"] = {"version": 1, "status": "valid", "eligible": True, "reason_codes": []}
+    if version == 3:
+        manifest, reference = persist_workflow_task_result(envelope, workflow=workflow, run_id="run", task_id="yes", settings={})
+        loader = lambda ref: load_workflow_node_result(
+            workflow, "run", "yes", ref, node_id="yes-node", execution_id=identity["execution_id"], attempt=1, iteration_path=[],
+        )
+        prompt, receipt = load_workflow_node_input(workflow, "run", identity, reference, output_name="documents")
+    else:
+        store = SerializedSections()
+        source = {"document_id": "source", "scope": "personal", "scope_id": "owner", "source_version": 1}
+        envelope["analysis_access"] = {"version": "analysis-source-access-v1", "sources": [source]}
+        manifest, reference = persist_workflow_task_result(envelope, workflow=workflow, run_id="run", task_id="yes", settings={}, save_result=store.save)
+        loader = lambda ref: store.load(workflow, "run", "yes", ref)
+        prompt, receipt = load_workflow_task_input(
+            workflow, "run", "yes", reference, output_name="documents", load_result=store.load,
+            source_resolver=lambda ids, **kwargs: [{**source, "authorization_status": "authorized"}],
+        )
+    assert manifest["outputs"]["documents"]["storage_kind"] == "record_pages"
+    second, total = read_result_records(manifest, "documents", loader, offset=1, limit=1)
+    assert total == 2 and second[0]["value"].endswith("END-OF-DOCUMENT-1")
+    value = json.loads(prompt)
+    assert value["kind"] == "document_results" and len(value["value"]) == 2
+    assert all(item["value"].endswith(f"END-OF-DOCUMENT-{index}") for index, item in enumerate(value["value"]))
+    assert receipt["output_name"] == "documents"
