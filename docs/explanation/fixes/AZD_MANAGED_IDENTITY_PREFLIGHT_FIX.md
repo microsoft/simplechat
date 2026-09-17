@@ -68,3 +68,8 @@ Offline regression coverage lives in `test_deployment_cosmos_access.py` and
 explicit environment selection, key-disabled accounts, concurrency, cache publication
 failure, first-run settings creation, preserved external caches and index-creation races.
 No tenant exemptions or production resource changes are required to run these tests.
+
+Tracked in [#1489](https://github.com/microsoft/simplechat/issues/1489), implemented by
+[PR #1488](https://github.com/microsoft/simplechat/pull/1488). The new hook implementation
+has offline regression coverage; Azure validation with an appropriately authorized
+deployment runner remains a follow-up before calling the cloud workflow verified.
