@@ -1,7 +1,7 @@
 # classic_ai_connections_admin.py
 """
 Classic admin panes with real local scripts and a closed capability API boundary.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 """
 
@@ -13,6 +13,7 @@ from playwright.sync_api import expect
 
 from ai_connections_admin import AIConnectionsFixture
 from v2_admin_settings import ORIGIN, REPO_ROOT
+from test_support.app_stubs import import_app_module
 
 
 class ClassicAIConnectionsFixture(AIConnectionsFixture):
@@ -36,6 +37,9 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
         )
         connections = environment.get_template("admin/_panes/model-endpoints.html").render(
             settings=settings, admin_landing_tab="model-endpoints",
+            custom_model_endpoint_api_types=import_app_module(
+                "functions_model_endpoint_providers"
+            ).get_model_endpoint_provider_ui_options(),
         )
         return (
             '<!doctype html><html lang="en"><head><meta charset="UTF-8">'

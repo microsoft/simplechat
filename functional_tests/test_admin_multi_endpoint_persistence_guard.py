@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_admin_multi_endpoint_persistence_guard.py
+#!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.239.199
+Version: 0.261.107
 Implemented in: 0.239.199
 
 This test ensures that once multi-endpoint model management is enabled, admin
@@ -10,12 +10,13 @@ settings saves preserve it even if the checkbox is omitted from later form
 posts, and that the backend save helper enforces the same one-way behavior.
 """
 
-import importlib
 import json
+import logging
 import os
 import sys
 import types
 from test_support.versioning import assert_app_version_at_least
+from test_model_endpoint_normalization_backend import _load_functions_settings_module as load_normalization_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,33 +43,11 @@ def _restore_modules(original_modules):
 
 
 def _load_functions_settings_module():
-    config_stub = types.ModuleType('config')
-    config_stub.json = json
-    config_stub.re = __import__('re')
-    config_stub.WORD_CHUNK_SIZE = 400
-    config_stub.video_indexer_endpoint = ''
-    config_stub.cosmos_settings_container = types.SimpleNamespace(upsert_item=lambda item: item)
-
-    appinsights_stub = types.ModuleType('functions_appinsights')
-    appinsights_stub.log_event = lambda *args, **kwargs: None
-
-    cache_stub = types.ModuleType('app_settings_cache')
-    cache_stub.get_settings_cache = lambda: None
-    cache_stub.update_settings_cache = lambda settings: None
-
-    original_modules = {}
-    for module_name, module_stub in {
-        'config': config_stub,
-        'functions_appinsights': appinsights_stub,
-        'app_settings_cache': cache_stub,
-    }.items():
-        original_modules[module_name] = sys.modules.get(module_name)
-        sys.modules[module_name] = module_stub
-
-    module_name = 'application.single_app.functions_settings'
-    original_modules[module_name] = sys.modules.get(module_name)
-    sys.modules.pop(module_name, None)
-    module = importlib.import_module(module_name)
+    module, original_modules = load_normalization_settings()
+    module.logging = logging
+    module.WORD_CHUNK_SIZE = 400
+    module.video_indexer_endpoint = ''
+    module.cosmos_settings_container = types.SimpleNamespace(upsert_item=lambda item: item)
     return module, original_modules
 
 

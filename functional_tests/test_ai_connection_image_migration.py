@@ -1,11 +1,12 @@
 # test_ai_connection_image_migration.py
 """
 Functional coverage for automatic image-connection import.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 
 Exercise the real migration builder and optimistic-concurrency coordinator without
 Azure services, including active-route preservation and non-destructive failure.
+Provider-qualified default invalidation coverage was added in 0.261.107.
 """
 
 import copy
@@ -25,11 +26,15 @@ from functions_ai_connections import (
     AIConnectionError,
     IMAGE_MIGRATION_VERSION_KEY,
     IMAGE_SELECTION_KEY,
+    image_settings_use_connections,
+    resolve_capability_binding,
+    resolve_capability_model_selection,
+    resolve_model_capability,
     supports_model_capability,
 )
 
 
-def legacy_settings():
+def legacy_settings(model_name="gpt-5.6-terra"):
     return {
         "id": "app_settings",
         "_etag": "revision-1",
@@ -40,9 +45,9 @@ def legacy_settings():
         "azure_openai_image_gen_key": "synthetic-image-key",
         "azure_openai_image_gen_api_version": "2024-12-01-preview",
         "image_gen_model": {
-            "selected": [{"deploymentName": "creative", "modelName": "gpt-5.6-terra"}],
+            "selected": [{"deploymentName": "creative", "modelName": model_name}],
             "all": [
-                {"deploymentName": "creative", "modelName": "gpt-5.6-terra"},
+                {"deploymentName": "creative", "modelName": model_name},
                 {"deploymentName": "pixels", "modelName": "gpt-image-1"},
             ],
         },
@@ -91,21 +96,149 @@ class ImageConnectionMigrationTests(unittest.TestCase):
         )
 
     def test_active_model_and_credentials_survive_without_changing_chat_mode(self):
-        source = legacy_settings()
+        source = legacy_settings(model_name="gpt-image-1")
         original = copy.deepcopy(source)
         updates = build_image_connection_migration(source)
         endpoint = updates["model_endpoints"][0]
         selection = updates[IMAGE_SELECTION_KEY]
         model = next(item for item in endpoint["models"] if item["id"] == selection["model_id"])
         self.assertEqual("creative", model["deploymentName"])
-        self.assertEqual("responses", model["image_generation_api"])
+        self.assertEqual("gpt-image-1", model["modelName"])
+        self.assertEqual("images", model["image_generation_api"])
         self.assertEqual("synthetic-image-key", endpoint["auth"]["api_key"])
         self.assertEqual("api_key", endpoint["auth"]["type"])
         self.assertEqual("2024-12-01-preview", endpoint["connection"]["operation_settings"]["image_generation"]["api_version"])
-        self.assertTrue(supports_model_capability(model, "image_generation"))
+        self.assertTrue(supports_model_capability(
+            model, "image_generation", endpoint["provider"], endpoint=endpoint
+        ))
         self.assertFalse(supports_model_capability(model, "chat"))
+        resolved, reason = resolve_capability_model_selection(
+            selection, updates["model_endpoints"], "image_generation"
+        )
+        self.assertEqual(selection, resolved)
+        self.assertIsNone(reason)
+        self.assertNotIn("ai_connection_default_notices", updates)
         self.assertNotIn("enable_multi_model_endpoints", updates)
         self.assertNotIn("azure_openai_image_gen_key", updates)
+        self.assertEqual(original, source)
+
+    def test_azure_chat_import_preserves_data_without_inventing_or_substituting_support(self):
+        for metadata in (
+            {},
+            {"supportsImageGeneration": True, "image_generation_api": "responses"},
+            {"supportsImageGeneration": True, "image_generation_api": "images"},
+        ):
+            with self.subTest(metadata=metadata):
+                source = legacy_settings()
+                source["image_gen_model"]["selected"][0].update(metadata)
+                source["image_gen_model"]["all"][0].update(metadata)
+                source["ai_connection_default_notices"] = {"chat": "Retain the existing chat notice."}
+                original = copy.deepcopy(source)
+                updates = build_image_connection_migration(source)
+                endpoint = updates["model_endpoints"][0]
+                selection = updates[IMAGE_SELECTION_KEY]
+                model = next(item for item in endpoint["models"] if item["id"] == selection["model_id"])
+                self.assertEqual("creative", model["deploymentName"])
+                self.assertEqual("gpt-5.6-terra", model["modelName"])
+                for field in ("supportsImageGeneration", "image_generation_api"):
+                    if field in metadata:
+                        self.assertEqual(model[field], metadata[field])
+                    else:
+                        self.assertNotIn(field, model)
+                self.assertEqual("synthetic-image-key", endpoint["auth"]["api_key"])
+                self.assertEqual(
+                    "2024-12-01-preview",
+                    endpoint["connection"]["operation_settings"]["image_generation"]["api_version"],
+                )
+                self.assertFalse(supports_model_capability(
+                    model, "image_generation", endpoint["provider"], endpoint=endpoint
+                ))
+                self.assertTrue(resolve_model_capability(
+                    model, "chat", endpoint["provider"], endpoint=endpoint
+                )["supported"])
+                self.assertFalse(supports_model_capability(model, "chat"))
+                self.assertEqual(
+                    ["pixels"], [item["deploymentName"] for item in endpoint["models"] if item["id"] != model["id"]]
+                )
+                self.assertFalse(next(item for item in endpoint["models"] if item["deploymentName"] == "pixels")["enabled"])
+                notices = updates["ai_connection_default_notices"]
+                self.assertIn("not supported", notices["image_generation"])
+                self.assertIn("dedicated image model", notices["image_generation"])
+                self.assertEqual(source["ai_connection_default_notices"]["chat"], notices["chat"])
+                resolved, reason = resolve_capability_model_selection(
+                    selection, updates["model_endpoints"], "image_generation"
+                )
+                self.assertEqual({"endpoint_id": "", "model_id": "", "provider": ""}, resolved)
+                self.assertTrue(reason)
+                migrated = {**source, **updates}
+                self.assertTrue(image_settings_use_connections(migrated))
+                with self.assertRaises(AIConnectionError) as raised:
+                    resolve_capability_binding(migrated, "image_generation")
+                self.assertEqual("model_configuration_unavailable", raised.exception.code)
+                self.assertNotIn("synthetic-image-key", str(raised.exception))
+                self.assertNotIn("enable_multi_model_endpoints", updates)
+                self.assertNotIn("azure_openai_image_gen_key", updates)
+                self.assertEqual(original, source)
+
+    def test_unrecorded_legacy_images_keep_an_explicit_images_route(self):
+        source = legacy_settings()
+        source["image_gen_model"]["selected"][0].pop("modelName")
+        source["image_gen_model"]["all"][0].pop("modelName")
+        original = copy.deepcopy(source)
+        updates = build_image_connection_migration(source)
+        endpoint = updates["model_endpoints"][0]
+        model = next(
+            item for item in endpoint["models"] if item["id"] == updates[IMAGE_SELECTION_KEY]["model_id"]
+        )
+        self.assertNotIn("modelName", model)
+        self.assertEqual("creative", model["deploymentName"])
+        self.assertTrue(model["supportsImageGeneration"])
+        self.assertEqual("images", model["image_generation_api"])
+        self.assertEqual("legacy_image_direct", endpoint["migration_source"])
+        support = resolve_model_capability(
+            model, "image_generation", endpoint["provider"], endpoint=endpoint
+        )
+        self.assertEqual(support, {
+            "supported": True, "source": "legacy", "reason": "", "api": "images",
+        })
+        unmarked_endpoint = copy.deepcopy(endpoint)
+        unmarked_endpoint.pop("migration_source")
+        self.assertFalse(supports_model_capability(
+            model, "image_generation", endpoint["provider"], endpoint=unmarked_endpoint
+        ))
+        self.assertNotIn("ai_connection_default_notices", updates)
+        self.assertEqual(original, source)
+
+    def test_incompatible_import_does_not_rewrite_an_existing_chat_connection(self):
+        source = legacy_settings()
+        source["model_endpoints"] = [{
+            "id": "chat-connection",
+            "provider": "aoai",
+            "enabled": True,
+            "connection": {"endpoint": source["azure_openai_image_gen_endpoint"]},
+            "auth": {"type": "api_key", "api_key": source["azure_openai_image_gen_key"]},
+            "models": [{
+                "id": "chat-model", "deploymentName": "creative", "modelName": "gpt-5.6-terra",
+                "enabled": True, "supportsImageGeneration": True, "image_generation_api": "responses",
+            }],
+        }]
+        source["default_model_selection"] = {
+            "endpoint_id": "chat-connection", "model_id": "chat-model", "provider": "aoai",
+        }
+        original = copy.deepcopy(source)
+        updates = build_image_connection_migration(source)
+        self.assertEqual(2, len(updates["model_endpoints"]))
+        self.assertEqual(original["model_endpoints"][0], updates["model_endpoints"][0])
+        self.assertNotEqual("chat-connection", updates[IMAGE_SELECTION_KEY]["endpoint_id"])
+        self.assertNotIn("default_model_selection", updates)
+        self.assertNotIn("enable_multi_model_endpoints", updates)
+        endpoint = updates["model_endpoints"][0]
+        self.assertTrue(supports_model_capability(
+            endpoint["models"][0], "chat", endpoint["provider"], endpoint=endpoint
+        ))
+        self.assertFalse(supports_model_capability(
+            endpoint["models"][0], "image_generation", endpoint["provider"], endpoint=endpoint
+        ))
         self.assertEqual(original, source)
 
     def test_import_ids_are_stable_and_completed_import_is_a_noop(self):
@@ -137,9 +270,20 @@ class ImageConnectionMigrationTests(unittest.TestCase):
         profile = selected["connection"]["operation_settings"]["image_generation"]
         self.assertTrue(profile["is_apim"])
         self.assertEqual("api-key", profile["auth_header"])
+        self.assertEqual("2025-04-01-preview", profile["api_version"])
+        model = next(
+            item for item in selected["models"] if item["id"] == updates[IMAGE_SELECTION_KEY]["model_id"]
+        )
+        self.assertEqual("gateway-deployment", model["deploymentName"])
+        self.assertNotIn("modelName", model)
+        self.assertEqual("images", model["image_generation_api"])
+        self.assertTrue(supports_model_capability(
+            model, "image_generation", selected["provider"], endpoint=selected
+        ))
+        self.assertNotIn("ai_connection_default_notices", updates)
 
     def test_reuses_compatible_connection_and_model_ids(self):
-        source = legacy_settings()
+        source = legacy_settings(model_name="gpt-image-1")
         source["model_endpoints"] = [{
             "id": "shared-connection",
             "name": "Team connection",
@@ -148,7 +292,7 @@ class ImageConnectionMigrationTests(unittest.TestCase):
             "connection": {"endpoint": source["azure_openai_image_gen_endpoint"], "openai_api_version": "2024-05-01-preview"},
             "auth": {"type": "api_key", "api_key": source["azure_openai_image_gen_key"], "management_cloud": "public"},
             "models": [{
-                "id": "existing-model", "deploymentName": "creative", "modelName": "gpt-5.6-terra",
+                "id": "existing-model", "deploymentName": "creative", "modelName": "gpt-image-1",
                 "enabled": True, "supportsImageGeneration": True,
             }],
         }]
@@ -166,7 +310,7 @@ class ImageConnectionMigrationTests(unittest.TestCase):
         self.assertNotIn("enabled_capabilities", updates["model_endpoints"][0]["models"][0])
 
     def test_different_credentials_are_not_merged(self):
-        source = legacy_settings()
+        source = legacy_settings(model_name="gpt-image-1")
         existing = copy.deepcopy(build_image_connection_migration(source)["model_endpoints"][0])
         existing["id"] = "different-auth"
         existing["auth"]["api_key"] = "a-different-synthetic-key"

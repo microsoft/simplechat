@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.105"
+version: "0.261.107"
 ---
 
 ## How to use this reference
@@ -61,6 +61,23 @@ arrived during streaming. After granting access, send the message again.
 | `scroll-to-bottom-btn` | Jumps the message pane to the newest message when you are scrolled upward. | Use it to return to an in-progress response or the latest turn. | Always available |
 | `chat-mobile-tools-toggle` | Opens the mobile tools panel containing quick actions, voice controls, and selectors. | Use it on smaller screens when desktop toolbar controls move into the offcanvas panel. | Always available |
 | `chat-tutorial-btn` | Launches the guided chat walkthrough. | Use it when onboarding users or when you want a reminder of the main chat workflow. | Always available |
+
+## Generated image editor
+
+From version **0.261.107**, the image editor uses the selected global image model's
+provider-qualified capabilities, not the text-chat model or the application's cloud.
+
+| Control or state | What it does | Why you would use it |
+| --- | --- | --- |
+| Region selection | Sends a transparent PNG mask with the current image when the model/API supports uploaded masks | Guide a change to a particular area; masks are not pixel-exact preservation guarantees |
+| Reference-image editing | Sends the current image and an instruction without a mask | Refine an image with supported MAI, FLUX, GPT Image, or direct OpenAI image-tool operations |
+| Whole-image regeneration | Generates a replacement from the prompt instead of sending the current image as a reference | Start over or apply generation-only rendering options |
+| Model-specific rendering controls | Offers only the selected profile's dimensions, quality, and background options | Avoid sending GPT-only parameters to another provider |
+| Provider/cloud and capability information | Explains which service and image operations are selected and where availability is unknown | Distinguish an approved commercial endpoint from the cloud hosting SimpleChat |
+| Unavailable model state | Disables new inference while retaining revision-history access | Review or restore an existing image without requiring a working generation service |
+
+Unsupported or stale masks/options are rejected rather than silently changed into a
+different operation. See [Generate images]({{ '/guides/generate-images/' | relative_url }}).
 
 ## Prompt, model, agent, and reasoning selectors
 

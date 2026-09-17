@@ -1,7 +1,7 @@
 # test_admin_shared_ai_connections_classic.py
 """
 Classic shared connection manager, image selection, recovery and saved-test workflows.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 """
 
@@ -41,7 +41,7 @@ def test_classic_registry_and_image_default_work_with_chat_mode_off(classic_ui):
     expect(page.locator("#image-generation-default-model optgroup")).to_have_count(3)
     page.get_by_label("Default image model", exact=True).select_option("0")
     expect(page.get_by_label("Default image model", exact=True)).to_be_enabled()
-    assert classic_ui.selections["image_generation"] == reference("team", "same:model", "aoai")
+    assert classic_ui.selections["image_generation"] == reference("team", "same:model", "custom")
     assert classic_ui.patches == []
 
 
@@ -55,7 +55,7 @@ def test_classic_failed_default_save_rolls_back_and_image_test_uses_saved_refere
     expect(picker).to_have_value("1")
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.locator("#test_image_result")).to_have_text("The saved image model generated an image successfully.")
-    assert classic_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "aoai")}]
+    assert classic_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "custom")}]
     picker.select_option("")
     expect(picker).to_be_enabled()
     assert classic_ui.selections["image_generation"] == reference()
@@ -158,7 +158,7 @@ def test_classic_recovery_accepts_the_legacy_failed_status(classic_ui):
     expect(classic_ui.page.locator("#legacy-image-settings")).to_have_js_property("disabled", False)
 
 
-def test_classic_manual_alias_keeps_the_underlying_model_without_an_api_picker(classic_ui):
+def test_classic_manual_alias_keeps_the_underlying_model_without_an_api_override(classic_ui):
     classic_ui.open()
     page = classic_ui.page
     page.get_by_role("button", name="Add Connection", exact=True).click()
@@ -181,9 +181,50 @@ def test_classic_manual_alias_keeps_the_underlying_model_without_an_api_picker(c
     assert classic_ui.image_tests == [] and classic_ui.connection_writes == []
 
 
+def test_classic_custom_image_metadata_preserves_separate_edit_and_mask_flags(classic_ui):
+    classic_ui.open()
+    page = classic_ui.page
+    page.locator("#model-endpoints-tbody tr").filter(has_text="Imported Studio").get_by_role("button", name="Edit", exact=True).click()
+    dialog = page.locator("#modelEndpointModal")
+    dialog.get_by_label("Model Name", exact=True).fill("private-image-orchestrator")
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_label("Image generation support", exact=True).select_option("true")
+    dialog.get_by_label("Source-image editing support", exact=True).select_option("true")
+    dialog.get_by_label("Uploaded-mask support", exact=True).select_option("false")
+    dialog.get_by_label("Image API for explicit metadata", exact=True).select_option("responses")
+    expect(dialog.get_by_label("Source-image editing support", exact=True)).to_be_visible()
+    page.locator("#model-endpoint-save-btn").click()
+    expect(dialog).not_to_be_visible()
+    stored = json.loads(page.locator("#model_endpoints_json").input_value())
+    model = next(item for item in stored if item["id"] == "studio")["models"][0]
+    assert model["supportsImageGeneration"] is True
+    assert model["supportsImageEditing"] is True
+    assert model["supportsImageMasking"] is False
+    assert model["image_generation_api"] == "responses"
+    assert classic_ui.image_tests == [] and classic_ui.connection_writes == []
+
+def test_classic_edit_preserves_an_omitted_raw_gateway_key_prefix(classic_ui):
+    source = classic_ui.endpoints[1]
+    source["auth"]["api_key_header"] = "X-Gateway-Key"
+    source["auth"].pop("api_key_prefix", None)
+    classic_ui.open()
+    page = classic_ui.page
+    page.locator("#model-endpoints-tbody tr").filter(has_text="Imported Studio").get_by_role("button", name="Edit", exact=True).click()
+    expect(page.locator("#model-endpoint-api-key-prefix")).to_have_value("")
+    page.locator("#model-endpoint-save-btn").click()
+    expect(page.locator("#modelEndpointModal")).not_to_be_visible()
+    stored = json.loads(page.locator("#model_endpoints_json").input_value())
+    auth = next(item for item in stored if item["id"] == "studio")["auth"]
+    assert auth["api_key_header"] == "X-Gateway-Key"
+    assert auth.get("api_key_prefix", "") == ""
+
+
 @pytest.mark.parametrize("auth_type", ["api_key", "service_principal"])
 def test_classic_duplicate_editor_preserves_image_profiles_and_secret_copy_policy(classic_ui, auth_type):
     source = classic_ui.endpoints[1]
+    source["provider"] = "aoai"
+    source.pop("api_type", None)
+    source["models"][0]["modelName"] = "gpt-image-1"
     source["connection"] = {
         "endpoint": "https://gateway.example.test/team/image-routing",
         "openai_api_version": "2024-05-01-preview",
@@ -202,6 +243,7 @@ def test_classic_duplicate_editor_preserves_image_profiles_and_secret_copy_polic
         if auth_type == "api_key"
         else {"type": "service_principal", "tenant_id": "test-tenant", "client_id": "test-client"}
     )
+    classic_ui.refresh_capabilities()
     original = copy.deepcopy(source)
     classic_ui.open()
     page = classic_ui.page

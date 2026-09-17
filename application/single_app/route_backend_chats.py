@@ -64,6 +64,7 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
@@ -13778,7 +13779,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     endpoint_cfg = next((endpoint for endpoint in endpoint_candidates if endpoint.get('id') == requested_endpoint_id), None)
 
     if not endpoint_cfg:
-        if selection_source == 'request':
+        if selection_source == 'request' or requested_provider == 'custom':
             raise LookupError('Selected model endpoint could not be found.')
         debug_print(
             f"[STREAMING][Model Resolution] Default model endpoint_id={requested_endpoint_id} was not found. Falling back to legacy streaming config."
@@ -13786,7 +13787,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         return None
 
     if not endpoint_cfg.get('enabled', True):
-        if selection_source == 'request':
+        if selection_source == 'request' or endpoint_cfg.get('provider') == 'custom':
             raise ValueError('Selected model endpoint is disabled.')
         debug_print(
             f"[STREAMING][Model Resolution] Default model endpoint_id={requested_endpoint_id} is disabled. Falling back to legacy streaming config."
@@ -13811,13 +13812,13 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_cfg = next(
             (
                 model for model in models
-                if str(model.get('deploymentName') or model.get('deployment') or '').strip() == requested_deployment
+                if resolve_model_endpoint_request_model(resolved_endpoint_cfg, model) == requested_deployment
             ),
             None,
         )
 
     if not model_cfg:
-        if selection_source == 'request':
+        if selection_source == 'request' or resolved_endpoint_cfg.get('provider') == 'custom':
             raise LookupError('Selected model could not be found on the configured endpoint.')
         debug_print(
             f"[STREAMING][Model Resolution] Default model_id={requested_model_id} was not found on endpoint_id={requested_endpoint_id}. Falling back to legacy streaming config."
@@ -13825,7 +13826,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         return None
 
     if not model_cfg.get('enabled', True):
-        if selection_source == 'request':
+        if selection_source == 'request' or resolved_endpoint_cfg.get('provider') == 'custom':
             raise ValueError('Selected model is disabled.')
         debug_print(
             f"[STREAMING][Model Resolution] Default model_id={requested_model_id} is disabled. Falling back to legacy streaming config."
@@ -13843,10 +13844,12 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-    deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
+    deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
     endpoint = str(connection.get('endpoint') or '').strip()
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+    runtime_protocol = infer_model_endpoint_protocol(
+        provider, endpoint, deployment, get_model_endpoint_api_type(resolved_endpoint_cfg),
+    )
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
     model_response_length = normalize_model_response_length_from_model(model_cfg)
     model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
@@ -13865,7 +13868,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
     )
     if missing_required_config:
-        if selection_source == 'request':
+        if selection_source == 'request' or provider == 'custom':
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
                 raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
             raise ValueError('Selected model endpoint is missing endpoint or deployment configuration.')
@@ -25224,9 +25227,10 @@ def register_route_backend_chats(bp):
                     conversation_id=conversation_id,
                     complete_content=loaded['content'],
                     origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    operation=data.get('operation', ''),
                     instruction=data.get('instruction') or '',
                     prompt=data.get('prompt') or '',
-                    mask_data_url=data.get('mask') or '',
+                    mask_data_url=data.get('mask', ''),
                     mask_regions=data.get('mask_regions') or 0,
                     size=data.get('size') or '',
                     quality=data.get('quality') or '',
