@@ -16,8 +16,10 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from functools import partial, wraps
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from azure.core.exceptions import ServiceRequestError
@@ -33,6 +35,8 @@ from functions_workflow_results import (
     persist_workflow_task_result,
     authorize_workflow_task_result_read,
 )
+from content_screening import access as screening_access
+from content_screening.contracts import ScreeningError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,12 +143,31 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
     def unexpected_workspace_write(*args, **kwargs):
         raise AssertionError("Result consumption must not upload or re-index a workspace document.")
 
+    def screening_metadata(document_id, user_id, group_id=None, public_workspace_id=None, **kwargs):
+        if document_id != "inventory-source" or user_id != "owner" or group_id or public_workspace_id:
+            raise PermissionError("Only the fictional inventory source is authorized.")
+        return {"id": document_id, "user_id": "owner", "file_name": "fictional-inventory.txt"}
+
+    def screened_model(invoke, evidence, user_id=None):
+        guarded = screening_access.guard_model_callable(invoke, evidence, user_id)
+
+        @wraps(invoke)
+        def call(*args, **kwargs):
+            with patch.object(screening_access, "_read_authorized_document", screening_metadata):
+                return guarded(*args, **kwargs)
+
+        return call
+
     analysis = _load_production_functions(ANALYSIS, {
         "time": time,
         "log_event": lambda *args, **kwargs: None,
         "debug_print": lambda *args, **kwargs: None,
         "normalize_search_id_list": lambda values: list(values or []),
         "normalize_search_scope": lambda value: value or "personal",
+        "PROVENANCE_FIELD": screening_access.PROVENANCE_FIELD,
+        "ScreeningError": ScreeningError,
+        "guard_model_callable": screened_model,
+        "assert_evidence_available": partial(screening_access.assert_evidence_available, metadata_reader=screening_metadata),
     })
     analysis["_get_mixed_source_orchestration_helpers"] = lambda: (
         type("AnalysisCancelled", (BaseException,), {}),

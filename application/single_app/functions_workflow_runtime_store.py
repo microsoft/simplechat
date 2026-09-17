@@ -1,13 +1,13 @@
 # functions_workflow_runtime_store.py
-"""Durable workflow runtime-control journal for milestone 3.
+"""Durable workflow runtime control and schema-2 paged execution journal.
 
-Version: 0.261.111
+Version: 0.261.116
 Implemented in: 0.261.111
 
-This module owns a single private control row in the existing workflow
-run-items container. It records runtime state, leases, gates, decisions, and
-small safe metadata only; schedulers/runners remain responsible for execution,
-authorization, task replay policy, and large result payload storage.
+The single private control row retains the existing lease/CAS identity.
+Schema 1 keeps legacy unit maps; schema 2 keeps cursor/counters and stores
+execution, attempt, unit and decision records separately in the same partition.
+Schedulers/runners still own execution, authorization and task replay policy.
 """
 
 import json
@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 from azure.cosmos import exceptions as cosmos_exceptions
+from functions_workflow_journal import WorkflowJournalMixin
+from functions_workflow_identity import workflow_execution_id
 
 
 CONTROL_ID = "workflow-runtime:v1"
@@ -55,6 +57,7 @@ IDENTITY_KEYS = frozenset({"workflow_id", "user_id", "group_id", "scope_type", "
 FORBIDDEN_PAYLOAD_KEY_PARTS = ("token", "secret", "password", "connection")
 FORBIDDEN_GATE_KEY_PARTS = FORBIDDEN_PAYLOAD_KEY_PARTS + ("prompt", "result", "payload", "content", "raw")
 GATE_ALLOWED_KEYS = frozenset({
+    "execution_id", "node_id", "iteration_path", "definition_revision",
     "id",
     "kind",
     "unit_id",
@@ -427,6 +430,7 @@ def public_projection(control):
         if isinstance(gate.get("metadata"), dict):
             safe_gate["metadata"] = _safe_ref(gate["metadata"])
     return {
+        "schema_version": control.get("schema_version", 1),
         "version": control.get("version"),
         "state": control.get("state"),
         "control_state": control.get("state"),
@@ -435,11 +439,20 @@ def public_projection(control):
         "snapshot_ref": _safe_ref(control.get("snapshot_ref")),
         "phase": control.get("phase"),
         "progress": control.get("progress"),
+        **({
+            "limits": {
+                "max_executions": control["max_executions"],
+                "admitted_count": int(control.get("admitted_count") or 0),
+                "deadline_at": control["deadline_at"],
+                "deadline_seconds": control["deadline_seconds"],
+                "waits_count": True,
+            },
+        } if control.get("schema_version") == 2 else {}),
         "deleted": bool(control.get("deleted")),
         "gate": safe_gate,
         "memory": {
-            "unit_count": len(units),
-            "completed_unit_count": sum(
+            "unit_count": int((control.get("journal_counts") or {}).get("unit") or 0) if control.get("schema_version") == 2 else len(units),
+            "completed_unit_count": int(control.get("completed_unit_count") or 0) if control.get("schema_version") == 2 else sum(
                 1 for unit in units.values()
                 if isinstance(unit, dict) and (unit.get("state") or unit.get("status")) == "completed"
             ),
@@ -448,6 +461,10 @@ def public_projection(control):
                 for key in sorted(unit_items)
             ],
             "decisions": decisions[-MAX_DECISIONS:],
+            **({
+                "execution_count": int((control.get("journal_counts") or {}).get("execution") or 0),
+                "decision_count": int((control.get("journal_counts") or {}).get("decision") or 0),
+            } if control.get("schema_version") == 2 else {}),
         },
         "can_resume": control.get("state") in RESUMABLE_STATES and not control.get("deleted"),
     }
@@ -456,7 +473,7 @@ def public_projection(control):
 workflow_runtime_projection = public_projection
 
 
-class WorkflowRuntimeStore:
+class WorkflowRuntimeStore(WorkflowJournalMixin):
     """Dependency-injected durable control journal for one authorized workflow run.
 
     ``container`` is the existing personal/group workflow_run_items Cosmos
@@ -475,6 +492,7 @@ class WorkflowRuntimeStore:
             raise ValueError("A workflow run-items container is required.")
         self.container = container
         self.identity = _identity(workflow, run_id)
+        self.workflow = deepcopy(workflow)
         self.clock = clock or _now
 
     def _now(self):
@@ -487,7 +505,7 @@ class WorkflowRuntimeStore:
             raise RuntimeConflict("identity_mismatch", "Workflow runtime identity does not match this run.")
         if control.get("id") != CONTROL_ID or control.get("type") != CONTROL_TYPE or control.get("item_type") != CONTROL_TYPE:
             raise RuntimeConflict("identity_mismatch", "Workflow runtime control row is invalid.")
-        if control.get("kind") != "run" or control.get("schema_version") != SCHEMA_VERSION:
+        if control.get("kind") != "run" or type(control.get("schema_version")) is not int or control.get("schema_version") not in {1, 2}:
             raise RuntimeConflict("identity_mismatch", "Workflow runtime control row version is invalid.")
         if control.get("deleted") and not allow_deleted:
             raise RuntimeConflict("not_found", "Workflow runtime control was deleted.")
@@ -564,6 +582,57 @@ class WorkflowRuntimeStore:
         """Return the internal control row after identity and tombstone checks."""
         return self._read_control(allow_deleted=allow_deleted)
 
+    def expire_deadline(self):
+        def mutator(current):
+            deadline = _parse_timestamp(current.get("deadline_at"))
+            if current.get("schema_version") != 2 or deadline is None or self._now() < deadline or current["state"] in TERMINAL_STATES | {"paused"}:
+                return NO_WRITE
+            return self._limit_pause(current, "deadline_exceeded")
+
+        return self._mutate(mutator)
+
+    def _limit_pause(self, current, code):
+        replacement = self._base_replacement(current)
+        node_id = (current.get("cursor") or {}).get("node_id")
+        replacement.update(state="paused", phase=code, lease=None, version=current["version"] + 1, gate={
+            "id": uuid.uuid4().hex, "kind": "pause", "unit_id": node_id or "run-limits",
+            "input_digest": current["definition_revision"], "choices": ["cancel"],
+            "reason": (
+                "The elapsed workflow deadline was reached, including time spent waiting. Cancel and start a new run."
+                if code == "deadline_exceeded" else
+                "The workflow execution admission limit was reached. Cancel and start a new run with an appropriate limit."
+            ),
+        })
+        return replacement
+
+    def pause_execution_limit(self, token, code):
+        if code not in {"deadline_exceeded", "execution_budget_exceeded"}:
+            raise RuntimeConflict("invalid_limit")
+
+        def mutator(current):
+            self._assert_current_owned(current, token)
+            return self._limit_pause(current, code)
+
+        return self._mutate(mutator)
+
+    def run_definition(self):
+        from functions_workflow_definitions import workflow_definition_revision
+        from functions_workflow_result_store import load_workflow_task_result, load_workflow_runtime_result
+
+        control = self._read_control()
+        snapshot = (
+            load_workflow_runtime_result(self.workflow, self.identity["run_id"], control, control["snapshot_ref"])
+            if control.get("schema_version") == 2 else
+            load_workflow_task_result(self.workflow, self.identity["run_id"], "runtime:definition", control["snapshot_ref"])
+        )
+        if (
+            workflow_definition_revision(snapshot) != control["definition_revision"]
+            or snapshot.get("id") != self.identity["workflow_id"] or snapshot.get("user_id") != self.identity["user_id"]
+            or (snapshot.get("group_id") or None) != self.identity["group_id"]
+        ):
+            raise RuntimeConflict("workflow_definition_changed")
+        return snapshot
+
     def write_record(self, token, record, *, immutable=False):
         """Fence a run-item payload write behind the live runtime-control lease.
 
@@ -625,6 +694,20 @@ class WorkflowRuntimeStore:
             "lease": None,
             "deleted": False,
         }
+        if self.workflow.get("definition_version") == 3:
+            from functions_workflow_flow import compile_workflow_flow
+
+            compiled = compile_workflow_flow(self.workflow)
+            control.update(
+                schema_version=2, cursor={"region_id": compiled["flow"]["id"], "node_id": None},
+                snapshot_identity={"node_id": compiled["flow"]["id"],
+                                   "execution_id": workflow_execution_id(self.workflow, self.identity["run_id"], compiled["flow"]["id"]),
+                                   "attempt": 1, "iteration_path": []},
+                admitted_count=0, journal_sequence=0, journal_counts={},
+                max_executions=compiled["limits"]["max_executions"],
+                deadline_seconds=compiled["limits"]["deadline_seconds"],
+                deadline_at=_iso(self._now() + timedelta(seconds=compiled["limits"]["deadline_seconds"])),
+            )
         _bounded_json_copy(control)
         try:
             saved = self.container.create_item(body=control)
@@ -840,6 +923,11 @@ class WorkflowRuntimeStore:
         return self._mutate(mutator)
 
     def decide(self, *, expected_version, gate_id, choice, actor_user_id, request_id):
+        if self._read_control().get("schema_version") == 2:
+            return self.journal_decide(
+                expected_version=expected_version, gate_id=gate_id, choice=choice,
+                actor_user_id=actor_user_id, request_id=request_id,
+            )
         if type(expected_version) is not int:
             raise RuntimeConflict("stale_version", "Workflow runtime version is required.")
         gate_id = _require_id(gate_id, "gate_id")
@@ -894,6 +982,8 @@ class WorkflowRuntimeStore:
         return self._mutate(mutator, attempts=MAX_CAS_RETRIES)
 
     def request_cancel(self, *, actor_user_id, request_id):
+        if self._read_control().get("schema_version") == 2:
+            return self.journal_request("cancel", actor_user_id=actor_user_id, request_id=request_id)
         actor_user_id = _require_id(actor_user_id, "actor_user_id")
         request_id = _require_id(request_id, "request_id")
 
@@ -947,6 +1037,8 @@ class WorkflowRuntimeStore:
         return self._mutate(mutator, attempts=MAX_CAS_RETRIES)
 
     def resume(self, *, expected_version, actor_user_id, request_id):
+        if self._read_control().get("schema_version") == 2:
+            return self.journal_request("resume", actor_user_id=actor_user_id, request_id=request_id, expected_version=expected_version)
         if type(expected_version) is not int:
             raise RuntimeConflict("stale_version", "Workflow runtime version is required.")
         actor_user_id = _require_id(actor_user_id, "actor_user_id")

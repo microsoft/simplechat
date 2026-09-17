@@ -120,6 +120,7 @@ def _serialize_run(run_record):
                 field: task.get(field)
                 for field in (
                     'task_id', 'task_name', 'task_order', 'status',
+                    'execution_id', 'node_id', 'iteration_path', 'attempt',
                     'workflow_result', 'context_budget', 'consumed_inputs', 'workflow_validation',
                 )
             }

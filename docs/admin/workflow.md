@@ -80,6 +80,26 @@ Cosmos container is required.
 See [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) for
 the operator's approval, continuation, and cancellation workflow.
 
+### Structured control-flow budgets
+
+Version **0.261.116** adds an explicit definition-version-3 option in the V2
+List editor. It uses the existing personal/group permissions and requires
+durable execution; it does not introduce another global capability toggle.
+Existing ordered definitions retain their previous behavior.
+
+The existing **Workflow Task Limit** still caps authored tasks, not runtime
+admissions. A structured definition additionally stores a finite admission
+limit (default/maximum 5,000) and elapsed deadline (default/maximum 86,400
+seconds). Time spent waiting for approval or output counts toward that
+deadline. These limits survive restart and Resume. Exhaustion pauses the run
+without releasing it for overlapping scheduled runs; cancellation is required
+before starting a replacement.
+
+Conditions and joins are deterministic engine operations. Model input limits
+still come from the selected catalog/deployment, not the admission limit.
+See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
+for the supported If/else, Run when, and forward-routing scope.
+
 ## Common tasks
 
 1. **Pilot group workflows with one team.** Enable Group Workflows, turn on

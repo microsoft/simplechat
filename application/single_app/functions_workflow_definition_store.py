@@ -36,9 +36,10 @@ def save_workflow_definition_record(container, partition_key, workflow, existing
             raise WorkflowDefinitionConflict("This workflow is being deleted. Your draft was not saved.")
         if workflow_definition_revision(current) != expected:
             raise WorkflowDefinitionConflict("This workflow changed since it was opened. Reload it before saving.")
-        if workflow.get("definition_version") == 2 and current.get("active_run_id"):
+        if workflow.get("definition_version") in {2, 3} and current.get("active_run_id"):
             raise WorkflowDefinitionConflict("An active run started while editing. Wait or cancel it before saving.")
-        body = dict(workflow)
+        body = {key: value for key, value in current.items() if not key.startswith("_")}
+        body.update(workflow)
         body.update({key: current[key] for key in WORKFLOW_RUNTIME_FIELDS if key in current})
         # A schedule edit intentionally computes a new next run; preserve the
         # live scheduler value only when its authored inputs stayed the same.

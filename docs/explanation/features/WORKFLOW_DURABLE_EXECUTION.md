@@ -4,6 +4,11 @@ Implemented in version: **0.261.111**
 
 Application version tracking: `application/single_app/config.py`.
 
+Structured control-flow integration in **0.261.116** adds an opt-in version-3
+definition and execution-scoped, paged journal records. The ordered version-2
+behavior described below remains supported. See
+[Structured workflow control flow](WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
+
 ## Purpose
 
 Durable execution separates a workflow run from the browser request that
@@ -180,6 +185,7 @@ claim races, checkpoint integrity, pending outputs, and private-record
 visibility. Native V2 tests cover queued responses, run-memory/approval recovery
 after reload, and explicit decision permissions.
 
-No new Cosmos container, external workflow service, graph editor, or loop
-execution feature is required. General For each, Repeat until, branching and
-visual Flow authoring remain separate milestones.
+No new Cosmos container or external workflow service is required. Structured
+If/else, Run when, and restricted forward routing are available through the
+version-3 List editor. General For each, Repeat until, exact Collect, and visual
+Flow authoring remain later milestones.
