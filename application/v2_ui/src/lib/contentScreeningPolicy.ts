@@ -62,6 +62,7 @@ export interface ScreeningBaselineSummary {
 /** UI-normalized templates; the controller obtains every default from the server. */
 export interface ScreeningPolicyTemplates {
     rules: ScreeningRule[];
+    packs: Array<{ id: string; name: string; rules: ScreeningRule[] }>;
     ai: Array<{ id: string; name: string; instructions: string }>;
     severities: string[];
     piiTypes: Array<{ value: string; label: string }>;
@@ -82,10 +83,61 @@ export function newScreeningRule(template: ScreeningRule): ScreeningRule {
     return { ...structuredClone(template), id };
 }
 
+export function newCustomScreeningRule(
+    type: ScreeningRule['type'], templates: ScreeningPolicyTemplates,
+): ScreeningRule {
+    const defaults = templates.rules.find((rule) => rule.type === type);
+    if (!defaults) throw new Error('Rule definitions are unavailable. Reload the policy.');
+    return newScreeningRule({
+        id: '', name: '', type, enabled: defaults.enabled,
+        category: defaults.category, severity: defaults.severity,
+        ...(type === 'pii' ? { pii_type: '' } : {
+            case_sensitive: false, whole_word: false,
+            ...(type === 'regex' ? { pattern: '' } : { values: [] }),
+        }),
+    });
+}
+
+export function addScreeningStarterPack(policy: ScreeningPolicy, rules: ScreeningRule[]): ScreeningPolicy {
+    const ids = new Set(policy.rules.map((rule) => rule.id));
+    return {
+        ...policy,
+        rules: [...policy.rules, ...rules.filter((rule) => !ids.has(rule.id)).map((rule) => structuredClone(rule))],
+    };
+}
+
+export function screeningPolicySummary(
+    policy: ScreeningPolicy, baseline: boolean, inherited?: ScreeningBaselineSummary | null,
+): { label: string; detail: string } {
+    if (!baseline && !inherited) {
+        return { label: 'Required baseline unavailable', detail: 'Reload the policy before interpreting its effective checks.' };
+    }
+    if (!(baseline ? policy.enabled : inherited?.enabled)) {
+        return {
+            label: baseline ? 'Policy disabled' : 'Administrator baseline disabled',
+            detail: 'Saved rules and model selections are inactive until the required baseline is enabled.',
+        };
+    }
+    const requiredRules = baseline ? 0 : inherited?.rule_count ?? 0;
+    const requiredAi = baseline ? 0 : inherited?.ai_check_count ?? 0;
+    const rules = requiredRules + (policy.enabled ? policy.rules.filter((rule) => rule.enabled).length : 0);
+    const ai = requiredAi + (policy.enabled && policy.ai.enabled ? 1 : 0);
+    return {
+        label: `${rules} deterministic check${rules === 1 ? '' : 's'} | ${ai ? `${ai} AI check${ai === 1 ? '' : 's'}` : 'AI screening off'}`,
+        detail: requiredAi
+            ? `Includes ${requiredAi} required administrator AI check${requiredAi === 1 ? '' : 's'}. Disabling workspace AI additions does not disable required checks.`
+            : 'Deterministic checks do not call a model. Model permission selections do not run checks.',
+    };
+}
+
 export function screeningPolicyTemplates(catalog: ScreeningTemplateCatalog): ScreeningPolicyTemplates {
     const rules = Object.values(catalog.rules).map((rule) => structuredClone(rule));
     return {
         rules,
+        packs: Object.entries(catalog.packs).map(([id, keys]) => ({
+            id, name: id.replaceAll('_', ' '),
+            rules: keys.map((key) => structuredClone(catalog.rules[key])),
+        })),
         ai: Object.entries(catalog.ai).map(([id, value]) => ({
             id,
             name: typeof value === 'string' ? id.replaceAll('_', ' ') : value.name,

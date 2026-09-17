@@ -1,7 +1,7 @@
 # test_content_screening_classic.py
 """
 Classic Content Screening policy, hold, review, and remediation workflows.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Uses the existing local/Azure Playwright connection fixture and a closed,
@@ -77,13 +77,13 @@ def test_classic_workspace_policy_preserves_mandatory_baseline(classic_screening
     expect(editor.locator(".screening-policy-baseline")).to_contain_text("cannot remove, disable, or weaken")
     expect(editor.locator(".screening-policy-baseline input")).to_have_count(0)
     expect(editor.get_by_label("Scanner model", exact=True)).to_contain_text("approved-model")
-    editor.get_by_label("Enable workspace additions", exact=True).check()
+    editor.get_by_label("Workspace additions enabled", exact=True).check()
     editor.get_by_role("button", name="Add literal rule", exact=True).click()
     rule = editor.locator(".screening-rule")
     rule.get_by_label("Rule name", exact=True).fill("Synthetic confidential marker")
     rule.get_by_label("Severity", exact=True).select_option("high")
     rule.get_by_label("Category", exact=True).fill("sensitive")
-    rule.get_by_label("Literal values (one per line)", exact=True).fill("fixture-private-marker")
+    rule.get_by_label("Literal values or phrases", exact=True).fill("fixture-private-marker")
     editor.get_by_role("button", name="Save screening policy", exact=True).click()
     expect(editor).to_contain_text("Screening policy saved.")
     assert classic_screening.global_policy["rules"][0]["id"] == "email"

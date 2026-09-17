@@ -6,6 +6,8 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
+**Current documentation version: 0.261.108.** Classic/V2 policy-editor alignment was implemented in this version; the original framework implementation remains 0.261.106.
+
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
 **Related issue:** [#1476](https://github.com/microsoft/simplechat/issues/1476). Related work includes document/chat PII (#341), message alerts (#375), outbound preflight (#992), and formatting-aware extraction (#1142).
@@ -87,6 +89,12 @@ Automatic metadata generation uses admitted source content. New metadata changes
 
 Since **0.261.107**, both interfaces expose **Admin Settings > Security > Content Screening** independently of Content Safety. The V2 policy editor loads and saves the protected policy through its dedicated API, supports sample inspection and configured-model selection, and remains visible before Enhanced Citations is enabled. Main settings saves no longer report success when persistence fails.
 
+Since **0.261.108**, both editors offer explicit custom literal/regex/PII creation and the same server-defined starter packs. Re-adding a pack preserves existing rule IDs, edits, and disabled rules. Deterministic rules do not call a model.
+
+The optional **Enable AI checks** switch precedes the policy's single scanner and criteria. Turning it off disables those inputs without clearing the configuration. **Models workspaces may use** is a separate administrative allowlist, not a list of model checks to execute. The baseline scanner's implicit permission is displayed without copying it into the explicit allowlist.
+
+Configured-check summaries count enabled local and mandatory baseline rules/model checks. Disabling workspace additions does not hide required administrator AI checks; a disabled baseline makes additions inactive. Summaries describe the draft rather than the separate enrollment capability.
+
 Use the [content-review guide]({{ '/guides/review-screened-documents/' | relative_url }}) for baseline selection, existing-workspace scans, and remediation. The capability is distinct from the existing Azure AI Content Safety chat-category feature.
 
 The shared API family is `/api/content-screening/...`; its policy, job, and review operations use authenticated Blueprints and object-level scope authorization. Detailed evidence is separate from ordinary document-list responses.
@@ -94,6 +102,8 @@ The shared API family is `/api/content-screening/...`; its policy, job, and revi
 ## Coverage and limitations
 
 Functional coverage lives in `functional_tests\test_content_screening_*.py`, with route-policy coverage under `functional_tests\route_tests\` and classic/V2 browser workflows under `ui_tests\`.
+
+`ui_tests\test_content_screening_policy_parity.py` runs the same custom-rule, starter-pack, AI-toggle, permission, and inherited-summary workflows against both real interfaces, including narrow and desktop layouts. Logic/rendering regressions cover the V2 helpers, and the engine tests prove that saved scanner references and permission lists do not invoke disabled AI checks.
 
 The core cases include a last-page finding, complete window coverage, regex deadlines, strict model responses, sticky review holds, authorization, revision conflicts, safe derivatives, and recovery from partial publication.
 

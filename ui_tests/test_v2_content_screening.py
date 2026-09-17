@@ -1,7 +1,7 @@
 # test_v2_content_screening.py
 """
 Production V2 browser regressions for screening-controlled documents and review.
-Version: 0.261.107
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Runs the real SPA with the existing closed workspace fixture and its Azure
@@ -917,8 +917,7 @@ def test_admin_policy_is_discoverable_and_editable_before_citations_are_enabled(
     expect(toggle).to_be_visible()
     expect(toggle).to_be_disabled()
     expect(page.get_by_text("must be enabled before these settings take effect.", exact=False)).to_be_visible()
-    editor.get_by_label("Starter rule", exact=True).select_option(label="Confidentiality markings · literal")
-    editor.get_by_role("button", name="Add rule", exact=True).click()
+    editor.get_by_role("button", name="Add literal rule", exact=True).click()
     editor.get_by_label("Rule name", exact=True).fill("Restricted project values")
     editor.get_by_label("Literal values or phrases", exact=True).fill("DO_NOT_SHARE")
     editor.get_by_text("Baseline policy enabled", exact=True).click()
@@ -1016,7 +1015,7 @@ def test_policy_editor_uses_configured_model_ids_and_backend_default_instruction
         "display_name": "Screening model", "provider": "aoai",
     }]
     editor = open_screening_admin(ui)
-    editor.get_by_text("Model screening enabled", exact=True).click()
+    editor.get_by_text("Enable AI checks", exact=True).click()
     editor.get_by_label("Scanner model", exact=True).select_option("0")
     editor.get_by_label("AI starter criteria", exact=True).select_option("1")
     editor.get_by_role("button", name="Use criteria", exact=True).click()

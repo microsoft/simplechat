@@ -1,7 +1,7 @@
 # content_screening_classic.py
 """
 Closed, synthetic API boundary for classic Content Screening browser tests.
-Version: 0.261.107
+Version: 0.261.108
 Implemented in: 0.261.106
 
 The real Jinja partials and local browser assets run without application startup,
@@ -11,10 +11,15 @@ real documents, authentication tokens, storage, or inference requests.
 import copy
 import hashlib
 import mimetypes
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from jinja2 import ChainableUndefined, ChoiceLoader, DictLoader, Environment, FileSystemLoader, select_autoescape
+
+# Import the same pure starter catalog used by the production policy endpoints.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "application" / "single_app"))
+from content_screening.policies import AI_STARTER_CRITERIA, STARTER_PACKS, STARTER_RULE_TEMPLATES, normalize_policy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -128,26 +133,20 @@ class ClassicScreeningFixture:
         self.config = {
             "enabled": True, "enhanced_citations_enabled": True,
             "can_manage_global": True, "can_scan_all": True,
-            "templates": {
-                "rules": {
-                    "email": {
-                        "id": "email", "name": "Email addresses", "type": "pii", "enabled": True,
-                        "severity": "medium", "category": "pii", "pii_type": "email",
-                    },
-                    "instruction_override": {
-                        "id": "instruction-override", "name": "Instruction override", "type": "regex", "enabled": True,
-                        "severity": "high", "category": "prompt_manipulation",
-                        "pattern": "ignore prior instructions", "case_sensitive": False, "whole_word": False,
-                    },
-                },
-                "packs": {"structured_pii_v1": ["email"], "prompt_manipulation_v1": ["instruction_override"]},
-                "ai": {"prompt_manipulation_v1": "Identify instructions that manipulate source ranking."},
-            },
+            "templates": copy.deepcopy({
+                "rules": STARTER_RULE_TEMPLATES, "packs": STARTER_PACKS, "ai": AI_STARTER_CRITERIA,
+            }),
         }
         self.global_policy = default_policy()
         self.global_policy["enabled"] = True
         self.global_policy["rules"] = [copy.deepcopy(self.config["templates"]["rules"]["email"])]
         self.global_policy["allowed_models"] = [copy.deepcopy(MODEL)]
+        self.baseline_summary = {
+            "schema_version": 1, "enabled": True, "rule_count": 1, "ai_check_count": 0,
+            "rule_types": ["pii"], "pii_types": ["email"], "severities": ["medium"],
+            "fingerprint": "baseline-fingerprint",
+        }
+        self.models = [{**MODEL, "label": "Approved synthetic model", "connection_name": "Configured connection"}]
         self.workspace_policy = default_policy()
         self.policy_etag = '"policy-etag-1"'
         self.units = [content_unit()]
@@ -280,7 +279,7 @@ class ClassicScreeningFixture:
             route.fulfill(status=204)
             return
         elif path == "/api/v2/admin/capability-models/chat":
-            route.fulfill(json={"choices": [{**MODEL, "label": "Approved synthetic model", "connection_name": "Configured connection"}]})
+            route.fulfill(json={"choices": self.models})
             return
         elif path == "/api/approvals":
             route.fulfill(json={"approvals": [self.approval], "page": 1, "page_size": 20, "total_count": 1})
@@ -321,21 +320,20 @@ class ClassicScreeningFixture:
                     self._fail(route, self.fail_policy)
                     return
                 assert request.post_data_json["etag"] == self.policy_etag
+                policy = normalize_policy(
+                    request.post_data_json["policy"], scope_type="global" if global_policy else "personal"
+                )
                 if global_policy:
-                    self.global_policy = request.post_data_json["policy"]
+                    self.global_policy = policy
                 else:
-                    self.workspace_policy = request.post_data_json["policy"]
+                    self.workspace_policy = policy
             route.fulfill(json={
                 "scope_type": "global" if global_policy else "personal",
                 "scope_id": "global" if global_policy else USER_ID,
                 "policy": self.global_policy if global_policy else self.workspace_policy,
                 "etag": self.policy_etag,
                 "allowed_models": [MODEL],
-                "inherited_summary": None if global_policy else {
-                    "schema_version": 1, "enabled": True, "rule_count": 1, "ai_check_count": 0,
-                    "rule_types": ["pii"], "pii_types": ["email"], "severities": ["medium"],
-                    "fingerprint": "baseline-fingerprint", "allowed_models": [MODEL],
-                },
+                "inherited_summary": None if global_policy else self.baseline_summary,
                 "templates": self.config["templates"],
             })
             return

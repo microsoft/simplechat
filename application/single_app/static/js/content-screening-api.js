@@ -57,6 +57,9 @@
                 name: typeof instructions === "object" ? instructions.name : id.replace(/_/g, " ")
             })),
             pii_types: [...new Set(ruleList.filter(rule => rule.type === "pii").map(rule => rule.pii_type))],
+            pii_choices: ruleList.filter(rule => rule.type === "pii").map(rule => ({
+                value: rule.pii_type, label: rule.name
+            })),
             severities: ["low", "medium", "high", "critical"],
             rule_defaults: Object.fromEntries(["pii", "regex", "literal"].map(type => {
                 const rule = ruleList.find(item => item.type === type);
