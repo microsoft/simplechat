@@ -1,18 +1,21 @@
 # test_ai_connection_image_runtime.py
 """
 Functional tests for shared image bindings, persistence, proposals, editing, and admin tests.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 
 Application storage, secret retrieval, and credentials are isolated before runtime imports.
 No Azure inference, provisioning, or Cosmos initialization is performed.
+Provider-qualified Custom image runtime coverage was added in 0.261.107.
 """
 
 import ast
 import base64
 import copy
+import io
 import json
 import logging
+import socket
 import sys
 import textwrap
 import types
@@ -22,9 +25,11 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import httpcore
 import httpx
 from flask import Flask, jsonify, request
 from openai import BadRequestError, RateLimitError
+from PIL import Image
 
 TEST_ROOT = Path(__file__).resolve().parent
 APP_ROOT = TEST_ROOT.parent.joinpath("application", "single_app")
@@ -37,13 +42,29 @@ import functions_ai_connections as connections  # noqa: E402
 import functions_image_api_route as image_route  # noqa: E402
 import functions_image_edit as image_edit  # noqa: E402
 
+# Keep application startup isolated while importing the real Custom auth, type, and URL helpers.
+with stubbed_config(cognitive_services_scope="https://cognitiveservices.azure.com/.default"):
+    import functions_model_endpoint_auth as endpoint_auth
+    import functions_model_endpoint_providers as endpoint_providers
+    import functions_model_endpoint_types as endpoint_types
+    import functions_model_endpoint_validation as endpoint_validation
+    import model_endpoint_clients as endpoint_clients
+
 
 generation = import_app_module("functions_image_generation")
 IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+IMAGE_BYTES = base64.b64decode(IMAGE_BASE64)
 IMAGE_SOURCE = f"data:image/png;base64,{IMAGE_BASE64}"
 
 
+def png_bytes(size=(1, 1), *, mode="RGBA", color=(0, 0, 0, 0), compress_level=6):
+    with io.BytesIO() as buffer:
+        Image.new(mode, size, color).save(buffer, format="PNG", compress_level=compress_level)
+        return buffer.getvalue()
+
+
 def shared_image_settings(*, direct=False, provider="aoai"):
+    """Default to the deliberately invalid Azure GPT selection; Custom support is explicit."""
     model = {
         "id": "stable-model",
         "deploymentName": "selected-image" if direct else "selected-gpt",
@@ -62,11 +83,12 @@ def shared_image_settings(*, direct=False, provider="aoai"):
         },
         "model_endpoints": [{
             "id": "team-one",
-            "name": "Team Azure",
+            "name": "Team OpenAI" if provider == "custom" else "Team Azure",
             "provider": provider,
+            **({"api_type": "openai"} if provider == "custom" else {}),
             "enabled": True,
             "connection": {
-                "endpoint": "https://team-one.openai.azure.com",
+                "endpoint": "https://api.openai.com/v1" if provider == "custom" else "https://team-one.openai.azure.com",
                 "api_version": "2023-03-15-preview",
                 "operation_settings": {
                     "image_generation": {
@@ -78,7 +100,7 @@ def shared_image_settings(*, direct=False, provider="aoai"):
             "auth": {"type": "api_key", "api_key": "vault-reference"},
             "models": [model],
         }],
-        "image_gen_model": {"selected": [{"deploymentName": "legacy-image", "modelName": "dall-e-3"}]},
+        "image_gen_model": {"selected": [{"deploymentName": "legacy-image", "modelName": "gpt-image-1"}]},
         "azure_openai_image_gen_endpoint": "https://legacy.openai.azure.com",
         "azure_openai_image_gen_key": "legacy-key",
         "azure_openai_image_gen_api_version": "2024-12-01-preview",
@@ -91,7 +113,7 @@ def responses_image_response(**overrides):
         "object": "response",
         "created_at": 1,
         "status": "completed",
-        "model": "selected-gpt",
+        "model": "gpt-5.6-terra",
         "output": [{
             "id": "ig_test",
             "type": "image_generation_call",
@@ -127,6 +149,16 @@ class ImageRuntimeTestCase(unittest.TestCase):
             cognitive_services_scope="https://cognitiveservices.azure.com/.default",
             cosmos_messages_container=self.messages,
         ))
+        self.stack.enter_context(patch.object(socket, "getaddrinfo", side_effect=lambda _host, port, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port)),
+        ]))
+        self.stack.enter_context(patch.object(
+            httpcore.SyncBackend, "connect_tcp",
+            side_effect=AssertionError("Unexpected live image connection"),
+        ))
+        self.stack.enter_context(patch.object(
+            generation.requests, "get", side_effect=AssertionError("Unexpected live image download")
+        ))
         self.secret_helper = Mock(side_effect=self.resolve_secret)
         keyvault = types.ModuleType("functions_keyvault")
         keyvault.SecretReturnType = types.SimpleNamespace(VALUE="value")
@@ -135,6 +167,27 @@ class ImageRuntimeTestCase(unittest.TestCase):
         self.credential = Mock()
         runtime.resolve_credential_for_model_endpoint_auth = Mock(return_value=self.credential)
         runtime.resolve_foundry_scope_for_endpoint_auth = Mock(return_value="https://ai.azure.us/.default")
+        self.custom_http_clients = []
+        self.custom_http_factory = Mock(side_effect=self.make_http_client)
+        runtime.__dict__.update({
+            "ModelEndpointValidationError": endpoint_validation.ModelEndpointValidationError,
+            "CUSTOM_ENDPOINT_VERSION_PATTERN": endpoint_validation.CUSTOM_ENDPOINT_VERSION_PATTERN,
+            "custom_endpoint_setting_enabled": endpoint_validation.custom_endpoint_setting_enabled,
+            "validate_custom_model_endpoint_url": endpoint_validation.validate_custom_model_endpoint_url,
+            "get_model_endpoint_provider": endpoint_providers.get_model_endpoint_provider,
+            "get_model_endpoint_api_type": endpoint_types.get_model_endpoint_api_type,
+            "resolve_client_certificate": endpoint_auth.resolve_client_certificate,
+            "resolve_custom_endpoint_credentials": endpoint_auth.resolve_custom_endpoint_credentials,
+            "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": endpoint_providers.MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+            "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": endpoint_providers.MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+            "resolve_custom_azure_openai_base_url": endpoint_clients.resolve_custom_azure_openai_base_url,
+            "resolve_custom_openai_base_url": endpoint_clients.resolve_custom_openai_base_url,
+            "build_custom_openai_sync_http_client": self.custom_http_factory,
+            "build_custom_openai_async_http_client": Mock(side_effect=AssertionError("Unexpected async image client")),
+        })
+        load_route_functions("functions_model_endpoint_runtime.py", (
+            "_resolve_custom_endpoint_runtime_options", "build_custom_openai_client_kwargs",
+        ), runtime.__dict__)
         self.auth_runtime = runtime
         self.stack.enter_context(patch.dict(sys.modules, {
             "functions_image_generation": generation,
@@ -157,6 +210,18 @@ class ImageRuntimeTestCase(unittest.TestCase):
         )
         self.app = Flask(__name__)
         self.app.secret_key = "test-only-session-key"
+
+    def make_http_client(self, **_transport_options):
+        client = httpx.Client(
+            transport=httpx.MockTransport(self.handle_request),
+            trust_env=False, follow_redirects=False,
+        )
+        self.custom_http_clients.append(client)
+        self.stack.callback(client.close)
+        return client
+
+    def handle_request(self, _request):
+        raise AssertionError("No HTTP response was configured for this test")
 
     @staticmethod
     def resolve_secret(endpoint, endpoint_id, *, scope, return_type):
@@ -256,22 +321,28 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         namespace["_resolve_legacy_chat_reasoning_model_name"].assert_called_once()
 
     def test_registered_factory_returns_client_only_and_images_ignore_chat_gate(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         client, constructor = self.mock_client()
         binding = connections.resolve_capability_binding(settings, "image_generation")
         self.assertIs(connections.create_capability_client(binding, settings), client)
         self.assertEqual(generation.request_generated_image_source(settings, "Draw a mountain"), IMAGE_SOURCE)
         arguments = client.responses.create.call_args.kwargs
-        self.assertEqual(arguments["model"], "selected-gpt")
+        self.assertEqual(arguments["model"], "gpt-5.6-terra")
         self.assertEqual(arguments["tools"], [{"type": "image_generation"}])
         self.assertEqual(arguments["tool_choice"], {"type": "image_generation"})
-        self.assertEqual(constructor.call_args.kwargs["base_url"], "https://team-one.openai.azure.com/openai/v1/")
-        self.assertEqual(constructor.call_args.kwargs["default_query"], {})
+        self.assertEqual(constructor.call_args.kwargs["base_url"], "https://api.openai.com/v1/")
+        self.assertEqual(constructor.call_args.kwargs.get("default_query", {}), {})
         self.assertEqual(constructor.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(constructor.call_args.kwargs["image_auth_header"], "authorization")
+        self.assertIs(constructor.call_args.kwargs["http_client"], self.custom_http_clients[-1])
+        self.assertEqual(self.custom_http_factory.call_count, 2)
+        self.custom_http_factory.assert_called_with(
+            allow_private=False, allow_insecure=False, ca_bundle_path="", client_cert=None
+        )
         client.images.generate.assert_not_called()
 
     def test_registered_factory_enforces_the_image_capability_gate(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings["enable_image_generation"] = False
         _, constructor = self.mock_client()
         binding = connections.resolve_capability_binding(settings, "image_generation")
@@ -282,7 +353,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.secret_helper.assert_not_called()
 
     def test_imported_image_only_models_choose_routes_without_a_connection_api(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         endpoint = settings["model_endpoints"][0]
         endpoint["models"][0]["enabled_capabilities"] = ["image_generation"]
         dedicated = shared_image_settings(direct=True)["model_endpoints"][0]["models"][0]
@@ -291,20 +362,20 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         client, constructor = self.mock_client()
 
         self.assertEqual(generation.request_generated_image_source(settings, "Use selected GPT"), IMAGE_SOURCE)
-        self.assertEqual(client.responses.create.call_args.kwargs["model"], "selected-gpt")
-        self.assertEqual(constructor.call_args.kwargs["default_query"], {})
+        self.assertEqual(client.responses.create.call_args.kwargs["model"], "gpt-5.6-terra")
+        self.assertEqual(constructor.call_args.kwargs.get("default_query", {}), {})
         settings[connections.IMAGE_SELECTION_KEY]["model_id"] = "dedicated-image"
         self.assertEqual(generation.request_generated_image_source(settings, "Use selected image"), IMAGE_SOURCE)
-        self.assertEqual(client.images.generate.call_args.kwargs["model"], "selected-image")
-        self.assertEqual(constructor.call_args.kwargs["default_query"], {"api-version": "2025-04-01-preview"})
+        self.assertEqual(client.images.generate.call_args.kwargs["model"], "gpt-image-1")
+        self.assertEqual(constructor.call_args.kwargs.get("default_query", {}), {})
         self.assertEqual(image_edit.resolve_image_edit_capability(settings)["mode"], "masked")
         self.assertNotIn("api", endpoint["connection"]["operation_settings"]["image_generation"])
         for model in endpoint["models"]:
-            self.assertFalse(connections.supports_model_capability(model, "chat", "aoai"))
-            self.assertTrue(connections.supports_model_capability(model, "image_generation", "aoai"))
+            self.assertFalse(connections.supports_model_capability(model, "chat", "custom", endpoint=endpoint))
+            self.assertTrue(connections.supports_model_capability(model, "image_generation", "custom", endpoint=endpoint))
 
     def test_stored_global_secret_is_resolved_without_mutating_registry(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         before = copy.deepcopy(settings)
         _, constructor = self.mock_client()
         generation.request_generated_image_source(settings, "Draw a mountain")
@@ -314,7 +385,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(self.secret_helper.call_args.kwargs, {"scope": "global", "return_type": "value"})
 
     def test_rotated_key_is_read_for_each_request(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         _, constructor = self.mock_client()
         generation.request_generated_image_source(settings, "First image")
         settings["model_endpoints"][0]["auth"]["api_key"] = "rotated-key"
@@ -322,30 +393,64 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(constructor.call_args.kwargs["api_key"], "rotated-key")
         self.assertEqual(self.secret_helper.call_count, 2)
 
+    def test_custom_bridge_preserves_auth_overrides_and_guarded_transport_options(self):
+        settings = shared_image_settings(provider="custom")
+        endpoint = settings["model_endpoints"][0]
+        endpoint["auth"].update({"api_key_header": "x-gateway-key", "api_key_prefix": "Token"})
+        endpoint["connection"].update({
+            "client_cert_path": "fixture-client.pem", "client_key_path": "fixture-client-key.pem",
+        })
+        settings.update({
+            "allow_private_custom_model_endpoints": True,
+            "allow_insecure_custom_model_endpoints": True,
+            "custom_model_endpoint_ca_bundle_path": "fixture-ca.pem",
+        })
+        original = copy.deepcopy(settings)
+        client, constructor = self.mock_client()
+        self.assertEqual(generation.request_generated_image_source(settings, "A mountain"), IMAGE_SOURCE)
+        kwargs = constructor.call_args.kwargs
+        self.assertEqual(kwargs["default_headers"]["Authorization"], "")
+        self.assertEqual(kwargs["default_headers"]["x-gateway-key"], "Token resolved-connection-key")
+        self.assertNotEqual(kwargs["api_key"], "resolved-connection-key")
+        self.assertEqual(kwargs["image_auth_header"], "authorization")
+        self.assertEqual(kwargs["max_retries"], 0)
+        self.assertIs(kwargs["http_client"], self.custom_http_clients[-1])
+        self.custom_http_factory.assert_called_once_with(
+            allow_private=True, allow_insecure=True, ca_bundle_path="fixture-ca.pem",
+            client_cert=("fixture-client.pem", "fixture-client-key.pem"),
+        )
+        self.assertEqual(settings, original)
+        client.responses.create.assert_called_once()
+        client.images.generate.assert_not_called()
+        client.close.assert_called_once()
+
     def test_cleared_missing_disabled_and_forged_selections_never_reactivate_legacy(self):
         _, constructor = self.mock_client()
         variants = []
         for value in (None, {}, {"endpoint_id": "", "model_id": "", "provider": ""}):
-            settings = shared_image_settings()
+            settings = shared_image_settings(provider="custom")
             settings[connections.IMAGE_SELECTION_KEY] = value
             variants.append(settings)
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings.pop(connections.IMAGE_SELECTION_KEY)
         settings[connections.IMAGE_MIGRATION_VERSION_KEY] = connections.IMAGE_MIGRATION_VERSION
         variants.append(settings)
         for field, value in (("endpoint_id", "personal-endpoint"), ("model_id", "other-model"), ("provider", "new_foundry")):
-            settings = shared_image_settings()
+            settings = shared_image_settings(provider="custom")
             settings[connections.IMAGE_SELECTION_KEY][field] = value
             variants.append(settings)
         for target in ("endpoint", "model"):
-            settings = shared_image_settings()
+            settings = shared_image_settings(provider="custom")
             entry = settings["model_endpoints"][0]
             (entry if target == "endpoint" else entry["models"][0])["enabled"] = False
             variants.append(settings)
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings["model_endpoints"][0]["models"][0]["enabled_capabilities"] = ["chat"]
         variants.append(settings)
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
+        settings["model_endpoints"][0]["models"][0].pop("modelName")
+        variants.append(settings)
+        settings = shared_image_settings(direct=True)
         settings["model_endpoints"][0]["models"][0].pop("deploymentName")
         variants.append(settings)
         bootstrap = load_route_functions(
@@ -358,8 +463,17 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
                 self.assertEqual(image_route.resolve_selected_image_model_name(settings), "")
                 capability = image_edit.resolve_image_edit_capability(settings)
                 self.assertFalse(capability["enabled"])
+                self.assertEqual(capability["mode"], "unavailable")
                 self.assertTrue(capability["reason"])
                 projection = bootstrap["_build_capabilities"](settings)["image_edit"]
+                self.assertEqual(projection, {
+                    key: capability[key]
+                    for key in (
+                        "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
+                        "availability", "availability_reason", "editing", "masking",
+                        "sizes", "qualities", "backgrounds",
+                    )
+                })
                 self.assertEqual(projection["model_name"], "")
                 self.assertEqual(projection["reason"], capability["reason"])
                 self.assertNotIn("vault-reference", json.dumps(projection))
@@ -372,7 +486,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.secret_helper.assert_not_called()
 
     def test_unestablished_gpt_capability_is_not_inferred_from_its_name(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         model = settings["model_endpoints"][0]["models"][0]
         model.pop("supportsImageGeneration")
         model["modelName"] = "gpt-not-a-verified-image-tool-model"
@@ -380,6 +494,29 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         with self.assertRaises(connections.AIConnectionError):
             generation.request_generated_image_source(settings, "Draw a mountain")
         constructor.assert_not_called()
+        self.secret_helper.assert_not_called()
+
+    def test_azure_and_foundry_gpt_overrides_cannot_start_an_image_request(self):
+        _, constructor = self.mock_client()
+        for provider in ("aoai", "aifoundry", "new_foundry"):
+            for route in ("images", "responses"):
+                with self.subTest(provider=provider, route=route):
+                    settings = shared_image_settings(provider=provider)
+                    endpoint = settings["model_endpoints"][0]
+                    endpoint["models"][0]["image_generation_api"] = route
+                    dedicated = shared_image_settings(direct=True)["model_endpoints"][0]["models"][0]
+                    endpoint["models"].append({**dedicated, "id": "available-image"})
+                    endpoint["connection"]["operation_settings"]["image_generation"]["image_deployment"] = "selected-image"
+                    original = copy.deepcopy(settings)
+                    self.assertTrue(connections.supports_model_capability(
+                        endpoint["models"][0], "chat", provider, endpoint=endpoint
+                    ))
+                    with self.assertRaises(connections.AIConnectionError):
+                        generation.request_generated_image_source(settings, "Do not substitute a model")
+                    self.assertEqual(settings, original)
+        constructor.assert_not_called()
+        self.secret_helper.assert_not_called()
+        self.custom_http_factory.assert_not_called()
 
     def test_legacy_and_shared_direct_images_keep_their_versions(self):
         client, constructor = self.mock_client()
@@ -396,32 +533,47 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         client.responses.create.assert_not_called()
 
     def test_no_arbitrary_image_backend_or_cross_connection_selection(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         image_model = shared_image_settings(direct=True)["model_endpoints"][0]["models"][0]
         settings["model_endpoints"][0]["models"].append({**image_model, "id": "image-one"})
         settings["model_endpoints"].append({
             **copy.deepcopy(settings["model_endpoints"][0]),
             "id": "other-resource",
+            "provider": "aoai",
             "connection": {"endpoint": "https://other-resource.openai.azure.com"},
+            "auth": {"type": "api_key", "api_key": "other-resource-key"},
         })
-        _, constructor = self.mock_client()
-        generation.request_generated_image_source(settings, "Use provider default")
-        self.assertNotIn("x-ms-oai-image-generation-deployment", constructor.call_args.kwargs["default_headers"])
+        client, constructor = self.mock_client()
         profile = settings["model_endpoints"][0]["connection"]["operation_settings"]["image_generation"]
-        profile["image_deployment"] = "selected-image"
-        generation.request_generated_image_source(settings, "Use explicitly stored backend")
-        self.assertEqual(constructor.call_args.kwargs["default_headers"]["x-ms-oai-image-generation-deployment"], "selected-image")
-        profile["image_deployment"] = "selected-gpt"
-        with self.assertRaises(connections.AIConnectionError):
-            generation.request_generated_image_source(settings, "Do not use GPT as image backend")
-        self.assertEqual(constructor.call_count, 2)
+        for backend in (None, "selected-image", "selected-gpt", "missing-backend"):
+            with self.subTest(backend=backend):
+                if backend is not None:
+                    profile["image_deployment"] = backend
+                original = copy.deepcopy(settings)
+                generation.request_generated_image_source(settings, "Use only the selected Custom model")
+                kwargs = constructor.call_args.kwargs
+                self.assertNotIn("x-ms-oai-image-generation-deployment", kwargs["default_headers"])
+                self.assertEqual(kwargs["base_url"], "https://api.openai.com/v1/")
+                self.assertEqual(kwargs["api_key"], "resolved-connection-key")
+                self.assertEqual(client.responses.create.call_args.kwargs["model"], "gpt-5.6-terra")
+                self.assertEqual(self.secret_helper.call_args.args[1], "team-one")
+                self.assertEqual(settings, original)
+        settings[connections.IMAGE_SELECTION_KEY]["endpoint_id"] = "other-resource"
+        for provider in ("custom", "aoai"):
+            settings[connections.IMAGE_SELECTION_KEY]["provider"] = provider
+            with self.assertRaises(connections.AIConnectionError):
+                generation.request_generated_image_source(settings, "Do not substitute another connection or image model")
+        self.assertEqual(constructor.call_count, 4)
+        self.assertEqual(self.secret_helper.call_count, 4)
+        client.images.generate.assert_not_called()
 
     def test_migrated_images_profile_does_not_force_selected_gpt_onto_images(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings["model_endpoints"][0]["connection"]["operation_settings"]["image_generation"]["api"] = "images"
         client, _ = self.mock_client()
         generation.request_generated_image_source(settings, "Draw a mountain")
         client.responses.create.assert_called_once()
+        self.assertEqual(client.responses.create.call_args.kwargs["model"], "gpt-5.6-terra")
         client.images.generate.assert_not_called()
 
     def test_non_successful_tools_and_refusals_never_produce_a_success(self):
@@ -439,8 +591,25 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         for response in variants:
             client.responses.create.return_value = response
             with self.subTest(response=response), self.assertRaises(image_route.ImageGenerationError):
-                generation.request_generated_image_source(shared_image_settings(), "Draw a mountain")
+                generation.request_generated_image_source(shared_image_settings(provider="custom"), "Draw a mountain")
         client.images.generate.assert_not_called()
+
+    def test_valid_base64_without_image_pixels_is_never_persisted(self):
+        client, _ = self.mock_client()
+        client.responses.create.return_value = responses_image_response(output=[{
+            "type": "image_generation_call", "status": "completed",
+            "result": base64.b64encode(b"Provider prose, not an image").decode("ascii"),
+        }])
+        with self.assertRaises(image_route.ImageGenerationError) as raised:
+            generation.generate_chat_image_message(
+                settings=shared_image_settings(provider="custom"),
+                user_id="user-1", conversation_id="conversation-1", prompt="A mountain",
+            )
+        self.assertEqual(raised.exception.code, "image_output_invalid")
+        self.messages.upsert_item.assert_not_called()
+        client.responses.create.assert_called_once()
+        client.images.generate.assert_not_called()
+        client.close.assert_called_once()
 
     def test_error_categories_and_logs_do_not_expose_provider_messages(self):
         cases = [
@@ -476,7 +645,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertNotIn("private-key", json.dumps(payload))
 
     def test_persistence_records_selected_deployment_proposal_and_thread_metadata(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         proposal = generation.normalize_image_proposal({"visualId": "figure-1", "prompt": "A mountain", "title": "Mountain"})
         with patch.object(generation, "request_generated_image_source", return_value=IMAGE_SOURCE):
             result = generation.generate_chat_image_message(
@@ -486,8 +655,8 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
                 proposal=proposal, source_assistant_message_id="assistant-1",
             )
         stored = self.messages.upsert_item.call_args.args[0]
-        self.assertEqual(stored["model_deployment_name"], "selected-gpt")
-        self.assertEqual(result["model_deployment_name"], "selected-gpt")
+        self.assertEqual(stored["model_deployment_name"], "gpt-5.6-terra")
+        self.assertEqual(result["model_deployment_name"], "gpt-5.6-terra")
         self.assertEqual(stored["prompt"], "A mountain")
         self.assertEqual(stored["metadata"]["image_proposal"]["source_assistant_message_id"], "assistant-1")
         self.assertIn("approved_at", stored["metadata"]["image_proposal"])
@@ -495,7 +664,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(stored["metadata"]["user_info"], {"user_id": "user-1"})
 
     def test_persistence_resolves_deployment_before_generation(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings[connections.IMAGE_SELECTION_KEY] = None
         with patch.object(generation, "request_generated_image_source") as generate:
             with self.assertRaises(connections.AIConnectionError):
@@ -516,7 +685,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.stack.enter_context(patch.dict(sys.modules, {"functions_simplechat_operations": operations}))
         with patch.object(generation, "request_generated_image_source", return_value=IMAGE_SOURCE):
             result = generation.generate_chat_image_message(
-                settings=shared_image_settings(), user_id="user-1", conversation_id="conversation-1",
+                settings=shared_image_settings(provider="custom"), user_id="user-1", conversation_id="conversation-1",
                 prompt="A mountain", proposal={"visualId": "figure-1"}, store_in_blob=True,
             )
         self.assertEqual(result["image_url"], "/api/image/new-image")
@@ -525,10 +694,11 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertTrue(result["image_message"]["metadata"]["is_blob_backed"])
         self.assertEqual(result["image_message"]["metadata"]["original_size"], 70)
         self.messages.reset_mock()
-        large_source = "data:image/png;base64," + "A" * 2_000_000
+        large_image = png_bytes((768, 768), mode="RGB", color="blue", compress_level=0)
+        large_source = "data:image/png;base64," + base64.b64encode(large_image).decode("ascii")
         with patch.object(generation, "request_generated_image_source", return_value=large_source):
             generation.generate_chat_image_message(
-                settings=shared_image_settings(), user_id="user-1", conversation_id="conversation-1",
+                settings=shared_image_settings(provider="custom"), user_id="user-1", conversation_id="conversation-1",
                 prompt="A mountain", proposal={"visualId": "large-figure"},
             )
         documents = [call.args[0] for call in self.messages.upsert_item.call_args_list]
@@ -539,47 +709,66 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(documents[1]["parent_message_id"], documents[0]["id"])
 
     def test_all_whole_image_regeneration_uses_shared_request(self):
-        for direct in (False, True):
-            settings = shared_image_settings(direct=direct)
-            if direct:
-                settings["model_endpoints"][0]["models"][0]["modelName"] = "dall-e-3"
+        for direct, provider, deployment in (
+            (False, "custom", "gpt-5.6-terra"),
+            (True, "custom", "gpt-image-1"),
+            (True, "aoai", "selected-image"),
+        ):
+            settings = shared_image_settings(direct=direct, provider=provider)
             with patch.object(generation, "request_generated_image_source", return_value=IMAGE_SOURCE) as generate:
                 with patch.object(image_edit, "_finish_image_edit", return_value={"method": "regenerate"}) as finish:
-                    result = image_edit.request_image_edit(settings, {}, "New mountain", quality="high")
+                    result = image_edit.request_image_edit(
+                        settings, None, "New mountain", quality="high", operation="regenerate"
+                    )
             self.assertEqual(result["method"], "regenerate")
             generate.assert_called_once_with(settings, "New mountain", size="", quality="high", background="")
-            self.assertEqual(finish.call_args.kwargs["deployment"], "selected-image" if direct else "selected-gpt")
+            self.assertEqual(finish.call_args.kwargs["deployment"], deployment)
 
     def test_shared_masked_edit_uses_operation_version_and_existing_edit_payload(self):
         settings = shared_image_settings(direct=True)
         settings["azure_openai_image_gen_api_version"] = "2020-01-01"
         self.assertEqual(image_edit.resolve_image_edit_capability(settings)["mode"], "masked")
-        client, _ = self.mock_client()
+        client, constructor = self.mock_client()
         client.images.edit.return_value = {"data": [{"b64_json": IMAGE_BASE64}]}
+        mask_bytes = png_bytes()
         with patch.object(image_edit, "_finish_image_edit", return_value={"method": "edit"}):
             result = image_edit.request_image_edit(
-                settings, {"file_name": "source.png", "bytes": b"source", "mime_type": "image/png"},
-                "Change the sky", mask={"bytes": b"mask"}, quality="high",
+                settings, {"file_name": "source.png", "bytes": IMAGE_BYTES, "mime_type": "image/png"},
+                "Change the sky", mask={"bytes": mask_bytes}, quality="high", operation="edit",
             )
         self.assertEqual(result["method"], "edit")
         arguments = client.images.edit.call_args.kwargs
         self.assertEqual(arguments["model"], "selected-image")
-        self.assertEqual(arguments["mask"], ("mask.png", b"mask", "image/png"))
-        self.assertEqual(arguments["extra_body"], {"quality": "high", "input_fidelity": "high"})
+        self.assertEqual(arguments["image"], ("source.png", IMAGE_BYTES, "image/png"))
+        self.assertEqual(arguments["mask"], ("mask.png", mask_bytes, "image/png"))
+        self.assertEqual(arguments["extra_body"], {"quality": "high"})
+        self.assertEqual(constructor.call_args.kwargs["default_query"], {"api-version": "2025-04-01-preview"})
+        client.images.edit.assert_called_once()
         client.responses.create.assert_not_called()
         client.images.generate.assert_not_called()
 
     def test_editor_handles_cleared_selection_without_breaking_bootstrap(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings[connections.IMAGE_SELECTION_KEY] = {}
         capability = image_edit.resolve_image_edit_capability(settings)
         self.assertFalse(capability["enabled"])
+        self.assertFalse(capability["supported"])
+        self.assertFalse(capability["editing"])
+        self.assertFalse(capability["masking"])
+        self.assertEqual(capability["mode"], "unavailable")
+        self.assertEqual(set(capability), {
+            "mode", "enabled", "supported", "model_name", "reason", "api", "editing", "masking",
+            "provider_label", "cloud_label", "availability", "availability_reason",
+            "sizes", "qualities", "backgrounds", "input_formats", "output_formats",
+        })
+        for field in ("sizes", "qualities", "backgrounds", "input_formats", "output_formats"):
+            self.assertEqual(capability[field], [])
         self.assertTrue(capability["reason"])
         with self.assertRaises(connections.AIConnectionError):
             image_edit.request_image_edit(settings, {}, "New mountain")
 
     def test_admin_shared_reference_uses_stored_globals_and_ignores_payload_secrets(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         settings["enable_image_generation"] = False
         before = copy.deepcopy(settings)
         namespace = self.admin_namespace(settings)
@@ -598,7 +787,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         namespace["resolve_admin_settings_secret_value"].assert_not_called()
 
     def test_admin_legacy_draft_keeps_redacted_secret_resolution_and_gateway_path(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         namespace = self.admin_namespace(settings)
         client, constructor = self.mock_client()
         with self.app.app_context():
@@ -618,10 +807,14 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(client.images.generate.call_args.kwargs["model"], "legacy-gateway-image")
 
     def test_admin_rejects_forged_and_cleared_references_without_legacy_fallback(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         namespace = self.admin_namespace(settings)
         _, constructor = self.mock_client()
-        for selection in (None, {}, {"endpoint_id": "private", "model_id": "stable-model", "provider": "aoai"}):
+        for selection in (
+            None, {},
+            {"endpoint_id": "private", "model_id": "stable-model", "provider": "custom"},
+            {"endpoint_id": "team-one", "model_id": "stable-model", "provider": "aoai"},
+        ):
             with self.app.app_context():
                 response, status = namespace["run_admin_settings_connection_test"]({
                     "test_type": "image", "selection": selection,
@@ -651,17 +844,19 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         with self.assertRaises(image_edit.ImageEditError) as caught:
             image_edit.request_image_edit(
                 shared_image_settings(direct=True),
-                {"file_name": "source.png", "bytes": b"source", "mime_type": "image/png"},
-                "Change the sky",
+                {"file_name": "source.png", "bytes": IMAGE_BYTES, "mime_type": "image/png"},
+                "Change the sky", operation="edit",
             )
         payload, status = generation.image_generation_error_response(caught.exception)
         self.assertEqual(status, 429)
         self.assertTrue(payload["rate_limited"])
         self.assertNotIn("private-key", str(self.logs.call_args_list))
         self.assertNotIn("private-prompt", str(caught.exception))
+        client.images.edit.assert_called_once()
+        client.responses.create.assert_not_called()
 
     def test_proposal_configuration_failure_is_not_relabelled_as_bad_prompt(self):
-        settings = shared_image_settings()
+        settings = shared_image_settings(provider="custom")
         errors = [
             (connections.AIConnectionError("Select a compatible image model.", "model_configuration_unavailable"), 503),
             (ValueError("private invalid prompt"), 400),

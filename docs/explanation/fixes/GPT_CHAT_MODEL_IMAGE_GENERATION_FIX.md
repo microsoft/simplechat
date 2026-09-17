@@ -1,5 +1,10 @@
 # GPT Chat Model Image Generation Fix (v0.261.105)
 
+> The Azure GPT image-orchestration guidance below describes the historical
+> v0.261.105 implementation. It is superseded by the dedicated-image-only Azure/Foundry
+> policy and direct OpenAI Custom support in
+> [v0.261.107](IMAGE_PROVIDER_CAPABILITIES_FIX.md).
+
 ## Issue
 
 An image-capable GPT deployment could be selected for image generation but fail when

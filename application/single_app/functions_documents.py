@@ -38,6 +38,8 @@ from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from model_endpoint_clients import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI, infer_model_endpoint_protocol
 import azure.cognitiveservices.speech as speechsdk
 
 _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
@@ -186,13 +188,14 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
 
         connection = endpoint_cfg.get("connection", {}) or {}
         auth_settings = endpoint_cfg.get("auth", {}) or {}
-        deployment = str(model_cfg.get("deploymentName") or model_cfg.get("deployment") or "").strip()
+        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         endpoint = str(connection.get("endpoint") or "").strip()
         api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
 
         if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
             raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
-        if not endpoint or not api_version or not deployment:
+        protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, get_model_endpoint_api_type(endpoint_cfg))
+        if not endpoint or not deployment or (protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version):
             raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
 
         return _build_model_endpoint_client(

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint payload auth type ordering.
-Version: 0.236.020
+Version: 0.261.107
 Implemented in: 0.236.020
 
 This test ensures authType is defined before validation checks in buildEndpointPayload,
@@ -21,9 +21,9 @@ def test_model_endpoint_payload_auth_type_order():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     js_path = os.path.join(repo_root, 'application', 'single_app', 'static', 'js', 'admin', 'admin_model_endpoints.js')
 
-    content = read_file_text(js_path)
+    content = read_file_text(js_path).split("function buildEndpointPayload(", 1)[1].split("function saveEndpoint(", 1)[0]
     auth_type_index = content.find("const authType = endpointAuthTypeSelect")
-    foundry_check_index = content.find("provider === \"aifoundry\" && authType")
+    foundry_check_index = content.find("isFoundryProvider(provider) && authType")
     aoai_check_index = content.find("provider === \"aoai\" && authType")
 
     assert auth_type_index != -1, "Expected authType assignment in buildEndpointPayload."

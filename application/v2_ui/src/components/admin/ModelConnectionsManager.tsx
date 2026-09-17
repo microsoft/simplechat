@@ -27,7 +27,11 @@ import {
     Zap,
 } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
-import { capabilityDescription, testImageModel } from '../../lib/capabilityModels';
+import { capabilityDescription, testImageModel, type ImageModelCapabilityStatus } from '../../lib/capabilityModels';
+import {
+    connectionRequestModel, connectionUsesModelName, CUSTOM_AUTH_TYPE_OPTIONS,
+    EMPTY_CUSTOM_NETWORK_POLICY, type CustomApiTypeDescriptor, type CustomNetworkPolicy,
+} from '../../lib/customModelConnections';
 import {
     AUTH_TYPE_OPTIONS,
     IDENTITY_HEADER_MODE_OPTIONS,
@@ -62,6 +66,8 @@ import {
     type ModelConnection,
 } from '../../lib/modelConnections';
 import { AdminModal } from './AdminModal';
+import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
+import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
@@ -141,6 +147,7 @@ function ModelCapabilities({ model, disabled, onChange }: {
     onChange: (next: ConnectionModel) => void;
 }) {
     const metadataId = useId();
+    const imageStatus: ImageModelCapabilityStatus | undefined = model.capability_status?.image_generation;
     const capabilities: Array<{ key: ImplementedCapability; label: string }> = [
         { key: 'chat', label: 'chat' },
         { key: 'image_generation', label: 'images' },
@@ -168,6 +175,16 @@ function ModelCapabilities({ model, disabled, onChange }: {
                     {' · '}{model.capability_status.vision.source}. This is separate from image output.
                 </p>
             ) : null}
+            {imageStatus?.supported ? (
+                <p className="text-xs text-text-3">
+                    {[imageStatus.provider_label, imageStatus.cloud_label, imageStatus.lifecycle].filter(Boolean).join(' · ')}
+                    {' · '}{imageStatus.masking ? 'Masked and whole-image edits'
+                        : imageStatus.editing ? 'Reference-image edits; no uploaded masks' : 'Generation only'}
+                </p>
+            ) : null}
+            {imageStatus?.availability_reason ? (
+                <p className="text-xs text-warn">{imageStatus.availability_reason}</p>
+            ) : null}
             {model.enabled === false ? <p className="text-xs text-warn">Model is disabled. Enable it and save to publish the selected uses.</p> : null}
             <details className="text-xs text-text-3">
                 <summary className="cursor-pointer py-1 text-text-2">Capability metadata</summary>
@@ -175,6 +192,8 @@ function ModelCapabilities({ model, disabled, onChange }: {
                 {([
                     ['supportsChat', 'Text output support'],
                     ['supportsImageGeneration', 'Image generation support'],
+                    ['supportsImageEditing', 'Source-image editing support'],
+                    ['supportsImageMasking', 'Uploaded-mask support'],
                     ['supportsVision', 'Image input support'],
                 ] as const).map(([key, label]) => (
                     <div key={key} className="mt-2">
@@ -201,6 +220,39 @@ function ModelCapabilities({ model, disabled, onChange }: {
                         </select>
                     </div>
                 ))}
+                <div className="mt-2">
+                    <label htmlFor={`${metadataId}-image-api`} className="mb-1 block">Image API for explicit metadata</label>
+                    <select
+                        id={`${metadataId}-image-api`}
+                        className={inputClass}
+                        value={model.image_generation_api ?? ''}
+                        disabled={disabled}
+                        onChange={(event) => {
+                            const next = { ...model };
+                            const value = event.target.value;
+                            delete next.capability_status;
+                            if (value === '') {
+                                delete next.image_generation_api;
+                            } else if (value === 'images' || value === 'responses' || value === 'mai' || value === 'flux') {
+                                next.image_generation_api = value;
+                            } else {
+                                toast.error('The image API is not supported.');
+                                return;
+                            }
+                            onChange(next);
+                        }}
+                    >
+                        <option value="">Automatic (catalog)</option>
+                        <option value="images">Images API</option>
+                        <option value="responses">OpenAI Responses image tool</option>
+                        <option value="mai">Foundry MAI Image</option>
+                        <option value="flux">Foundry FLUX</option>
+                    </select>
+                    <p className="mt-1">
+                        Unknown Custom image models need an explicit compatible API. Editing and masks
+                        are separate capabilities; declarations cannot override provider restrictions.
+                    </p>
+                </div>
             </details>
         </div>
     );
@@ -212,10 +264,12 @@ function ModelCapabilities({ model, disabled, onChange }: {
 
 function ConnectionEditor({
     initial,
+    customApiTypes,
     onClose,
     onSaved,
 }: {
     initial: ModelConnection;
+    customApiTypes: CustomApiTypeDescriptor[];
     onClose: () => void;
     onSaved: (saved: ModelConnection, created: boolean) => void;
 }) {
@@ -229,7 +283,10 @@ function ConnectionEditor({
 
     const isNew = !initial.id;
     const foundry = isFoundryProvider(draft.provider);
+    const custom = draft.provider === 'custom';
+    const usesModelName = connectionUsesModelName(draft);
     const authType = String(draft.auth?.type ?? 'managed_identity');
+    const authOptions = custom ? CUSTOM_AUTH_TYPE_OPTIONS : AUTH_TYPE_OPTIONS;
 
     const shown = useMemo(() => visibleFields(draft), [draft]);
     const savedBinding = !isNew && JSON.stringify(buildConnectionPayload(draft)) ===
@@ -246,7 +303,7 @@ function ConnectionEditor({
         });
         setDraft((current) => {
             const next = { ...current };
-            if (path === 'name' || path === 'provider' || path === 'enabled') {
+            if (path === 'name' || path === 'provider' || path === 'enabled' || path === 'api_type') {
                 (next as Record<string, unknown>)[path] = value;
                 // Switching provider changes which API version default applies, and the
                 // previous provider's default would otherwise be silently carried over.
@@ -255,6 +312,20 @@ function ConnectionEditor({
                         ...next.connection,
                         openai_api_version: defaultOpenAiApiVersion(value),
                     };
+                    if (value === 'custom') {
+                        next.api_type = next.api_type || 'openai';
+                        next.connection.openai_api_version = '';
+                        next.auth = { ...next.auth, type: 'api_key' };
+                    } else if (current.provider === 'custom') {
+                        next.auth = { ...next.auth, type: 'managed_identity' };
+                    }
+                    next.models = next.models?.map(({ capability_status: _status, ...model }) => model);
+                }
+                if (path === 'api_type') {
+                    const descriptor = customApiTypes.find((option) => option.value === value);
+                    next.connection = { ...next.connection, api_version: '', anthropic_version: descriptor?.defaultVersion || '' };
+                    next.auth = { ...next.auth, api_key_header: '', api_key_prefix: descriptor?.defaultApiKeyPrefix || '' };
+                    next.models = next.models?.map(({ capability_status: _status, ...model }) => model);
                 }
                 return next;
             }
@@ -265,7 +336,7 @@ function ConnectionEditor({
             };
             return next;
         });
-    }, []);
+    }, [customApiTypes]);
 
     const setModels = useCallback((models: ConnectionModel[]) => {
         setDraft((current) => ({ ...current, models }));
@@ -315,7 +386,9 @@ function ConnectionEditor({
         try {
             const response = await testConnection(buildConnectionPayload(draft));
             toast.success(
-                typeof response.count === 'number'
+                response.validation_only
+                    ? response.message || 'Configuration validated. Inference was not tested.'
+                    : typeof response.count === 'number'
                     ? `Connected. ${response.count} deployment${response.count === 1 ? '' : 's'} visible. Image inference was not tested.`
                     : 'Connected. Image inference was not tested.',
             );
@@ -331,9 +404,9 @@ function ConnectionEditor({
             setFormError('Save the connection first. Image tests use only the saved model and credentials.');
             return;
         }
-        const deploymentName = String(model.deploymentName ?? '').trim();
+        const deploymentName = connectionRequestModel(draft, model);
         if (!deploymentName) {
-            setFormError('Give the model a deployment name before testing it.');
+            setFormError(`Give the model a ${usesModelName ? 'model name' : 'deployment name'} before testing it.`);
             return;
         }
         setTestingModelId(String(model.id ?? deploymentName));
@@ -350,7 +423,7 @@ function ConnectionEditor({
                 }
                 toast.success(`${deploymentName} generated an image.`);
             } else {
-                await testConnectionModel(buildConnectionPayload(draft), deploymentName);
+                await testConnectionModel(buildConnectionPayload(draft), model);
                 toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
             }
         } catch (error) {
@@ -458,6 +531,8 @@ function ConnectionEditor({
                 </select>
             </Field>
 
+            {custom ? <CustomConnectionFields draft={draft} descriptors={customApiTypes} errors={errors} busy={busy} inputClass={inputClass} onChange={setField} /> : null}
+
             <SectionHeading>Connection</SectionHeading>
 
             <Field
@@ -465,7 +540,9 @@ function ConnectionEditor({
                 error={errors.endpoint}
                 htmlFor="connection-endpoint"
                 help={
-                    foundry
+                    custom
+                        ? 'The Custom API URL. HTTPS is required unless both private-host and plaintext HTTP permissions are explicitly enabled.'
+                        : foundry
                         ? 'A Foundry project URL. Including /api/projects/<name> names the project for you.'
                         : 'The resource endpoint, for example https://my-resource.openai.azure.com.'
                 }
@@ -474,7 +551,7 @@ function ConnectionEditor({
                     id="connection-endpoint"
                     type="url"
                     className={inputClass}
-                    placeholder={foundry ? 'https://…/api/projects/my-project' : 'https://my-resource.openai.azure.com'}
+                    placeholder={custom ? 'https://api.example.com' : foundry ? 'https://…/api/projects/my-project' : 'https://my-resource.openai.azure.com'}
                     value={String(draft.connection?.endpoint ?? '')}
                     disabled={busy}
                     spellCheck={false}
@@ -482,7 +559,7 @@ function ConnectionEditor({
                 />
             </Field>
 
-            <Field
+            {!custom ? <Field
                 label="OpenAI API version"
                 error={errors.openai_api_version}
                 htmlFor="connection-openai-version"
@@ -496,7 +573,7 @@ function ConnectionEditor({
                     spellCheck={false}
                     onChange={(event) => setField('connection.openai_api_version', event.target.value)}
                 />
-            </Field>
+            </Field> : null}
 
             {shown.project ? (
                 <>
@@ -542,12 +619,12 @@ function ConnectionEditor({
             ) : null}
 
             <SectionHeading
-                hint={AUTH_TYPE_OPTIONS.find((option) => option.value === authType)?.hint}
+                hint={authOptions.find((option) => option.value === authType)?.hint}
             >
                 Authentication
             </SectionHeading>
 
-            <Field label="Method" htmlFor="connection-auth-type">
+            <Field label="Method" htmlFor="connection-auth-type" error={errors.auth_type}>
                 <select
                     id="connection-auth-type"
                     className={inputClass}
@@ -555,7 +632,7 @@ function ConnectionEditor({
                     disabled={busy}
                     onChange={(event) => setField('auth.type', event.target.value)}
                 >
-                    {AUTH_TYPE_OPTIONS.map((option) => (
+                    {authOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                             {option.label}
                         </option>
@@ -667,6 +744,7 @@ function ConnectionEditor({
                     />
                 </Field>
             ) : null}
+            {custom ? <CustomAuthenticationFields draft={draft} descriptors={customApiTypes} errors={errors} busy={busy} inputClass={inputClass} onChange={setField} /> : null}
 
             {shown.managementCloud ? (
                 <Field label="Management cloud" htmlFor="connection-cloud">
@@ -764,7 +842,9 @@ function ConnectionEditor({
 
             <SectionHeading
                 hint={
-                    shown.apiKey
+                    custom
+                        ? 'Enter the exact request model identifier. Custom connections do not use Azure management discovery.'
+                        : shown.apiKey
                         ? 'Discovery needs Azure credentials, so with an API key the models have to be listed by hand.'
                         : 'Discovered models arrive switched off. Turn on the ones people may use.'
                 }
@@ -778,7 +858,7 @@ function ConnectionEditor({
                     variant="subtle"
                     size="sm"
                     onClick={() => void runDiscovery()}
-                    disabled={busy || shown.apiKey}
+                    disabled={busy || shown.apiKey || custom}
                 >
                     {discovering ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -795,7 +875,7 @@ function ConnectionEditor({
                     disabled={busy}
                 >
                     {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-                    Test connection
+                    {custom ? 'Validate configuration' : 'Test connection'}
                 </GlassButton>
                 <GlassButton
                     type="button"
@@ -822,10 +902,11 @@ function ConnectionEditor({
                 Connection checks do not test image inference. Image tests use saved bindings and may incur generation costs.
                 {!savedBinding ? ' Save the connection first before testing images or choosing a default.' : ''}
             </p>
+            {errors.models ? <p role="alert" className="mb-2 text-xs text-danger">{errors.models}</p> : null}
 
             {models.length === 0 ? (
                 <p className="rounded-lg border border-edge bg-surface-1 p-3 text-xs text-text-3">
-                    No models yet. Discover them from the connection, or add one by deployment name.
+                    {custom ? 'No models yet. Add one manually using its request identifier.' : 'No models yet. Discover them from the connection, or add one by deployment name.'}
                 </p>
             ) : (
                 <ul className="space-y-2">
@@ -843,7 +924,7 @@ function ConnectionEditor({
                                             className="accent-[var(--accent)]"
                                             checked={model.enabled !== false}
                                             disabled={busy}
-                                            aria-label={`Enable ${model.deploymentName || 'model'}`}
+                                            aria-label={`Enable ${connectionRequestModel(draft, model) || 'model'}`}
                                             onChange={(event) => {
                                                 const next = [...models];
                                                 next[index] = {
@@ -858,8 +939,8 @@ function ConnectionEditor({
                                     {model.isDiscovered ? <Pill tone="muted">Discovered</Pill> : null}
                                     <button
                                         type="button"
-                                        title={`Remove ${model.deploymentName || 'model'}`}
-                                        aria-label={`Remove ${model.deploymentName || 'model'}`}
+                                        title={`Remove ${connectionRequestModel(draft, model) || 'model'}`}
+                                        aria-label={`Remove ${connectionRequestModel(draft, model) || 'model'}`}
                                         disabled={busy}
                                         onClick={() =>
                                             setModels(models.filter((_, at) => at !== index))
@@ -874,16 +955,16 @@ function ConnectionEditor({
                                     <input
                                         type="text"
                                         className={inputClass}
-                                        placeholder="Deployment name"
-                                        aria-label="Deployment name"
-                                        value={String(model.deploymentName ?? '')}
+                                        placeholder={usesModelName ? 'Model name' : 'Deployment name'}
+                                        aria-label={usesModelName ? 'Model name' : 'Deployment name'}
+                                        value={String((usesModelName ? model.modelName : model.deploymentName) ?? '')}
                                         disabled={busy}
                                         spellCheck={false}
                                         onChange={(event) => {
                                             const next = [...models];
                                             next[index] = {
                                                 ...model,
-                                                deploymentName: event.target.value,
+                                                [usesModelName ? 'modelName' : 'deploymentName']: event.target.value,
                                             };
                                             delete next[index].capability_status;
                                             setModels(next);
@@ -906,7 +987,7 @@ function ConnectionEditor({
                                         }}
                                     />
                                 </div>
-                                <label className="mt-2 block text-xs text-text-3">
+                                {!usesModelName ? <label className="mt-2 block text-xs text-text-3">
                                     Underlying model name (optional)
                                     <input
                                         type="text"
@@ -919,7 +1000,7 @@ function ConnectionEditor({
                                             setModels(models.map((item, at) => at === index ? nextModel : item));
                                         }}
                                     />
-                                </label>
+                                </label> : null}
                                 <ModelCapabilities
                                     model={model}
                                     disabled={busy}
@@ -1019,6 +1100,8 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [migration, setMigration] = useState<ConnectionMigrationNotice | null>(null);
     const [defaultNotices, setDefaultNotices] = useState<string[]>([]);
+    const [customApiTypes, setCustomApiTypes] = useState<CustomApiTypeDescriptor[]>([]);
+    const [customNetworkPolicy, setCustomNetworkPolicy] = useState<CustomNetworkPolicy>(EMPTY_CUSTOM_NETWORK_POLICY);
 
     // Turning connections on seeds this list server-side with the classic chat endpoint,
     // and that save happens in the section above rather than here. Without a reload the
@@ -1029,6 +1112,8 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         try {
             const response = await fetchModelConnections(signal);
             setConnections(Array.isArray(response.endpoints) ? response.endpoints : []);
+            setCustomApiTypes(response.custom_api_types ?? []);
+            setCustomNetworkPolicy(response.custom_network_policy ?? EMPTY_CUSTOM_NETWORK_POLICY);
             setMigration(response.migration ?? null);
             setDefaultNotices(Object.values(response.default_notices ?? {}).filter((notice): notice is string => typeof notice === 'string' && Boolean(notice)));
             setError(null);
@@ -1131,6 +1216,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
 
             {help ? <p className="mb-3 text-xs leading-relaxed text-text-3">{help}</p> : null}
             <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat and image defaults. Image connections remain available when chat uses its classic endpoint.</p>
+            {!loading ? <CustomNetworkPolicyEditor policy={customNetworkPolicy} onSaved={setCustomNetworkPolicy} /> : null}
             {migration?.message ? (
                 <p role="status" className={`mb-3 rounded-lg p-3 text-xs ${migration.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>
                     {migration.message}
@@ -1175,7 +1261,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             ) : visible.length === 0 ? (
                 <p className="rounded-lg border border-edge bg-surface-1 p-4 text-xs text-text-3">
                     {connections.length === 0
-                        ? 'No connections yet. Add one to publish models from an Azure OpenAI or Foundry resource.'
+                        ? 'No connections yet. Add an Azure OpenAI, Foundry, or Custom connection to publish models.'
                         : 'No connections match your search.'}
                 </p>
             ) : (
@@ -1206,6 +1292,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
                                     </div>
                                     <p className="mt-0.5 truncate text-xs text-text-3">
                                         {providerLabel(connection.provider)} ·{' '}
+                                        {connection.provider === 'custom' ? `${customApiTypes.find((option) => option.value === connection.api_type)?.label || connection.api_type || 'API type missing'} · ` : ''}
                                         {authTypeLabel(connection.auth?.type)} ·{' '}
                                         {total === 0
                                             ? 'no models'
@@ -1271,6 +1358,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             {editing ? (
                 <ConnectionEditor
                     initial={editing}
+                    customApiTypes={customApiTypes}
                     onClose={() => setEditing(null)}
                     onSaved={onSaved}
                 />

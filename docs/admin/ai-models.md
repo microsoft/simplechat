@@ -5,7 +5,7 @@ description: "Configure shared chat and image connections, independent task defa
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.105"
+version: "0.261.107"
 ---
 
 
@@ -17,7 +17,7 @@ AI Models configures chat, embedding, image generation, APIM, multi-endpoint rou
 
 ## Why it matters
 
-Model endpoints are production dependencies for every generated answer, embedding, and image. Keep deployment names, API versions, and authentication choices aligned with the Azure resources operators support.
+Model endpoints are production dependencies for every generated answer, embedding, and image. Keep provider model names, Azure deployment names, API contracts, and authentication aligned with the services operators support.
 
 {% include media.html src="admin-settings/ai-models.png" alt="Screenshot of the AI Models group in Admin Settings." title="AI Models settings" %}
 
@@ -51,6 +51,28 @@ The authentication method determines whether SimpleChat can enumerate a resource
 Discovered models arrive switched off. Finding a deployment is not the same as publishing it, so each one has to be enabled and made available for the intended task before it can be selected. Discovery includes supported image models as well as chat models; it does not perform paid image generation or prove that an image operation works.
 
 Secrets are never returned to the browser. When a key or client secret is already stored, its field shows that it exists and stays empty; leaving it empty keeps the stored value, and typing a new one replaces it. Deleting a connection removes the secrets it owned.
+
+### Custom API connections
+
+Use **Custom** for direct OpenAI, an approved OpenAI-compatible gateway, Custom Azure
+OpenAI, Anthropic messages, or Gemini's compatible API. Select the API contract and
+enter model names manually; the Azure OpenAI contract instead uses deployment names.
+A Custom connection test validates configuration rather than listing Azure deployments.
+Use the separate chat or image test to exercise the intended inference operation.
+
+Custom authentication supports API keys with optional header/prefix overrides, bearer
+tokens, and OAuth2 client credentials. Token requests use the same outbound network
+policy as model requests. Stored bearer tokens and client secrets remain hidden on
+read, and blank fields preserve them.
+
+Automatic URL handling follows the API contract without dropping gateway prefixes.
+Exact mode uses the supplied API base without adding a version/deployment prefix; an
+Anthropic exact URL names the complete messages operation. mTLS certificates and keys
+are deployment-mounted paths, not PEM contents pasted into settings.
+
+Configure the **Custom endpoint network policy** only when an approved private
+destination or trust bundle requires it. HTTPS verification and the hard blocks on
+loopback, link-local, and platform metadata addresses remain in effect.
 
 ### Identity header
 
@@ -93,6 +115,27 @@ still fail because of provider permissions, quota, gateway operations, or missin
 image-tool access. Do not declare image support simply because the model can accept
 pictures or call generic tools.
 
+### Provider-qualified image capabilities
+
+The JSON catalog distinguishes a model's publisher from the service hosting it.
+OpenAI model documentation does not automatically establish Azure OpenAI or Foundry
+image support. Connection/model descriptions identify the effective provider, cloud,
+image operation, editing support, and availability evidence.
+
+SimpleChat offers dedicated image models on Azure/Foundry. Supported GPT image-tool
+orchestration is available through direct OpenAI **Custom** connections. An explicit
+capability declaration cannot make an Azure GPT chat model bypass that policy.
+
+For an unrecognized Custom model, `supportsImageGeneration` and a compatible
+`image_generation_api` describe generation. `supportsImageEditing` and
+`supportsImageMasking` are separate declarations; generation alone establishes
+neither. Known provider/adapter restrictions remain authoritative.
+
+The application hosting cloud is not a feature gate. Government-hosted SimpleChat
+can use an approved commercial model endpoint without changing that endpoint's
+residency label. Unknown Government image availability is reported as unknown, not
+as a fabricated available deployment or a blanket ban.
+
 ### Connection settings
 
 | Setting | What it does | Default | Notes |
@@ -100,11 +143,17 @@ pictures or call generic tools.
 | Use AI Connections for chat | Migrates chat from the classic endpoint to shared connections. Switching this on cannot be undone; it carries over the classic chat configuration when needed without replacing image connections. | Off | `enable_multi_model_endpoints`; chat-only capability toggle, not required for images |
 | AI Connections | Shared resource/authentication/model records, each saved individually. Chat and image defaults reference these records. | Empty before configuration/import | `model_endpoints`; edited through its own API |
 | Model availability | Limits a model to the supported tasks administrators intend to publish. Changing availability does not change the model's technical capabilities. | No task-specific restriction when absent | Model `enabled_capabilities`; `chat` and `image_generation` are the implemented operations |
+| Allow private Custom endpoint hosts | Permits approved private-network Custom destinations without permitting loopback, link-local, or platform metadata addresses. | Off | `allow_private_custom_model_endpoints`; global Custom network policy |
+| Allow plaintext HTTP | Allows a Custom HTTP connection only when private-host permission is also enabled. Traffic, including credentials and prompts, is then unencrypted. | Off | `allow_insecure_custom_model_endpoints`; prefer HTTPS with a private CA |
+| Custom CA bundle path | Replaces the default public trust roots with an approved deployment-mounted CA bundle for Custom model and OAuth2 requests. | Empty | `custom_model_endpoint_ca_bundle_path`; does not disable certificate verification |
 | Send an identity header with model requests | Adds a header identifying the signed-in user to every model request. | Off | `model_endpoint_identity_header_enabled` |
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
 | Identity sent in the header | Object id is stable across a rename; UPN is readable in gateway logs. Tenant variants qualify the value for a multi-tenant gateway. | Object id and tenant id | `model_endpoint_identity_header_value_type` |
 
 ### Chat {#gpt-config}
+
+For the shared connection workflow, see
+[Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
 
 SimpleChat has two ways to reach a chat model and only one of them is in force at a time. When **Use AI Connections for chat** is on, chat draws from the connections above. When it is off, chat runs on a single classic endpoint — one Azure OpenAI resource, or API Management in front of one — whose address, credentials, API version and deployment are configured on the server-rendered admin page rather than here.
 
@@ -210,19 +259,29 @@ SimpleChat does not silently substitute another model.
 
 ### Which API produces the image
 
-A compatible dedicated image deployment uses the Images API. A GPT deployment with
-established hosted-image-tool support uses Azure v1 Responses with the
-`image_generation` tool. Capability and connection metadata select the route internally:
-there is no mandatory API-mode setting or second backing-image chooser.
+| Model and service | Operation used |
+| --- | --- |
+| Dedicated GPT Image on Azure OpenAI/Foundry OpenAI | Azure Images generation and supported multipart edits |
+| Dedicated GPT Image through direct OpenAI Custom | OpenAI Images generation/edits |
+| Verified GPT image-tool model through direct OpenAI Custom | OpenAI Responses with `image_generation`, including supported source/mask edits |
+| Foundry MAI Image | MAI generation and multipart reference edits |
+| Foundry FLUX.2 and FLUX-1.1-pro | Their documented native Foundry provider operations |
+| Foundry FLUX.1-Kontext-pro | The documented v1 Images-compatible generation/multipart-edit interface |
 
-Not every GPT or Responses deployment supports image generation. A GPT-only resource is
-not guaranteed to work: any required image backend/default, entitlement, and provider
-permissions must already be available and verified. Generic tools or image-input support
-are not enough, and SimpleChat does not guess or provision a missing deployment.
+Capability and connection metadata choose the known model's API. There is no second
+backing-image chooser. Microsoft does document Azure Responses generation backed by
+a separate GPT Image deployment; excluding that route is the deliberate SimpleChat
+standalone-only policy, not a claim that the Azure tool never exists.
 
-Responses image generation offers whole-image regeneration in SimpleChat, not masked
-editing. Existing direct-image masked editing remains subject to the selected model
-and Images API support.
+MAI and eligible FLUX models can edit a reference image without an uploaded mask.
+Generation-only profiles instead offer regeneration. The editor never silently
+discards an unsupported mask to obtain a successful whole-image replacement.
+
+Rendering options are model-specific. MAI generation requires each dimension to be
+at least 768 pixels and total area at most 1,048,576 pixels; GPT landscape/portrait
+presets are not interchangeable with MAI presets. Native MAI/FLUX reference edits
+do not expose a dimension override here; use regeneration to change dimensions.
+MAI preview status is shown, and optional Bing web grounding is not enabled.
 
 New shared Images connections without an image-specific API version use
 `2025-04-01-preview` for generations and edits. Explicit image operation versions,
@@ -230,8 +289,9 @@ including older imported versions, are preserved. Unmigrated legacy Images setti
 retain their `2024-12-01-preview` fallback when no image version is configured.
 
 These versions do not come from the chat connection's API version or legacy root
-settings after shared selection. The hosted image tool instead uses v1 Responses
-without a dated `api-version` query. No image operation changes the chat API version.
+settings after shared selection. Direct OpenAI uses `/v1` without an Azure
+`api-version` query. MAI uses its `/mai/v1` contract, and Foundry FLUX uses
+`api-version=preview`. No image operation changes the chat API version.
 
 ### Direct connections and API Management
 
@@ -239,8 +299,8 @@ Store the intended route and credentials in the selected connection. An APIM-bac
 connection must retain its gateway path, authentication convention, and supported
 operation; a failing gateway request must not be redirected to the backend resource.
 
-Imported legacy APIM image configurations retain their Images route. A shared model
-configured for Responses still needs the gateway to publish the matching operation.
+Imported legacy APIM image configurations retain their Images route. A Custom gateway
+configured for an OpenAI image operation must publish that operation.
 Discovery/read permissions and image-inference permissions are separate, so test the
 image operation rather than relying on a successful deployment listing or chat test.
 
@@ -290,7 +350,7 @@ model-selection API is unchanged.
 | Resource Group | Direct-resource discovery context | Empty | `azure_openai_image_gen_resource_group` |
 | Azure OpenAI Image Generation Key | Direct-route credential, through scoped secret helpers | Empty | `azure_openai_image_gen_key` |
 | Image model | Active direct deployment and saved model metadata | None selected | `image_gen_model` |
-| Azure OpenAI Image Gen API Version | Direct Images operation version; not the Azure v1 Responses contract | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Azure OpenAI Image Gen API Version | Legacy direct Images operation version; independent of chat and of newly selected shared image defaults | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
 | Azure APIM Endpoint | Gateway address and path | Empty | `azure_apim_image_gen_endpoint` |
 | Azure APIM API Version | Gateway image operation version | Empty | `azure_apim_image_gen_api_version` |
 | Azure APIM Deployment | Active gateway deployment name | Empty | `azure_apim_image_gen_deployment` |

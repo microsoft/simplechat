@@ -17,6 +17,7 @@ from functions_model_endpoint_runtime import (
     resolve_model_endpoint_from_context,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -1438,18 +1439,14 @@ def _test_multimodal_vision_connection(payload):
                 matched_model = next(
                     (
                         model for model in resolved_models
-                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                        if resolve_model_endpoint_request_model(resolved_endpoint, model) == model_context['model_deployment']
                     ),
                     None,
                 )
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = str(
-                matched_model.get('deploymentName')
-                or matched_model.get('deployment')
-                or model_context['model_deployment']
-            ).strip()
+            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(

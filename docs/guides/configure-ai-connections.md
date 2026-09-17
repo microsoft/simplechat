@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once, publish compatible models, and choose independent chat and image defaults."
 section: "Guides"
 audience: admin
-version: "0.261.105"
+version: "0.261.107"
 ---
 
 ## What this does
@@ -15,6 +15,8 @@ copies of the same endpoint and key. Rotating a shared connection's credential t
 updates the connection used by both tasks.
 
 Implemented in version: **0.261.105**.
+Provider-qualified image operations and Custom image connections were implemented
+in version **0.261.107**, tracked in `application/single_app/config.py`.
 [Issue #1436](https://github.com/microsoft/simplechat/issues/1436) tracks the shared
 connection and GPT image-generation changes.
 
@@ -37,8 +39,9 @@ configuration. This guide does not migrate them.
 - Sign in with the SimpleChat **Admin** role to manage global connections and defaults.
   This image default is global; personal and group chat connections do not become
   global image choices.
-- Have an existing supported deployment and its actual deployment name, not just the
-  underlying model family name. SimpleChat does not create a deployment for you.
+- For Azure/Foundry, have an existing supported deployment and its actual deployment
+  name, not just the underlying model family name. Direct OpenAI Custom connections
+  instead use the provider's model name. SimpleChat does not provision either.
 - Decide whether requests must go through API Management. Keep its published path,
   authentication convention, and supported operations; do not substitute the backend
   resource URL to make a failing gateway request work.
@@ -78,6 +81,35 @@ If you manually declare support for an internally named model, verify the provid
 operation contract first. Do not mark it image-capable just to make an empty picker
 show a choice.
 
+### Direct OpenAI through Custom
+
+Use the **Custom** connection type and the **OpenAI API** contract for
+`https://api.openai.com/v1`. Enter the credentials and model names on that connection,
+then publish the supported image operation and choose it as the global image default.
+There is no separate image endpoint/key form to keep synchronized.
+
+Known models obtain their image operation from the provider-qualified catalog. For
+an unrecognized model, declare a compatible image API and generation support
+explicitly; editing and masking require separate capabilities. A new GPT version
+does not gain image support just because its name begins with `gpt-`.
+
+An OpenAI-compatible gateway is not automatically the direct OpenAI service. Preserve
+its configured path and provide compatible metadata where its backend cannot be
+identified. Use the Azure OpenAI API contract for Azure endpoints rather than
+mislabeling them as direct OpenAI.
+
+### Endpoint cloud and availability
+
+The endpoint's provider/cloud determines capability information, not where SimpleChat
+is hosted or which authority authenticates the application. A Government-hosted
+installation can use a configured commercial endpoint when organizational policy
+permits it. The catalog does not authorize cross-cloud data transfers.
+
+The reviewed Government model table does not establish availability of GPT Image,
+MAI Image, or FLUX. Such entries are marked unknown rather than given invented
+availability or a blanket Government restriction. Published model capability,
+service access, network policy, and live readiness remain separate requirements.
+
 ## Select task-specific defaults
 
 ### Chat
@@ -98,11 +130,13 @@ It is not a prerequisite for shared image generation.
    chat mode.
 3. Generate a test image using that default before relying on it in production.
 
-There is no second backing-image chooser and no required **Images versus Responses**
-setting. SimpleChat uses model capability metadata and the connection's operation
-configuration to choose the supported API. That does not remove Azure prerequisites:
-where a Responses image tool needs a backing deployment or service default, it must
-be established by verified provider configuration or existing metadata, not guessed.
+Known models select the operation automatically. Azure/Foundry image choices are
+dedicated GPT Image, MAI Image, and supported FLUX deployments. Verified direct OpenAI
+GPT models can invoke the hosted image tool through Custom connections.
+
+Microsoft documents an Azure Responses tool backed by a separate image deployment,
+but SimpleChat deliberately does not offer that Azure orchestration route. There is
+no backing-image chooser or automatic fallback to another service.
 
 Users continue to use the chat **Image** control. The normal chat-model choice does not
 override this global image default, and this release adds no per-chat image-model picker.
@@ -178,9 +212,10 @@ request uses API Management, confirm the request went through the expected gatew
 Repeat the relevant operation after changing a deployment, credential, or route.
 Generation tests can incur provider charges.
 
-Responses image generation supports whole-image regeneration in SimpleChat, not masked
-editing. Existing direct-image masked editing remains subject to the selected model
-and Images API support.
+Check the intended edit operation too. Direct OpenAI Responses/Images and compatible
+Azure GPT Image profiles can support masks. MAI and eligible FLUX profiles support
+reference-image edits without promising a mask interface. Generation-only models
+offer clearly labeled whole-image regeneration.
 
 ## Troubleshooting
 
@@ -191,7 +226,8 @@ and Images API support.
 | Chat changed but image output still uses the old model | The defaults are independent; change the image default explicitly |
 | A default becomes unavailable | The selected record was deleted, disabled, or made incompatible/unpublished. Choose a valid replacement rather than relying on a fallback |
 | Discovery fails but inference works | The identity lacks management/project read access, or inference-only key authentication is in use. Supply deployment names manually or correct discovery permissions |
-| A GPT model produces no image or the service rejects the tool | Confirm that deployment and resource support the hosted image operation, including any required backend binding, entitlement, and gateway operation. A successful text response is not image readiness |
+| An Azure GPT model is excluded from images | Select a dedicated Azure/Foundry image model. The approved SimpleChat policy excludes Azure GPT orchestration even when an administrator declares image support |
+| A direct OpenAI GPT model produces no image or the service rejects the tool | Confirm the Custom API contract, exact model capability, account access, and gateway operation. A successful text response is not image readiness |
 | Images worked before an import warning | Preserve the legacy values, correct the reported configuration/permissions, and restart to retry |
 | Images fail after clearing a successfully imported default | Clearing was authoritative. Choose a new shared default or disable image generation; legacy values will not be reactivated |
 | An older settings integration reports `409` / `image_catalog_migrated` | The legacy image catalog is no longer authoritative. Use AI Connections or update the integration to `GET`/`PUT /api/v2/admin/capability-models/image_generation`; retrying the old catalog write will not update the default |

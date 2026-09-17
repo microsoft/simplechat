@@ -7,6 +7,7 @@ from functions_content import *
 from functions_settings import *
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_connections import filter_model_endpoints_by_capability
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
@@ -599,7 +600,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     continue
 
                 model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
-                deployment_name = model.get('deploymentName') or model.get('deployment') or ''
+                deployment_name = resolve_model_endpoint_request_model(endpoint, model)
                 display_name = model.get('displayName') or model.get('modelName') or deployment_name or model.get('name') or model_id
                 selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}"
 
@@ -825,7 +826,7 @@ def register_route_frontend_chats(bp):
                     multi_endpoint_models.append({
                         "id": model.get("id"),
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
-                        "deployment_name": model.get("deploymentName") or "",
+                        "deployment_name": resolve_model_endpoint_request_model(endpoint, model),
                         "endpoint_id": endpoint.get("id"),
                         "provider": endpoint.get("provider"),
                         "icon": model.get("icon") if isinstance(model.get("icon"), dict) else {}

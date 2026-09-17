@@ -1,7 +1,7 @@
 # test_admin_shared_ai_connections.py
 """
 Browser coverage for independent chat/image defaults and shared connection availability.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 
 Exercise the real built SPA, production schema and protected API shapes without live services.
@@ -35,20 +35,20 @@ def test_shared_list_and_grouped_defaults_preserve_connection_identity(ai_ui, wi
     ai_ui.open(width=width)
     page = ai_ui.page
     manager = page.get_by_role("region", name="AI Connections", exact=True)
-    for name in ("Team Azure", "Imported Studio", "Image Resource"):
+    for name in ("Team OpenAI", "Imported Studio", "Image Resource"):
         expect(manager.get_by_text(name, exact=True)).to_be_visible()
     chat = page.get_by_label("Default chat model", exact=True)
-    expect(chat.locator("option")).to_have_text(["No default chat model", "Dual model (same-deployment)"])
+    expect(chat.locator("option")).to_have_text(["No default chat model", "Dual model (gpt-5.6-sol)"])
     image = page.get_by_label("Default image model", exact=True)
     expect(image.locator("optgroup")).to_have_count(3)
     expect(image).to_have_value("1")
     image.select_option("0")
     expect(image).to_be_enabled()
-    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "aoai")
+    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "custom")
     image.select_option("1")
     expect(image).to_be_enabled()
-    assert ai_ui.selections["image_generation"] == reference("studio", "same:model", "aoai")
-    assert ai_ui.selections["chat"] == reference("team", "same:model", "aoai")
+    assert ai_ui.selections["image_generation"] == reference("studio", "same:model", "custom")
+    assert ai_ui.selections["chat"] == reference("team", "same:model", "custom")
     for legacy in ("Azure OpenAI Image Generation Endpoint", "Azure APIM Subscription Key", "Use APIM instead of direct to Azure OpenAI endpoint"):
         expect(page.get_by_label(legacy, exact=True)).to_have_count(0)
     expect(manager.get_by_text(re.compile("embeddings|transcription|speech|computer use", re.I))).to_have_count(0)
@@ -80,14 +80,14 @@ def test_default_failure_rolls_back_and_clear_never_restores_legacy(ai_ui):
 
 def test_connection_failure_preserves_draft_and_saved_model(ai_ui):
     ai_ui.open()
-    ai_ui.page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    ai_ui.page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = ai_ui.page.get_by_role("dialog")
     dialog.get_by_label("Name", exact=True).fill("Renamed")
     ai_ui.reject_connection = True
     dialog.get_by_role("button", name="Save changes", exact=True).click()
     expect(dialog.get_by_role("alert")).to_have_text("The connection could not be saved.")
     expect(dialog.get_by_label("Name", exact=True)).to_have_value("Renamed")
-    assert ai_ui.endpoints[0]["name"] == "Team Azure"
+    assert ai_ui.endpoints[0]["name"] == "Team OpenAI"
     dialog.get_by_role("button", name="Cancel", exact=True).click()
     expect(ai_ui.page.get_by_label("Default image model", exact=True)).to_have_value("1")
 
@@ -115,7 +115,7 @@ def test_usage_policy_and_connection_notifications_refresh_choices(ai_ui):
 def test_image_tests_require_saved_bindings_and_actual_image_success(ai_ui):
     ai_ui.open()
     page = ai_ui.page
-    page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Display name", exact=True).fill("Pending name")
     dialog.get_by_role("button", name="Test image generation", exact=True).click()
@@ -125,7 +125,7 @@ def test_image_tests_require_saved_bindings_and_actual_image_success(ai_ui):
     ai_ui.reject_image_test = True
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="The saved model did not return an image.")).to_be_visible()
-    assert ai_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "aoai")}]
+    assert ai_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "custom")}]
     ai_ui.reject_image_test = False
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.get_by_text("The saved image model generated an image successfully.", exact=True)).to_be_visible()
@@ -189,7 +189,33 @@ def test_manual_image_model_metadata_is_saved_before_default_selection(ai_ui, de
 def test_connection_check_does_not_claim_to_test_image_inference(ai_ui):
     ai_ui.open()
     page = ai_ui.page
-    page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    page.get_by_role("button", name="Edit Image Resource", exact=True).click()
     page.get_by_role("dialog").get_by_role("button", name="Test connection", exact=True).click()
     expect(page.get_by_text("Connected. 2 deployments visible. Image inference was not tested.", exact=True)).to_be_visible()
     assert ai_ui.image_tests == [] and len(ai_ui.connection_tests) == 1
+
+
+def test_custom_model_can_declare_distinct_image_operations(ai_ui):
+    ai_ui.open()
+    page = ai_ui.page
+    page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Model name", exact=True).fill("private-image-orchestrator")
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_label("Image generation support", exact=True).select_option("true")
+    dialog.get_by_label("Source-image editing support", exact=True).select_option("true")
+    dialog.get_by_label("Uploaded-mask support", exact=True).select_option("true")
+    dialog.get_by_label("Image API for explicit metadata", exact=True).select_option("responses")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    model = ai_ui.connection_writes[-1]["models"][0]
+    assert model["image_generation_api"] == "responses"
+    assert model["supportsImageGeneration"] is True
+    assert model["supportsImageEditing"] is True
+    assert model["supportsImageMasking"] is True
+    image = page.get_by_label("Default image model", exact=True)
+    image.select_option("0")
+    expect(image).to_be_enabled()
+    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "custom")
+    expect(page.get_by_test_id("capability-picker-image_generation")).to_contain_text("administrator-declared")
+    assert ai_ui.image_tests == []

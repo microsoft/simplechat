@@ -602,6 +602,8 @@ def _format_model_provider_label(provider):
         return 'Foundry (classic)'
     if normalized_provider == 'new_foundry':
         return 'New Foundry'
+    if normalized_provider == 'custom':
+        return 'Custom'
     return 'Azure OpenAI'
 
 
@@ -2530,6 +2532,7 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
 
     return sanitize_model_endpoints_for_frontend(
         filter_model_endpoints_by_capability(endpoints, preserve_empty=True),
+        include_connection_details=False,
     )
 
 
