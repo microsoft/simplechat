@@ -2,7 +2,7 @@
 # test_generated_artifact_workspace_promotion.py
 """
 Functional test for generated artifact workspace promotion.
-Version: 0.241.128
+Version: 0.261.109
 Implemented in: 0.241.128
 
 This test ensures generated chat artifacts can be promoted into workspace
@@ -17,6 +17,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT / "application" / "single_app" / "route_enhanced_citations.py"
+PUBLICATION_FILE = ROOT / "application" / "single_app" / "functions_artifact_publication.py"
 GROUP_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_group_documents.py"
 PUBLIC_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_public_documents.py"
 CHAT_MESSAGES_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
@@ -32,6 +33,7 @@ def test_backend_promotion_routes() -> None:
     print("Testing generated artifact promotion backend routes...")
 
     route_content = read_text(ROUTE_FILE)
+    publication_content = read_text(PUBLICATION_FILE)
     group_route_content = read_text(GROUP_ROUTE_FILE)
     public_route_content = read_text(PUBLIC_ROUTE_FILE)
 
@@ -41,13 +43,16 @@ def test_backend_promotion_routes() -> None:
     assert "def promote_chat_artifact_to_workspace(" in route_content, (
         "Expected route_enhanced_citations.py to expose a workspace promotion handler."
     )
-    assert 'generated_artifact_promotion_status="pending_approval"' in route_content, (
+    assert "publish_generated_chat_artifact_for_user(" in route_content, (
+        "Expected manual promotion to use the same publication service as workflows."
+    )
+    assert 'generated_artifact_promotion_status="pending_approval"' in publication_content, (
         "Expected group/public artifact promotions to persist a pending approval marker."
     )
-    assert "create_group_notification(" in route_content, (
+    assert "create_group_notification" in publication_content, (
         "Expected group promotions to notify the group workspace."
     )
-    assert "create_public_workspace_notification(" in route_content, (
+    assert "create_public_workspace_notification" in publication_content, (
         "Expected public promotions to notify the public workspace."
     )
 
@@ -106,8 +111,11 @@ def test_workspace_promotion_ui_wiring() -> None:
     assert "approveGroupGeneratedArtifactDocument" in group_workspace_content, (
         "Expected the group workspace UI to expose a generated artifact approval handler."
     )
-    assert "buildGroupGeneratedArtifactApproveButton" in group_workspace_content, (
-        "Expected the group workspace UI to render an Approve action for pending generated artifacts."
+    assert "buildGroupGeneratedArtifactActionLauncherButton" in group_workspace_content, (
+        "Expected the group workspace UI to launch review of pending generated artifacts."
+    )
+    assert 'id="groupGeneratedArtifactApprovalModalApproveBtn"' in group_workspace_content, (
+        "Expected the group review modal to retain its explicit Approve action."
     )
     assert "denyGroupGeneratedArtifactDocument" in group_workspace_content, (
         "Expected the group workspace UI to expose a generated artifact denial handler."

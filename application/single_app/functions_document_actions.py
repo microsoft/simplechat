@@ -8,6 +8,7 @@ from functions_document_analysis import (
     WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
     normalize_document_analysis_targets,
 )
+from functions_document_analysis_results import normalize_analysis_options
 from functions_search import normalize_search_id_list
 
 
@@ -229,6 +230,10 @@ def _build_analyze_action(legacy_analyze=None):
         'analysis_mode': legacy_analyze.get('analysis_mode'),
         'target_mode': legacy_analyze.get('target_mode'),
         'recent_window_minutes': legacy_analyze.get('recent_window_minutes'),
+        **({
+            'analysis_options': legacy_analyze.get('analysis_options'),
+            'transformation_spec': legacy_analyze.get('transformation_spec'),
+        } if 'analysis_options' in legacy_analyze or 'transformation_spec' in legacy_analyze else {}),
     }
 
 
@@ -300,6 +305,10 @@ def normalize_document_action_config(
             raise ValueError(_build_document_action_disabled_message(action_type))
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        if 'analysis_options' in source_action or 'transformation_spec' in source_action:
+            normalized_action['analysis_options'] = normalize_analysis_options(
+                source_action.get('analysis_options'), source_action.get('transformation_spec'),
+            )
         target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
         if target_mode == DOCUMENT_ACTION_TARGET_MODE_ALL:
             normalized_action.update({
@@ -433,4 +442,9 @@ def build_analyze_config(action_config=None):
         'analysis_mode': normalize_document_action_analysis_mode(action_config.get('analysis_mode')),
         'target_mode': normalize_document_action_target_mode(action_config.get('target_mode')),
         'recent_window_minutes': normalize_recent_document_window_minutes(action_config.get('recent_window_minutes')),
+        **({
+            'analysis_options': normalize_analysis_options(
+                action_config.get('analysis_options'), action_config.get('transformation_spec'),
+            ),
+        } if 'analysis_options' in action_config or 'transformation_spec' in action_config else {}),
     }

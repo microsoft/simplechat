@@ -2,7 +2,7 @@
 # test_workflow_task_document_actions.py
 """
 Functional test for per-task workflow workspace documents and the document picker fix.
-Version: 0.250.225
+Version: 0.261.111
 Implemented in: 0.250.225
 
 This test ensures that:
@@ -137,7 +137,6 @@ def load_runner_helpers():
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
-        "WORKFLOW_TASK_CONTEXT_MAX_CHARS": 12000,
         "re": __import__("re"),
         "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
         "_get_document_action_config": lambda source: dict(
@@ -149,7 +148,6 @@ def load_runner_helpers():
     return load_functions(
         RUNNER_FILE,
         {
-            "_truncate_workflow_task_context",
             "_get_workflow_active_task",
             "_document_run_item_id",
             "_resolve_workflow_task_document_action",
@@ -517,10 +515,13 @@ def test_task_document_action_failures_stay_inside_the_retry_loop() -> None:
     print("Testing task document action failure containment...")
     runner_source = read_text(RUNNER_FILE)
 
-    sequence_start = runner_source.index("def _execute_workflow_task_sequence(")
-    sequence_body = runner_source[sequence_start:sequence_start + 6000]
+    sequence_node = next(
+        node for node in ast.parse(runner_source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_workflow_task_sequence"
+    )
+    sequence_body = ast.get_source_segment(runner_source, sequence_node)
     attempt_loop_index = sequence_body.index("for attempt_index in range(retry_count + 1):")
-    build_index = sequence_body.index("prepared_workflow = _build_workflow_task_execution_workflow(")
+    build_index = sequence_body.index("attempt_workflow = _build_workflow_task_execution_workflow(")
     try_index = sequence_body.index("try:", attempt_loop_index)
 
     assert build_index > attempt_loop_index, (

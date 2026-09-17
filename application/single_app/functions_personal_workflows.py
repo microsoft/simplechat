@@ -40,6 +40,11 @@ from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
+from functions_workflow_result_store import delete_workflow_run_results
+from functions_workflow_bindings import authorize_workflow_reference
+from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_runtime_store import workflow_runtime_store
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
@@ -58,8 +63,6 @@ WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
 WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
-
-
 def _utc_now():
     return datetime.now(timezone.utc)
 
@@ -162,6 +165,35 @@ def _normalize_alert_priority(value):
     return normalized
 
 
+def normalize_workflow_publication(publication):
+    """Normalize an explicit existing-artifact request, never a workspace preference."""
+    if publication is None:
+        return None
+    if not isinstance(publication, dict) or set(publication) - {
+        'artifact_format', 'workspace_scope', 'group_id', 'public_workspace_id',
+    }:
+        raise ValueError('Task publication must specify an artifact format and destination.')
+    output_format = _normalize_text(publication.get('artifact_format'), 'Artifact format', required=True).lower()
+    if output_format == 'markdown':
+        output_format = 'md'
+    if output_format not in {'md', 'csv', 'json', 'xml', 'docx', 'pdf'}:
+        raise ValueError('Choose an existing supported analysis artifact format.')
+    scope = _normalize_text(publication.get('workspace_scope'), 'Publication destination', required=True).lower()
+    if scope not in {'personal', 'group', 'public'}:
+        raise ValueError('Publication destination must be personal, group, or public.')
+    normalized = {'artifact_format': output_format, 'workspace_scope': scope}
+    target_field = {'group': 'group_id', 'public': 'public_workspace_id'}.get(scope)
+    for field in ('group_id', 'public_workspace_id'):
+        value = _normalize_text(publication.get(field), 'Publication workspace id')
+        if field == target_field:
+            if not value or len(value) > 256:
+                raise ValueError('Choose an explicit publication workspace id.')
+            normalized[field] = value
+        elif value:
+            raise ValueError('Publication must have exactly one destination.')
+    return normalized
+
+
 def _normalize_workflow_tasks(
     workflow_data,
     existing_workflow=None,
@@ -203,7 +235,21 @@ def _normalize_workflow_tasks(
         if len(name) > WORKFLOW_TASK_NAME_MAX_LENGTH:
             raise ValueError(f'Task name must be {WORKFLOW_TASK_NAME_MAX_LENGTH} characters or fewer.')
 
-        instructions = _normalize_text(raw_task.get('instructions'), 'Task instructions', required=True)
+        publication = None
+        if raw_task.get('publication') is not None:
+            publication = normalize_workflow_publication(raw_task['publication'])
+            if index == 0:
+                raise ValueError('Add an analysis task before its publication task.')
+            publication_action = raw_task.get('document_action')
+            if publication_action is not None and (
+                not isinstance(publication_action, dict) or publication_action.get('type', 'none') != 'none'
+            ):
+                raise ValueError('A publication task reuses an existing artifact; it cannot analyze documents.')
+        instructions = _normalize_text(
+            raw_task.get('instructions') or ('Publish the existing analysis artifact.' if publication else ''),
+            'Task instructions',
+            required=True,
+        )
         if len(instructions) > WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH:
             raise ValueError(
                 f'Task instructions must be {WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH} characters or fewer.'
@@ -213,6 +259,8 @@ def _normalize_workflow_tasks(
         runner_type = _normalize_text(raw_runner.get('type') or 'inherit', 'Task runner type').lower()
         if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
             raise ValueError(f'Workflow task {index + 1} has an unsupported runner type.')
+        if publication and runner_type != 'inherit':
+            raise ValueError('A publication task does not use a model or agent runner.')
         if runner_type == 'inherit':
             runner = {'type': 'inherit'}
         elif callable(task_runner_normalizer):
@@ -228,6 +276,8 @@ def _normalize_workflow_tasks(
             'order': index + 1,
             'runner': runner,
         }
+        if publication:
+            normalized_task['publication'] = publication
 
         if callable(task_document_action_normalizer):
             raw_document_action = raw_task.get('document_action')
@@ -663,7 +713,7 @@ def get_personal_workflows(user_id):
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=user_id,
         ))
-        cleaned = [_strip_cosmos_metadata(item) for item in items]
+        cleaned = [workflow_definition_for_editor(_strip_cosmos_metadata(item)) for item in items]
         cleaned.sort(key=lambda item: item.get('updated_at') or item.get('created_at') or '', reverse=True)
         return cleaned
     except exceptions.CosmosResourceNotFoundError:
@@ -682,7 +732,7 @@ def get_personal_workflow(user_id, workflow_id):
     """Fetch a specific personal workflow."""
     try:
         workflow = cosmos_personal_workflows_container.read_item(item=workflow_id, partition_key=user_id)
-        return _strip_cosmos_metadata(workflow)
+        return workflow_definition_for_editor(_strip_cosmos_metadata(workflow))
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
@@ -761,6 +811,12 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         ),
         default_document_action=document_action,
     )
+    definition_fields = normalize_workflow_definition(
+        workflow_data, existing_workflow, tasks, user_id=user_id,
+    )
+    tasks = definition_fields['tasks']
+    for reference in definition_fields.get('reference_inputs', []):
+        authorize_workflow_reference({'user_id': user_id}, reference, actor_user_id=modifying_user_id)
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
         'Task prompt',
@@ -911,8 +967,11 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     else:
         workflow['next_run_at'] = None
 
+    workflow.update(definition_fields)
     normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
-    result = cosmos_personal_workflows_container.upsert_item(body=workflow)
+    result = save_workflow_definition_record(
+        cosmos_personal_workflows_container, user_id, workflow, existing_workflow,
+    )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for user {user_id}")
     return cleaned_result
@@ -921,13 +980,9 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 def update_personal_workflow_runtime_fields(user_id, workflow_id, updates):
     """Apply runtime fields such as status and last-run metadata."""
     updates = updates if isinstance(updates, dict) else {}
-    workflow = get_personal_workflow(user_id, workflow_id)
-    if not workflow:
-        raise ValueError('Workflow not found.')
-
-    workflow.update(updates)
-    workflow['updated_at'] = _utc_now_iso()
-    result = cosmos_personal_workflows_container.upsert_item(body=workflow)
+    result = update_workflow_runtime_record(
+        cosmos_personal_workflows_container, user_id, workflow_id, updates, _utc_now_iso(),
+    )
     return _strip_cosmos_metadata(result)
 
 
@@ -1032,6 +1087,8 @@ def get_personal_workflow_run_item(run_id, item_id):
     """Fetch a workflow run item by id."""
     try:
         item = cosmos_personal_workflow_run_items_container.read_item(item=item_id, partition_key=run_id)
+        if not is_public_workflow_run_item(item):
+            return None
         return _strip_cosmos_metadata(item)
     except exceptions.CosmosResourceNotFoundError:
         return None
@@ -1045,6 +1102,28 @@ def get_personal_workflow_run_item(run_id, item_id):
         return None
 
 
+def is_public_workflow_run_item(item):
+    """Keep private payloads and writer tokens out of ordinary workflow history."""
+    private_types = (
+        "workflow_result_chunk", "chat_analysis_result_chunk",
+        "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint",
+        "workflow_runtime_control",
+    )
+    return isinstance(item, dict) and not any(
+        item.get(field) in private_types for field in ("type", "item_type")
+    )
+
+
+WORKFLOW_PUBLIC_RUN_ITEMS_FILTER = (
+    'AND (NOT IS_DEFINED(c.type) OR c.type NOT IN '
+    '("workflow_result_chunk", "chat_analysis_result_chunk", '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
+    'AND (NOT IS_DEFINED(c.item_type) OR c.item_type NOT IN '
+    '("workflow_result_chunk", "chat_analysis_result_chunk", '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
+)
+
+
 def list_personal_workflow_run_items(run_id, limit=1000):
     """List per-item workflow run records for a run."""
     try:
@@ -1052,12 +1131,14 @@ def list_personal_workflow_run_items(run_id, limit=1000):
             query=(
                 'SELECT * FROM c '
                 'WHERE c.run_id = @run_id '
+                + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER +
                 'ORDER BY c.created_at ASC'
             ),
             parameters=[{'name': '@run_id', 'value': run_id}],
             partition_key=run_id,
         ))
-        return [_strip_cosmos_metadata(item) for item in items[:limit]]
+        visible_items = [item for item in items if is_public_workflow_run_item(item)]
+        return [_strip_cosmos_metadata(item) for item in visible_items[:limit]]
     except Exception as exc:
         log_event(
             f'[WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
@@ -1074,33 +1155,37 @@ def delete_personal_workflow(user_id, workflow_id):
     if not workflow:
         return False
 
-    cosmos_personal_workflows_container.delete_item(item=workflow_id, partition_key=user_id)
-
-    runs = list_personal_workflow_runs(user_id, workflow_id, limit=500)
+    update_workflow_runtime_record(
+        cosmos_personal_workflows_container, user_id, workflow_id,
+        {"deleting": True, "status": "deleting"}, datetime.now(timezone.utc).isoformat(),
+    )
+    runs = cosmos_personal_workflow_runs_container.query_items(
+        query='SELECT c.id FROM c WHERE c.user_id = @user_id AND c.workflow_id = @workflow_id',
+        parameters=[{'name': '@user_id', 'value': user_id}, {'name': '@workflow_id', 'value': workflow_id}],
+        partition_key=user_id,
+    )
     for run in runs:
         run_id = run.get('id')
-        for item in list_personal_workflow_run_items(run_id, limit=1000):
+        workflow_runtime_store(workflow, run_id).tombstone()
+        delete_workflow_run_results(workflow, run_id)
+        items = cosmos_personal_workflow_run_items_container.query_items(
+            query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
+            parameters=[{'name': '@run_id', 'value': run_id}],
+            partition_key=run_id,
+        )
+        for item in items:
+            if not is_public_workflow_run_item(item):
+                continue
             try:
                 cosmos_personal_workflow_run_items_container.delete_item(item=item.get('id'), partition_key=run_id)
             except exceptions.CosmosResourceNotFoundError:
                 continue
-            except Exception as exc:
-                log_event(
-                    f"[WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
-                    extra={'user_id': user_id, 'workflow_id': workflow_id, 'run_id': run_id},
-                    level=logging.WARNING,
-                )
         try:
             cosmos_personal_workflow_runs_container.delete_item(item=run.get('id'), partition_key=user_id)
         except exceptions.CosmosResourceNotFoundError:
             continue
-        except Exception as exc:
-            log_event(
-                f"[WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
-                extra={'user_id': user_id, 'workflow_id': workflow_id},
-                level=logging.WARNING,
-            )
 
+    cosmos_personal_workflows_container.delete_item(item=workflow_id, partition_key=user_id)
     return True
 
 

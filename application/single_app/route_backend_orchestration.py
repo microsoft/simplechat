@@ -34,13 +34,21 @@ from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Response, jsonify, request, session, stream_with_context
+from flask import Response, g, has_request_context, jsonify, request, session, stream_with_context
 from openai import OpenAIError
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from functions_appinsights import log_event
 from functions_citation_tracking import merge_cited_documents_into_conversation
 from functions_conversation_cache import invalidate_conversation_cache_for_item
+from functions_saved_analysis import (
+    analysis_result_contexts,
+    load_saved_analysis,
+    saved_analysis_context,
+    sanitize_saved_analysis_messages,
+)
+from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
+from model_endpoint_clients import ModelEndpointBehavior
 from functions_authentication import (
     get_current_user_id,
     get_current_user_info,
@@ -130,6 +138,7 @@ from functions_orchestration_planner import (
 from functions_orchestration_models import (
     OrchestrationModel,
     OrchestrationModelError,
+    REASONING_COMPLETION_BUDGET,
     has_planner_model_override,
     resolve_orchestration_model,
 )
@@ -263,6 +272,20 @@ def _build_invoke_prompt(settings, token_usage=None, model=None):
             if isinstance(prompt_text, list)
             else [{'role': 'user', 'content': str(prompt_text or '')}]
         )
+        if (metadata or {}).get('complete_saved_analysis_input'):
+            behavior_name = getattr(model, 'behavior_name', '') or model.deployment
+            output_tokens = getattr(model, 'response_length', None)
+            if output_tokens is None:
+                output_tokens = ANSWER_MAX_TOKENS
+                if ModelEndpointBehavior(model.provider, behavior_name).is_openai_reasoning_model:
+                    output_tokens = max(output_tokens, REASONING_COMPLETION_BUDGET)
+            audit = calculate_workflow_context_budget(
+                messages, getattr(model, 'model_metadata', None) or behavior_name,
+                provider=model.provider, output_tokens=output_tokens,
+            )
+            invoke_prompt.context_budget = audit
+            if audit['decision'] == 'blocked':
+                raise WorkflowContextBudgetError(audit)
         try:
             response = model.create_completion(
                 messages=messages,
@@ -301,6 +324,15 @@ def _build_invoke_prompt(settings, token_usage=None, model=None):
             raise PlannerResponseError('empty_completion')
         return text
 
+    invoke_prompt.model_metadata = getattr(model, 'model_metadata', None) or getattr(model, 'behavior_name', '') or model.deployment
+    invoke_prompt.provider = model.provider
+    invoke_prompt.output_tokens = getattr(model, 'response_length', None)
+    if invoke_prompt.output_tokens is None:
+        behavior_name = getattr(model, 'behavior_name', '') or model.deployment
+        invoke_prompt.output_tokens = (
+            max(ANSWER_MAX_TOKENS, REASONING_COMPLETION_BUDGET)
+            if ModelEndpointBehavior(model.provider, behavior_name).is_openai_reasoning_model else ANSWER_MAX_TOKENS
+        )
     return invoke_prompt
 
 
@@ -370,7 +402,7 @@ def _load_ledger(conversation_id, user_id, settings):
     try:
         sources = list(cosmos_messages_container.query_items(
             query=(
-                'SELECT c.id, c.role, c.metadata FROM c WHERE c.conversation_id = @conversation_id '
+                'SELECT c.id, c.conversation_id, c.role, c.metadata FROM c WHERE c.conversation_id = @conversation_id '
                 'AND ARRAY_CONTAINS(@message_ids, c.id)'
             ),
             parameters=[
@@ -386,6 +418,8 @@ def _load_ledger(conversation_id, user_id, settings):
         )
         return {'runs': [], 'answered_questions': [], 'truncated': True}
     visible = set()
+    sources = sanitize_saved_analysis_messages(sources, user_id)
+    inherited_contexts = _remember_analysis_history_contexts(sources)
     for source in sources:
         metadata = source.get('metadata') or {}
         thread = (metadata.get('thread_info') or {}) if isinstance(metadata, dict) else None
@@ -394,6 +428,7 @@ def _load_ledger(conversation_id, user_id, settings):
             and isinstance(metadata, dict) and isinstance(thread, dict)
             and not metadata.get('masked') and not metadata.get('masked_ranges')
             and not metadata.get('is_generated_chat_artifact')
+            and (metadata.get('saved_analysis') or {}).get('available') is not False
             and thread.get('active_thread') is not False
         ):
             visible.add(source['id'])
@@ -402,9 +437,42 @@ def _load_ledger(conversation_id, user_id, settings):
         if run.get('user_message_id') in visible
         and (not run.get('assistant_message_id') or run['assistant_message_id'] in visible)
     ]
-    return build_run_ledger(
-        runs, settings=settings, answered_questions=collect_answered_questions(runs)
+    safe_runs = []
+    for run in runs:
+        try:
+            contexts = run.get('analysis_result_contexts') or (
+                run.get('conversation_context') or {}
+            ).get('analysis_result_contexts') or []
+            for context in contexts:
+                load_saved_analysis(user_id, context)
+                if context not in inherited_contexts:
+                    inherited_contexts.append(context)
+            safe_runs.append(run)
+        except (PermissionError, ValueError, LookupError, AzureError):
+            continue
+    ledger = build_run_ledger(
+        safe_runs, settings=settings, answered_questions=collect_answered_questions(safe_runs)
     )
+    if inherited_contexts:
+        ledger['analysis_result_contexts'] = inherited_contexts
+        if has_request_context():
+            prior = list(getattr(g, 'orchestration_analysis_result_contexts', []) or [])
+            g.orchestration_analysis_result_contexts = prior + [item for item in inherited_contexts if item not in prior]
+    return ledger
+
+
+def _remember_analysis_history_contexts(messages):
+    contexts = []
+    for message in messages:
+        if ((message.get('metadata') or {}).get('saved_analysis') or {}).get('available') is False:
+            continue
+        for context in analysis_result_contexts(message):
+            if context not in contexts:
+                contexts.append(context)
+    if has_request_context() and contexts:
+        prior = list(getattr(g, 'orchestration_analysis_result_contexts', []) or [])
+        g.orchestration_analysis_result_contexts = prior + [item for item in contexts if item not in prior]
+    return contexts
 
 
 def _authorize_context_conversation(conversation_id, user_id):
@@ -461,9 +529,17 @@ def _load_conversation_snapshot(
         parameters=parameters,
         partition_key=conversation_id,
     ))
-    return build_conversation_snapshot(
+    messages = sanitize_saved_analysis_messages(messages, user_id)
+    snapshot = build_conversation_snapshot(
         messages, settings, turn_id=turn_id, truncated=len(messages) >= scan_limit
     )
+    selected_ids = {message['id'] for message in snapshot.get('messages') or []}
+    contexts = _remember_analysis_history_contexts([
+        message for message in messages if message.get('id') in selected_ids
+    ])
+    if contexts:
+        snapshot['analysis_result_contexts'] = contexts
+    return snapshot
 
 
 def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
@@ -488,12 +564,25 @@ def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
         ],
         partition_key=conversation_id,
     )) if message_ids else []
-    return validate_conversation_snapshot(snapshot, messages)
+    messages = sanitize_saved_analysis_messages(messages, user_id)
+    contexts = snapshot.get('analysis_result_contexts') or []
+    for context in contexts:
+        load_saved_analysis(user_id, context)
+    validated = validate_conversation_snapshot(
+        {key: value for key, value in snapshot.items() if key != 'analysis_result_contexts'},
+        messages,
+    )
+    current_contexts = _remember_analysis_history_contexts(messages)
+    if contexts or current_contexts:
+        validated['analysis_result_contexts'] = contexts + [item for item in current_contexts if item not in contexts]
+    return validated
 
 
 def _conversation_context_for_run(record, user_id, settings):
     conversation_id = record['conversation_id']
     _authorize_context_conversation(conversation_id, user_id)
+    for context in record.get('analysis_result_contexts') or []:
+        load_saved_analysis(user_id, context)
     if record.get('user_message_id'):
         try:
             current = cosmos_messages_container.read_item(
@@ -795,6 +884,8 @@ def _persist_planned_turn(
     plan, turn_context, user_id, conversation_id, submission=None, expected_previous_run=None,
 ):
     _validate_turn_memory_context(turn_context, user_id, conversation_id)
+    if has_request_context() and getattr(g, 'orchestration_analysis_result_contexts', None):
+        turn_context['analysis_result_contexts'] = list(g.orchestration_analysis_result_contexts)
     latest = get_latest_turn_run(conversation_id, user_id, turn_context['turn_id'])
     if latest and latest['run_id'] != plan['run_id']:
         expected_previous_run = expected_previous_run or read_revision_run(
@@ -1068,6 +1159,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
             original_seeds=record.get('original_seeds') or {},
             resolved_message=record.get('resolved_message') or record.get('user_message'),
             conversation_context=snapshot, context_message_ids=(record.get('request_resolution') or {}).get('message_ids'),
+            analysis_result_contexts=record.get('analysis_result_contexts'),
             allowed_user_urls=allowed_urls, memory_context=memory, doc_scope=seeds.get('doc_scope') or 'all',
             tags=seeds.get('tags') or None, document_filter_mode=seeds.get('document_filter_mode') or None,
             active_group_ids=seeds.get('active_group_ids') or None,
@@ -1101,6 +1193,14 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         try:
             _conversation_context_for_run(record, record['user_id'], get_settings())
             _validate_turn_memory_context(record, record['user_id'], record['conversation_id'])
+            for reference in getattr(context, 'analysis_result_contexts', []) or []:
+                load_saved_analysis(record['user_id'], reference)
+            if result.get('saved_analyses'):
+                # The displayed assistant message does not exist at this boundary yet.
+                from functions_saved_analysis import load_orchestration_analysis_input
+
+                for descriptor in result['saved_analyses']:
+                    load_orchestration_analysis_input(record['user_id'], descriptor, authorize_only=True)
             document_ids = set(getattr(context, 'documents_touched', []) or [])
             document_ids.update(
                 item['document_id'] for item in result.get('citations') or []
@@ -1161,6 +1261,15 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
     # The future released state is what both the saved message and done frame
     # describe. The live lease remains held until message persistence finishes.
     message_id = f"assistant_orchestration_{fingerprint(record['id'])[:40]}"
+    saved_analyses = [
+        {**deepcopy(descriptor), 'conversation_id': record['conversation_id'], 'message_id': message_id}
+        for descriptor in result.get('saved_analyses') or []
+    ]
+    inherited_contexts = list(result.get('analysis_result_contexts') or [])
+    for descriptor in saved_analyses:
+        reference = saved_analysis_context(descriptor)
+        if reference not in inherited_contexts:
+            inherited_contexts.append(reference)
     public = public_execution_fields({
         **current, 'execution_lease': None, 'finalization_status': 'saved',
         'assistant_message_id': message_id, 'message_saved': True,
@@ -1168,6 +1277,35 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
     summary = summarize_plan(record['plan'])
     summary.update({'status': status, 'capabilities_used': list(result.get('capabilities_used') or [])})
     documents, web, tools = _partition_citations(result.get('citations'))
+    terminal_metadata = {
+        'orchestration': {
+            'run_id': record['id'], 'turn_id': record.get('turn_id'),
+            'plan_summary': summary, **public,
+        },
+        'token_usage': combined_usage, **reasoning,
+    }
+    if inherited_contexts:
+        terminal_metadata['analysis_result_contexts'] = inherited_contexts
+    if saved_analyses:
+        terminal_metadata.update({'saved_analyses': saved_analyses, 'saved_analysis': saved_analyses[-1]})
+    if result.get('analysis_consumption'):
+        terminal_metadata['analysis_explanation'] = {
+            'original_sources_reanalyzed': False, 'consumption': result['analysis_consumption'],
+        }
+    analysis_artifacts = [
+        artifact for artifact in result.get('artifacts') or []
+        if isinstance(artifact, dict) and artifact.get('capability') == 'analyze'
+    ]
+    native_outputs = [
+        artifact for artifact in result.get('artifacts') or []
+        if isinstance(artifact, dict) and (
+            artifact.get('capability') == 'tabular' or artifact.get('export_run_id')
+        )
+    ]
+    if analysis_artifacts:
+        terminal_metadata['generated_analysis_artifacts'] = analysis_artifacts
+    if native_outputs:
+        terminal_metadata['generated_tabular_outputs'] = native_outputs
     saved = False
     try:
         lease.read()
@@ -1175,12 +1313,7 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         persisted_id = _save_message(
             record['conversation_id'], 'assistant', answer, message_id=message_id,
             persist=lease.publish_message,
-            metadata={
-                'orchestration': {
-                    'run_id': record['id'], 'turn_id': record.get('turn_id'),
-                    'plan_summary': summary, **public,
-                }, 'token_usage': combined_usage, **reasoning,
-            },
+            metadata=terminal_metadata,
             extra={
                 **answer_model.metadata(), **reasoning, 'hybrid_citations': documents,
                 'web_search_citations': web, 'agent_citations': tools,
@@ -1191,7 +1324,11 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         if persisted_id != message_id:
             raise CheckpointError('message_not_saved')
         saved = True
-        lease.update({'assistant_message_id': message_id, 'message_saved': True, 'finalization_status': 'saved'})
+        lease.update({
+            'assistant_message_id': message_id, 'message_saved': True, 'finalization_status': 'saved',
+            **({'saved_analyses': saved_analyses} if saved_analyses else {}),
+            **({'analysis_result_contexts': inherited_contexts} if inherited_contexts else {}),
+        })
         _touch_conversation(record['conversation_id'], record['user_id'])
         _record_cited_documents(record['conversation_id'], record['user_id'], documents)
     except Exception as exc:
@@ -1223,6 +1360,10 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         recovery=public['recovery'], message_saved=saved,
         finalization_status=public.get('finalization_status'), **answer_model.metadata(), **reasoning,
     )
+    if saved and inherited_contexts:
+        payload = json.loads(frame.partition('data:')[2].strip())
+        payload['metadata'] = terminal_metadata
+        frame = f'data: {json.dumps(payload)}\n\n'
     return ([build_content_event(answer)] if saved else [build_error_event(build_failure('message_not_saved')['message'], record['conversation_id'])]) + [frame]
 
 
@@ -2265,6 +2406,7 @@ def register_route_backend_orchestration(bp):
                 original_seeds=record.get('original_seeds') or {},
                 resolved_message=_text(record.get('resolved_message')) or user_message,
                 conversation_context=snapshot,
+                analysis_result_contexts=record.get('analysis_result_contexts'),
                 context_message_ids=context_message_ids,
                 allowed_user_urls=allowed_user_urls,
                 revalidate_conversation_context=lambda: _conversation_context_for_run(
@@ -2294,6 +2436,21 @@ def register_route_backend_orchestration(bp):
             context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
             context.prompt_token_usage = run_token_usage
             cancel_requested = lease.cancel_requested
+
+            def analysis_checkpoint_factory(step_id):
+                # Reuse the active execution lease token and recovery-owned conditional guard.
+                from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
+
+                def authorize_analysis_work():
+                    lease.read()
+                    return not lease.cancel_requested()
+
+                return analysis_checkpoints_for_orchestration(
+                    user_id, conversation_id, run_id, step_id, authorize=authorize_analysis_work,
+                    attempt_token=lease.token, resume_run_id=record.get('retry_of_run_id'), settings=settings,
+                )
+
+            context.analysis_checkpoint_factory = analysis_checkpoint_factory
             outcome = {}
 
             def worker():

@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.107"
+version: "0.261.122"
 ---
 
 ## How to use this reference
@@ -154,6 +154,50 @@ parameter. Plans and answer metadata retain compatibility adjustments.
 | `tags-dropdown-button` | Filters grounded search by document tags. | Use it to narrow broad workspaces to a topic, project, lifecycle stage, or classification. | Always available |
 | `clearFiltersBtn` | Clears selected grounded-search filters. | Use it when a search is too narrow or you want to return to the full chosen scope. | Always available |
 | `document-comparison-edit-btn` | Reopens comparison setup for source/target document selections. The child label `document-comparison-edit-btn-label` supplies the visible text. | Use it when the wrong source or target document was selected for Compare. | Always available |
+
+## Saved Analyze results (both interfaces)
+
+Implemented in version **0.261.109**. These response-specific controls appear in
+classic chat and React V2 when an assistant message has a saved Analyze result.
+They are rendered with the response rather than added to the always-visible
+toolbar. See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
+
+The answer remains the readable overview, even after a supporting export finishes.
+The overview and download previews are not the full findings set. Ordinary
+narrative requests such as “Explain the risks in these documents” do not require
+a report schema, scoring setup, or configuration interview.
+
+| Control or notice | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| **Saved analysis** | Identifies the saved result and shows displayed-versus-total record counts, separate source counts, and its validation notice. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
+| **Findings and limitations** | Expands accepted findings and any **Limitations and validation issues**, loading up to 25 complete records at a time. | Inspect details without downloading a file or displaying the whole result at once. | The saved result is available |
+| **Previous findings** / **Next findings** | Reads the preceding or following page of the same saved result. | Review records outside the currently displayed range. A page's source count may be smaller than the result's total source count. | A corresponding page exists and the current page has loaded |
+| **Evidence for finding …** | Loads that finding's saved supporting passages and any saved filename, page, or chunk location. The label includes the finding's identifier. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
+| **Ask about this analysis** | Selects this saved result for the next message and focuses the composer. | Ask for an explanation of these findings instead of another original-source pass. | The saved result is available |
+| **View diagnostics (JSON)** | Opens a separate, bounded diagnostic-data response in a new tab; `next_offset` identifies further byte pages. | Audit processing details without mixing them into findings, reports, or model input. | The saved result is available and its current source access is confirmed |
+| **Saved analysis selected.** | Shows the composer notice: “Explaining the saved analysis — not running a new pass over the original sources.” A completed result can select this context automatically. | Confirm what the next ordinary follow-up will discuss. | Saved-analysis context is selected |
+| **Remove saved analysis context** | The accessible label of the notice's close button; removes the saved-result selection without deleting the result or draft. | Leave explanation mode before choosing a different task or source pass. | The saved-analysis composer notice is present |
+| **Downloads** | Expands the existing generated-file cards and their format-specific actions, such as **Download CSV**. | Obtain a supporting output after reviewing the answer and findings. | The available saved result has generated outputs; existing output readiness and approval rules still apply |
+| **Retry findings** / **Retry evidence** | Repeats a failed read of saved data, not the original analysis. | Recover from a temporary loading failure without requesting another source pass. | A findings or evidence request has a retryable loading error |
+
+With the saved-analysis notice present, an ordinary follow-up explains saved data;
+it does not invoke document Analyze/Search or Orchestrate source retrieval.
+Removing the notice, starting or changing conversations, or explicitly choosing a
+new source action clears that selection. Refreshing the message feed does not
+override an explicit removal or new source choice in the open conversation.
+
+**Structural checks passed.** does not establish factual correctness or
+exhaustiveness. **Partial analysis**, **Validation pending**, **Validation failed**,
+and **Not validated** remain distinct notices; execution completion does not turn
+them into successful validation. Saved evidence and explanations do not imply a
+new independent check of the original sources.
+
+For results produced by this feature, losing access to any contributing source
+blocks new reads and reuse of the whole original result, its evidence, saved
+derived explanations, and original exports—even if the conversation remains
+accessible. An unavailable or stale notice must not be interpreted as zero
+findings. Already explicitly published workspace copies retain the destination
+workspace's permissions and lifecycle; saving a result in chat is not publication.
 
 ## Search within a conversation
 

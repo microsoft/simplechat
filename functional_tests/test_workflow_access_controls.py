@@ -1,7 +1,7 @@
 # test_workflow_access_controls.py
 """
 Functional test for workflow access controls.
-Version: 0.250.062
+Version: 0.261.108
 Implemented in: 0.241.106
 Updated in: 0.250.062
 
@@ -71,7 +71,7 @@ def test_workflow_access_control_wiring():
     )
 
     workflow_api_route_count = workflow_routes_content.count("@enabled_required('allow_user_workflows')")
-    assert workflow_api_route_count == 12, "Expected twelve backend personal workflow API route gates."
+    assert workflow_api_route_count == 14, "Expected fourteen backend personal workflow API route gates."
     assert workflow_routes_content.count("@workflow_user_required") == workflow_api_route_count, (
         "Expected every backend workflow API route to require workflow user access."
     )

@@ -69,6 +69,7 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from functions_ai_connections import require_model_capability
+from functions_workflow_context import wrap_workflow_chat_service
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_authentication import get_current_user_id_or_none
@@ -959,6 +960,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                     "model_budget_model": multi_endpoint_config["model_budget_model"],
                     "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
                     "reasoning_effort": agent.get("reasoning_effort"),
+                    "model_metadata": multi_endpoint_config.get("model") or {},
                     "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
                 }
             if global_apim_enabled:
@@ -1046,6 +1048,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "model_budget_model": multi_endpoint_config["model_budget_model"],
             "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
             "reasoning_effort": agent.get("reasoning_effort"),
+            "model_metadata": multi_endpoint_config.get("model") or {},
             "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
         }
         return result
@@ -2144,6 +2147,11 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             if agent_config.get('max_completion_tokens', -1) > 0:
                 print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+        chat_service = wrap_workflow_chat_service(
+            chat_service,
+            build_agent_model_budget(agent_config, settings),
+            provider=agent_config.get("model_provider") or "aoai",
+        )
         kernel.add_service(chat_service)
         log_event(
             f"[SK_LOADER] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
@@ -3305,6 +3313,11 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         if should_apply_prompt_settings(agent_config, settings):
                             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                         if chat_service:
+                            chat_service = wrap_workflow_chat_service(
+                                chat_service,
+                                build_agent_model_budget(agent_config, settings),
+                                provider=agent_config.get("model_provider") or "aoai",
+                            )
                             kernel.add_service(chat_service)
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
@@ -3408,6 +3421,11 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 chat_service, get_agent_prompt_settings_config(orchestrator_config, settings),
                             )
                         if chat_service:
+                            chat_service = wrap_workflow_chat_service(
+                                chat_service,
+                                build_agent_model_budget(orchestrator_config, settings),
+                                provider=orchestrator_config.get("model_provider") or "aoai",
+                            )
                             kernel.add_service(chat_service)
                 if not chat_service:
                     raise RuntimeError(f"[SK Loader] No AzureChatCompletion service available for orchestrator agent '{orchestrator_config['name']}'")

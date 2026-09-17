@@ -5,6 +5,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton } from '../components/ui/primitives';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { DELEGATION_INPUT_CLASS } from '../components/agents/CallAgentEditor';
+import { WorkflowsSection } from './workspace/WorkflowsSection';
 import { delegationError } from '../lib/agentDelegation';
 import { GROUP_WORKSPACES, type WorkspaceSummary } from '../lib/workspaces';
 
@@ -17,7 +18,9 @@ export function GroupAgentDelegationPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [reload, setReload] = useState(0);
-    const [dirty, setDirty] = useState(false);
+    const [delegationDirty, setDelegationDirty] = useState(false);
+    const [workflowDirty, setWorkflowDirty] = useState(false);
+    const dirty = delegationDirty || workflowDirty;
 
     useEffect(() => {
         let cancelled = false;
@@ -66,7 +69,7 @@ export function GroupAgentDelegationPage() {
                             {groups.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.userRole || 'Member'}</option>)}
                         </select>
                     </div>
-                    {dirty ? <p role="status" className="text-sm text-warn">Save or cancel your Call agent changes before switching groups.</p> : null}
+                    {dirty ? <p role="status" className="text-sm text-warn">Save or cancel your group automation changes before switching groups.</p> : null}
                     {!loading && !error && !groups.length ? <p role="status" className="text-sm text-text-3">No groups match your search or you have no group membership.</p> : null}
                     {page > 1 || totalCount > 25 ? (
                         <div className="flex items-center gap-2">
@@ -76,8 +79,15 @@ export function GroupAgentDelegationPage() {
                         </div>
                     ) : null}
                     {selectedGroup ? (
-                        <AgentDelegationManager key={selectedGroup.id} scope={{ type: 'group', groupId: selectedGroup.id }}
-                            allowManage={['Owner', 'Admin'].includes(selectedGroup.userRole ?? '')} onDirtyChange={setDirty} />
+                        <div className="space-y-6">
+                            <WorkflowsSection
+                                key={`workflows:${selectedGroup.id}`}
+                                scope={{ type: 'group', groupId: selectedGroup.id }}
+                                onDirtyChange={setWorkflowDirty}
+                            />
+                            <AgentDelegationManager key={`delegation:${selectedGroup.id}`} scope={{ type: 'group', groupId: selectedGroup.id }}
+                                allowManage={['Owner', 'Admin'].includes(selectedGroup.userRole ?? '')} onDirtyChange={setDelegationDirty} />
+                        </div>
                     ) : null}
                 </div>
             </div>

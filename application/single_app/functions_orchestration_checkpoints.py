@@ -1,7 +1,7 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.105
+Version: 0.261.106
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 """
@@ -29,6 +29,8 @@ STATE_FIELDS = (
     'evidence', 'citations', 'artifacts', 'notes', 'documents_touched',
     'step_documents', 'execution_manifest', 'source_manifest',
 )
+# Absent/empty Analyze references must retain pre-Analyze checkpoint fingerprints.
+OPTIONAL_STATE_FIELDS = ('saved_analyses',)
 INPUT_FIELDS = (
     'user_message', 'user_message_id', 'resolved_message', 'answered_questions',
     'elicitation_references', 'selected_document_ids', 'original_seeds',
@@ -87,6 +89,10 @@ def effective_plan(plan):
 
 def context_state(context):
     state = {key: deepcopy(getattr(context, key, None)) for key in STATE_FIELDS}
+    for key in OPTIONAL_STATE_FIELDS:
+        value = getattr(context, key, None)
+        if value:
+            state[key] = deepcopy(value)
     json_bytes(state)
     return state
 
@@ -94,9 +100,12 @@ def context_state(context):
 def context_binding(context, plan, settings):
     """Hash runtime bindings; never persist identity, credentials or memory prompts."""
     model = getattr(context, 'model_context', None) or {}
+    inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
+    if getattr(context, 'analysis_result_contexts', None):
+        inputs['analysis_result_contexts'] = context.analysis_result_contexts
     return fingerprint({
         'plan': effective_plan(plan),
-        'inputs': {key: getattr(context, key, None) for key in INPUT_FIELDS},
+        'inputs': inputs,
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
         'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
@@ -113,11 +122,19 @@ def step_input_fingerprint(step, context, binding):
 
 def restore_context(context, payload):
     state = payload.get('state')
-    if not isinstance(state, dict) or set(state) != set(STATE_FIELDS):
+    if (
+        not isinstance(state, dict) or not set(STATE_FIELDS).issubset(state)
+        or set(state) - set(STATE_FIELDS) - set(OPTIONAL_STATE_FIELDS)
+    ):
         raise CheckpointError('checkpoint_invalid')
     json_bytes(state)
     for key in STATE_FIELDS:
         setattr(context, key, deepcopy(state[key]))
+    for key in OPTIONAL_STATE_FIELDS:
+        value = state.get(key, [])
+        if not isinstance(value, list):
+            raise CheckpointError('checkpoint_invalid')
+        setattr(context, key, deepcopy(value))
 
 
 class CheckpointStore:
