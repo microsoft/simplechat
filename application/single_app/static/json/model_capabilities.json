@@ -2,7 +2,7 @@
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 3,
   "lastUpdated": "2026-09-19",
-  "description": "SimpleChat model capability, operation-policy, and token-capacity catalog. Published numeric limits retain independently verified evidence and hosting profiles; operation metadata never supplies a token limit.",
+  "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",
@@ -18,7 +18,8 @@
     "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses.",
     "supportsStreaming": "Supports incremental token streaming for chat responses. SimpleChat wraps models without streaming support so they still deliver through the stream.",
     "reasoning": "Performs extended reasoning or thinking before responding.",
-    "imageGenerationTool": "Verified support for orchestrating the hosted image_generation tool in the Responses API, not native image output or vision. Deployment, provider, region, API version, and image-backend prerequisites still apply."
+    "imageGenerationTool": "Verified support for orchestrating the hosted image_generation tool in the Responses API, not native image output or vision. Deployment, provider, region, API version, and image-backend prerequisites still apply.",
+    "generatesEmbeddings": "Produces embedding vectors. Runtime eligibility additionally requires validated embeddingPolicy metadata and a supported OpenAI-compatible operation; this is not chat or image generation."
   },
   "coverageNotes": [
     "OpenAI coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
@@ -37,7 +38,13 @@
     "Azure -chat entries are not automatically equated with OpenAI -chat-latest model IDs. OpenAI's documented tools for a similarly named chat snapshot do not establish the Azure entry's image tool support.",
     "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service.",
     "OpenAI boolean capability coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry; reasoning-only entries additionally cover legacy GPT and o-series models.",
-    "Reasoning policies describe effort support, not endpoint/API availability. No Responses API migration is implied. Responses-only max effort is excluded from this Chat Completions policy. Models without verified level lists remain unknown."
+    "Reasoning policies describe effort support, not endpoint/API availability. No Responses API migration is implied. Responses-only max effort is excluded from this Chat Completions policy. Models without verified level lists remain unknown.",
+    "Embedding specifications and aliases were checked against primary sources on 2026-09-16. OpenAI embeddings use cl100k_base; text-embedding-ada-002 version 1 accepts 2,046 tokens, while version 2 and text-embedding-3 accept 8,192. Uncataloged Ada version metadata requires explicit administrator-verified limits rather than inheriting a newer version's context.",
+    "Cohere model knowledge does not establish a supported current OpenAI-compatible embeddings route. Its task-sensitive native APIs and the deprecated Azure Model Inference API are not implemented. An explicit compatible-gateway declaration must attest that the gateway handles input_type and any dimensions translation; SimpleChat never sends vendor-native fields to a standard OpenAI operation.",
+    "Azure lists embed-v-4-0 with a 512-token hosting limit; Cohere lists embed-v4.0 with 128k model context. The default policy retains the 512-token Azure limit and records 128,000 separately as model_context_tokens. A larger verified hosting limit must be declared explicitly, never inferred from the model context.",
+    "Cohere batch count is bounded by its documented 96-text limit. The 49,152-token default batch budget is a conservative application bound derived from 96 inputs of 512 tokens, not a claim about a vendor aggregate-token limit.",
+    "The 2026-09-19 token audit covers the original 75 records with tokenLimitEvidence. Additional qualitative and reasoning-only records omit unreviewed token fields and qualitative flags rather than guessing them. Embedding policies preserve their sourced dimensions, hosting/version input limits, and application batch budgets separately from chat context, generation limits, accounting, and verified numeric aliases.",
+    "Historical source review dates remain independent: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and embedding metadata on 2026-09-16. These retained dates do not claim a new source review or a chat-token audit of the additional models."
   ],
   "sources": [
     {
@@ -981,229 +988,323 @@
       "id": "azure-openai-responses",
       "provider": "microsoft",
       "title": "Azure OpenAI Responses API supported models and image generation",
-      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses"
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "azure-openai-v1",
       "provider": "microsoft",
       "title": "Azure OpenAI v1 API version lifecycle",
-      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle"
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "azure-openai-images",
       "provider": "microsoft",
       "title": "Azure OpenAI image models, Images API, and DALL-E retirement",
-      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/dall-e"
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/dall-e",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-6-terra",
       "provider": "openai",
       "title": "OpenAI GPT-5.6 Terra model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-6-luna",
       "provider": "openai",
       "title": "OpenAI GPT-5.6 Luna model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-5",
       "provider": "openai",
       "title": "OpenAI GPT-5.5 model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.5"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-4",
       "provider": "openai",
       "title": "OpenAI GPT-5.4 model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.4"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-4-pro",
       "provider": "openai",
       "title": "OpenAI GPT-5.4 Pro model and supported tools; GPT-5.4 Pro model-specific effort support",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-4-mini",
       "provider": "openai",
       "title": "OpenAI GPT-5.4 Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-4-nano",
       "provider": "openai",
       "title": "OpenAI GPT-5.4 Nano model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-3-codex",
       "provider": "openai",
       "title": "OpenAI GPT-5.3 Codex model and supported tools; GPT-5.3 Codex model-specific effort support",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-2",
       "provider": "openai",
       "title": "OpenAI GPT-5.2 model and supported tools; GPT-5.2 model-specific effort support",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.2"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.2",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-2-codex",
       "provider": "openai",
       "title": "OpenAI GPT-5.2 Codex model and supported tools; GPT-5.2 Codex model-specific effort support",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.2-codex"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.2-codex",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-1-codex",
       "provider": "openai",
       "title": "OpenAI GPT-5.1 Codex model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-1-codex-mini",
       "provider": "openai",
       "title": "OpenAI GPT-5.1 Codex Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-1-codex-max",
       "provider": "openai",
       "title": "OpenAI GPT-5.1 Codex Max model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-pro",
       "provider": "openai",
       "title": "OpenAI GPT-5 Pro model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5-pro"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-pro",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-codex",
       "provider": "openai",
       "title": "OpenAI GPT-5 Codex model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5-codex"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-codex",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-mini",
       "provider": "openai",
       "title": "OpenAI GPT-5 Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt5-nano",
       "provider": "openai",
       "title": "OpenAI GPT-5 Nano model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-5-nano"
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-nano",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt4o",
       "provider": "openai",
       "title": "OpenAI GPT-4o model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-4o"
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt4o-mini",
       "provider": "openai",
       "title": "OpenAI GPT-4o Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt4-1",
       "provider": "openai",
       "title": "OpenAI GPT-4.1 model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-4.1"
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt4-1-mini",
       "provider": "openai",
       "title": "OpenAI GPT-4.1 Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt4-1-nano",
       "provider": "openai",
       "title": "OpenAI GPT-4.1 Nano model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-nano"
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-nano",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-o1",
       "provider": "openai",
       "title": "OpenAI o1 model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/o1"
+      "url": "https://developers.openai.com/api/docs/models/o1",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-o3",
       "provider": "openai",
       "title": "OpenAI o3 model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/o3"
+      "url": "https://developers.openai.com/api/docs/models/o3",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-o3-mini",
       "provider": "openai",
       "title": "OpenAI o3 Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/o3-mini"
+      "url": "https://developers.openai.com/api/docs/models/o3-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-o4-mini",
       "provider": "openai",
       "title": "OpenAI o4 Mini model and supported tools",
-      "url": "https://developers.openai.com/api/docs/models/o4-mini"
+      "url": "https://developers.openai.com/api/docs/models/o4-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt-image-2",
       "provider": "openai",
       "title": "OpenAI GPT Image 2 model",
-      "url": "https://developers.openai.com/api/docs/models/gpt-image-2"
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-2",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt-image-1-5",
       "provider": "openai",
       "title": "OpenAI GPT Image 1.5 model",
-      "url": "https://developers.openai.com/api/docs/models/gpt-image-1.5"
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1.5",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt-image-1",
       "provider": "openai",
       "title": "OpenAI GPT Image 1 model",
-      "url": "https://developers.openai.com/api/docs/models/gpt-image-1"
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-gpt-image-1-mini",
       "provider": "openai",
       "title": "OpenAI GPT Image 1 Mini model",
-      "url": "https://developers.openai.com/api/docs/models/gpt-image-1-mini"
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1-mini",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-dalle3",
       "provider": "openai",
       "title": "OpenAI DALL-E 3 historical model documentation",
-      "url": "https://developers.openai.com/api/docs/models/dall-e-3"
+      "url": "https://developers.openai.com/api/docs/models/dall-e-3",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "openai-deprecations",
       "provider": "openai",
       "title": "OpenAI API model deprecations and shutdown dates",
-      "url": "https://developers.openai.com/api/docs/deprecations"
+      "url": "https://developers.openai.com/api/docs/deprecations",
+      "verifiedAt": "2026-09-08"
     },
     {
       "id": "azure-openai-reasoning",
       "provider": "microsoft",
       "title": "Azure OpenAI reasoning effort and per-model API support (verified 2026-09-07)",
-      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic"
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic",
+      "verifiedAt": "2026-09-07"
     },
     {
       "id": "luna-deployed-contract",
       "provider": "microsoft",
       "title": "Observed GPT-5.6 Luna Chat Completions rejection on 2026-09-07: minimal rejected; none, low, medium, high, xhigh explicitly accepted",
-      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic"
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic",
+      "verifiedAt": "2026-09-07"
     },
     {
       "id": "openai-chat-completions",
       "provider": "openai",
       "title": "Chat Completions reasoning_effort is supported only by reasoning models",
-      "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create"
+      "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+      "verifiedAt": "2026-09-07"
+    },
+    {
+      "id": "azure-openai-embeddings",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embeddings: per-input, batch-count and aggregate-token limits (verified 2026-09-16)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-openai-embeddings-rest",
+      "provider": "microsoft",
+      "title": "Current Azure OpenAI embeddings REST contract and supported dimensions parameter",
+      "url": "https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embedding model dimensions and version-specific input limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-cohere-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure Cohere Embed v4 identifier, dimensions and 512-token hosting limit",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#cohere-models-sold-by-azure",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-partner-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure partner catalog: Cohere English and multilingual v3 identifiers and limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners#cohere",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-embedding-models",
+      "provider": "cohere",
+      "title": "Cohere embedding model identifiers, dimensions and model context lengths",
+      "url": "https://docs.cohere.com/docs/cohere-embed",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-embedding-api",
+      "provider": "cohere",
+      "title": "Cohere native Embed API: required input_type, output_dimension and 96-text batch limit",
+      "url": "https://docs.cohere.com/v2/reference/embed",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-azure-embeddings",
+      "provider": "cohere",
+      "title": "Cohere Azure hosting and distinct embedding operation schemas",
+      "url": "https://docs.cohere.com/docs/cohere-on-microsoft-azure#embeddings",
+      "verifiedAt": "2026-09-16"
     }
   ],
   "models": [
@@ -10362,6 +10463,276 @@
           "azure-openai-reasoning"
         ]
       }
+    },
+    {
+      "id": "text-embedding-ada-002",
+      "provider": "openai",
+      "displayName": "Text Embedding Ada 002",
+      "aliases": [],
+      "family": "text-embedding-ada",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": false,
+        "min_dimensions": 1536,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-ada-002:2",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false,
+        "versions": {
+          "1": {
+            "max_input_tokens": 2046,
+            "model_revision": "text-embedding-ada-002:1"
+          },
+          "2": {
+            "max_input_tokens": 8192,
+            "model_revision": "text-embedding-ada-002:2"
+          }
+        }
+      },
+      "notes": [
+        "Fixed 1,536-dimensional output; the dimensions request parameter is unsupported.",
+        "Azure version 1 has a 2,046-token limit; the default policy describes version 2. Model-version metadata is resolved before administrator overrides."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Small",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-small",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": [
+        "Default output is 1,536 dimensions. Send dimensions only when the administrator explicitly selects a supported output size."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "text-embedding-3-large",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Large",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 3072,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 3072,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-large",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": [
+        "Default output is 3,072 dimensions. A 1,536-dimensional selection is an explicit output-size choice, not evidence of compatibility with Ada or another model's vector space."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "embed-v-4-0",
+      "provider": "cohere",
+      "displayName": "Cohere Embed v4",
+      "aliases": [
+        "embed-v4.0"
+      ],
+      "family": "cohere-embed-v4",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 256,
+        "max_dimensions": 1536,
+        "allowed_dimensions": [
+          256,
+          512,
+          1024,
+          1536
+        ],
+        "max_input_tokens": 512,
+        "model_context_tokens": 128000,
+        "hosting_limits": {
+          "azure": {
+            "max_input_tokens": 512
+          }
+        },
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-v4.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "Cataloged model knowledge only: native task-sensitive Cohere inference is not a supported runtime adapter.",
+        "Azure's 512-token hosting limit is retained separately from Cohere's 128k model context. Use an explicit verified hosting limit for a compatible gateway.",
+        "A compatible gateway must handle input_type semantics and translate the OpenAI dimensions parameter to the provider's supported output_dimension operation. Text embeddings only are integrated."
+      ],
+      "sourceIds": [
+        "azure-cohere-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
+    },
+    {
+      "id": "Cohere-embed-v3-english",
+      "provider": "cohere",
+      "displayName": "Cohere Embed English v3",
+      "aliases": [
+        "embed-english-v3.0"
+      ],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-english-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "English embedding model with fixed 1,024-dimensional output and 512-token inputs.",
+        "Azure and Cohere identifiers are documented aliases, not a promise of a compatible OpenAI operation. A gateway must explicitly handle the required task semantics."
+      ],
+      "sourceIds": [
+        "azure-partner-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
+    },
+    {
+      "id": "Cohere-embed-v3-multilingual",
+      "provider": "cohere",
+      "displayName": "Cohere Embed Multilingual v3",
+      "aliases": [
+        "embed-multilingual-v3.0"
+      ],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-multilingual-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "Multilingual embedding model with fixed 1,024-dimensional output and 512-token inputs.",
+        "Azure documents text input for this hosted model; Cohere also documents image input at the model level. Neither establishes a supported image-understanding or native embedding adapter in SimpleChat."
+      ],
+      "sourceIds": [
+        "azure-partner-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
     }
   ]
 }

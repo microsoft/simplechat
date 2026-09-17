@@ -11,6 +11,7 @@ Only stdlib imports are used here on purpose. This module sits below the setting
 logging, and route layers, so pulling those in would risk import cycles.
 """
 
+import copy
 import json
 import os
 import re
@@ -111,7 +112,7 @@ def _load_model_capability_catalog_document(force_refresh=False):
         return _CATALOG_CACHE
 
 
-def load_model_capability_catalog(force_refresh=False):
+def load_model_capability_catalog(force_refresh=False, *, strict_identity=False):
     """Return the identifier-indexed capability view used by the V2 model editors."""
     document = _load_model_capability_catalog_document(force_refresh)
     catalog = {}
@@ -121,18 +122,29 @@ def load_model_capability_catalog(force_refresh=False):
         capabilities = record.get("capabilities") or {}
         if not isinstance(capabilities, Mapping):
             continue
-        capabilities = dict(capabilities)
+        capabilities = copy.deepcopy(dict(capabilities))
         if isinstance(record.get("reasoningPolicy"), Mapping):
-            capabilities["reasoningPolicy"] = record["reasoningPolicy"]
-        for identifier in _iter_catalog_record_identifiers(record):
-            catalog[identifier] = dict(capabilities)
+            capabilities["reasoningPolicy"] = copy.deepcopy(record["reasoningPolicy"])
+        if "embeddingPolicy" in record:
+            capabilities["embeddingPolicy"] = copy.deepcopy(record["embeddingPolicy"])
+        identifiers = _iter_catalog_record_identifiers(record)
+        if strict_identity:
+            identifiers = (
+                _normalize_model_identifier(identifier)
+                for identifier in [record.get("id"), *(record.get("aliases") or [])]
+                if identifier
+            )
+        for identifier in identifiers:
+            catalog[identifier] = copy.deepcopy(capabilities)
     return catalog
 
 
 def get_model_capability_catalog_records():
-    """Return every model record defined by the catalog."""
+    """Return isolated copies of every model record defined by the catalog."""
     catalog = _load_model_capability_catalog_document()
-    return [record for record in catalog.get("models") or [] if isinstance(record, dict)]
+    return copy.deepcopy([
+        record for record in catalog.get("models") or [] if isinstance(record, dict)
+    ])
 
 
 def _get_record_field(record, field_name):
@@ -246,21 +258,35 @@ def _read_declared_capabilities(source):
     return declared
 
 
-def get_model_catalog_capabilities(model):
+def get_model_catalog_capabilities(model, *, strict_identity=False):
     """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
 
     Vision retains its legacy deployment-name heuristic separately. Image tool
     support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
     """
-    if isinstance(model, Mapping):
-        underlying = model.get("modelName")
-    else:
-        underlying = getattr(model, "modelName", None)
+    underlying = next((
+        _get_record_field(model, field_name)
+        for field_name in ("modelName", "behavior_name")
+        if isinstance(_get_record_field(model, field_name), str)
+        and _get_record_field(model, field_name).strip()
+    ), "")
     identifiers = [underlying] if str(underlying or "").strip() else _iter_model_identifiers(model)
-    catalog = load_model_capability_catalog()
+    if strict_identity and not underlying and not isinstance(model, str):
+        identifiers = next((
+            [_get_record_field(model, field_name)]
+            for field_name in ("deploymentName", "deployment", "name")
+            if isinstance(_get_record_field(model, field_name), str)
+            and _get_record_field(model, field_name).strip()
+        ), [])
+    catalog = (
+        load_model_capability_catalog(strict_identity=True)
+        if strict_identity else load_model_capability_catalog()
+    )
     for identifier in identifiers:
         normalized = _normalize_model_identifier(identifier)
         if normalized not in catalog:
+            if strict_identity:
+                continue
             snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
             if not snapshot or snapshot.group(1) not in catalog:
                 continue
@@ -271,7 +297,7 @@ def get_model_catalog_capabilities(model):
             normalized = snapshot.group(1)
         capabilities = catalog[normalized]
         if any(isinstance(value, bool) for value in capabilities.values()):
-            return dict(capabilities)
+            return copy.deepcopy(capabilities)
     return None
 
 
@@ -716,6 +742,9 @@ def is_vision_capable_model_name(*model_names):
 
 def resolve_model_vision_support(model, endpoint=None):
     """Return the shared vision decision and its source for model-editor controls."""
+    catalog = get_model_catalog_capabilities(model)
+    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
+        return False, VISION_SOURCE_CATALOG
     supports_vision = bool(
         resolve_model_capability(
             CAPABILITY_PROCESSES_IMAGES,

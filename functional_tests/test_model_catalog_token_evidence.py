@@ -1,13 +1,16 @@
 # test_model_catalog_token_evidence.py
 """
 Offline functional tests for the complete, evidence-backed model token catalog.
-Version: 0.261.035
+Version: 0.261.122
 Implemented in: 0.261.035
+React V2 catalog integration: 0.261.122
 
 Refs #1493 and PR #1497. The 2026-09-19 primary-source audit accounts for every
 one of the 75 original IDs. Expected limits are explicit per ID, not inferred
-from a family or calculated by adding/subtracting other limits. No test fetches
-provider documentation, initializes application services, or calls a model.
+from a family or calculated by adding/subtracting other limits. Additional
+operation/reasoning records have separate, strict metadata-only contracts; their
+historical source reviews are not new token audits. No test fetches provider
+documentation, initializes application services, or calls a model.
 """
 
 import copy
@@ -26,6 +29,7 @@ from test_model_capability_catalog_resolution import (
     CATALOG_PATH,
     load_catalog_schema_validator,
 )
+from functions_embedding_policy import _catalog_policy
 
 
 VERIFIED_AT = "2026-09-19"
@@ -36,6 +40,56 @@ PROFILE_FIELDS = (
 )
 AZURE_CHAT_TOOL_EFFORT_MODELS = {
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+}
+TOKEN_METADATA_FIELDS = frozenset((
+    *PROFILE_FIELDS, "verifiedAliases", "tokenLimitsApplicability",
+    "tokenLimitEvidence", "tokenLimitProfiles",
+))
+
+AUDITED_SOURCE_IDS = {
+    "openai-gpt5", "openai-gpt5-1", "openai-gpt5-6",
+    "azure-openai-gpt5", "anthropic-models", "anthropic-deprecations",
+    "meta-llama4", "meta-llama33", "meta-llama32-vision",
+    "meta-codellama", "xai-models", "xai-grok45",
+    "xai-imagine-image", "xai-imagine-video", "xai-voice",
+    "microsoft-phi4-multimodal", "microsoft-phi4-mini", "microsoft-phi4-reasoning",
+    "microsoft-phi35-vision", "microsoft-mai-ds-r1", "openai-reasoning",
+    "azure-reasoning", "anthropic-context-windows", "anthropic-extended-thinking",
+    "anthropic-batch-processing", "anthropic-models-2025-09-02", "anthropic-models-2025-05-19",
+    "meta-llama-registry", "meta-codellama-config-pinned", "meta-codellama-card-pinned",
+    "xai-responses-api", "xai-chat-completions-api", "xai-image-generation",
+    "xai-video-generation", "xai-release-notes", "google-gemini-api",
+    "google-model-metadata", "google-token-counting", "google-thinking",
+    "google-deprecations", "azure-spec-gpt-5", "azure-spec-gpt-51",
+    "azure-spec-gpt-52", "azure-spec-gpt-53", "azure-spec-gpt-54",
+    "azure-spec-gpt-55", "azure-spec-gpt-56", "azure-spec-gpt-chat-latest",
+    "anthropic-spec-fable-5", "anthropic-spec-mythos-5", "anthropic-spec-opus-5",
+    "anthropic-spec-sonnet-5", "anthropic-spec-opus-4-8", "anthropic-spec-opus-4-7",
+    "anthropic-spec-opus-4-6", "anthropic-spec-opus-4-5", "anthropic-spec-sonnet-4-6",
+    "anthropic-spec-sonnet-4-5", "anthropic-spec-haiku-4-5", "microsoft-phi4-multimodal-config",
+    "microsoft-phi4-mini-config", "microsoft-phi4-reasoning-config", "microsoft-phi4-mini-reasoning",
+    "microsoft-phi4-mini-reasoning-config", "microsoft-phi35-vision-config", "microsoft-mai-ds-r1-config",
+    "vertex-spec-gemini-3.8-flash", "vertex-spec-gemini-3.7-flash", "vertex-spec-gemini-3.6-flash",
+    "vertex-spec-gemini-3.5-flash", "vertex-spec-gemini-3.5-flash-lite", "vertex-spec-gemini-3.1-pro-preview",
+    "vertex-spec-gemini-2.5-pro", "vertex-spec-gemini-2.5-flash", "vertex-spec-gemini-2.5-flash-lite",
+    "openai-spec-gpt-5.6-sol", "openai-spec-gpt-5.6-terra", "openai-spec-gpt-5.6-luna",
+    "openai-spec-gpt-5.5", "openai-spec-gpt-chat-latest", "openai-spec-gpt-5.4",
+    "openai-spec-gpt-5.4-pro", "openai-spec-gpt-5.4-mini", "openai-spec-gpt-5.4-nano",
+    "openai-spec-gpt-5.3-codex", "openai-spec-gpt-5.2-codex", "openai-spec-gpt-5.2",
+    "openai-spec-gpt-5.1", "openai-spec-gpt-5.1-codex", "openai-spec-gpt-5.1-codex-mini",
+    "openai-spec-gpt-5.1-codex-max", "openai-spec-gpt-5", "openai-spec-gpt-5-pro",
+    "openai-spec-gpt-5-codex", "openai-spec-gpt-5-mini", "openai-spec-gpt-5-nano",
+    "xai-spec-grok-4.5", "xai-spec-grok-4.3", "xai-spec-grok-4.20-0309-reasoning",
+    "xai-spec-grok-4.20-0309-non-reasoning", "xai-spec-grok-build-0.1", "xai-spec-grok-4.20-multi-agent-0309",
+    "xai-spec-grok-imagine-image-quality", "xai-spec-grok-imagine-image", "xai-spec-grok-imagine-video-1.5",
+    "xai-spec-grok-imagine-video", "google-spec-gemini-3.8-flash", "google-spec-gemini-3.7-flash",
+    "google-spec-gemini-3.6-flash", "google-spec-gemini-3.5-flash", "google-spec-gemini-3.5-flash-lite",
+    "google-spec-gemini-3.1-pro-preview", "google-spec-gemini-2.5-pro", "google-spec-gemini-2.5-flash",
+    "google-spec-gemini-2.5-flash-lite", "google-spec-gemini-2.0-flash", "anthropic-model-ids",
+    "anthropic-context-windows-2025-08-29", "anthropic-extended-thinking-2025-09-03", "google-generate-content",
+    "google-openai-compatibility", "google-openai-cookbook", "google-generate-content-thinking-2026-02-03",
+    "vertex-generation-reference", "vertex-generation-parameters", "vertex-thinking-prompting",
+    "vertex-openai-compatibility",
 }
 
 # Provider, shared context, independent input, maximum generation; None is explicit.
@@ -459,6 +513,18 @@ SOURCE_HOSTS = {
     "developers.openai.com", "learn.microsoft.com", "platform.claude.com",
     "docs.anthropic.com", "web.archive.org", "github.com", "huggingface.co",
     "docs.x.ai", "ai.google.dev", "cloud.google.com", "docs.cloud.google.com",
+    "docs.cohere.com",
+}
+SOURCE_PROVIDER_HOSTS = {
+    "openai": {"developers.openai.com"},
+    "azure": {"learn.microsoft.com"},
+    "anthropic": {"platform.claude.com", "docs.anthropic.com", "web.archive.org"},
+    "google": {"ai.google.dev", "github.com", "web.archive.org"},
+    "vertex": {"cloud.google.com", "docs.cloud.google.com"},
+    "xai": {"docs.x.ai"},
+    "meta": {"github.com", "huggingface.co"},
+    "microsoft": {"learn.microsoft.com", "huggingface.co"},
+    "cohere": {"docs.cohere.com"},
 }
 GITHUB_PUBLISHER_PREFIXES = {
     "meta": "/meta-llama/llama-models/",
@@ -486,6 +552,10 @@ def validate_catalog_integrity(catalog):
             or parsed.password
         ):
             raise ValueError(f"Not a public primary-source URL: {source_id}")
+        if parsed.hostname not in SOURCE_PROVIDER_HOSTS.get(source["provider"], set()):
+            raise ValueError(f"Source publisher and URL disagree: {source_id}")
+        if source["verifiedAt"] > catalog["lastUpdated"]:
+            raise ValueError(f"Source is newer than catalog: {source_id}")
         if parsed.hostname == "github.com":
             prefix = GITHUB_PUBLISHER_PREFIXES.get(source["provider"])
             if not prefix or not parsed.path.startswith(prefix):
@@ -502,6 +572,16 @@ def validate_catalog_integrity(catalog):
             if not source["url"].endswith(original):
                 raise ValueError(f"Archive and original disagree: {source_id}")
 
+    embedding_identities = {}
+    for model in catalog["models"]:
+        if "embeddingPolicy" not in model:
+            continue
+        for identity in (model["id"], *model.get("aliases", [])):
+            normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
+            owner = embedding_identities.setdefault(normalized, model["id"])
+            if owner != model["id"]:
+                raise ValueError(f"Ambiguous embedding identity: {identity}")
+
     model_ids = set()
     identities = {}
     for model in catalog["models"]:
@@ -509,14 +589,40 @@ def validate_catalog_integrity(catalog):
         if model_id in model_ids:
             raise ValueError(f"Duplicate model ID: {model_id}")
         model_ids.add(model_id)
-        for identity in (model_id, *model["verifiedAliases"]):
+        for identity in (model_id, *model.get("aliases", []), *model.get("verifiedAliases", [])):
+            normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
+            embedding_owner = embedding_identities.get(normalized)
+            if embedding_owner is not None and embedding_owner != model_id:
+                raise ValueError(f"Ambiguous embedding identity: {identity}")
+        for identity in (model_id, *model.get("verifiedAliases", [])):
             normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
             owner = identities.setdefault(normalized, model_id)
             if owner != model_id:
                 raise ValueError(f"Ambiguous verified identity: {identity}")
-        for source_id in model["sourceIds"]:
+        for source_id in model.get("sourceIds", []):
             if source_id not in sources:
                 raise ValueError(f"Unresolved model source: {model_id}/{source_id}")
+
+        embeds = model.get("capabilities", {}).get("generatesEmbeddings") is True
+        if embeds != ("embeddingPolicy" in model):
+            raise ValueError(f"Embedding operation and policy disagree: {model_id}")
+        if embeds:
+            embedding_policy = _catalog_policy(model["embeddingPolicy"])
+            for version_policy in embedding_policy.get("versions", {}).values():
+                _catalog_policy({**embedding_policy, **version_policy})
+
+        policy = model.get("reasoningPolicy")
+        if policy is not None:
+            for source_id in policy["sourceIds"]:
+                if source_id not in sources:
+                    raise ValueError(f"Unresolved reasoning source: {model_id}/{source_id}")
+            if policy["status"] == "supported" and policy["default_effort"] not in policy["efforts"]:
+                raise ValueError(f"Reasoning fallback is not a supported effort: {model_id}")
+
+        if "tokenLimitEvidence" not in model:
+            if TOKEN_METADATA_FIELDS.intersection(model):
+                raise ValueError(f"Unevidenced token metadata: {model_id}")
+            continue
 
         profiles = model.get("tokenLimitProfiles", [])
         profile_ids = [profile["id"] for profile in profiles]
@@ -573,12 +679,16 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         cls.models = {model["id"]: model for model in cls.catalog["models"]}
+        cls.audited_models = {
+            model_id: model for model_id, model in cls.models.items()
+            if model_id in AUDITED_NATIVE_LIMITS
+        }
         cls.sources = {source["id"]: source for source in cls.catalog["sources"]}
         cls.validator = load_catalog_schema_validator()
 
     def test_all_75_exact_dispositions(self):
-        self.assertEqual(set(self.models), set(AUDITED_NATIVE_LIMITS))
-        counts = Counter(model["provider"] for model in self.models.values())
+        self.assertEqual(set(self.audited_models), set(AUDITED_NATIVE_LIMITS))
+        counts = Counter(model["provider"] for model in self.audited_models.values())
         self.assertEqual(
             counts,
             {"openai": 25, "anthropic": 17, "google": 10, "meta": 6, "microsoft": 6, "xai": 11},
@@ -609,8 +719,10 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         self.validator.validate(self.catalog)
         validate_catalog_integrity(self.catalog)
         self.assertIn("google-gemini-api", self.sources)
-        for source in self.sources.values():
-            self.assertEqual(source["verifiedAt"], VERIFIED_AT)
+        self.assertTrue(AUDITED_SOURCE_IDS.issubset(self.sources))
+        for source_id in AUDITED_SOURCE_IDS:
+            with self.subTest(source=source_id):
+                self.assertEqual(self.sources[source_id]["verifiedAt"], VERIFIED_AT)
 
     def test_public_source_registry_matches_the_audited_urls(self):
         for source_id, (provider, _title, url) in SOURCE_ADDITIONS.items():
@@ -624,7 +736,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
                 self.assertEqual(source["url"], f"{VERTEX_SOURCE_BASE}/{page}")
 
     def test_published_native_limits_reference_the_exact_model(self):
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             provider = model["provider"]
             source_id = None
             if provider == "openai" and model_id not in AZURE_ONLY_CHAT_IDS:
@@ -698,7 +810,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
 
     def test_tool_effort_constraints_are_evidenced_and_exactly_scoped(self):
         constrained = set()
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             self.assertNotIn("toolReasoningEfforts", model)
             for profile in model.get("tokenLimitProfiles", []):
                 if "toolReasoningEfforts" not in profile:
@@ -940,7 +1052,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         self.assertEqual(self.models["gpt-5.5"]["contextWindow"], 1050000)
 
     def test_claude_context_and_synchronous_output_are_not_beta_limits(self):
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             if model["provider"] != "anthropic":
                 continue
             with self.subTest(model=model_id):
@@ -988,7 +1100,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
             self.assertIn("anthropic-model-ids", self.models[model_id]["sourceIds"])
 
     def test_google_independent_limits_do_not_invent_shared_context(self):
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             if model["provider"] != "google":
                 continue
             with self.subTest(model=model_id):
@@ -1032,7 +1144,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         capabilities = catalog_resolution.capabilities
         capabilities.reset_model_capability_catalog_cache()
         self.addCleanup(capabilities.reset_model_capability_catalog_cache)
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             if model["provider"] != "google":
                 continue
             expected_evidence = (
@@ -1111,7 +1223,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         self.assertEqual(
             historical["archivedFrom"], "https://ai.google.dev/gemini-api/docs/thinking"
         )
-        for model in self.models.values():
+        for model in self.audited_models.values():
             if model["provider"] == "google":
                 evidence = model["tokenLimitEvidence"]["outputTokenAccounting"]
                 self.assertEqual(evidence["status"], "unknown")
@@ -1144,14 +1256,14 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         reasoning = self.models["phi-4-mini-reasoning"]
         self.assertNotIn("microsoft-phi4-mini", reasoning["sourceIds"])
         self.assertIn("microsoft-phi4-mini-reasoning", reasoning["sourceIds"])
-        for model in self.models.values():
+        for model in self.audited_models.values():
             if model["provider"] in {"meta", "microsoft"}:
                 self.assertIsNone(model["inputTokenLimit"])
                 self.assertIsNone(model["outputTokenLimit"])
                 self.assertEqual(model["outputTokenAccounting"], "unknown")
 
     def test_xai_default_is_not_a_maximum_and_accounting_is_protocol_scoped(self):
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             if model["provider"] != "xai" or model["tokenLimitsApplicability"] != "text":
                 continue
             with self.subTest(model=model_id):
@@ -1172,7 +1284,7 @@ class TestModelCatalogTokenEvidence(unittest.TestCase):
         capabilities = catalog_resolution.capabilities
         capabilities.reset_model_capability_catalog_cache()
         self.addCleanup(capabilities.reset_model_capability_catalog_cache)
-        for model_id, model in self.models.items():
+        for model_id, model in self.audited_models.items():
             if model["provider"] != "xai":
                 continue
             for alias in model["verifiedAliases"]:

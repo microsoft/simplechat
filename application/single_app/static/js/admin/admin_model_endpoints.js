@@ -45,6 +45,12 @@ const migrationModal = migrationModalEl && window.bootstrap ? bootstrap.Modal.ge
 const endpointModalEl = document.getElementById("modelEndpointModal");
 const endpointModal = endpointModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(endpointModalEl) : null;
 
+// The modal shell is shared with chat-only workspace editors. Extend only this global admin instance.
+const embeddingOperationTemplate = document.getElementById("model-endpoint-embedding-template");
+if (embeddingOperationTemplate && endpointModalEl) {
+    document.getElementById("model-endpoint-api-key-note")?.after(embeddingOperationTemplate.content.cloneNode(true));
+}
+
 const endpointIdInput = document.getElementById("model-endpoint-id");
 const endpointNameInput = document.getElementById("model-endpoint-name");
 const endpointProviderSelect = document.getElementById("model-endpoint-provider");
@@ -52,6 +58,9 @@ const endpointApiTypeGroup = document.getElementById("model-endpoint-api-type-gr
 const endpointUrlModeGroup = document.getElementById("model-endpoint-url-mode-group");
 const endpointUrlModeExactInput = document.getElementById("model-endpoint-url-mode-exact");
 const endpointApiTypeSelect = document.getElementById("model-endpoint-api-type");
+if (embeddingOperationTemplate && endpointProviderSelect) {
+    endpointProviderSelect.appendChild(new Option("OpenAI-compatible (embeddings only)", "openai_compatible"));
+}
 const endpointUrlInput = document.getElementById("model-endpoint-endpoint");
 const endpointUrlLabel = document.getElementById("model-endpoint-endpoint-label");
 const endpointUrlHelp = document.getElementById("model-endpoint-endpoint-help");
@@ -95,6 +104,13 @@ const apiKeyInput = document.getElementById("model-endpoint-api-key");
 const endpointIdentityModeSelect = document.getElementById("model-endpoint-identity-mode");
 const endpointIdentityHeaderNameInput = document.getElementById("model-endpoint-identity-header-name");
 const endpointIdentityValueTypeSelect = document.getElementById("model-endpoint-identity-value-type");
+const embeddingOperationInputs = {
+    api: document.getElementById("model-endpoint-embedding-api"),
+    endpoint: document.getElementById("model-endpoint-embedding-endpoint"),
+    api_version: document.getElementById("model-endpoint-embedding-version"),
+    auth_header: document.getElementById("model-endpoint-embedding-auth-header"),
+    is_apim: document.getElementById("model-endpoint-embedding-apim"),
+};
 
 const fetchBtn = document.getElementById("model-endpoint-fetch-btn");
 const saveBtn = document.getElementById("model-endpoint-save-btn");
@@ -128,6 +144,11 @@ const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
 const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
 const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
+const MODEL_CAPABILITIES = [
+    { key: "chat", label: "chat", metadataKey: "supportsChat", supportLabel: "Text output support" },
+    { key: "image_generation", label: "images", metadataKey: "supportsImageGeneration", supportLabel: "Image generation support" },
+    { key: "embeddings", label: "embeddings", metadataKey: "supportsEmbeddings", supportLabel: "Text embedding support" },
+];
 const CUSTOM_VERSION_VALUE = "custom";
 const IDENTITY_HEADER_MODES = new Set(["inherit", "enabled", "disabled"]);
 const IDENTITY_HEADER_VALUE_TYPES = new Set(["", "user_oid_tenant_id", "user_oid", "user_upn_tenant_id", "user_upn"]);
@@ -150,6 +171,8 @@ const MODEL_ICON_CONTROL_CONFIG = Object.freeze({
     imageClear: ".model-icon-image-clear",
     defaultBootstrapIcon: "bi-stars"
 });
+
+class ModelEndpointValidationError extends Error {}
 
 function generateId() {
     if (window.crypto && window.crypto.randomUUID) {
@@ -284,19 +307,64 @@ function syncProjectNameFromEndpoint() {
 function syncEndpointCopyForProvider() {
     const provider = endpointProviderSelect?.value || "aoai";
     if (endpointUrlLabel) {
-        endpointUrlLabel.textContent = isFoundryProvider(provider)
+        endpointUrlLabel.textContent = provider === "openai_compatible"
+            ? "Embedding API base URL"
+            : isFoundryProvider(provider)
             ? "Project Endpoint"
             : "Endpoint Fully Qualified Domain Name (FQDN)";
     }
     if (endpointUrlHelp) {
         if (isFoundryProvider(provider)) {
             endpointUrlHelp.textContent = "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name.";
+        } else if (provider === "openai_compatible") {
+            endpointUrlHelp.textContent = "Use the explicit API base, such as https://gateway.example/api/v1. The path is preserved; only text embeddings with API key authentication are supported.";
         } else if (isCustomProvider(provider)) {
             endpointUrlHelp.textContent = "Enter the HTTPS FQDN for the Custom endpoint.";
         } else {
             endpointUrlHelp.textContent = "For Azure OpenAI, paste the resource endpoint.";
         }
     }
+}
+
+function defaultEmbeddingApi() {
+    const endpoint = embeddingOperationInputs.endpoint?.value.trim() || endpointUrlInput?.value.trim() || "";
+    return (endpointProviderSelect?.value || "aoai") === "aoai" &&
+        !/\/openai\/v1\/*$/i.test(endpoint)
+        ? "azure_openai" : "openai";
+}
+
+function syncEmbeddingOperationVisibility() {
+    const provider = endpointProviderSelect?.value || "aoai";
+    const api = embeddingOperationInputs.api?.value || defaultEmbeddingApi();
+    const azureOption = embeddingOperationInputs.api?.querySelector('option[value="azure_openai"]');
+    if (azureOption) {
+        azureOption.disabled = provider !== "aoai";
+        azureOption.hidden = provider !== "aoai";
+    }
+    const defaultOption = embeddingOperationInputs.api?.querySelector('option[value=""]');
+    if (defaultOption) defaultOption.textContent = `Provider default (${defaultEmbeddingApi() === "azure_openai" ? "Azure OpenAI versioned" : "OpenAI-compatible"})`;
+    setElementVisibility(document.getElementById("model-endpoint-embedding-version-group"), api === "azure_openai" || Boolean(embeddingOperationInputs.api_version?.value));
+    const help = document.getElementById("model-endpoint-embedding-endpoint-help");
+    if (help) {
+        help.textContent = isFoundryProvider(provider)
+            ? "Foundry project endpoints do not route embeddings. Enter the explicit resource inference base ending /openai/v1/. The project URL is never rewritten."
+            : "Optional when the connection endpoint already serves embeddings. Preserve a custom gateway's explicit API base path exactly.";
+    }
+}
+
+function collectEmbeddingOperationSettings(connection) {
+    const operations = { ...(connection.operation_settings || {}) };
+    const embedding = { ...(operations.embeddings || {}) };
+    Object.entries(embeddingOperationInputs).forEach(([key, input]) => {
+        if (!input) return;
+        const value = input.value.trim();
+        if (value === "") delete embedding[key];
+        else embedding[key] = key === "is_apim" ? value === "true" : value;
+    });
+    if (Object.keys(embedding).length) operations.embeddings = embedding;
+    else delete operations.embeddings;
+    if (Object.keys(operations).length) connection.operation_settings = operations;
+    else delete connection.operation_settings;
 }
 
 function syncVersionCustomVisibility() {
@@ -490,11 +558,14 @@ function formatProviderLabel(provider) {
     if (provider === "custom") {
         return "Custom";
     }
+    if (provider === "openai_compatible") {
+        return "OpenAI-compatible (embeddings only)";
+    }
     return "Azure OpenAI";
 }
 
 function getDefaultOpenAiApiVersion(provider) {
-    return isFoundryProvider(provider) ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;
+    return isFoundryProvider(provider) || provider === "openai_compatible" ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;
 }
 
 function syncOpenAiApiVersionForProvider() {
@@ -532,17 +603,38 @@ function collectSelectedModels(endpoint) {
     }
     const names = selected.map((model) => {
         const uses = [];
-        if (modelPublishesCapability(model, "chat")) uses.push("chat");
-        if (modelPublishesCapability(model, "image_generation")) uses.push("images");
+        MODEL_CAPABILITIES.forEach(({ key, label }) => {
+            if (endpoint.provider === "openai_compatible" && key !== "embeddings") return;
+            if (modelPublishesCapability(model, key)) uses.push(label);
+        });
         return `${model.displayName || model.deploymentName || model.modelName || "Unnamed"} (${uses.join(", ") || "not published"})`;
     });
     return names.join(", ");
 }
 
+function isKnownEmbeddingModel(model) {
+    return [
+        "text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large",
+        "embed-v-4-0", "embed-v4.0", "embed-english-v3.0", "embed-multilingual-v3.0",
+        "cohere-embed-v3-english", "cohere-embed-v3-multilingual",
+    ].includes(String(model?.catalogModelId || model?.modelName || model?.deploymentName || "").trim().toLowerCase());
+}
+
+function modelNeedsEmbeddingGateway(model) {
+    return isKnownEmbeddingModel(model) &&
+        !/^text-embedding-(ada-002|3-small|3-large)$/i.test(String(model?.catalogModelId || model?.modelName || model?.deploymentName || "").trim());
+}
+
 function modelSupportsCapability(model, capability) {
+    if (isKnownEmbeddingModel(model) && capability !== "embeddings") return false;
     const status = model?.capability_status?.[capability];
     if (status && typeof status.supported === "boolean") return status.supported;
-    return capability === "chat" ? model?.supportsChat !== false : model?.supportsImageGeneration === true;
+    if (capability === "embeddings") {
+        return model?.supportsEmbeddings ?? (isKnownEmbeddingModel(model) &&
+            (!modelNeedsEmbeddingGateway(model) || model.embedding_config?.openai_compatible === true));
+    }
+    if (capability === "image_generation") return model?.supportsImageGeneration === true;
+    return model?.supportsChat ?? (model?.supportsEmbeddings !== true && !model?.embedding_policy && !model?.embedding_config);
 }
 
 function modelPublishesCapability(model, capability) {
@@ -570,7 +662,11 @@ async function loadAIConnectionNotices() {
         if (!response.ok) throw new Error("AI Connection status could not be loaded. Refresh the page to retry.");
         const data = await response.json();
         if (migrationNotice) {
-            migrationNotice.textContent = data.migration?.message || "";
+            const notices = [data.migration, data.embedding_migration].filter(Boolean);
+            migrationNotice.textContent = notices.map(notice => notice.message).filter(message => typeof message === "string").join(" ");
+            const failed = notices.some(notice => notice.status === "error" || notice.status === "failed");
+            migrationNotice.classList.toggle("alert-warning", failed);
+            migrationNotice.classList.toggle("alert-info", !failed);
             migrationNotice.classList.toggle("d-none", !migrationNotice.textContent);
         }
         if (defaultNotices) {
@@ -629,6 +725,17 @@ function renderEndpoints() {
         modelsSpan.title = selectedModels;
         modelsSpan.textContent = selectedModels;
         modelsCell.appendChild(modelsSpan);
+        const operationCounts = document.createElement("div");
+        operationCounts.className = "d-flex flex-wrap gap-1 mt-1";
+        MODEL_CAPABILITIES.forEach(({ key, label }) => {
+            const count = endpoint.enabled === false || (endpoint.provider === "openai_compatible" && key !== "embeddings")
+                ? 0 : (endpoint.models || []).filter(model => modelPublishesCapability(model, key)).length;
+            const badge = document.createElement("span");
+            badge.className = count ? "badge text-bg-primary" : "badge text-bg-secondary";
+            badge.textContent = `${count} ${label}`;
+            operationCounts.appendChild(badge);
+        });
+        modelsCell.appendChild(operationCounts);
 
         const statusCell = document.createElement("td");
         const statusBadge = document.createElement("span");
@@ -718,6 +825,7 @@ function buildDefaultModelOptions() {
     defaultModelSelect.appendChild(emptyOption);
 
     modelEndpoints.forEach((endpoint) => {
+        if (endpoint.provider === "openai_compatible") return;
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
 
         models.forEach((model) => {
@@ -747,6 +855,7 @@ function buildMetadataExtractionModelOptions() {
     }
 
     modelEndpoints.forEach((endpoint) => {
+        if (endpoint.provider === "openai_compatible") return;
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
         models.forEach((model) => {
             if (!modelPublishesCapability(model, "chat")) return;
@@ -930,11 +1039,12 @@ function updateAuthVisibility() {
     const modelsPlaceholder = document.getElementById("model-endpoint-models-placeholder");
     const provider = endpointProviderSelect?.value || "aoai";
     const customProvider = isCustomProvider(provider);
-    if (customProvider && endpointAuthTypeSelect) {
+    const isCustom = provider === "openai_compatible";
+    if ((customProvider || isCustom) && endpointAuthTypeSelect) {
         endpointAuthTypeSelect.value = "api_key";
     }
     if (endpointAuthTypeSelect) {
-        endpointAuthTypeSelect.disabled = customProvider;
+        endpointAuthTypeSelect.disabled = customProvider || isCustom;
     }
     setElementVisibility(endpointApiTypeGroup, customProvider);
     // The exact-URL escape hatch only applies to URL-built protocols, not to the
@@ -945,10 +1055,14 @@ function updateAuthVisibility() {
     );
 
     const apiType = getCustomApiType();
+    Array.from(endpointAuthTypeSelect?.options || []).forEach(option => {
+        option.disabled = (customProvider || isCustom) && option.value !== "api_key";
+        option.hidden = (customProvider || isCustom) && option.value !== "api_key";
+    });
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const isApiKey = authType === "api_key";
     const isFoundry = !customProvider && isFoundryProvider(provider);
-    const showOpenAiVersion = !customProvider || customApiTypeRequiresApiVersion(apiType);
+    const showOpenAiVersion = !isCustom && (!customProvider || customApiTypeRequiresApiVersion(apiType));
     const showAnthropicVersion = customProvider && customApiTypeVersionField(apiType) === "anthropic_version";
     const projectNameFromEndpoint = syncProjectNameFromEndpoint();
     syncEndpointCopyForProvider();
@@ -972,9 +1086,11 @@ function updateAuthVisibility() {
     setElementVisibility(addModelBtn, customProvider || authType === "api_key");
     setElementVisibility(fetchBtn, !customProvider && authType !== "api_key");
 
-    if (customProvider) {
+    if (customProvider || isCustom) {
         if (apiKeyNoteText) {
-            apiKeyNoteText.textContent = "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable.";
+            apiKeyNoteText.textContent = isCustom
+                ? "Embedding-only connections use API keys and manually configured text embedding models. There is no Azure discovery or chat test. Test a saved embedding model below."
+                : "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable.";
         }
         if (modelsPlaceholder) {
             modelsPlaceholder.textContent = "Add a model manually.";
@@ -989,12 +1105,16 @@ function updateAuthVisibility() {
                 : "Fetch models or add a model manually.";
         }
     }
+    syncEmbeddingOperationVisibility();
+    if (endpointProviderSelect) endpointProviderSelect.dataset.previousProvider = provider;
+    if (endpointApiTypeSelect) endpointApiTypeSelect.dataset.previousApiType = apiType;
 }
 
 function resetModal() {
     modalEndpoint = {};
     renderEndpointBudgetEditor();
     modelVisionRequest += 1;
+    modelVisionCapability = {};
     modalEndpointSource = null;
     if (endpointModalEl) {
         endpointModalEl.dataset.duplicateDisabledDefault = '';
@@ -1003,6 +1123,7 @@ function resetModal() {
     if (endpointNameInput) endpointNameInput.value = "";
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
     if (endpointApiTypeSelect) endpointApiTypeSelect.value = "openai";
+    if (endpointUrlModeExactInput) endpointUrlModeExactInput.checked = false;
     if (endpointUrlInput) endpointUrlInput.value = "";
     if (endpointProjectInput) endpointProjectInput.value = "";
     setSelectedVersionValue(
@@ -1033,6 +1154,7 @@ function resetModal() {
     if (endpointIdentityModeSelect) endpointIdentityModeSelect.value = "inherit";
     if (endpointIdentityHeaderNameInput) endpointIdentityHeaderNameInput.value = "";
     if (endpointIdentityValueTypeSelect) endpointIdentityValueTypeSelect.value = "";
+    Object.values(embeddingOperationInputs).forEach(input => { if (input) input.value = ""; });
 
     modalModels = [];
     if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">Fetch models to begin selection.</p>";
@@ -1112,6 +1234,10 @@ function openModalForEndpoint(endpoint) {
         if (endpointIdentityModeSelect) endpointIdentityModeSelect.value = identityHeader.mode;
         if (endpointIdentityHeaderNameInput) endpointIdentityHeaderNameInput.value = identityHeader.header_name;
         if (endpointIdentityValueTypeSelect) endpointIdentityValueTypeSelect.value = identityHeader.value_type;
+        Object.entries(embeddingOperationInputs).forEach(([key, input]) => {
+            if (input) input.value = endpoint.connection?.operation_settings?.embeddings?.[key] === undefined
+                ? "" : String(endpoint.connection.operation_settings.embeddings[key]);
+        });
         modalModels = Array.isArray(modalEndpoint.models) ? [...modalEndpoint.models] : [];
         refreshModalModels(modalModels);
     }
@@ -1436,11 +1562,12 @@ let modelVisionRequest = 0;
  * @param {Array<object>} models Models currently in the modal.
  * @returns {Promise<void>}
  */
-async function loadModelVisionCapability(models) {
+async function loadModelVisionCapability(models, request = modelVisionRequest) {
+    if (endpointProviderSelect?.value === "openai_compatible") return false;
     const wanted = (models || [])
-        .filter((model) => model && model.deploymentName)
+        .filter((model) => model && getModelRequestName(model) && !isKnownEmbeddingModel(model))
         .map((model) => ({
-            deploymentName: model.deploymentName,
+            deploymentName: getModelRequestName(model),
             modelName: model.modelName || "",
             displayName: model.displayName || "",
             supportsVision: model.supportsVision,
@@ -1448,7 +1575,7 @@ async function loadModelVisionCapability(models) {
         }));
 
     if (!wanted.length) {
-        modelVisionCapability = {};
+        if (request === modelVisionRequest) modelVisionCapability = {};
         return false;
     }
 
@@ -1459,13 +1586,14 @@ async function loadModelVisionCapability(models) {
             body: JSON.stringify({ models: wanted })
         });
         const data = await response.json().catch(() => ({}));
+        if (request !== modelVisionRequest) return false;
         modelVisionCapability = data.models || {};
         return Object.keys(modelVisionCapability).length > 0;
     } catch (error) {
         // A failed lookup must not block editing the endpoint. The checkbox falls
         // back to whatever is already stored on the model.
         console.error("Vision capability lookup failed", error);
-        modelVisionCapability = {};
+        if (request === modelVisionRequest) modelVisionCapability = {};
         return false;
     }
 }
@@ -1484,7 +1612,7 @@ function createModelVisionControl(model, modelId) {
     const vision = model.capability_status?.vision;
     const resolved = vision
         ? { supports_vision: vision.supported, source: vision.source }
-        : modelVisionCapability[model.deploymentName || ""] || {};
+        : modelVisionCapability[getModelRequestName(model)] || {};
     const declaredVision = typeof model.capabilities?.processesImages === "boolean"
         ? model.capabilities.processesImages
         : model.supportsVision;
@@ -1499,7 +1627,8 @@ function createModelVisionControl(model, modelId) {
     checkbox.type = "checkbox";
     checkbox.id = getModelIconDomId(modelId, "supports-vision");
     checkbox.dataset.supportsVisionFor = modelId;
-    checkbox.checked = checked;
+    checkbox.disabled = isKnownEmbeddingModel(model) || endpointProviderSelect?.value === "openai_compatible";
+    checkbox.checked = !checkbox.disabled && checked;
     checkbox.addEventListener("change", () => { checkbox.dataset.visionEdited = "true"; });
 
     const label = createElement("label", "form-check-label");
@@ -1523,13 +1652,64 @@ function createModelVisionControl(model, modelId) {
     return column;
 }
 
+function createModelEmbeddingControls(model, modelId) {
+    const container = createElement("div", "mt-3 border-top pt-2");
+    const help = createElement("p", "form-text");
+    help.textContent = "Blank overrides retain catalog defaults. Unknown models require declared embedding support, dimensions and an input token limit. Dimensions are never resized implicitly.";
+    container.appendChild(help);
+    [
+        ["dimensions", "Embedding dimensions", "number"],
+        ["max_input_tokens", "Embedding input token limit", "number"],
+        ["model_revision", "Embedding model revision", "text"],
+    ].forEach(([key, text, type]) => {
+        const label = createElement("label", "form-label d-block mt-2");
+        label.textContent = text;
+        const input = document.createElement("input");
+        input.id = getModelIconDomId(modelId, `embedding-${key}`);
+        label.htmlFor = input.id;
+        input.type = "text";
+        input.className = "form-control form-control-sm";
+        input.dataset.embeddingConfigFor = modelId;
+        input.dataset.configKey = key;
+        input.value = model.embedding_config?.[key] ?? "";
+        if (type === "number") {
+            input.inputMode = "numeric";
+            input.pattern = "[0-9]*";
+            input.placeholder = model.embedding_policy?.[key] ? `Catalog: ${model.embedding_policy[key]}` : isKnownEmbeddingModel(model) ? "Use catalog default" : "Required for an unknown model";
+        }
+        container.append(label, input);
+    });
+    if (endpointProviderSelect?.value === "openai_compatible" || modelNeedsEmbeddingGateway(model) || model.embedding_policy?.api === "unsupported" || model.embedding_config?.openai_compatible !== undefined) {
+        const label = createElement("label", "form-label d-block mt-2");
+        label.textContent = "Verified OpenAI-compatible gateway";
+        const select = document.createElement("select");
+        select.id = getModelIconDomId(modelId, "embedding-compatible");
+        label.htmlFor = select.id;
+        select.className = "form-select form-select-sm";
+        select.dataset.embeddingConfigFor = modelId;
+        select.dataset.configKey = "openai_compatible";
+        select.append(new Option("Use catalog compatibility", ""), new Option("Verified compatible gateway", "true"), new Option("Not compatible", "false"));
+        select.value = model.embedding_config?.openai_compatible === undefined ? "" : String(model.embedding_config.openai_compatible);
+        select.addEventListener("change", () => {
+            try {
+                modalModels = collectModalModels();
+                renderModalModels(modalModels);
+            } catch (error) {
+                showToast(error.message || "Check the embedding metadata before continuing.", "warning");
+            }
+        });
+        const explanation = createElement("p", "form-text");
+        explanation.textContent = "Declare only a verified gateway exposing the supported text embedding contract, not a native or deprecated inference API.";
+        container.append(label, select, explanation);
+    }
+    return container;
+}
+
 function createModelCapabilityControls(model, modelId) {
     const container = createElement("div", "mt-3");
-    const capabilities = [
-        ["chat", "chat", "supportsChat"],
-        ["image_generation", "images", "supportsImageGeneration"],
-    ];
-    capabilities.forEach(([capability, labelText]) => {
+    const custom = endpointProviderSelect?.value === "openai_compatible";
+    const capabilities = MODEL_CAPABILITIES.filter(({ key }) => !custom || key === "embeddings");
+    capabilities.forEach(({ key: capability, label: labelText }) => {
         const wrapper = createElement("div", "form-check mt-2");
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
@@ -1551,19 +1731,30 @@ function createModelCapabilityControls(model, modelId) {
             ? "Save the connection to resolve capabilities."
             : !status.supported
               ? status.reason || "Not supported."
-              : `${status.api === "images" ? "Direct image output" : status.api === "responses" ? "Image output through the Responses image tool" : "Text output"} · ${status.source || "unknown source"}`;
+              : `${capability === "embeddings" ? "Text embeddings" : status.api === "images" ? "Direct image output" : status.api === "responses" ? "Image output through the Responses image tool" : "Text output"} · ${status.source || "unknown source"}${status.available === false && status.reason ? ` · ${status.reason}` : ""}`;
         container.append(wrapper, help);
     });
+    if (model.embedding_policy) {
+        const policy = model.embedding_policy;
+        const details = createElement("p", "form-text");
+        const dimensions = policy.dimensions ?? policy.default_dimensions;
+        details.textContent = [
+            dimensions ? `${Number(dimensions).toLocaleString()} dimensions` : "Dimensions not configured",
+            policy.max_input_tokens ? `${Number(policy.max_input_tokens).toLocaleString()} input tokens per text` : "Input token limit not configured",
+        ].filter(Boolean).join(" · ");
+        container.appendChild(details);
+    }
     const details = document.createElement("details");
     details.className = "mt-2";
+    if (custom) details.open = true;
     const summary = document.createElement("summary");
     summary.textContent = "Capability metadata";
     const explanation = createElement("p", "form-text");
     explanation.textContent = "Keep automatic metadata unless you have verified the deployment's capabilities. Publication choices do not change technical support. Image input is separate from image output.";
     details.append(summary, explanation);
-    capabilities.forEach(([, , metadataKey]) => {
+    capabilities.forEach(({ metadataKey, supportLabel }) => {
         const label = createElement("label", "form-label d-block mt-2");
-        label.textContent = metadataKey === "supportsChat" ? "Text output support" : "Image generation support";
+        label.textContent = supportLabel;
         const select = document.createElement("select");
         select.id = getModelIconDomId(modelId, metadataKey);
         label.htmlFor = select.id;
@@ -1572,12 +1763,20 @@ function createModelCapabilityControls(model, modelId) {
         select.dataset.metadataKey = metadataKey;
         select.append(new Option("Automatic", ""), new Option("Supported (verified by administrator)", "true"), new Option("Not supported", "false"));
         select.value = typeof model[metadataKey] === "boolean" ? String(model[metadataKey]) : "";
+        select.disabled = isKnownEmbeddingModel(model) && metadataKey !== "supportsEmbeddings";
         select.addEventListener("change", () => {
-            modalModels = collectModalModels();
-            renderModalModels(modalModels);
+            try {
+                modalModels = collectModalModels();
+                renderModalModels(modalModels);
+            } catch (error) {
+                showToast(error.message || "Check the model metadata before continuing.", "warning");
+            }
         });
         details.append(label, select);
     });
+    if (custom || modelSupportsCapability(model, "embeddings") || isKnownEmbeddingModel(model) || model.embedding_config) {
+        details.appendChild(createModelEmbeddingControls(model, modelId));
+    }
     container.appendChild(details);
     return container;
 }
@@ -1594,10 +1793,16 @@ function createModelCapabilityControls(model, modelId) {
 function refreshModalModels(models) {
     const request = ++modelVisionRequest;
     renderModalModels(models);
-    void loadModelVisionCapability(models).then((resolved) => {
+    void loadModelVisionCapability(models, request).then((resolved) => {
         if (resolved && request === modelVisionRequest) {
-            modalModels = collectModalModels();
-            renderModalModels(modalModels);
+            try {
+                modalModels = collectModalModels();
+                renderModalModels(modalModels);
+            } catch (error) {
+                // A background lookup must not erase invalid capacity or
+                // embedding values that the administrator is still editing.
+                showToast(error?.message || "Review the model fields before saving.", "warning");
+            }
         }
     });
 }
@@ -1619,8 +1824,9 @@ function renderModalModels(models) {
         const modelName = model.modelName || "";
         const displayName = model.displayName || requestName;
         const description = model.description || "";
+        const custom = endpointProviderSelect?.value === "openai_compatible";
         const responseLength = getModelResponseLength(model);
-        const requestNameReadonly = model.isDiscovered && !isCustomProvider();
+        const requestNameReadonly = model.isDiscovered && !isCustomProvider() && !custom;
         const requestNameLabel = isCustomProvider() && customApiTypeUsesModelName()
             ? "Model Name"
             : "Deployment Name";
@@ -1665,6 +1871,7 @@ function renderModalModels(models) {
         iconCol.appendChild(createSmallLabel("Icon"));
         iconCol.appendChild(createModelIconEditor(model, modelId));
         const responseLengthCol = createElement("div", "col-md-4");
+        setElementVisibility(responseLengthCol, !custom && !isKnownEmbeddingModel(model));
         const responseLengthLabel = createSmallLabel("Response Length");
         responseLengthLabel.htmlFor = getModelIconDomId(modelId, "response-length");
         responseLengthCol.appendChild(responseLengthLabel);
@@ -1684,9 +1891,9 @@ function renderModalModels(models) {
         fieldsRow.appendChild(iconCol);
         fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
-        fieldsRow.appendChild(createModelVisionControl(model, modelId));
+        if (!custom && !isKnownEmbeddingModel(model)) fieldsRow.appendChild(createModelVisionControl(model, modelId));
 
-        const actions = createElement("div", "d-flex gap-2 mt-2");
+        const actions = createElement("div", "d-flex flex-wrap gap-2 mt-2");
         const testButton = document.createElement("button");
         testButton.type = "button";
         testButton.className = "btn btn-sm btn-outline-secondary";
@@ -1694,14 +1901,21 @@ function renderModalModels(models) {
         testButton.dataset.modelId = modelId;
         testButton.textContent = "Test chat";
         testButton.disabled = !modelPublishesCapability(model, "chat");
-        testButton.classList.toggle("d-none", !modelSupportsCapability(model, "chat"));
+        testButton.classList.toggle("d-none", custom || !modelSupportsCapability(model, "chat"));
         const imageTestButton = document.createElement("button");
         imageTestButton.type = "button";
         imageTestButton.className = "btn btn-sm btn-outline-secondary";
         imageTestButton.dataset.action = "test-image";
         imageTestButton.dataset.modelId = modelId;
         imageTestButton.textContent = "Test image generation";
-        imageTestButton.classList.toggle("d-none", !modelSupportsCapability(model, "image_generation"));
+        imageTestButton.classList.toggle("d-none", custom || !modelSupportsCapability(model, "image_generation"));
+        const embeddingTestButton = document.createElement("button");
+        embeddingTestButton.type = "button";
+        embeddingTestButton.className = "btn btn-sm btn-outline-secondary";
+        embeddingTestButton.dataset.action = "test-embeddings";
+        embeddingTestButton.dataset.modelId = modelId;
+        embeddingTestButton.textContent = "Test embeddings";
+        embeddingTestButton.classList.toggle("d-none", !modelSupportsCapability(model, "embeddings"));
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "btn btn-sm btn-outline-danger";
@@ -1710,6 +1924,7 @@ function renderModalModels(models) {
         removeButton.textContent = "Remove";
         actions.appendChild(testButton);
         actions.appendChild(imageTestButton);
+        actions.appendChild(embeddingTestButton);
         actions.appendChild(removeButton);
 
         wrapper.appendChild(checkWrapper);
@@ -1719,6 +1934,11 @@ function renderModalModels(models) {
         }));
         wrapper.appendChild(createModelCapabilityControls(model, modelId));
         wrapper.appendChild(actions);
+        if (modelSupportsCapability(model, "embeddings") || modelSupportsCapability(model, "image_generation")) {
+            const costNotice = createElement("p", "form-text mt-2");
+            costNotice.textContent = "Operation tests use saved models and may incur inference costs. Embedding tests store no vectors and do not change the default or bypass compatibility checks.";
+            wrapper.appendChild(costNotice);
+        }
         fragment.appendChild(wrapper);
     });
 
@@ -1745,7 +1965,7 @@ function collectModalModels() {
         const iconEditor = findModelEditor(model.id);
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
-            throw new Error("Response length must be a positive whole number.");
+            throw new ModelEndpointValidationError("Response length must be a positive whole number.");
         }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
         const previousRequestName = getModelRequestName(model);
@@ -1758,8 +1978,7 @@ function collectModalModels() {
             delete model.capability_status;
         }
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
-        const metadataInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-metadata-for]"))
-            .filter(input => input.dataset.capabilityMetadataFor === model.id);
+        const metadataInputs = Array.from(row?.querySelectorAll("[data-capability-metadata-for]") || []);
         metadataInputs.forEach(input => {
             const key = input.dataset.metadataKey;
             const next = input.value === "" ? undefined : input.value === "true";
@@ -1767,16 +1986,43 @@ function collectModalModels() {
             if (next === undefined) delete model[key];
             else model[key] = next;
         });
-        const availabilityInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-for]"))
-            .filter(input => input.dataset.capabilityFor === model.id);
+        const availabilityInputs = Array.from(row?.querySelectorAll("[data-capability-for]") || []);
         if (availabilityInputs.some(input => String(input.checked) !== input.dataset.initialChecked)) {
-            const enabled = new Set(model.enabled_capabilities || ["chat", "image_generation"]);
+            const enabled = new Set(model.enabled_capabilities || MODEL_CAPABILITIES.map(({ key }) => key));
             availabilityInputs.forEach(input => {
                 if (String(input.checked) === input.dataset.initialChecked) return;
                 if (input.checked) enabled.add(input.dataset.capability);
                 else enabled.delete(input.dataset.capability);
             });
             model.enabled_capabilities = [...enabled];
+        }
+        const embeddingInputs = Array.from(row?.querySelectorAll("[data-embedding-config-for]") || []);
+        if (embeddingInputs.length) {
+            const config = { ...(model.embedding_config || {}) };
+            embeddingInputs.forEach(input => {
+                const key = input.dataset.configKey;
+                let value = input.value.trim();
+                if (value === "") {
+                    if (config[key] !== undefined) delete model.capability_status;
+                    delete config[key];
+                    return;
+                }
+                if (key === "dimensions" || key === "max_input_tokens") {
+                    if (!/^[0-9]+$/.test(value)) {
+                        throw new ModelEndpointValidationError("Embedding dimensions and input token limits must be positive whole numbers.");
+                    }
+                    value = Number(value);
+                    if (!Number.isSafeInteger(value) || value <= 0) {
+                        throw new ModelEndpointValidationError("Embedding dimensions and input token limits must be positive whole numbers.");
+                    }
+                } else if (key === "openai_compatible") {
+                    value = value === "true";
+                }
+                if (config[key] !== value) delete model.capability_status;
+                config[key] = value;
+            });
+            if (Object.keys(config).length) model.embedding_config = config;
+            else delete model.embedding_config;
         }
         // A late metadata lookup must not turn its initial unchecked placeholder
         // into an administrator override while preserving the rest of the draft.
@@ -1799,6 +2045,7 @@ function collectModalModels() {
 }
 
 async function testModelConnection(model) {
+    if (endpointProviderSelect?.value === "openai_compatible" || !modelSupportsCapability(model, "chat")) return;
     const payload = buildEndpointPayload();
     const requestModel = getModelRequestName(model);
     if (!payload || !requestModel) {
@@ -1838,12 +2085,13 @@ async function testModelConnection(model) {
     }
 }
 
-async function testSavedImageModel(model) {
+async function testSavedOperationModel(model, capability) {
+    const embedding = capability === "embeddings";
     const endpointId = endpointIdInput?.value || "";
     const saved = savedModelEndpoints.find(endpoint => endpoint.id === endpointId);
     const savedModel = saved?.models?.find(item => item.id === model.id);
     if (!saved || !savedModel || connectionDraftChanged || modalDraftChanged) {
-        showToast("Save the connection first. Image tests use only saved models and credentials.", "warning");
+        showToast(`Save the connection first. ${embedding ? "Embedding" : "Image"} tests use only saved models and credentials.`, "warning");
         return;
     }
     try {
@@ -1851,17 +2099,22 @@ async function testSavedImageModel(model) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                test_type: "image",
+                test_type: embedding ? "embedding" : "image",
                 selection: { endpoint_id: saved.id, model_id: savedModel.id, provider: saved.provider },
             }),
         });
         const data = await response.json();
         if (!response.ok || data.success !== true) {
-            throw new Error(data.error || "The saved model did not return an image.");
+            throw new Error(data.error || "The saved model did not return a valid result.");
         }
-        showToast("The saved model generated an image successfully.", "success");
+        if (embedding && (!Number.isSafeInteger(data.dimensions) || data.dimensions <= 0)) {
+            throw new Error("The saved embedding model did not return valid vector dimensions.");
+        }
+        showToast(embedding
+            ? `The saved embedding model returned ${data.dimensions.toLocaleString()} dimensions. No vectors were stored and the default was not changed.`
+            : "The saved model generated an image successfully.", "success");
     } catch (error) {
-        showToast(error.message || "Image generation could not be tested.", "danger");
+        showToast(error.message || "The saved model could not be tested.", "danger");
     }
 }
 
@@ -1923,7 +2176,7 @@ async function fetchModels() {
         markModalDraftChanged();
         showToast(`Fetched ${models.length} models. Added ${addedCount} new.`, "success");
     } catch (error) {
-        if (!(error instanceof ModelBudgetValidationError)) {
+        if (!(error instanceof ModelBudgetValidationError) && !(error instanceof ModelEndpointValidationError)) {
             console.error("Model fetch failed", error);
         }
         showToast(error.message || "Failed to fetch models.", "danger");
@@ -1940,6 +2193,7 @@ function buildEndpointPayload(requireDiscovery = false) {
     const provider = endpointProviderSelect?.value || "aoai";
     const customProvider = isCustomProvider(provider);
     const apiType = getCustomApiType();
+    const custom = provider === "openai_compatible";
     const projectNameFromEndpoint = isFoundryProvider(provider) ? syncProjectNameFromEndpoint() : "";
     const projectName = projectNameFromEndpoint || endpointProjectInput?.value.trim() || "";
     const projectApiVersion = getSelectedVersionValue(
@@ -1954,7 +2208,7 @@ function buildEndpointPayload(requireDiscovery = false) {
     );
     const subscriptionId = endpointSubscriptionInput?.value.trim() || "";
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
-    const authType = customProvider ? "api_key" : (endpointAuthTypeSelect?.value || "managed_identity");
+    const authType = (customProvider || custom) ? "api_key" : (endpointAuthTypeSelect?.value || "managed_identity");
     const existingEndpoint = modelEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
     const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
     const identityHeader = normalizeEndpointIdentityHeaderOverride({
@@ -1973,8 +2227,12 @@ function buildEndpointPayload(requireDiscovery = false) {
         return null;
     }
 
-    if ((!customProvider || customApiTypeRequiresApiVersion(apiType)) && !openAiApiVersion) {
+    if (!custom && (!customProvider || customApiTypeRequiresApiVersion(apiType)) && !openAiApiVersion) {
         showToast("OpenAI API version is required.", "warning");
+        return null;
+    }
+    if (custom && requireDiscovery) {
+        showToast("Custom embedding connections use manually entered models, not Azure discovery.", "warning");
         return null;
     }
 
@@ -1995,15 +2253,17 @@ function buildEndpointPayload(requireDiscovery = false) {
 
     let auth = {
         type: authType,
-        managed_identity_type: miTypeSelect?.value || "system_assigned",
-        managed_identity_client_id: miClientIdInput?.value.trim() || "",
-        tenant_id: tenantIdInput?.value.trim() || "",
-        client_id: clientIdInput?.value.trim() || "",
-        client_secret: clientSecretInput?.value.trim() || "",
+        ...(!custom ? {
+            managed_identity_type: miTypeSelect?.value || "system_assigned",
+            managed_identity_client_id: miClientIdInput?.value.trim() || "",
+            tenant_id: tenantIdInput?.value.trim() || "",
+            client_id: clientIdInput?.value.trim() || "",
+            client_secret: clientSecretInput?.value.trim() || "",
+            management_cloud: endpointManagementCloudSelect?.value || "public",
+            custom_authority: endpointCustomAuthorityInput?.value.trim() || "",
+            foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
+        } : {}),
         api_key: apiKeyInput?.value.trim() || "",
-        management_cloud: endpointManagementCloudSelect?.value || "public",
-        custom_authority: endpointCustomAuthorityInput?.value.trim() || "",
-        foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
     };
     if (customProvider) {
         auth = {
@@ -2036,6 +2296,8 @@ function buildEndpointPayload(requireDiscovery = false) {
         showToast("API key is required for API key authentication.", "warning");
         return null;
     }
+    if (!auth.api_key) delete auth.api_key;
+    if (!auth.client_secret) delete auth.client_secret;
 
     const management = !customProvider && provider === "aoai" ? {
         subscription_id: subscriptionId,
@@ -2055,7 +2317,7 @@ function buildEndpointPayload(requireDiscovery = false) {
         connection.api_version = openAiApiVersion;
     } else if (customProvider && versionField === "anthropic_version") {
         connection.anthropic_version = endpointAnthropicVersionInput?.value.trim() || DEFAULT_ANTHROPIC_VERSION;
-    } else if (!customProvider) {
+    } else if (!customProvider && !custom) {
         connection.openai_api_version = openAiApiVersion;
     }
 
@@ -2064,7 +2326,15 @@ function buildEndpointPayload(requireDiscovery = false) {
         if (projectName) {
             connection.project_name = projectName;
         }
+    } else {
+        delete connection.project_api_version;
+        delete connection.project_name;
     }
+    if (custom) {
+        delete connection.openai_api_version;
+        delete connection.api_version;
+    }
+    collectEmbeddingOperationSettings(connection);
 
     return {
         id: endpointId,
@@ -2078,6 +2348,45 @@ function buildEndpointPayload(requireDiscovery = false) {
     };
 }
 
+function validateEmbeddingModels(models, payload) {
+    const custom = payload.provider === "openai_compatible";
+    const operation = payload.connection.operation_settings?.embeddings || {};
+    const api = operation.api || defaultEmbeddingApi();
+    if (!["azure_openai", "openai"].includes(api) || (custom && api !== "openai")) {
+        throw new ModelEndpointValidationError("Choose a supported embedding API. Custom connections require the OpenAI-compatible API.");
+    }
+    if (api === "openai" && operation.api_version) {
+        throw new ModelEndpointValidationError("The OpenAI-compatible embedding API does not use an Azure api-version query. Clear the embedding API version override.");
+    }
+    const embeddingModels = models.filter(model => model.enabled !== false &&
+        (!model.enabled_capabilities || model.enabled_capabilities.includes("embeddings")) &&
+        (custom || modelSupportsCapability(model, "embeddings")));
+    if (embeddingModels.length || operation.endpoint) {
+        const endpoint = operation.endpoint || payload.connection.endpoint;
+        let parsed;
+        try {
+            parsed = new URL(endpoint);
+        } catch {
+            throw new ModelEndpointValidationError("Enter a full embedding API base URL.");
+        }
+        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+            throw new ModelEndpointValidationError("The embedding API base URL must not contain credentials, a query or a fragment.");
+        }
+        if (endpointIncludesProject(endpoint) || (isFoundryProvider(payload.provider) && !/\/openai\/v1\/?$/i.test(parsed.pathname))) {
+            throw new ModelEndpointValidationError("Foundry project endpoints do not route embeddings. Enter the explicit embedding inference base URL ending /openai/v1/.");
+        }
+    }
+    embeddingModels.forEach(model => {
+        if (isKnownEmbeddingModel(model) || model.capability_status?.embeddings?.source === "catalog") return;
+        if (model.supportsEmbeddings !== true) {
+            throw new ModelEndpointValidationError("Unknown embedding models require an explicit administrator declaration of embedding support.");
+        }
+        if (!model.embedding_config?.dimensions || !model.embedding_config?.max_input_tokens) {
+            throw new ModelEndpointValidationError("Unknown embedding models require explicit dimensions and an input token limit; no catalog default is assumed.");
+        }
+    });
+}
+
 function saveEndpoint() {
     try {
         const payload = buildEndpointPayload();
@@ -2086,6 +2395,7 @@ function saveEndpoint() {
         }
 
         const models = collectModalModels();
+        validateEmbeddingModels(models, payload);
         const endpointId = endpointIdInput?.value || generateId();
         const existingEndpoint = modelEndpoints.find((endpoint) => endpoint.id === endpointId);
         const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
@@ -2127,7 +2437,7 @@ function saveEndpoint() {
         endpointModal?.hide();
         showToast("Please save your settings to persist changes.", "warning");
     } catch (error) {
-        if (!(error instanceof ModelBudgetValidationError)) {
+        if (!(error instanceof ModelBudgetValidationError) && !(error instanceof ModelEndpointValidationError)) {
             console.error("Failed to save endpoint", error);
         }
         showToast(error?.message || "Failed to save endpoint.", "danger");
@@ -2147,7 +2457,9 @@ function addManualModel() {
         icon: {},
         description: "",
         enabled: true,
-        isDiscovered: false
+        isDiscovered: false,
+        ...(endpointProviderSelect?.value === "openai_compatible"
+            ? { supportsChat: false, supportsImageGeneration: false, supportsVision: false } : {}),
     };
     setModelRequestName(model, "");
     modalModels.push(model);
@@ -2172,8 +2484,8 @@ function handleModelListClick(event) {
     if (!model) {
         return;
     }
-    if (action === "test-image") {
-        void testSavedImageModel(model);
+    if (action === "test-image" || action === "test-embeddings") {
+        void testSavedOperationModel(model, action === "test-embeddings" ? "embeddings" : "image_generation");
         return;
     }
 
@@ -2662,11 +2974,15 @@ function init() {
                 modalModels = collectModalModels();
             } catch (error) {
                 showToast(error?.message || "Unable to update the endpoint provider.", "danger");
+                endpointProviderSelect.value = endpointProviderSelect.dataset.previousProvider || "aoai";
                 return;
             }
+            modelVisionRequest += 1;
+            modelVisionCapability = {};
+            if (endpointUrlModeExactInput) endpointUrlModeExactInput.checked = false;
+            updateAuthVisibility();
             syncOpenAiApiVersionForProvider();
             renderModalModels(modalModels);
-            updateAuthVisibility();
         });
     }
     if (endpointApiTypeSelect) {
@@ -2675,13 +2991,19 @@ function init() {
                 modalModels = collectModalModels();
             } catch (error) {
                 showToast(error?.message || "Unable to update the API type.", "danger");
+                endpointApiTypeSelect.value = endpointApiTypeSelect.dataset.previousApiType || "openai";
                 return;
             }
+            modelVisionRequest += 1;
+            modelVisionCapability = {};
+            if (endpointUrlModeExactInput) endpointUrlModeExactInput.checked = false;
+            updateAuthVisibility();
             syncOpenAiApiVersionForProvider();
             renderModalModels(modalModels);
-            updateAuthVisibility();
         });
     }
+    embeddingOperationInputs.api?.addEventListener("change", syncEmbeddingOperationVisibility);
+    embeddingOperationInputs.endpoint?.addEventListener("input", syncEmbeddingOperationVisibility);
     if (endpointUrlInput) {
         endpointUrlInput.addEventListener("input", updateAuthVisibility);
     }

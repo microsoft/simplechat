@@ -1,7 +1,10 @@
 # route_frontend_admin_settings.py
 
+import copy
 import os
 import re
+
+from azure.core.exceptions import AzureError
 
 from config import *
 from functions_documents import *
@@ -15,13 +18,22 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
+from functions_appinsights import log_event
 from functions_ai_connections import (
+    AIConnectionError,
+    EMBEDDINGS_CAPABILITY,
+    EMBEDDING_SELECTION_KEY,
     IMAGE_SELECTION_KEY,
+    embedding_settings_use_connections,
     filter_model_endpoints_by_capability,
     image_settings_use_connections,
     resolve_capability_model_selection,
 )
-from functions_ai_connection_migration import preserve_legacy_image_form_settings
+from functions_ai_connection_migration import (
+    preserve_legacy_embedding_form_settings,
+    preserve_legacy_image_form_settings,
+)
+from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
 from functions_content_safety import normalize_content_safety_violation_message
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
@@ -604,7 +616,18 @@ def register_route_frontend_admin_settings(bp):
     @login_required
     @admin_required
     def admin_settings():
-        settings = get_settings()
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return "Admin settings are temporarily unavailable. Try again later.", 503
+            settings = copy.deepcopy(settings)
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Admin settings could not be read",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return "Admin settings are temporarily unavailable. Try again later.", 503
         settings['document_action_capabilities'] = normalize_document_action_capabilities(settings)
         admin_user = session.get('user', {})
         admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
@@ -642,7 +665,10 @@ def register_route_frontend_admin_settings(bp):
                 'created_at': None
             }
 
-        normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
+        try:
+            normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
+        except (AIConnectionError, ModelTokenBudgetError) as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         if endpoints_changed:
             if update_settings({'model_endpoints': normalized_endpoints}, expected_etag=settings.get('_etag')):
                 settings = get_settings()
@@ -1773,7 +1799,7 @@ def register_route_frontend_admin_settings(bp):
             try:
                 parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
                 parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
-            except ModelTokenBudgetError as exc:
+            except (ModelTokenBudgetError, AIConnectionError) as exc:
                 log_event(
                     "[MODEL_ENDPOINT] Model token-budget validation failed",
                     extra={"exception_type": type(exc).__name__, "code": exc.code},
@@ -1807,16 +1833,6 @@ def register_route_frontend_admin_settings(bp):
                 for endpoint in existing_model_endpoints
                 if isinstance(endpoint, dict) and endpoint.get('id')
             }
-            parsed_model_endpoints = [
-                keyvault_model_endpoint_save_helper(
-                    endpoint,
-                    endpoint.get('id'),
-                    scope='global',
-                    existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
-                )
-                for endpoint in parsed_model_endpoints
-            ]
-
             saved_endpoint_ids = {
                 endpoint.get('id')
                 for endpoint in parsed_model_endpoints
@@ -3202,7 +3218,64 @@ def register_route_frontend_admin_settings(bp):
                     notices["image_generation"] = image_warning or "The image default was cleared."
                     new_settings["ai_connection_default_notices"] = notices
                     flash(notices["image_generation"], "warning")
-            if update_settings(new_settings, expected_etag=settings_etag):
+            try:
+                embedding_settings = read_embedding_settings()
+                if not isinstance(embedding_settings, dict):
+                    raise AIConnectionError(
+                        "AI connection settings are unavailable. Reload before saving.",
+                        "settings_unavailable",
+                    )
+                new_settings = preserve_legacy_embedding_form_settings(
+                    new_settings, form_data, embedding_settings,
+                )
+                if embedding_settings_use_connections(embedding_settings):
+                    embedding_selection, embedding_warning = resolve_capability_model_selection(
+                        embedding_settings.get(EMBEDDING_SELECTION_KEY),
+                        parsed_model_endpoints,
+                        EMBEDDINGS_CAPABILITY,
+                    )
+                    if embedding_selection != embedding_settings.get(EMBEDDING_SELECTION_KEY):
+                        new_settings[EMBEDDING_SELECTION_KEY] = embedding_selection
+                        notices = dict(
+                            new_settings.get("ai_connection_default_notices")
+                            or embedding_settings.get("ai_connection_default_notices") or {}
+                        )
+                        notices[EMBEDDINGS_CAPABILITY] = (
+                            embedding_warning
+                            or "The embedding default was cleared. Select a compatible embedding model in AI Connections."
+                        )
+                        new_settings["ai_connection_default_notices"] = notices
+                        flash(notices[EMBEDDINGS_CAPABILITY], "warning")
+                preflight_embedding_settings(
+                    embedding_settings, {**embedding_settings, **new_settings},
+                )
+                parsed_model_endpoints = [
+                    keyvault_model_endpoint_save_helper(
+                        endpoint,
+                        endpoint.get("id"),
+                        scope="global",
+                        existing_endpoint=existing_endpoints_by_id.get(endpoint.get("id")),
+                        stage_new_secrets=True,
+                    )
+                    for endpoint in parsed_model_endpoints
+                ]
+                new_settings["model_endpoints"] = parsed_model_endpoints
+                settings_saved = update_settings(new_settings, expected_etag=settings_etag)
+            except AIConnectionError as exc:
+                flash(f"Admin settings were not saved. {exc.public_message}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            except (AzureError, OSError, RuntimeError, ValueError) as exc:
+                log_event(
+                    "[AI_CONNECTIONS] Admin connection settings could not be stored",
+                    extra={"error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+                flash(
+                    "Admin settings were not saved. Review the connection and Key Vault configuration, then try again.",
+                    "danger",
+                )
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            if settings_saved:
                 for endpoint in parsed_model_endpoints:
                     endpoint_id = endpoint.get("id")
                     if endpoint_id:

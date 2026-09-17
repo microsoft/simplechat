@@ -1,8 +1,8 @@
 # test_ai_connections_capabilities.py
 """
 Pure functional tests for shared AI Connections capability and binding contracts.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.106
+Implemented in: 0.261.106
 
 Exercise the real leaf modules and shipped catalog without Flask, settings-store,
 Azure, or inference clients. Each test loads private module instances and restores
@@ -39,11 +39,15 @@ class IsolatedConnectionsTestCase(unittest.TestCase):
         self.capabilities = _load_module(
             "functions_model_capabilities", "functions_model_capabilities.py"
         )
+        self.embedding_policy = _load_module(
+            "functions_embedding_policy", "functions_embedding_policy.py"
+        )
         self.connections = _load_module(
             "_test_ai_connections_capabilities", "functions_ai_connections.py"
         )
         self.chat = self.connections.CHAT_CAPABILITY
         self.images = self.connections.IMAGE_GENERATION_CAPABILITY
+        self.embeddings = self.connections.EMBEDDINGS_CAPABILITY
         self.empty_selection = {
             "endpoint_id": "",
             "model_id": "",
@@ -121,6 +125,7 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
 
         with mock.patch("builtins.__import__", side_effect=guarded_import):
             _load_module("functions_model_capabilities", "functions_model_capabilities.py")
+            _load_module("functions_embedding_policy", "functions_embedding_policy.py")
             module = _load_module(
                 "_test_ai_connections_import_boundary", "functions_ai_connections.py"
             )
@@ -215,6 +220,30 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
                 support = self.connections.resolve_model_capability(model, self.chat)
                 self.assertEqual(support["source"], "legacy")
 
+    def test_reasoning_only_catalog_records_do_not_disable_legacy_chat(self):
+        for name in ("gpt-4", "gpt-4.5", "gpt-35-turbo", "o1-mini", "o1-preview", "o3-pro"):
+            with self.subTest(model=name):
+                catalog = self.capabilities.get_model_catalog_capabilities(name)
+                self.assertIn("reasoningPolicy", catalog)
+                self.assertNotIn("generatesText", catalog)
+                self.assertTrue(self.connections.supports_model_capability(name, self.chat))
+                self.assertFalse(self.connections.supports_model_capability(name, self.images))
+
+    def test_capability_identity_uses_nonblank_canonical_reasoning_metadata(self):
+        for model in (
+            {"modelName": " ", "behavior_name": "gpt-5.6-luna", "deploymentName": "production"},
+            {"modelName": 17, "behavior_name": "gpt-5.6-luna", "deploymentName": "production"},
+            {"modelName": " ", "deploymentName": "gpt-5.6-luna"},
+        ):
+            with self.subTest(model=model):
+                self.assertTrue(self.connections.supports_model_capability(model, self.chat))
+                self.assertTrue(self.connections.supports_model_capability(model, self.images))
+        unknown = {
+            "modelName": "unknown-private-model", "behavior_name": "gpt-5.6-luna",
+            "deploymentName": "gpt-5.6-luna",
+        }
+        self.assertFalse(self.connections.supports_model_capability(unknown, self.images))
+
     def test_empty_models_do_not_gain_chat_or_image_support(self):
         for model in (None, {}, "", "  "):
             with self.subTest(model=model):
@@ -264,8 +293,8 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
         document = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         native_models = [
             model for model in document["models"]
-            if model["provider"] != "openai"
-            and model["capabilities"].get("generatesImages") is True
+            if model.get("provider") != "openai"
+            and model.get("capabilities", {}).get("generatesImages") is True
         ]
         self.assertTrue(native_models)
         for entry in native_models:
@@ -710,7 +739,7 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
 
 class CapabilityExtensionTests(IsolatedConnectionsTestCase):
     def test_only_implemented_capabilities_and_no_clients_ship_in_the_leaf_registry(self):
-        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images})
+        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images, self.embeddings})
         self.assertEqual(self.connections._CLIENT_FACTORIES, {})
 
     def test_dummy_future_capability_reuses_catalog_binding_and_client_contracts(self):
@@ -959,15 +988,16 @@ class CatalogMetadataTests(unittest.TestCase):
         for model in self.models.values():
             identifiers.extend([model["id"]] + model.get("aliases", []))
             with self.subTest(model=model["id"]):
-                self.assertTrue(model["sourceIds"])
-                self.assertTrue(set(model["sourceIds"]).issubset(self.sources))
-                if "imageGenerationTool" in model["capabilities"]:
+                source_ids = model.get("sourceIds") or model.get("reasoningPolicy", {}).get("sourceIds")
+                self.assertTrue(source_ids)
+                self.assertTrue(set(source_ids).issubset(self.sources))
+                if "imageGenerationTool" in model.get("capabilities", {}):
                     self.assertIsInstance(model["capabilities"]["imageGenerationTool"], bool)
         self.assertEqual(len(identifiers), len(set(identifiers)))
 
     def test_each_positive_tool_flag_has_a_model_specific_official_source(self):
         for model in self.models.values():
-            if model["capabilities"].get("imageGenerationTool") is not True:
+            if model.get("capabilities", {}).get("imageGenerationTool") is not True:
                 continue
             with self.subTest(model=model["id"]):
                 urls = [urlparse(self.sources[source]["url"]) for source in model["sourceIds"]]
@@ -978,6 +1008,16 @@ class CatalogMetadataTests(unittest.TestCase):
                 ))
                 self.assertIs(model["capabilities"]["generatesImages"], False)
                 self.assertIn("azure-openai-responses", model["sourceIds"])
+
+    def test_shared_catalog_entries_retain_image_and_reasoning_metadata(self):
+        for name in ("gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini"):
+            with self.subTest(model=name):
+                self.assertIn("capabilities", self.models[name])
+                self.assertIn("reasoningPolicy", self.models[name])
+                self.assertTrue(self.models[name]["reasoningPolicy"]["sourceIds"])
+        self.assertTrue(self.models["o3-mini"]["capabilities"]["imageGenerationTool"])
+        self.assertFalse(self.models["o3-mini"]["capabilities"]["processesImages"])
+        self.assertEqual(self.models["o3-mini"]["reasoningPolicy"]["status"], "supported")
 
     def test_image_models_distinguish_direct_output_from_hosted_orchestration(self):
         for name in ("gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"):

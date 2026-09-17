@@ -1,8 +1,8 @@
 # test_ai_connection_defaults_api.py
 """
 Functional tests for capability-specific model-default API behavior.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.106
+Implemented in: 0.261.105
 
 Mount the actual route functions with isolated storage and authentication seams;
 exercise HTTP payloads without importing the application's Azure clients.
@@ -10,6 +10,7 @@ exercise HTTP payloads without importing the application's Azure clients.
 
 import ast
 import copy
+import logging
 import sys
 import unittest
 from functools import wraps
@@ -22,12 +23,14 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 import functions_ai_connections as connections
+from functions_embedding_profile import resolve_embedding_profile
 
 
 ROUTE_SOURCE = APP_ROOT / "route_backend_v2.py"
 ROUTE_TREE = ast.parse(ROUTE_SOURCE.read_text(encoding="utf-8"))
 ROUTE_NAMES = {
     "_load_global_model_endpoints",
+    "_ai_connection_error_response",
     "_capability_model_payload",
     "v2_admin_get_capability_model",
     "v2_admin_set_capability_model",
@@ -87,6 +90,7 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         namespace = {
             "bp": bp,
             "get_settings": lambda: copy.deepcopy(self.settings),
+            "read_embedding_settings": lambda: copy.deepcopy(self.settings),
             "update_settings": update_settings,
             "jsonify": jsonify,
             "request": request,
@@ -95,10 +99,16 @@ class CapabilityDefaultApiTests(unittest.TestCase):
             "swagger_route": lambda **_kwargs: lambda function: function,
             "get_auth_security": lambda: [],
             "log_event": lambda *_args, **_kwargs: None,
+            "logging": logging,
             "MIGRATION_NOTICE_KEY": "ai_connections_image_migration_notice",
+            "EMBEDDING_MIGRATION_NOTICE_KEY": "ai_connections_embedding_migration_notice",
+            "resolve_embedding_profile": resolve_embedding_profile,
+            "embedding_compatibility_status": lambda _settings: {"status": "unavailable"},
         }
         for name in (
-            "CAPABILITY_DEFINITIONS", "EMPTY_MODEL_SELECTION", "IMAGE_MIGRATION_VERSION",
+            "AIConnectionError", "CAPABILITY_DEFINITIONS", "EMPTY_MODEL_SELECTION",
+            "EMBEDDINGS_CAPABILITY", "EMBEDDING_SELECTION_KEY",
+            "EMBEDDING_MIGRATION_VERSION", "EMBEDDING_MIGRATION_VERSION_KEY", "IMAGE_MIGRATION_VERSION",
             "IMAGE_MIGRATION_VERSION_KEY", "get_capability_definition",
             "normalize_capability_selection", "resolve_capability_model_selection",
             "build_capability_model_catalog", "is_capability_enabled",
@@ -110,6 +120,7 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         ]
         self.assertEqual(ROUTE_NAMES, {node.name for node in nodes})
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROUTE_SOURCE), "exec"), namespace)
+        self.namespace = namespace
         self.app = Flask(__name__)
         self.app.register_blueprint(bp)
         self.client = Client(self.app, self.app.response_class)
@@ -222,8 +233,14 @@ class CapabilityDefaultApiTests(unittest.TestCase):
             self.assertNotIn("Old import failure", response.get_data(as_text=True))
 
     def test_invalid_payload_and_partial_reference_are_rejected(self):
-        self.assertEqual(400, self.client.put(f"{BASE}/image_generation", json=[]).status_code)
-        self.assertEqual(400, self.put("image_generation", "one", "").status_code)
+        responses = (
+            self.client.put(f"{BASE}/image_generation", json=[]),
+            self.put("image_generation", "one", ""),
+        )
+        for response in responses:
+            self.assertEqual(400, response.status_code)
+            self.assertEqual("invalid_model_selection", response.get_json()["code"])
+            self.assertTrue(response.get_json()["error"])
         self.assertEqual([], self.writes)
 
     def test_failed_write_is_not_successful(self):
@@ -233,9 +250,10 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         self.assertEqual(before, self.settings)
 
     def test_future_capabilities_are_not_exposed_before_implementation(self):
-        for capability in ("embeddings", "transcription", "speech", "computer_use"):
-            self.assertEqual(404, self.client.get(f"{BASE}/{capability}").status_code)
-            self.assertEqual(404, self.put(capability).status_code)
+        for capability in ("transcription", "speech", "computer_use"):
+            for response in (self.client.get(f"{BASE}/{capability}"), self.put(capability)):
+                self.assertEqual(404, response.status_code)
+                self.assertEqual("unsupported_capability", response.get_json()["code"])
         self.assertEqual([], self.writes)
 
     def test_code_defined_extension_reuses_the_same_binding_api_and_factory(self):
