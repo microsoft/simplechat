@@ -4,7 +4,7 @@ title: "Generate images"
 description: "Use the chat Image control to request AI-generated images."
 section: "Guides"
 audience: user
-version: "0.261.105"
+version: "0.261.107"
 ---
 
 ## What this does
@@ -29,9 +29,10 @@ Use image generation for visual concepts, drafts, illustrations, and creative ex
 - Admins must enable image generation and select a supported image default; see
   [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
   This does not require enabling **Use AI Connections for chat**.
-- The selected resource or API Management route must support the image operation.
-  Not every GPT or Responses deployment can generate images, even when ordinary
-  chat works.
+- The selected resource or gateway must support the image operation. Azure OpenAI
+  and Foundry use dedicated image models in SimpleChat. GPT-based image tools are
+  available through compatible direct OpenAI **Custom** connections, not by
+  selecting an Azure GPT chat deployment.
 - Prompts must comply with your organization's acceptable use policy.
 
 ## Steps
@@ -61,10 +62,31 @@ The conversation contains generated image output rather than a text-only answer.
 source controls return when **Image** is off. A text description of a proposed picture
 is not successful image generation.
 
-The available edit actions depend on the configured image model. Responses-backed
-generation supports whole-image regeneration in SimpleChat; masked editing requires
-an existing compatible direct Images model/API. Image-input support alone does not
-provide either generation or masked editing.
+## Edit an image or create a replacement
+
+The image editor uses the administrator's selected image model, not the text-chat
+model. Its capability information explains which changes are possible:
+
+| Operation | What is sent | When to use it |
+| --- | --- | --- |
+| Masked edit | The current image, your instruction, and the selected region | Change a particular area using a supported GPT Image or direct OpenAI image-tool operation |
+| Whole-image reference edit | The current image and your instruction, without a mask | Refine an image with an edit-capable MAI Image or FLUX model, or edit a GPT image without selecting a region |
+| Whole-image regeneration | A revised prompt, not the current image as a reference | Create a replacement or change generation-only rendering options |
+
+Masking is guidance, not a guarantee that every pixel outside the region stays
+identical. MAI and FLUX reference editing does not imply an uploaded-mask interface,
+so those models do not offer region selection. Controls reflect the selected
+operation; GPT quality/background choices are not sent to MAI or FLUX.
+
+If the image default becomes unavailable, new generation/edit actions are disabled.
+Existing revision history can still be reviewed and restored. An unsupported or
+stale mask is rejected rather than silently turning the request into regeneration.
+
+Provider and cloud labels describe the configured model endpoint. A SimpleChat
+installation in Azure Government can use an approved commercial endpoint; that does
+not make the image service Government-resident. An unknown availability label means
+the reviewed provider documentation does not establish availability in that cloud,
+not that all Government-hosted installations must disable images.
 
 ## Troubleshooting
 
@@ -74,9 +96,10 @@ provide either generation or masked editing.
 | Source controls are disabled | Image mode intentionally disables them | Turn **Image** off. |
 | Changing the chat model does not change generated images | Chat and image defaults are independent | Ask an admin to review the image default if a different image model is needed. |
 | The image model is unavailable | Its shared connection/model was deleted, disabled, or no longer published for images | Ask an admin to choose a compatible replacement in AI Connections. The application does not silently substitute another model. |
-| A GPT model does not return an image | The resource may lack image-tool access, a required image backend/default, or the matching gateway operation | Ask an admin to verify image readiness on the selected resource. Rewording the prompt cannot repair a missing service capability. |
+| An Azure GPT model is no longer an image choice | SimpleChat offers dedicated image models on Azure/Foundry rather than GPT image-tool orchestration | Ask an admin to select GPT Image, MAI Image, or a supported Foundry FLUX deployment. Direct OpenAI tool generation belongs in a Custom connection. |
 | Images fail after an administrator clears the default | An imported/shared default is authoritative | Ask an admin to select a new image default; old endpoint settings are not automatically restored. |
-| Only regeneration is offered | The selected route does not support SimpleChat's masked-edit workflow | Regenerate the whole image, or ask an admin whether an approved edit-capable image deployment is available. |
+| Reference edits are available but no region selector appears | The model's image API does not document an uploaded-mask operation | Describe a whole-image change, or use an approved mask-capable model when precise region guidance is needed. |
+| Only regeneration is offered | The selected operation does not support source-image editing | Create a new image from the prompt, or ask an admin about an approved edit-capable model. |
 
 ## Related
 

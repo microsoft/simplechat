@@ -34,6 +34,7 @@ class AnalysisWorkUnitCheckpoints:
     def __init__(
         self, store, binding, *, user_id, authorize, resume_from=None,
         attempt_token=None, source_authorizer=None, operation_request=None, operation_sources=None,
+        recover_running_unit=None,
     ):
         if not callable(authorize):
             raise ValueError('Analysis checkpoints require current producer authorization.')
@@ -45,6 +46,7 @@ class AnalysisWorkUnitCheckpoints:
         self.authorize = authorize
         self.resume_from = deepcopy(resume_from)
         self.token = attempt_token or uuid.uuid4().hex
+        self.recover_running_unit = recover_running_unit
         self.source_authorizer = source_authorizer or authorize_analysis_sources
         self.operation_request = deepcopy(operation_request)
         self.operation_sources = (
@@ -151,7 +153,9 @@ class AnalysisWorkUnitCheckpoints:
             row = self.store.read_analysis_checkpoint(binding, 'unit', unit['work_unit_id'])
             if row is None or row.get('status') != 'completed':
                 if binding == self.binding and row is not None and row.get('status') == 'running':
-                    raise AnalysisWorkUnitConflictError('analysis_unit_already_claimed')
+                    if self.recover_running_unit is None or not self.recover_running_unit():
+                        raise AnalysisWorkUnitConflictError('analysis_unit_already_claimed')
+                    self.fail_unit(row)
                 continue
             payload = self.store._load(binding, row['reference'])
             saved_unit = payload.get('work_unit') or {}
@@ -238,6 +242,7 @@ def analysis_checkpoints_for_workflow(
     workflow, run_id, task_id, *, user_id, authorize, resume_run_id=None,
     attempt_token=None, settings=None, store=None, source_authorizer=None,
     operation_request=None, operation_sources=None,
+    recover_running_unit=None,
 ):
     binding = _identity(workflow, run_id, task_id)
     return AnalysisWorkUnitCheckpoints(
@@ -246,6 +251,7 @@ def analysis_checkpoints_for_workflow(
         resume_from=_identity(workflow, resume_run_id, task_id) if resume_run_id else None,
         source_authorizer=source_authorizer,
         operation_request=operation_request, operation_sources=operation_sources,
+        recover_running_unit=recover_running_unit,
     )
 
 

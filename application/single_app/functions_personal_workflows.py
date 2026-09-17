@@ -39,6 +39,10 @@ from functions_personal_agents import get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_result_store import delete_workflow_run_results
+from functions_workflow_bindings import authorize_workflow_reference
+from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_runtime_store import workflow_runtime_store
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
@@ -57,8 +61,6 @@ WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
 WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
-
-
 def _utc_now():
     return datetime.now(timezone.utc)
 
@@ -708,7 +710,7 @@ def get_personal_workflows(user_id):
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=user_id,
         ))
-        cleaned = [_strip_cosmos_metadata(item) for item in items]
+        cleaned = [workflow_definition_for_editor(_strip_cosmos_metadata(item)) for item in items]
         cleaned.sort(key=lambda item: item.get('updated_at') or item.get('created_at') or '', reverse=True)
         return cleaned
     except exceptions.CosmosResourceNotFoundError:
@@ -727,7 +729,7 @@ def get_personal_workflow(user_id, workflow_id):
     """Fetch a specific personal workflow."""
     try:
         workflow = cosmos_personal_workflows_container.read_item(item=workflow_id, partition_key=user_id)
-        return _strip_cosmos_metadata(workflow)
+        return workflow_definition_for_editor(_strip_cosmos_metadata(workflow))
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
@@ -806,6 +808,12 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         ),
         default_document_action=document_action,
     )
+    definition_fields = normalize_workflow_definition(
+        workflow_data, existing_workflow, tasks, user_id=user_id,
+    )
+    tasks = definition_fields['tasks']
+    for reference in definition_fields.get('reference_inputs', []):
+        authorize_workflow_reference({'user_id': user_id}, reference, actor_user_id=modifying_user_id)
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
         'Task prompt',
@@ -956,7 +964,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     else:
         workflow['next_run_at'] = None
 
-    result = cosmos_personal_workflows_container.upsert_item(body=workflow)
+    workflow.update(definition_fields)
+    result = save_workflow_definition_record(
+        cosmos_personal_workflows_container, user_id, workflow, existing_workflow,
+    )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for user {user_id}")
     return cleaned_result
@@ -965,13 +976,9 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 def update_personal_workflow_runtime_fields(user_id, workflow_id, updates):
     """Apply runtime fields such as status and last-run metadata."""
     updates = updates if isinstance(updates, dict) else {}
-    workflow = get_personal_workflow(user_id, workflow_id)
-    if not workflow:
-        raise ValueError('Workflow not found.')
-
-    workflow.update(updates)
-    workflow['updated_at'] = _utc_now_iso()
-    result = cosmos_personal_workflows_container.upsert_item(body=workflow)
+    result = update_workflow_runtime_record(
+        cosmos_personal_workflows_container, user_id, workflow_id, updates, _utc_now_iso(),
+    )
     return _strip_cosmos_metadata(result)
 
 
@@ -1096,6 +1103,7 @@ def is_public_workflow_run_item(item):
     private_types = (
         "workflow_result_chunk", "chat_analysis_result_chunk",
         "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint",
+        "workflow_runtime_control",
     )
     return isinstance(item, dict) and not any(
         item.get(field) in private_types for field in ("type", "item_type")
@@ -1105,10 +1113,10 @@ def is_public_workflow_run_item(item):
 WORKFLOW_PUBLIC_RUN_ITEMS_FILTER = (
     'AND (NOT IS_DEFINED(c.type) OR c.type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
     'AND (NOT IS_DEFINED(c.item_type) OR c.item_type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
 )
 
 
@@ -1143,6 +1151,10 @@ def delete_personal_workflow(user_id, workflow_id):
     if not workflow:
         return False
 
+    update_workflow_runtime_record(
+        cosmos_personal_workflows_container, user_id, workflow_id,
+        {"deleting": True, "status": "deleting"}, datetime.now(timezone.utc).isoformat(),
+    )
     runs = cosmos_personal_workflow_runs_container.query_items(
         query='SELECT c.id FROM c WHERE c.user_id = @user_id AND c.workflow_id = @workflow_id',
         parameters=[{'name': '@user_id', 'value': user_id}, {'name': '@workflow_id', 'value': workflow_id}],
@@ -1150,6 +1162,7 @@ def delete_personal_workflow(user_id, workflow_id):
     )
     for run in runs:
         run_id = run.get('id')
+        workflow_runtime_store(workflow, run_id).tombstone()
         delete_workflow_run_results(workflow, run_id)
         items = cosmos_personal_workflow_run_items_container.query_items(
             query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,

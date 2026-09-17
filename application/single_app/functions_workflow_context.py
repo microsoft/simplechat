@@ -14,6 +14,7 @@ from semantic_kernel.connectors.ai.chat_completion_client_base import ChatComple
 
 from functions_model_capabilities import resolve_model_token_limits
 from model_endpoint_clients import ModelEndpointBehavior
+from functions_workflow_execution import assert_workflow_execution_owned
 
 
 # This is a disclosed compatibility policy, not an invented model capability.
@@ -135,6 +136,7 @@ def workflow_context_budget_scope(workflow):
 
 
 def _check_request(messages, model, *, provider=None, tools=None, output_tokens=None):
+    assert_workflow_execution_owned()
     workflow = _active_workflow.get()
     if workflow is None:
         return

@@ -1,6 +1,7 @@
 # functions_image_generation.py
 """Shared helpers for opt-in chat image generation proposals."""
 
+import base64
 import mimetypes
 import random
 import re
@@ -10,6 +11,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
+import httpx
 from azure.identity import get_bearer_token_provider
 from openai import OpenAI
 
@@ -22,19 +24,23 @@ from functions_ai_connections import (
     register_capability_client_factory,
 )
 from functions_appinsights import log_event
+from functions_image_adapters import edit_image, generate_image
+from functions_image_capabilities import resolve_image_endpoint_context, resolve_image_model_capability, validate_image_options
 from functions_image_api_route import (
     DEFAULT_IMAGES_API_VERSION,
     IMAGE_API_ROUTE_RESPONSES,
+    IMAGE_API_ROUTE_MAI,
+    IMAGE_API_ROUTE_FLUX,
     ImageGenerationError,
     _as_response_dict,
     build_image_api_base_url,
-    build_image_generation_tool,
     extract_responses_image_source,
     resolve_image_api_route,
     resolve_image_binding_api,
+    resolve_image_binding_api_version,
     resolve_image_binding_deployment,
     resolve_image_generation_api_version,
-    resolve_responses_image_backend,
+    resolve_selected_image_capability,
     resolve_selected_image_deployment_name,
     resolve_shared_image_binding,
 )
@@ -273,24 +279,63 @@ def image_generation_error_response(exc):
     }, status
 
 
-def _build_image_runtime_client(endpoint, settings, deployment, route, api_version, backend=''):
+def _build_custom_image_runtime_client(endpoint, settings, deployment, route, api_version):
+    """Reuse Custom URL, credential and pinned-transport rules without chat inference."""
+    # Runtime construction imports application configuration; keep leaf projections independent.
+    from functions_model_endpoint_runtime import build_custom_openai_client_kwargs
+
+    api_type = endpoint.get('api_type')
+    if api_type not in ('openai', 'azure_openai') or route not in ('images', 'responses'):
+        raise AIConnectionError('This Custom API type has no compatible image adapter.', 'unsupported_capability')
+    if api_type == 'azure_openai' and route != 'images':
+        raise AIConnectionError('Azure image generation requires a dedicated image model.', 'unsupported_capability')
+    runtime_endpoint = deepcopy(endpoint)
+    if api_type == 'azure_openai':
+        runtime_endpoint['connection']['api_version'] = api_version
+    kwargs = build_custom_openai_client_kwargs(
+        runtime_endpoint, settings, request_model=deployment,
+        default_headers=build_model_endpoint_identity_headers(settings, endpoint_config=endpoint),
+    )
+    if api_type == 'azure_openai' and api_version == 'v1':
+        if runtime_endpoint['connection'].get('url_mode') != 'exact':
+            kwargs['base_url'] = build_image_api_base_url(
+                runtime_endpoint['connection']['endpoint'], 'images', deployment=deployment, api_version='v1',
+            )
+        kwargs['default_query'] = {}
+    try:
+        return _ImageOpenAIClient(image_auth_header='authorization', max_retries=0, **kwargs)
+    except (TypeError, ValueError):
+        kwargs['http_client'].close()
+        raise
+
+
+def _build_image_runtime_client(endpoint, settings, deployment, route, api_version, image_capability=None):
     connection = endpoint.get('connection') or {}
     auth = endpoint.get('auth') or {}
     profile = get_connection_operation_settings(endpoint, IMAGE_GENERATION_CAPABILITY)
     provider = str(endpoint.get('provider') or 'aoai').strip().lower()
+    if provider == 'custom':
+        return _build_custom_image_runtime_client(endpoint, settings, deployment, route, api_version)
     if provider not in ('aoai', 'aifoundry', 'new_foundry'):
         raise AIConnectionError('This connection type has no compatible image adapter.', 'unsupported_capability')
-    if not isinstance(api_version, str) or not re.fullmatch(r'(?:v1|\d{4}-\d{2}-\d{2}(?:-preview)?)', api_version):
+    native_preview = route == IMAGE_API_ROUTE_FLUX and api_version == 'preview'
+    if not native_preview and (
+        not isinstance(api_version, str) or not re.fullmatch(r'(?:v1|\d{4}-\d{2}-\d{2}(?:-preview)?)', api_version)
+    ):
         raise AIConnectionError('The image connection API version is invalid.')
 
+    compatible_images = (image_capability or {}).get('transport') == 'openai_images'
     base_url = build_image_api_base_url(
-        connection.get('endpoint'), route, deployment=deployment, api_version=api_version
+        connection.get('endpoint'), 'images' if compatible_images else route,
+        deployment=deployment, api_version='v1' if compatible_images else api_version,
     )
     auth_type = str(auth.get('type') or 'managed_identity').strip().lower()
-    auth_header = str(profile.get('auth_header') or (
-        'api-key' if api_version != 'v1' or provider == 'aoai' or profile.get('is_apim')
+    default_header = (
+        'api-key' if compatible_images else 'authorization' if route == IMAGE_API_ROUTE_FLUX
+        else 'api-key' if route == IMAGE_API_ROUTE_MAI or api_version != 'v1' or provider == 'aoai' or profile.get('is_apim')
         else 'authorization'
-    )).lower()
+    )
+    auth_header = str(profile.get('auth_header') or default_header).lower()
     if auth_header not in ('api-key', 'authorization', 'ocp-apim-subscription-key'):
         raise AIConnectionError('The image connection authentication header is unsupported.')
     token_provider = None
@@ -309,16 +354,20 @@ def _build_image_runtime_client(endpoint, settings, deployment, route, api_versi
         )
 
         credential = resolve_credential_for_model_endpoint_auth(auth)
-        scope = cognitive_services_scope
-        if provider in ('aifoundry', 'new_foundry'):
+        context = resolve_image_endpoint_context(endpoint)
+        scope = auth.get('foundry_scope') or ''
+        if not scope and context['cloud'] in ('commercial', 'government'):
+            domain = 'azure.us' if context['cloud'] == 'government' else 'azure.com'
+            scope = f'https://cognitiveservices.{domain}/.default'
+        elif not scope and provider in ('aifoundry', 'new_foundry'):
             scope = resolve_foundry_scope_for_endpoint_auth(auth, endpoint=connection.get('endpoint'))
+        elif not scope:
+            scope = cognitive_services_scope
         token_provider = get_bearer_token_provider(credential, scope)
     else:
         raise AIConnectionError('The image connection authentication type is unsupported.')
 
     headers = build_model_endpoint_identity_headers(settings, endpoint_config=endpoint)
-    if backend:
-        headers['x-ms-oai-image-generation-deployment'] = backend
     return _ImageOpenAIClient(
         api_key=api_key,
         base_url=base_url,
@@ -338,12 +387,7 @@ def build_image_connection_client(binding, settings):
         if binding.selection.get('provider') not in (None, '', provider):
             raise AIConnectionError('The selected image model does not belong to that provider.')
         deployment = resolve_image_binding_deployment(binding)
-        profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
-        api_version = (
-            'v1' if route == IMAGE_API_ROUTE_RESPONSES
-            else str(profile.get('api_version') or DEFAULT_IMAGES_API_VERSION).strip()
-        )
-        backend = resolve_responses_image_backend(binding) if route == IMAGE_API_ROUTE_RESPONSES else ''
+        api_version = resolve_image_binding_api_version(binding)
         # The model-endpoint helper enforces endpoint secret scope; a settings-secret
         # reference or browser-redacted credential must never be treated as the key.
         from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
@@ -351,7 +395,10 @@ def build_image_connection_client(binding, settings):
         endpoint = keyvault_model_endpoint_get_helper(
             deepcopy(binding.endpoint), binding.endpoint['id'], scope='global', return_type=SecretReturnType.VALUE
         )
-        return _build_image_runtime_client(endpoint, settings, deployment, route, api_version, backend)
+        image_capability = resolve_image_model_capability(binding.model, binding.endpoint)
+        return _build_image_runtime_client(
+            endpoint, settings, deployment, route, api_version, image_capability=image_capability
+        )
     except AIConnectionError:
         raise
     except Exception as exc:
@@ -426,6 +473,18 @@ def request_generated_image_source(settings, prompt, size='', quality='', backgr
     test that exercised a different route from the real call would certify a path nobody
     uses.
     """
+    return _request_image_source(settings, prompt, size=size, quality=quality, background=background)
+
+
+def request_edited_image_source(settings, prompt, source_image, mask=None, size='', quality='', background=''):
+    """Use the same binding, errors and output validation for a real source-image edit."""
+    return _request_image_source(
+        settings, prompt, source_image=source_image, mask=mask,
+        size=size, quality=quality, background=background, operation='edit',
+    )
+
+
+def _request_image_source(settings, prompt, *, source_image=None, mask=None, size='', quality='', background='', operation='generate'):
     client = None
     response = None
     route = ''
@@ -434,30 +493,45 @@ def request_generated_image_source(settings, prompt, size='', quality='', backgr
             raise PermissionError('Image generation is not enabled')
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError('Image generation prompt is required')
-        route = resolve_image_api_route(settings)
-        client, deployment = resolve_image_generation_client(settings)
-        if route != IMAGE_API_ROUTE_RESPONSES:
-            arguments = {'model': deployment, 'prompt': prompt, 'n': 1}
-            if size:
-                arguments['size'] = size
-            optional = {key: value for key, value in {'quality': quality, 'background': background}.items() if value}
-            if optional:
-                arguments['extra_body'] = optional
-            response = client.images.generate(**arguments)
-            return extract_generated_image_source(response)
+        if operation not in ('generate', 'edit'):
+            raise ValueError('The image operation is invalid')
+        capability = resolve_selected_image_capability(settings)
+        if operation == 'edit':
+            # Editing imports generation helpers lazily; keep the shared projection cycle-free.
+            from functions_image_edit import resolve_image_edit_capability
 
-        response = client.responses.create(
-            model=deployment,
-            input=prompt,
-            tools=[build_image_generation_tool(size=size, quality=quality, background=background)],
-            tool_choice={'type': 'image_generation'},
+            capability = resolve_image_edit_capability(settings)
+            if not capability.get('enabled') or not capability.get('editing'):
+                raise AIConnectionError(
+                    capability.get('reason') or 'The selected model cannot edit a source image.',
+                    'unsupported_image_operation',
+                )
+        route = capability['api']
+        validate_image_options(capability, size, quality, background)
+        if mask and not capability.get('masking'):
+            raise ImageGenerationError('The selected image operation does not support masks.', 'unsupported_image_operation', 400)
+        client, deployment = resolve_image_generation_client(settings)
+        if operation == 'edit':
+            response = edit_image(
+                client, deployment, capability, prompt, source_image, mask,
+                size=size, quality=quality, background=background,
+            )
+        else:
+            response = generate_image(
+                client, deployment, capability, prompt, size=size, quality=quality, background=background
+            )
+        generated_image_url = (
+            extract_responses_image_source(response) if route == IMAGE_API_ROUTE_RESPONSES
+            else extract_generated_image_source(response)
         )
-        generated_image_url = extract_responses_image_source(response)
         if not generated_image_url:
             raise ImageGenerationError(
                 'The selected model returned no image. Ask an administrator to check image service availability for this connection.',
                 'image_output_missing',
             )
+        if generated_image_url.startswith('data:image/') or capability.get('connection_provider') == 'custom':
+            mime_type, image_bytes = resolve_generated_image_bytes(generated_image_url, settings=settings)
+            generated_image_url = f'data:{mime_type};base64,{base64.b64encode(image_bytes).decode("ascii")}'
         return generated_image_url
     except Exception as exc:
         error = normalize_image_generation_error(exc)
@@ -484,6 +558,10 @@ def request_generated_image_source(settings, prompt, size='', quality='', backgr
 def extract_generated_image_source(image_response):
     """Extract a usable image URL or data URL from an Azure OpenAI image response."""
     response_dict = _as_response_dict(image_response)
+    if response_dict.get('error') or response_dict.get('status') in (
+        'failed', 'incomplete', 'in_progress', 'queued', 'cancelled',
+    ):
+        extract_responses_image_source(response_dict)
     if not isinstance(response_dict.get('data'), list) or not response_dict['data']:
         raise ImageGenerationError('The image service returned no image data.', 'image_output_missing')
 
@@ -508,24 +586,86 @@ def extract_generated_image_source(image_response):
     raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
 
-def resolve_generated_image_bytes(generated_image_url):
+def _validated_image_bytes(image_bytes):
+    """Validate actual output pixels instead of trusting a provider's MIME label or base64."""
+    # The editor's bounded decoder is shared with generation without importing app configuration.
+    from PIL import Image
+    from functions_image_edit import MAX_SOURCE_IMAGE_BYTES, ImageEditError, _open_image
+
+    if not image_bytes or len(image_bytes) > MAX_SOURCE_IMAGE_BYTES:
+        raise ImageGenerationError('The image output is empty or exceeds the application size limit.', 'image_output_invalid')
+    try:
+        with _open_image(image_bytes, 'generated image') as image:
+            mime_type = Image.MIME.get(image.format)
+    except ImageEditError as exc:
+        raise ImageGenerationError('The provider returned unreadable image output.', 'image_output_invalid') from exc
+    if mime_type not in ('image/png', 'image/jpeg', 'image/webp'):
+        raise ImageGenerationError('The provider returned an unsupported image format.', 'image_output_invalid')
+    return mime_type, image_bytes
+
+
+def _download_custom_image_bytes(image_url, settings):
+    """Fetch provider output without forwarding inference credentials or client certificates."""
+    # Reuse the Custom egress boundary for derived URLs as well as model requests.
+    from functions_image_edit import MAX_SOURCE_IMAGE_BYTES
+    from functions_model_endpoint_validation import ModelEndpointValidationError, custom_endpoint_setting_enabled
+    from model_endpoint_clients import build_custom_openai_sync_http_client
+
+    try:
+        with build_custom_openai_sync_http_client(
+            allow_private=custom_endpoint_setting_enabled(settings, 'allow_private_custom_model_endpoints'),
+            allow_insecure=custom_endpoint_setting_enabled(settings, 'allow_insecure_custom_model_endpoints'),
+            ca_bundle_path=str(settings.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
+            client_cert=None,
+        ) as client:
+            with client.stream('GET', image_url, timeout=30) as response:
+                response.raise_for_status()
+                image_bytes = bytearray()
+                for chunk in response.iter_bytes(chunk_size=65536):
+                    image_bytes.extend(chunk)
+                    if len(image_bytes) > MAX_SOURCE_IMAGE_BYTES:
+                        raise ImageGenerationError(
+                            'The image output exceeds the application size limit.', 'image_output_invalid'
+                        )
+                return bytes(image_bytes)
+    except (httpx.HTTPError, ModelEndpointValidationError) as exc:
+        raise ImageGenerationError(
+            'The generated image could not be downloaded through the configured network policy.',
+            'image_download_failed', context=image_generation_error_log_context(exc),
+        ) from exc
+
+
+def resolve_generated_image_bytes(generated_image_url, settings=None):
     """Resolve generated image output into bytes and a MIME type for blob storage."""
     normalized_image_url = str(generated_image_url or '').strip()
     if not normalized_image_url:
         raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
     if normalized_image_url.startswith('data:image/'):
+        from functions_image_edit import MAX_SOURCE_IMAGE_BYTES
+
+        if len(normalized_image_url) > ((MAX_SOURCE_IMAGE_BYTES + 2) // 3) * 4 + 128:
+            raise ImageGenerationError('The image output exceeds the application size limit.', 'image_output_invalid')
         try:
-            return decode_image_content(normalized_image_url)
+            _mime_type, image_bytes = decode_image_content(normalized_image_url)
         except ValueError as exc:
             raise ImageGenerationError('The image service returned unreadable image data.', 'image_output_missing') from exc
+        return _validated_image_bytes(image_bytes)
 
     try:
         parsed_url = urlparse(normalized_image_url)
-        if parsed_url.scheme not in {'http', 'https'} or not parsed_url.hostname:
+        if (
+            parsed_url.scheme not in {'http', 'https'} or not parsed_url.hostname
+            or parsed_url.username or parsed_url.password
+        ):
             raise ValueError('Unsupported image URL')
     except ValueError as exc:
         raise ImageGenerationError('The image service returned an unsupported image source.', 'image_output_missing') from exc
+
+    if settings is not None and image_settings_use_connections(settings):
+        binding = resolve_shared_image_binding(settings)
+        if binding.endpoint.get('provider') == 'custom':
+            return _validated_image_bytes(_download_custom_image_bytes(normalized_image_url, settings))
 
     try:
         response = requests.get(normalized_image_url, timeout=30)
@@ -539,11 +679,7 @@ def resolve_generated_image_bytes(generated_image_url):
     if not image_bytes:
         raise ImageGenerationError('The generated image download was empty.', 'image_output_missing')
 
-    content_type = str(response.headers.get('Content-Type') or '').split(';', 1)[0].strip()
-    if not content_type or not content_type.startswith('image/'):
-        content_type = mimetypes.guess_type(parsed_url.path)[0] or 'image/png'
-
-    return content_type, image_bytes
+    return _validated_image_bytes(image_bytes)
 
 
 def _image_extension_for_mime_type(mime_type):

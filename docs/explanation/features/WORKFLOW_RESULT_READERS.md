@@ -3,6 +3,8 @@
 Implemented in version: **0.261.107**, recorded in
 `application/single_app/config.py`.
 
+Workflow authoring/runtime integration was added in **0.261.108**.
+
 Reader-policy alignment updated in version: **0.261.110**. An explicit empty
 nested access policy is rejected rather than replaced by a different policy,
 and `allow_partial` must be a boolean. Source lineage alone does not label a
@@ -38,6 +40,13 @@ be bound as final output.
 
 The receipt records the producer, output name, manifest reference, and exact
 output reference. Consumers must retain it on their resulting manifest.
+
+Workflow task-result HTTP reads, run history, and activity now use this source
+authorization boundary. `authorize_workflow_run_read` checks all stored task
+references without applying a UI history-page limit. Generic
+`workflow_validation` requirements are enforced independently of the producer's
+Analyze validation; neither an invalid requirement report nor a pending producer
+can be bypassed by requesting partial output.
 
 ## Partial and invalid results
 

@@ -26,6 +26,7 @@ sys.path.insert(0, str(RUNNER.parent))
 
 # Import the domain error after establishing the worktree module path.
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError
+from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import (
     ANALYSIS_SOURCE_ACCESS_VERSION,
     WORKFLOW_RESULT_CONTRACT_VERSION,
@@ -79,6 +80,8 @@ def result_client():
         }
 
     def authorize_result(bound_workflow, run_id, task_id, result_ref, *, reader_user_id):
+        if state.get("authorization_error"):
+            raise state["authorization_error"]
         manifest = {
             "contract_version": WORKFLOW_RESULT_CONTRACT_VERSION,
             "identity": {"workflow_id": bound_workflow["id"], "run_id": run_id, "task_id": task_id},
@@ -164,6 +167,16 @@ def test_other_user_cannot_read_workflow_result(result_client):
     client, state, workflow, run, item, reads = result_client
     state["actor"] = "another-user"
     assert client.get("/user/workflow-1/run-1/extract").status_code == 404
+    assert reads == []
+
+
+@pytest.mark.parametrize("scope", ["user", "group"])
+def test_revoked_contributor_blocks_the_page_before_any_content_read(result_client, scope):
+    client, state, workflow, run, item, reads = result_client
+    state["authorization_error"] = AnalysisResultUnavailable()
+    response = client.get(f"/{scope}/workflow-1/run-1/extract?output=authoritative")
+    assert response.status_code == 403
+    assert "content" not in response.json
     assert reads == []
 
 

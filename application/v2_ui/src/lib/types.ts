@@ -62,6 +62,23 @@ export interface SavedAnalysisPage {
     };
 }
 
+/** Safe, server-resolved operations for the selected global image model. */
+export interface ImageEditCapability {
+    enabled: boolean;
+    mode: 'masked' | 'edit' | 'regenerate' | 'unavailable';
+    model_name: string;
+    reason: string;
+    provider_label: string;
+    cloud_label: string;
+    availability: 'documented' | 'unknown' | 'unavailable';
+    availability_reason: string;
+    editing: boolean;
+    masking: boolean;
+    sizes: string[];
+    qualities: string[];
+    backgrounds: string[];
+}
+
 export interface Conversation {
     id: string;
     title: string;
@@ -862,13 +879,7 @@ export interface BootstrapPayload {
      * anybody set, so it cannot live in `features`.
      */
     capabilities?: {
-        image_edit?: {
-            /** `masked` supports region edits; `regenerate` can only replace the whole image. */
-            mode: 'masked' | 'regenerate';
-            model_name: string;
-            /** Why region editing is unavailable, in words worth showing a reader. */
-            reason: string;
-        };
+        image_edit?: ImageEditCapability;
     };
     catalogs: {
         models: ModelOption[];

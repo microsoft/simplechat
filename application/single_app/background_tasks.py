@@ -53,6 +53,7 @@ from functions_group_workflows import (
 )
 from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
 from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
+from functions_workflow_runtime import check_durable_workflows_once, queue_durable_workflow_run
 
 
 def _get_lock_holder_id():
@@ -560,6 +561,17 @@ def check_due_workflows_once():
                     except Exception:
                         pass
 
+                if refreshed_workflow.get('durable_execution') is True:
+                    if not refreshed_workflow.get('active_run_id'):
+                        queued = queue_durable_workflow_run(
+                            refreshed_workflow, actor_user_id=user_id, trigger_source=trigger_source,
+                        )
+                        update_personal_workflow_runtime_fields(user_id, workflow_id, {
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        })
+                        results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': queued['success']})
+                    continue
+
                 started_at = datetime.now(timezone.utc).isoformat()
                 active_run_id = create_workflow_run_id()
                 update_personal_workflow_runtime_fields(
@@ -596,7 +608,7 @@ def check_due_workflows_once():
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                if refreshed_workflow:
+                if refreshed_workflow and refreshed_workflow.get('durable_execution') is not True:
                     update_personal_workflow_runtime_fields(
                         user_id,
                         workflow_id,
@@ -644,6 +656,17 @@ def check_due_workflows_once():
                     except Exception:
                         pass
 
+                if refreshed_workflow.get('durable_execution') is True:
+                    if not refreshed_workflow.get('active_run_id'):
+                        queued = queue_durable_workflow_run(
+                            refreshed_workflow, actor_user_id=refreshed_workflow['user_id'], trigger_source=trigger_source,
+                        )
+                        update_group_workflow_runtime_fields(group_id, workflow_id, {
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        })
+                        results.append({'scope': 'group', 'workflow_id': workflow_id, 'success': queued['success']})
+                    continue
+
                 started_at = datetime.now(timezone.utc).isoformat()
                 active_run_id = create_workflow_run_id()
                 update_group_workflow_runtime_fields(
@@ -680,7 +703,7 @@ def check_due_workflows_once():
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                if refreshed_workflow:
+                if refreshed_workflow and refreshed_workflow.get('durable_execution') is not True:
                     update_group_workflow_runtime_fields(
                         group_id,
                         workflow_id,
@@ -704,6 +727,7 @@ def run_workflow_scheduler_loop():
     while True:
         try:
             check_due_workflows_once()
+            check_durable_workflows_once()
         except Exception as exc:
             print(f"Error in workflow scheduler check: {exc}")
             log_event(f"[WORKFLOW_SCHEDULER] Error in workflow scheduler check: {exc}", level=logging.ERROR)

@@ -31,6 +31,7 @@ import {
     type BulkConversationResult,
     type ImageRevisionEntry,
     type ImageRevisionOrigin,
+    type ImageRevisionOperation,
     type MessageBlockRevisions,
 } from '../lib/endpoints';
 import {
@@ -606,6 +607,7 @@ export interface ImageRevisionActionRequest {
     conversationId: string;
     conversationKind: ConversationKind | null;
     origin?: ImageRevisionOrigin;
+    operation?: ImageRevisionOperation;
     instruction?: string;
     prompt?: string;
     /** A PNG data URL whose transparent pixels mark the region to change. */
@@ -3411,6 +3413,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationId,
         conversationKind,
         origin,
+        operation,
         instruction,
         prompt,
         mask,
@@ -3428,6 +3431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const body = {
             conversation_id: conversationId,
             ...(origin ? { origin } : {}),
+            ...(operation ? { operation } : {}),
             ...(instruction ? { instruction } : {}),
             ...(prompt ? { prompt } : {}),
             ...(mask ? { mask } : {}),
