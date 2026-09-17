@@ -129,13 +129,14 @@ def _legacy_image_connection(settings, apim):
         if deployment == active_name:
             support = resolve_model_capability(model, IMAGE_GENERATION_CAPABILITY, "aoai")
             model_name = str(model.get("modelName") or "").lower()
-            legacy_route = (
-                "responses"
-                if not apim and model_name and not any(marker in model_name for marker in ("image", "dall-e", "dalle"))
-                else "images"
-            )
-            model["supportsImageGeneration"] = True
-            model["image_generation_api"] = support["api"] or legacy_route
+            if model.get("supportsImageGeneration") is not False:
+                if support["supported"]:
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = support["api"]
+                elif not model_name:
+                    # An unrecorded legacy Images deployment remains recoverable, not a GPT tool guess.
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = "images"
         models.append(model)
 
     auth_type = "api_key" if apim else str(settings.get("azure_openai_image_gen_authentication_type") or "key")
@@ -216,7 +217,9 @@ def _compatible_connection(existing, imported, capability=IMAGE_GENERATION_CAPAB
             (model for model in models if model.get("deploymentName") == incoming["deploymentName"]),
             None,
         )
-        if match and incoming["enabled"] and not supports_model_capability(match, capability, existing.get("provider")):
+        if match and incoming["enabled"] and not supports_model_capability(
+            match, capability, existing.get("provider"), endpoint=existing
+        ):
             return False
     return bool(existing.get("id"))
 
@@ -235,6 +238,7 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
     endpoints = copy.deepcopy(current)
     selected = dict(EMPTY_MODEL_SELECTION)
     imported_count = 0
+    default_warning = ""
     active_apim = bool(settings.get("enable_image_gen_apim"))
     for apim in (False, True):
         imported, active_name = _legacy_image_connection(settings, apim)
@@ -267,7 +271,12 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
                 "model_id": str(model["id"]),
                 "provider": str(existing["provider"]).lower(),
             }
-    return {
+            if not supports_model_capability(model, IMAGE_GENERATION_CAPABILITY, existing["provider"], endpoint=existing):
+                default_warning = (
+                    "The imported image default is not supported on its provider. "
+                    "Select a dedicated image model in AI Connections; the original settings have been retained."
+                )
+    patch = {
         "model_endpoints": endpoints,
         IMAGE_SELECTION_KEY: selected,
         IMAGE_MIGRATION_VERSION_KEY: IMAGE_MIGRATION_VERSION,
@@ -277,6 +286,12 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
             "message": "Existing image configuration is now managed through AI Connections.",
         },
     }
+    if default_warning:
+        patch["ai_connection_default_notices"] = {
+            **(settings.get("ai_connection_default_notices") or {}),
+            IMAGE_GENERATION_CAPABILITY: default_warning,
+        }
+    return patch
 
 
 def _legacy_embedding_connection(settings, apim):
@@ -593,15 +608,21 @@ def _migrate_connections(
 
 
 def initialize_ai_connections(settings):
-    """Import after cache initialization; retain legacy operation on a reported failure."""
-    if image_connection_import_is_complete(settings) and embedding_connection_import_is_complete(settings):
+    """Import through the authoritative store without publishing stale startup data."""
+    failed_notice = any(
+        isinstance(settings.get(key), dict) and settings[key].get("status") == "error"
+        for key in (MIGRATION_NOTICE_KEY, EMBEDDING_MIGRATION_NOTICE_KEY)
+    )
+    if (
+        image_connection_import_is_complete(settings)
+        and embedding_connection_import_is_complete(settings)
+        and not failed_notice
+    ):
         return settings
 
     # Startup collaborators are lazy so the migration builder is usable without Azure.
-    from azure.core import MatchConditions
     from azure.core.exceptions import AzureError
-    from azure.cosmos.exceptions import CosmosAccessConditionFailedError
-    from config import cosmos_settings_container
+    from app_settings_store import SettingsConflictError
     from functions_appinsights import log_event
     from functions_keyvault import (
         keyvault_model_endpoint_cleanup_helper,
@@ -609,17 +630,16 @@ def initialize_ai_connections(settings):
         resolve_secret_reference_for_context,
         validate_secret_name_dynamic,
     )
-    from functions_settings import _refresh_app_settings_cache_after_write, normalize_model_endpoints
+    from functions_settings import _get_app_settings_store, normalize_model_endpoints
 
+    store = _get_app_settings_store()
     latest = copy.deepcopy(settings)
     transaction_settings = latest
     failed_notices = {}
 
     def read():
         nonlocal latest, transaction_settings
-        transaction_settings = cosmos_settings_container.read_item(
-            item="app_settings", partition_key="app_settings"
-        )
+        transaction_settings = store.read(use_cosmos=True)
         latest = copy.deepcopy(transaction_settings)
         latest.update(failed_notices)
         return transaction_settings
@@ -664,26 +684,51 @@ def initialize_ai_connections(settings):
                 extra={"error_type": type(exc).__name__},
             )
 
+    def guard_write(current, candidate):
+        # Profile activation must cover the same CAS and shared-cache publication.
+        from functions_embedding_compatibility import embedding_settings_write_guard
+
+        return embedding_settings_write_guard(
+            current, candidate, force_check=label == "embedding",
+        )
+
     def write(candidate, etag):
         try:
-            return cosmos_settings_container.replace_item(
-                item="app_settings", body=candidate,
-                etag=etag, match_condition=MatchConditions.IfNotModified,
+            return store.write(
+                lambda _current: copy.deepcopy(candidate),
+                expected_etag=etag, write_guard=guard_write,
             )
-        except CosmosAccessConditionFailedError as exc:
+        except SettingsConflictError as exc:
             raise ImageMigrationConflict() from exc
 
-    for label, migrate, notice_key in (
-        ("image", migrate_image_connections, MIGRATION_NOTICE_KEY),
-        ("embedding", migrate_embedding_connections, EMBEDDING_MIGRATION_NOTICE_KEY),
+    for label, migrate, notice_key, is_complete in (
+        ("image", migrate_image_connections, MIGRATION_NOTICE_KEY, image_connection_import_is_complete),
+        ("embedding", migrate_embedding_connections, EMBEDDING_MIGRATION_NOTICE_KEY, embedding_connection_import_is_complete),
     ):
         try:
             result = migrate(
                 read, write, prepare, normalize_endpoint=normalize, discard_endpoint=discard
             )
+            notice = result.get(notice_key)
+            initial_notice = settings.get(notice_key)
+            if (
+                isinstance(notice, dict) and notice.get("status") == "error"
+                or isinstance(initial_notice, dict) and initial_notice.get("status") == "error"
+            ):
+                def confirm_import(current):
+                    if not is_complete(current):
+                        raise AIConnectionError("Settings changed while confirming the connection import. Reload before retrying.")
+                    previous_notice = current.get(notice_key)
+                    confirmed_notice = copy.deepcopy(previous_notice) if isinstance(previous_notice, dict) else {}
+                    confirmed_notice.update(
+                        status="complete", message=f"The {label} connection import has been confirmed.",
+                    )
+                    current[notice_key] = confirmed_notice
+                    return current
+
+                result = store.write(confirm_import, write_guard=guard_write)
             latest = copy.deepcopy(result)
             latest.update(failed_notices)
-            _refresh_app_settings_cache_after_write(latest, context=f"ai_connections_{label}_import")
             log_event(f"[AI_CONNECTIONS] Legacy {label} connection import completed")
         except (AzureError, RuntimeError, ValueError) as exc:
             failed_notices[notice_key] = {
@@ -691,12 +736,30 @@ def initialize_ai_connections(settings):
                 "message": (
                     f"{exc.public_message} "
                     if isinstance(exc, AIConnectionError)
-                    else f"{label.capitalize()} connection import could not finish. Review connection and Key Vault permissions. "
-                ) + f"Existing {label} settings are unchanged. Restart after correcting the configuration to retry.",
+                    else f"{label.capitalize()} connection import could not finish or its save could not be confirmed. "
+                ) + "Legacy settings remain available for recovery. Reload settings and restart after correcting the configuration to retry.",
             }
-            latest.update(failed_notices)
             log_event(
-                f"[AI_CONNECTIONS] {label.capitalize()} connection import failed; retaining legacy configuration",
+                f"[AI_CONNECTIONS] {label.capitalize()} connection import was not confirmed",
                 extra={"error_type": type(exc).__name__},
             )
+            def record_failure(current):
+                current[notice_key] = copy.deepcopy(failed_notices[notice_key])
+                return current
+
+            try:
+                latest = store.write(record_failure)
+            except (AzureError, RuntimeError, ValueError) as notice_error:
+                log_event(
+                    "[AI_CONNECTIONS] Import failure notice could not be persisted",
+                    extra={"error_type": type(notice_error).__name__, "capability": label},
+                )
+                try:
+                    latest = store.read(use_cosmos=True)
+                except (AzureError, RuntimeError, ValueError) as read_error:
+                    log_event(
+                        "[AI_CONNECTIONS] Settings could not be reloaded after an unconfirmed import",
+                        extra={"error_type": type(read_error).__name__, "capability": label},
+                    )
+            latest.update(failed_notices)
     return latest

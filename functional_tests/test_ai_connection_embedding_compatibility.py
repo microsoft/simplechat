@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_compatibility.py
 """
 Functional coverage for embedding vector-space activation and persistence guards.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Use isolated stores to prove that populated vectors, unavailable inspections, and
@@ -9,6 +9,7 @@ stale work cannot silently cross embedding profiles or bypass a cleared default.
 """
 
 import copy
+import json
 import sys
 import types
 import unittest
@@ -24,6 +25,8 @@ sys.path.insert(0, str(ROOT / "application" / "single_app"))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 from test_support.app_stubs import import_app_module
+from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD
+from test_app_settings_store_consistency import FakeCosmos, FakeRedis
 from test_ai_connection_embedding_runtime import custom_settings, runtime
 from test_data_management_search_write_fence import FakeGateContainer
 from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY
@@ -263,23 +266,66 @@ class EmbeddingCompatibilityTests(unittest.TestCase):
         self.assertFalse(state.get("embedding_vectors_written"))
 
     def test_admin_schema_observation_is_persisted_with_settings_cas(self):
-        settings_store = Mock()
-        settings_store.replace_item.side_effect = lambda **kwargs: {**kwargs["body"], "_etag": "saved"}
-        current = {**self.current, "_etag": "before"}
-        refresh = Mock()
-        with (
-            patch.object(compatibility, "_runtime_containers", return_value=(settings_store, self.gate, self.facts)),
-            patch.object(compatibility, "read_embedding_settings", side_effect=lambda: copy.deepcopy(current)),
-            patch.dict(sys.modules, {"functions_settings": types.SimpleNamespace(_refresh_app_settings_cache_after_write=refresh)}),
-        ):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        container.replace_item = Mock(wraps=container.replace_item)
+        cache = FakeRedis()
+        store = AppSettingsStore(container, cache, redis_required=True)
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
             compatibility.record_embedding_index_schema(index_schema(), self.current)
-        write = settings_store.replace_item.call_args.kwargs
-        self.assertEqual(write["etag"], "before")
+        write = container.replace_item.call_args.kwargs
+        self.assertEqual(write["etag"], "1")
         self.assertEqual(
             write["body"][EMBEDDING_VECTOR_PROFILE_KEY]["indexes"]["simplechat-user-index"],
             {"exists": True, "dimensions": 3, "provenance": True},
         )
-        self.assertEqual(refresh.call_args.args[0]["_etag"], "saved")
+        self.assertEqual(container.document, json.loads(cache.raw)["document"])
+        self.assertEqual(1, container.document[SETTINGS_REVISION_FIELD])
+
+    def test_schema_observation_retries_without_losing_other_index_metadata(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        newer_baseline = copy.deepcopy(self.current[EMBEDDING_VECTOR_PROFILE_KEY])
+        newer_baseline["indexes"] = {"another-index": {"exists": True, "dimensions": 3, "provenance": True}}
+        container.before_replace = lambda: store.write(lambda current: {
+            **current, EMBEDDING_VECTOR_PROFILE_KEY: newer_baseline, "app_title": "Concurrent edit",
+        })
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
+            compatibility.record_embedding_index_schema(index_schema(), self.current)
+        self.assertEqual("Concurrent edit", container.document["app_title"])
+        self.assertEqual(
+            {"another-index", "simplechat-user-index"},
+            set(container.document[EMBEDDING_VECTOR_PROFILE_KEY]["indexes"]),
+        )
+        self.assertEqual(2, container.document[SETTINGS_REVISION_FIELD])
+
+    def test_schema_observation_cannot_follow_a_concurrent_model_switch(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        container.before_replace = lambda: store.write(lambda current: {
+            **current, **copy.deepcopy(self.candidate),
+            EMBEDDING_VECTOR_PROFILE_KEY: self.next_profile.as_state(),
+        })
+        with (
+            patch.object(compatibility, "_get_embedding_settings_store", return_value=store),
+            self.assertRaises(AIConnectionError) as raised,
+        ):
+            compatibility.record_embedding_index_schema(index_schema(), self.current)
+        self.assertEqual("embedding_profile_changed", raised.exception.code)
+        self.assertEqual(1, container.writes)
+        self.assertEqual(self.next_profile.profile_id, container.document[EMBEDDING_VECTOR_PROFILE_KEY]["id"])
+
+    def test_embedding_settings_use_authoritative_shared_store_reads(self):
+        store = Mock()
+        store.read.return_value = copy.deepcopy(self.current)
+        with (
+            patch.object(compatibility, "_get_embedding_settings_store", return_value=store),
+            patch.object(compatibility, "_runtime_containers", side_effect=AssertionError("No direct settings read")),
+        ):
+            self.assertEqual(self.current, compatibility.read_embedding_settings())
+        store.read.assert_called_once_with(use_cosmos=True)
 
     def test_query_profile_check_rejects_stale_settings_without_marking_vector_writes(self):
         fence = gates.acquire_data_management_search_write_fence(self.gate, "activation", 600)

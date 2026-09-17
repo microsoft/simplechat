@@ -6,13 +6,12 @@ import logging
 import uuid
 from contextlib import contextmanager
 
-from azure.core import MatchConditions
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.search.documents.indexes import SearchIndexClient
-from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 
+from app_settings_store import SettingsConflictError, SettingsUnavailableError
 from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY, embedding_settings_use_connections
 from functions_appinsights import log_event
 from functions_data_management_search_write_fence import (
@@ -41,11 +40,17 @@ def _runtime_containers():
     return cosmos_settings_container, cosmos_data_management_jobs_container, cosmos_agent_facts_container
 
 
+def _get_embedding_settings_store():
+    # Resolve the configured shared store only when runtime settings are needed.
+    from functions_settings import _get_app_settings_store
+
+    return _get_app_settings_store()
+
+
 def read_embedding_settings():
-    settings_container, _, _ = _runtime_containers()
     try:
-        settings = settings_container.read_item(item="app_settings", partition_key="app_settings")
-    except AzureError as exc:
+        settings = _get_embedding_settings_store().read(use_cosmos=True)
+    except (AzureError, SettingsUnavailableError, SettingsConflictError) as exc:
         log_event("[EMBEDDING] Settings could not be read", extra={"error_type": type(exc).__name__})
         raise AIConnectionError(
             "Embedding configuration is temporarily unavailable.", "embedding_compatibility_unavailable",
@@ -333,9 +338,7 @@ def record_embedding_index_schema(index, settings):
     if expected is None:
         return
     _check_index_dimensions(index, expected.dimensions)
-    settings_container, _, _ = _runtime_containers()
-    for _attempt in range(3):
-        current = read_embedding_settings()
+    def record_observation(current):
         actual = active_embedding_profile(current)
         if actual.profile_id != expected.profile_id:
             raise AIConnectionError("The embedding model changed during index maintenance. Reload and retry.", "embedding_profile_changed")
@@ -344,19 +347,19 @@ def record_embedding_index_schema(index, settings):
         indexes[index.name] = _index_metadata(index, expected.dimensions)
         baseline["indexes"] = indexes
         current[EMBEDDING_VECTOR_PROFILE_KEY] = baseline
-        try:
-            saved = settings_container.replace_item(
-                item="app_settings", body=current, etag=current["_etag"],
-                match_condition=MatchConditions.IfNotModified,
-            )
-            # Cache invalidation depends on initialized application settings.
-            from functions_settings import _refresh_app_settings_cache_after_write
+        return current
 
-            _refresh_app_settings_cache_after_write(saved, context="embedding_index_schema")
-            return
-        except CosmosAccessConditionFailedError:
-            continue
-    raise AIConnectionError("Settings changed during index maintenance. Reload and retry.", "settings_conflict")
+    try:
+        _get_embedding_settings_store().write(record_observation)
+    except SettingsConflictError as exc:
+        raise AIConnectionError(
+            "Settings changed during index maintenance. Reload and retry.", "settings_conflict",
+        ) from exc
+    except SettingsUnavailableError as exc:
+        raise AIConnectionError(
+            "Index schema metadata could not be confirmed. Reload before retrying.",
+            "embedding_compatibility_unavailable",
+        ) from exc
 
 
 def _runtime_index_metadata(search_client, profile, settings):

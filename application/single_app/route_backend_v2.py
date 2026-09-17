@@ -169,6 +169,12 @@ from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_model_capabilities import resolve_model_vision_support
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoint,
+    validate_custom_model_endpoints,
+)
 from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
@@ -428,15 +434,18 @@ def _build_capabilities(settings):
     like a settings key to everything that reads the application's surface, including the
     documentation inventory. It is reported separately instead.
 
-    Computed from the raw settings and reduced to an enum, so no deployment detail beyond the
-    model's name reaches the browser.
+    Computed from raw settings, then reduced to safe operation metadata. Connection URLs,
+    authentication, provider payloads and internal model-routing paths never reach the browser.
     """
     capability = resolve_image_edit_capability(settings)
     return {
         "image_edit": {
-            "mode": capability["mode"],
-            "model_name": capability["model_name"],
-            "reason": capability["reason"],
+            key: capability[key]
+            for key in (
+                "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
+                "availability", "availability_reason", "editing", "masking",
+                "sizes", "qualities", "backgrounds",
+            )
         },
     }
 
@@ -952,7 +961,7 @@ def _persist_global_model_endpoints(normalized, existing):
     if not isinstance(settings, dict):
         raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
     preflight_embedding_settings(settings, {**settings, "model_endpoints": normalized})
-
+    validate_custom_model_endpoints(normalized, settings)
     existing_by_id = {
         endpoint.get("id"): endpoint
         for endpoint in existing
@@ -1355,6 +1364,15 @@ def register_route_backend_v2_admin(bp):
             normalized, errors, warnings = normalize_admin_settings_updates(
                 updates, current_settings
             )
+            for key in ('allow_private_custom_model_endpoints', 'allow_insecure_custom_model_endpoints'):
+                if key in updates and not isinstance(updates[key], bool):
+                    errors[key] = "Custom network permissions must be true or false."
+            ca_path_key = 'custom_model_endpoint_ca_bundle_path'
+            if ca_path_key in updates:
+                if not isinstance(updates[ca_path_key], str):
+                    errors[ca_path_key] = "The CA bundle must be a deployment-mounted file path."
+                else:
+                    normalized[ca_path_key] = updates[ca_path_key].strip()
 
             if errors:
                 log_event(
@@ -1656,6 +1674,12 @@ def register_route_backend_v2_admin(bp):
                         "migration": settings.get(MIGRATION_NOTICE_KEY),
                         "embedding_migration": settings.get(EMBEDDING_MIGRATION_NOTICE_KEY),
                         "default_notices": settings.get("ai_connection_default_notices", {}),
+                        "custom_api_types": get_model_endpoint_provider_ui_options(),
+                        "custom_network_policy": {
+                            "allow_private_custom_model_endpoints": settings.get("allow_private_custom_model_endpoints") is True,
+                            "allow_insecure_custom_model_endpoints": settings.get("allow_insecure_custom_model_endpoints") is True,
+                            "custom_model_endpoint_ca_bundle_path": settings.get("custom_model_endpoint_ca_bundle_path") or "",
+                        },
                     }
                 ),
                 200,
@@ -1703,6 +1727,8 @@ def register_route_backend_v2_admin(bp):
             return _model_endpoint_response(saved, endpoint_id, 201)
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to create model endpoint: {exc}",
@@ -1775,6 +1801,8 @@ def register_route_backend_v2_admin(bp):
             return _model_endpoint_response(saved, current.get("id"), 200)
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to update model endpoint: {exc}",
@@ -2056,7 +2084,8 @@ def register_route_backend_v2_admin(bp):
                     ),
                 }
             if capability == EMBEDDINGS_CAPABILITY and not clearing:
-                resolve_embedding_profile({**settings, **updates})
+                profile = resolve_embedding_profile({**settings, **updates})
+                validate_custom_model_endpoint(profile.binding.endpoint, settings)
             if not update_settings(updates):
                 return jsonify({"error": "The default model could not be stored."}), 500
             log_event("[AI_CONNECTIONS] Capability default updated", extra={"capability": capability})
@@ -2069,6 +2098,8 @@ def register_route_backend_v2_admin(bp):
             return jsonify(_capability_model_payload(updated, capability)), 200
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
         except Exception as exc:
             log_event(
                 "[AI_CONNECTIONS] Capability default could not be stored",

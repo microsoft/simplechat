@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for new Foundry REST streaming runtime.
-Version: 0.250.172
+Version: 0.261.107
 Implemented in: 0.239.177
 Updated in: 0.250.172
 

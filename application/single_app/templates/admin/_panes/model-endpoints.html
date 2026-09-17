@@ -1,4 +1,4 @@
-            <div class="tab-pane fade{% if admin_landing_tab == 'model-endpoints' %} show active{% endif %}" id="model-endpoints" role="tabpanel" aria-labelledby="model-endpoints-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'model-endpoints' %} show active{% endif %}" id="model-endpoints" role="tabpanel" aria-labelledby="model-endpoints-tab" data-custom-api-types="{{ custom_model_endpoint_api_types|default([])|tojson|forceescape }}">
 
                 <p class="text-muted">
                     Configure shared AI Connections for chat, image generation and embeddings. Each capability keeps its own default model.
@@ -9,7 +9,7 @@
                         <i class="bi bi-hdd-network me-2"></i>AI Connections
                     </h5>
                     <p class="text-muted small">
-                        Manage Azure OpenAI, Foundry, New Foundry, Custom chat connections, and OpenAI-compatible embedding connections once. Publish models for their supported operations; images and embeddings work independently of the chat mode switch.
+                        Manage Azure OpenAI, Foundry (classic), New Foundry, Custom API connections, and embedding-only OpenAI-compatible connections once. Publish each model for the operations its provider and API support. Images and embeddings work independently of the chat mode switch.
                     </p>
 
                     {% if not settings.enable_multi_model_endpoints %}
@@ -18,55 +18,6 @@
                         <label class="form-check-label" for="enable_multi_model_endpoints">Use AI Connections for chat</label>
                     </div>
                     {% endif %}
-
-                    <div class="form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="allow_private_custom_model_endpoints"
-                            name="allow_private_custom_model_endpoints"
-                            {% if settings.allow_private_custom_model_endpoints %}checked{% endif %}
-                        >
-                        <label class="form-check-label" for="allow_private_custom_model_endpoints">
-                            Allow private Custom endpoint hosts
-                        </label>
-                        <div class="form-text">
-                            Enable this for on-premises inference. It permits IP addresses, short host names, and hosts resolving to private ranges. Loopback, link-local, and cloud metadata addresses are always rejected, and every address is revalidated when the connection is made.
-                        </div>
-                    </div>
-
-                    <div class="form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="allow_insecure_custom_model_endpoints"
-                            name="allow_insecure_custom_model_endpoints"
-                            {% if settings.allow_insecure_custom_model_endpoints %}checked{% endif %}
-                        >
-                        <label class="form-check-label" for="allow_insecure_custom_model_endpoints">
-                            Allow plaintext HTTP Custom endpoints
-                        </label>
-                        <div class="form-text text-danger">
-                            Prompts and API keys travel unencrypted. Only for an isolated network where TLS cannot be terminated. Requires private Custom endpoint hosts to also be enabled.
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="custom_model_endpoint_ca_bundle_path" class="form-label">
-                            Custom endpoint CA bundle path
-                        </label>
-                        <input
-                            type="text"
-                            class="form-control"
-                            id="custom_model_endpoint_ca_bundle_path"
-                            name="custom_model_endpoint_ca_bundle_path"
-                            value="{{ settings.custom_model_endpoint_ca_bundle_path or '' }}"
-                            placeholder="/etc/ssl/certs/internal-ca.pem"
-                        >
-                        <div class="form-text">
-                            Custom endpoints trust only public certificate authorities, and deliberately ignore ambient environment variables so nothing can silently widen that trust. Name a PEM bundle here to trust an internally issued certificate, which an on-premises gateway normally uses.
-                        </div>
-                    </div>
 
                     {% if settings.enable_semantic_kernel %}
                     <div id="agent-default-model-migration-panel" class="border rounded p-3 mt-3">
@@ -247,6 +198,24 @@
 
                     <input type="hidden" name="model_endpoints_json" id="model_endpoints_json" />
                     <input type="hidden" name="default_model_selection_json" id="default_model_selection_json" />
+
+                    <details class="border rounded p-3 mt-3">
+                        <summary>Custom endpoint network policy</summary>
+                        <p class="form-text">Applies to Custom inference and OAuth2 token requests. Loopback, link-local, platform metadata addresses, redirects, and environment proxies remain blocked.</p>
+                        <div class="form-check mb-2">
+                            <input type="checkbox" class="form-check-input" id="allow_private_custom_model_endpoints" name="allow_private_custom_model_endpoints" {% if settings.allow_private_custom_model_endpoints %}checked{% endif %} />
+                            <label class="form-check-label" for="allow_private_custom_model_endpoints">Allow private Custom endpoint hosts</label>
+                            <div class="form-text">For approved on-premises inference, permits IP addresses, short host names, and hosts resolving to private ranges. Always-blocked addresses remain rejected, and every address is revalidated when the connection is made.</div>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input type="checkbox" class="form-check-input" id="allow_insecure_custom_model_endpoints" name="allow_insecure_custom_model_endpoints" {% if settings.allow_insecure_custom_model_endpoints %}checked{% endif %} />
+                            <label class="form-check-label" for="allow_insecure_custom_model_endpoints">Allow plaintext HTTP (also requires private-host permission)</label>
+                        </div>
+                        <p class="text-warning small">HTTP sends prompts and credentials without encryption. Prefer HTTPS with a private CA bundle.</p>
+                        <label for="custom_model_endpoint_ca_bundle_path" class="form-label">Custom CA bundle path</label>
+                        <input type="text" class="form-control" id="custom_model_endpoint_ca_bundle_path" name="custom_model_endpoint_ca_bundle_path" value="{{ settings.custom_model_endpoint_ca_bundle_path or '' }}" />
+                        <p class="form-text">Optional deployment-mounted PEM trust bundle for approved internal certificate authorities. Empty uses public roots. Ambient environment variables cannot widen that trust, and HTTPS certificate verification cannot be disabled.</p>
+                    </details>
 
                     <div id="ai-connections-migration-notice" class="alert alert-info d-none mt-3" role="status"></div>
                     <div id="ai-connections-default-notices" class="alert alert-warning d-none mt-3" role="status"></div>
@@ -497,5 +466,56 @@
                         <p class="form-text mt-2">Model changes, even at the same dimensions, may require a controlled rebuild. Saving does not automatically rebuild existing vectors.</p>
                     </fieldset>
                 </template>
-                {% include '_multiendpoint_modal.html' %}
+
+                <template id="custom-model-endpoint-fields-template">
+                    <div id="custom-model-endpoint-fields" class="row g-3 mt-1 d-none">
+                        <div class="col-md-6">
+                            <label for="model-endpoint-url-mode" class="form-label">URL Handling</label>
+                            <select class="form-select" id="model-endpoint-url-mode">
+                                <option value="auto">Automatic for the API type</option>
+                                <option value="exact">Exact API base / messages URL</option>
+                            </select>
+                            <p class="form-text">Exact adds no version or deployment prefix. For Anthropic, enter the full messages URL.</p>
+                        </div>
+                        <div class="col-md-6" id="model-endpoint-bearer-group">
+                            <label for="model-endpoint-bearer-token" class="form-label">Bearer Token</label>
+                            <input type="password" class="form-control" id="model-endpoint-bearer-token" autocomplete="new-password" />
+                            <p class="form-text">Leave blank to keep a stored token.</p>
+                        </div>
+                        <div class="col-md-6" id="model-endpoint-token-url-group">
+                            <label for="model-endpoint-token-url" class="form-label">OAuth2 Token URL</label>
+                            <input type="url" class="form-control" id="model-endpoint-token-url" />
+                        </div>
+                        <div class="col-md-6" id="model-endpoint-oauth-scope-group">
+                            <label for="model-endpoint-oauth-scope" class="form-label">OAuth2 Scope (optional)</label>
+                            <input type="text" class="form-control" id="model-endpoint-oauth-scope" />
+                        </div>
+                        <div class="col-12" id="model-endpoint-api-key-override-group">
+                            <details>
+                                <summary>Gateway API key header</summary>
+                                <label for="model-endpoint-api-key-header" class="form-label mt-2">API Key Header Override</label>
+                                <input type="text" class="form-control" id="model-endpoint-api-key-header" />
+                                <label for="model-endpoint-api-key-prefix" class="form-label mt-2">API Key Prefix</label>
+                                <input type="text" class="form-control" id="model-endpoint-api-key-prefix" />
+                                <p class="form-text">An empty header uses the API type default. A named override with an empty prefix sends the key as-is.</p>
+                            </details>
+                        </div>
+                        <div class="col-12">
+                            <details>
+                                <summary>Client certificate (mTLS)</summary>
+                                <label for="model-endpoint-client-cert-path" class="form-label mt-2">Client Certificate Path</label>
+                                <input type="text" class="form-control" id="model-endpoint-client-cert-path" />
+                                <label for="model-endpoint-client-key-path" class="form-label mt-2">Client Private Key Path</label>
+                                <input type="text" class="form-control" id="model-endpoint-client-key-path" />
+                                <p class="form-text">Deployment-mounted PEM files, not certificate contents. Leave the key path empty for a combined PEM.</p>
+                            </details>
+                        </div>
+                        <div class="col-12">
+                            <p class="alert alert-info mb-0">Custom connections use manual model identifiers. Protocol compatibility alone does not grant operation capabilities. Save settings before selecting defaults.</p>
+                        </div>
+                    </div>
+                </template>
+                {% with model_endpoint_api_types=custom_model_endpoint_api_types|default(model_endpoint_api_types|default([]), true) %}
+                    {% include '_multiendpoint_modal.html' %}
+                {% endwith %}
             </div>

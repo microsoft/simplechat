@@ -1,89 +1,47 @@
 # functions_model_endpoint_diagnostics.py
-"""Server-side diagnostics for Custom model endpoint failures.
-
-Custom endpoint errors are sanitized before they reach the browser, because an
-upstream error body can echo back a URL, a header, or an API key. The first
-implementation achieved that by discarding the cause entirely:
-
-    raise RuntimeError("Custom model request failed.") from None
-
-That is safe and undebuggable. An administrator saw the same sentence for a
-wrong path, a wrong key, a wrong model name, a TLS failure, and a blocked
-address, with nothing in the log to tell them apart.
-
-This module keeps the browser message generic while recording the real cause
-server-side, and stamps both with a short correlation id so an administrator can
-join the message they were shown to the log entry that explains it.
-"""
+"""Correlated, user-safe Custom endpoint failures with server-side stack context."""
 
 import logging
 import re
+import traceback
 import uuid
-from typing import Any, Dict
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from functions_appinsights import log_event
 
 
 CORRELATION_ID_LENGTH = 8
-
-# Credentials can appear in an upstream error body, in a repeated request URL, or
-# in a header dump. Redact them before anything is written to the log.
+MAX_LOGGED_DETAIL_LENGTH = 2000
 _REDACTION_PATTERNS = (
-    re.compile(r"(?i)(api[-_]?key\"?\s*[:=]\s*\"?)([^\"\s,&]+)"),
-    re.compile(r"(?i)(authorization\"?\s*[:=]\s*\"?)([^\"\s,&]+)"),
-    re.compile(r"(?i)(bearer\s+)([A-Za-z0-9\-._~+/]+=*)"),
-    re.compile(r"(?i)([?&](?:key|api[-_]?key|access[-_]?token)=)([^&\s\"]+)"),
-    re.compile(r"(?i)(x-api-key\"?\s*[:=]\s*\"?)([^\"\s,&]+)"),
-    re.compile(r"(?i)(x-goog-api-key\"?\s*[:=]\s*\"?)([^\"\s,&]+)"),
-    re.compile(r"(sk-[A-Za-z0-9\-_]{8,})"),
+    re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?)([^\"'\r\n,}]+)"),
+    re.compile(r"(?i)([?&](?:key|api[-_]?key|access[-_]?token)=)([^&\s\"']+)"),
+    re.compile(r'(?i)((?:api[-_]?key|x-goog-api-key|client[-_]?secret|access[-_]?token|refresh[-_]?token|bearer[-_]?token|password)["\']?\s*[:=]\s*["\']?)([^"\'\s,&]+)'),
+    re.compile(r'(?i)(bearer\s+)([A-Za-z0-9\-._~+/]+=*)'),
+    re.compile(r'(sk-[A-Za-z0-9_-]{8,})'),
 )
 
-MAX_LOGGED_DETAIL_LENGTH = 2000
+
+class SanitizedModelEndpointError(RuntimeError):
+    """Only stable messages and a correlation reference may cross an API boundary."""
+
+    def __init__(self, public_message):
+        super().__init__(public_message)
+        self.public_message = public_message
 
 
 def redact_model_endpoint_secrets(value: Any) -> str:
-    """Return text with credential-looking values replaced by a redaction marker."""
     text = str(value or "")
-    if not text:
-        return ""
     for pattern in _REDACTION_PATTERNS:
-        if pattern.groups >= 2:
-            text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
-        else:
-            text = pattern.sub("[REDACTED]", text)
-    if len(text) > MAX_LOGGED_DETAIL_LENGTH:
-        text = f"{text[:MAX_LOGGED_DETAIL_LENGTH]}...[truncated]"
-    return text
+        text = pattern.sub(
+            (lambda match: f"{match.group(1)}[REDACTED]") if pattern.groups >= 2 else "[REDACTED]",
+            text,
+        )
+    return text[:MAX_LOGGED_DETAIL_LENGTH]
 
 
 def new_model_endpoint_correlation_id() -> str:
-    """Return a short id that links a sanitized message to its log entry."""
     return uuid.uuid4().hex[:CORRELATION_ID_LENGTH]
-
-
-def _build_log_context(
-    correlation_id: str,
-    *,
-    api_type: Any = "",
-    protocol: Any = "",
-    request_url: Any = "",
-    status_code: Any = None,
-    detail: Any = "",
-) -> Dict[str, Any]:
-    context: Dict[str, Any] = {"correlation_id": correlation_id}
-    if api_type:
-        context["api_type"] = str(api_type)
-    if protocol:
-        context["protocol"] = str(protocol)
-    if request_url:
-        # The resolved URL is the single most useful diagnostic, because URL
-        # normalization can rewrite what the administrator typed.
-        context["request_url"] = redact_model_endpoint_secrets(request_url)
-    if status_code is not None:
-        context["status_code"] = status_code
-    if detail:
-        context["detail"] = redact_model_endpoint_secrets(detail)
-    return context
 
 
 def log_custom_model_endpoint_failure(
@@ -96,30 +54,48 @@ def log_custom_model_endpoint_failure(
     status_code: Any = None,
     detail: Any = "",
 ) -> str:
-    """Record a Custom endpoint failure server-side and return its correlation id."""
+    """Log the stack and transport context, never an arbitrary provider body.
+
+    Provider bodies and exception strings may echo credentials without labels.
+    A frame-only traceback keeps the failing code path without dumping those
+    strings or local variables. ``detail`` is accepted for historical callers but
+    intentionally not recorded.
+    """
     correlation_id = new_model_endpoint_correlation_id()
-    context = _build_log_context(
-        correlation_id,
-        api_type=api_type,
-        protocol=protocol,
-        request_url=request_url,
-        status_code=status_code,
-        detail=detail,
-    )
+    context = {"correlation_id": correlation_id, "api_type": str(api_type), "protocol": str(protocol)}
+    if request_url:
+        try:
+            parsed = urlsplit(str(request_url))
+            host = parsed.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            context["request_url"] = redact_model_endpoint_secrets(
+                urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+            )
+        except ValueError:
+            context["request_url"] = "[invalid URL]"
+    if status_code is not None:
+        context["status_code"] = status_code
     if exception is not None:
         context["error_type"] = type(exception).__name__
-        context["error"] = redact_model_endpoint_secrets(exception)
-
+        context["traceback"] = "\n".join(
+            f"{frame.filename}:{frame.lineno} in {frame.name}"
+            for frame in traceback.extract_tb(exception.__traceback__)
+        )
+        if exception.__cause__ is not None:
+            context["cause_type"] = type(exception.__cause__).__name__
     try:
         log_event(
             f"[CUSTOM_MODEL_ENDPOINT] {summary} (correlation_id={correlation_id})",
-            extra=context,
-            level=logging.ERROR,
-            exceptionTraceback=exception is not None,
+            extra=context, level=logging.ERROR,
         )
-    except Exception:
-        # Diagnostics must never replace the original failure with a logging error.
-        pass
+    except (RuntimeError, OSError, ValueError, TypeError) as logging_error:
+        logging.getLogger(__name__).error(
+            "[CUSTOM_MODEL_ENDPOINT] Telemetry logging failed; reference %s; logger error type %s",
+            correlation_id, type(logging_error).__name__, extra=context,
+        )
     return correlation_id
 
 
@@ -132,15 +108,9 @@ def build_sanitized_model_endpoint_error(
     request_url: Any = "",
     status_code: Any = None,
     detail: Any = "",
-) -> RuntimeError:
-    """Log the real cause and return the sanitized error to raise in its place."""
-    correlation_id = log_custom_model_endpoint_failure(
-        message,
-        exception,
-        api_type=api_type,
-        protocol=protocol,
-        request_url=request_url,
-        status_code=status_code,
-        detail=detail,
+) -> SanitizedModelEndpointError:
+    reference = log_custom_model_endpoint_failure(
+        message, exception, api_type=api_type, protocol=protocol,
+        request_url=request_url, status_code=status_code, detail=detail,
     )
-    return RuntimeError(f"{message} (reference {correlation_id})")
+    return SanitizedModelEndpointError(f"{message} (reference {reference})")

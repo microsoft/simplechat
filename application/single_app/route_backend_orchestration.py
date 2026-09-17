@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 
 from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
+from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Response, jsonify, request, session, stream_with_context
 from openai import OpenAIError
@@ -91,6 +92,13 @@ from functions_orchestration_events import (
     serialize_sse,
 )
 from functions_orchestration_executor import RunContext, execute_plan
+from functions_orchestration_adapters import resolve_context_source_manifest
+from functions_orchestration_checkpoints import CheckpointError, fingerprint
+from functions_orchestration_recovery import (
+    ExecutionCheckpoints, ExecutionLease, RecoveryError, prepare_retry,
+    public_execution_fields, recovery_projection, request_cancellation, validate_resume,
+    reconcile_checkpoints,
+)
 from functions_orchestration_memory import (
     OrchestrationMemoryError,
     load_orchestration_memory,
@@ -146,6 +154,7 @@ from functions_orchestration_runs import (
     prepare_elicitation_outcome,
     release_elicitation_submission,
     save_orchestration_step,
+    public_step_record,
     save_pending_turn_context,
     update_orchestration_run,
 )
@@ -159,6 +168,9 @@ from functions_orchestration_schema import (
     apply_plan_edits,
     normalize_elicitation,
     summarize_plan,
+    build_failure,
+    failure_explanation,
+    safe_failure,
 )
 from functions_settings import get_settings, get_user_settings
 from functions_prompt_metadata import build_prompt_selection_metadata
@@ -402,7 +414,7 @@ def _authorize_context_conversation(conversation_id, user_id):
         )
     except CosmosResourceNotFoundError:
         raise ConversationContextError('That conversation could not be opened.') from None
-    if conversation.get('user_id') != user_id:
+    if conversation.get('user_id') != user_id or conversation.get('orchestration_deleted'):
         raise ConversationContextError('That conversation could not be opened.')
     return conversation
 
@@ -696,20 +708,23 @@ def _record_cited_documents(conversation_id, user_id, document_citations):
                   f"documents: {exc}", level=logging.WARNING)
         return
 
-    if conversation.get('user_id') != user_id:
+    if conversation.get('user_id') != user_id or conversation.get('orchestration_deleted'):
         return
 
     try:
         merge_cited_documents_into_conversation(conversation, document_citations)
         conversation['last_updated'] = _now_iso()
-        cosmos_conversations_container.upsert_item(conversation)
+        cosmos_conversations_container.replace_item(
+            item=conversation_id, body=conversation, etag=conversation['_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
         invalidate_conversation_cache_for_item(conversation, reason="orchestration_completed")
     except Exception as exc:
         log_event(f"[ORCHESTRATION] Could not record cited documents: {exc}",
                   level=logging.WARNING)
 
 
-def _save_message(conversation_id, role, content, metadata=None, extra=None, message_id=None):
+def _save_message(conversation_id, role, content, metadata=None, extra=None, message_id=None, persist=None):
     """Write one message, returning its id.
 
     ``extra`` carries the citation fields an assistant message needs. They are top-level
@@ -730,7 +745,10 @@ def _save_message(conversation_id, role, content, metadata=None, extra=None, mes
         document['metadata'] = metadata
 
     try:
-        cosmos_messages_container.upsert_item(document)
+        if persist:
+            persist(document)
+        else:
+            cosmos_messages_container.upsert_item(document)
     except Exception as exc:
         log_event(
             f'[ORCHESTRATION] Could not save a {role} message.',
@@ -888,7 +906,7 @@ def _touch_conversation(conversation_id, user_id, title=None):
     except Exception:
         return None
 
-    if item.get('user_id') != user_id:
+    if item.get('user_id') != user_id or item.get('orchestration_deleted'):
         return None
 
     item['last_updated'] = _now_iso()
@@ -896,7 +914,10 @@ def _touch_conversation(conversation_id, user_id, title=None):
         item['title'] = _text(title, 80)
 
     try:
-        cosmos_conversations_container.upsert_item(item)
+        cosmos_conversations_container.replace_item(
+            item=conversation_id, body=item, etag=item['_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
     except Exception as exc:
         log_event(f"[ORCHESTRATION] Could not touch a conversation: {exc}",
                   level=logging.WARNING)
@@ -925,7 +946,9 @@ def _run_summary_row(record):
         'created_at': record.get('created_at'),
         'started_at': record.get('started_at'),
         'completed_at': record.get('completed_at'),
-        'error': _text(record.get('error'), 400) or None,
+        'error': safe_failure(record['failure'])['message'] if record.get('failure') else (
+            'This run did not complete.' if record.get('error') else None
+        ),
         'user_message': _text(record.get('user_message'), 400),
         'user_message_id': record.get('user_message_id'),
         'assistant_message_id': record.get('assistant_message_id'),
@@ -939,6 +962,7 @@ def _run_summary_row(record):
             'mode': approval.get('mode'),
             'state': approval.get('state'),
         },
+        **public_execution_fields(record),
     }
 
 
@@ -963,6 +987,243 @@ def _run_detail_row(record):
             row['plan'].get('reasoning_adjustments'), record.get('reasoning_adjustments'),
         )
     return row
+
+
+def _validate_checkpoint_artifacts(artifacts, conversation_id, user_id):
+    _authorize_context_conversation(conversation_id, user_id)
+    for artifact in artifacts:
+        artifact_id = artifact.get('artifact_message_id') if isinstance(artifact, dict) else None
+        if not artifact_id:
+            return False
+        try:
+            message = cosmos_messages_container.read_item(item=artifact_id, partition_key=conversation_id)
+        except CosmosResourceNotFoundError:
+            return False
+        metadata = message.get('metadata') or {}
+        if (
+            message.get('conversation_id') != conversation_id or metadata.get('masked')
+            or metadata.get('deleted') or message.get('deleted')
+            or message.get('user_id', user_id) != user_id
+        ):
+            return False
+        expires = artifact.get('expires_at') or metadata.get('expires_at')
+        if expires:
+            try:
+                if datetime.fromisoformat(expires.replace('Z', '+00:00')) <= datetime.now(timezone.utc):
+                    return False
+            except (ValueError, TypeError):
+                return False
+    return True
+
+
+def _checkpoint_artifact_versions(artifacts, conversation_id, user_id):
+    if not _validate_checkpoint_artifacts(artifacts, conversation_id, user_id):
+        raise CheckpointError('context_unavailable')
+    return {
+        artifact['artifact_message_id']: fingerprint(cosmos_messages_container.read_item(
+            item=artifact['artifact_message_id'], partition_key=conversation_id,
+        ))
+        for artifact in artifacts
+    }
+
+
+def _validate_retry_context(record, user_id, settings, *, preparing=False):
+    """Rebuild the same authorized execution inputs without invoking a model."""
+    conversation_id = record['conversation_id']
+    snapshot = _conversation_context_for_run(record, user_id, settings)
+    seeds = record.get('seeds') or {}
+    resolve_elicitation_references(seeds.get('elicitation_references') or [], user_id, conversation_id, settings=settings)
+    identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+    agents = resolve_agent_catalog(
+        user_id, seeds=seeds, settings=settings, user_groups=seeds.get('active_group_ids') or None,
+    ) if identity.get('user_enable_agents', True) else []
+    actions = resolve_action_catalog(
+        user_id, seeds=seeds, settings=settings, user_groups=seeds.get('active_group_ids') or None,
+    )
+    allowed_urls = revision_allowed_urls(record)
+    required = {step['capability_id'] for step in record['plan'].get('steps') or [] if step.get('enabled', True)}
+    available = set(resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'), candidate_ids=required,
+        request_context=_capability_request_context(
+            user_id, identity, record.get('user_message'), agents, actions, allowed_user_urls=allowed_urls,
+        ),
+    ))
+    if required - available:
+        raise CheckpointError('context_unavailable')
+    _validate_turn_memory_context(record, user_id, conversation_id)
+    memory = load_orchestration_memory(
+        user_id, _authorize_context_conversation(conversation_id, user_id),
+        build_elicitation_user_request(record.get('resolved_message') or record.get('user_message'), record.get('answered_questions')),
+        settings=settings, seeds=seeds, expected_audience=record.get('memory_audience'),
+    )
+    model = resolve_orchestration_model(settings, user_id=user_id, seeds=seeds, identity_context=identity)
+    try:
+        context = RunContext(
+            run_id=record['id'], plan_id=record['plan'].get('plan_id'),
+            conversation_id=conversation_id, user_id=user_id,
+            user_message=record.get('user_message'), user_message_id=record.get('user_message_id'),
+            answered_questions=record.get('answered_questions') or [],
+            elicitation_references=seeds.get('elicitation_references') or [],
+            selected_document_ids=seeds.get('document_ids') or [],
+            original_seeds=record.get('original_seeds') or {},
+            resolved_message=record.get('resolved_message') or record.get('user_message'),
+            conversation_context=snapshot, context_message_ids=(record.get('request_resolution') or {}).get('message_ids'),
+            allowed_user_urls=allowed_urls, memory_context=memory, doc_scope=seeds.get('doc_scope') or 'all',
+            tags=seeds.get('tags') or None, document_filter_mode=seeds.get('document_filter_mode') or None,
+            active_group_ids=seeds.get('active_group_ids') or None,
+            active_group_id=(seeds.get('active_group_ids') or [None])[0],
+            active_public_workspace_id=(seeds.get('active_public_workspace_ids') or [None])[0],
+            active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+            agent_catalog=agents, action_catalog=actions, user_enable_agents=identity.get('user_enable_agents', True),
+            user_roles=identity.get('user_roles'), user_email=identity.get('user_email'),
+            gpt_model=model.deployment, model_context={
+                'model_id': model.model_id, 'endpoint_id': model.endpoint_id,
+                'provider': model.provider, 'model_deployment': model.deployment,
+            },
+            agent_execution_identity=capture_execution_identity(user_id, conversation_id),
+        )
+        context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
+        context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
+        return validate_resume(
+            record, context, settings,
+            lambda: _authorize_context_conversation(conversation_id, user_id),
+            source_run_id=record['id'] if preparing else None,
+        )
+    finally:
+        model.close()
+
+
+def _finalize_execution(record, result, error, context, lease, answer_model, research_model, run_token_usage):
+    """Persist every terminal explanation on the worker, even after transport loss."""
+    current = lease.read()
+    result = result if isinstance(result, dict) else {}
+    if not error and result:
+        try:
+            _conversation_context_for_run(record, record['user_id'], get_settings())
+            _validate_turn_memory_context(record, record['user_id'], record['conversation_id'])
+            document_ids = set(getattr(context, 'documents_touched', []) or [])
+            document_ids.update(
+                item['document_id'] for item in result.get('citations') or []
+                if isinstance(item, dict) and item.get('document_id')
+            )
+            if document_ids:
+                manifest = resolve_context_source_manifest(
+                    context, sorted(document_ids), settings=get_settings(), user_id=record['user_id'],
+                )
+                authorized = {
+                    item.get('document_id') for item in manifest if item.get('authorization_status') == 'authorized'
+                }
+                if document_ids - authorized:
+                    raise CheckpointError('context_unavailable')
+            if result.get('artifacts') and not _validate_checkpoint_artifacts(
+                result['artifacts'], record['conversation_id'], record['user_id'],
+            ):
+                raise CheckpointError('context_unavailable')
+        except Exception:
+            error = CheckpointError('context_unavailable')
+    if error or not result:
+        failure = safe_failure(error.failure) if isinstance(error, CheckpointError) else build_failure(
+            'context_unavailable' if isinstance(error, (ConversationContextError, OrchestrationMemoryError, PermissionError)) else 'execution_interrupted'
+        )
+        failures = list(getattr(context, 'failures', [])) + [failure]
+        result = {
+            'status': 'failed', 'outcome': 'failed', 'failure': failures[0], 'failures': failures,
+            'message': failure_explanation(failures), 'citations': [], 'artifacts': [],
+            'token_usage': getattr(context, 'token_usage', {}),
+        }
+        if isinstance(error, CheckpointError) and not any(
+            step.get('status') == 'running' for step in current.get('execution_steps') or []
+        ):
+            current = lease.update({'recovery_blocked_code': error.code})
+    failures = [safe_failure(value) for value in result.get('failures') or []]
+    failure = failures[0] if failures else None
+    status = result.get('status') if result.get('status') in ('completed', 'failed', 'cancelled') else 'failed'
+    outcome = result.get('outcome') or status
+    answer = result.get('message') or failure_explanation(failures, cancelled=status == 'cancelled')
+    combined_usage = _combined_token_usage(run_token_usage, result.get('token_usage'))
+    reasoning = build_model_reasoning_metadata(answer_model)
+    reasoning['reasoning_adjustments'] = merge_reasoning_adjustments(
+        record['plan'].get('reasoning_adjustments'), reasoning.get('reasoning_adjustments'),
+        build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
+        if research_model is not answer_model else [],
+    )
+    steps = deepcopy(current.get('execution_steps') or [])
+    for step in steps:
+        if step.get('status') == 'running':
+            step.update({'status': 'failed', 'failure': failure or build_failure('execution_interrupted')})
+    updates = {
+        'status': status, 'outcome': outcome, 'failure': failure, 'failures': failures,
+        'error': failure['message'] if failure else None, 'completed_at': _now_iso(),
+        'execution_steps': steps, 'token_usage': combined_usage,
+        'reasoning_adjustments': reasoning['reasoning_adjustments'],
+    }
+    current = lease.update(updates)
+    # The future released state is what both the saved message and done frame
+    # describe. The live lease remains held until message persistence finishes.
+    message_id = f"assistant_orchestration_{fingerprint(record['id'])[:40]}"
+    public = public_execution_fields({
+        **current, 'execution_lease': None, 'finalization_status': 'saved',
+        'assistant_message_id': message_id, 'message_saved': True,
+    })
+    summary = summarize_plan(record['plan'])
+    summary.update({'status': status, 'capabilities_used': list(result.get('capabilities_used') or [])})
+    documents, web, tools = _partition_citations(result.get('citations'))
+    saved = False
+    try:
+        lease.read()
+        _authorize_context_conversation(record['conversation_id'], record['user_id'])
+        persisted_id = _save_message(
+            record['conversation_id'], 'assistant', answer, message_id=message_id,
+            persist=lease.publish_message,
+            metadata={
+                'orchestration': {
+                    'run_id': record['id'], 'turn_id': record.get('turn_id'),
+                    'plan_summary': summary, **public,
+                }, 'token_usage': combined_usage, **reasoning,
+            },
+            extra={
+                **answer_model.metadata(), **reasoning, 'hybrid_citations': documents,
+                'web_search_citations': web, 'agent_citations': tools,
+                'generated_artifacts': result.get('artifacts') or [],
+                'augmented': bool(documents or web or tools),
+            },
+        )
+        if persisted_id != message_id:
+            raise CheckpointError('message_not_saved')
+        saved = True
+        lease.update({'assistant_message_id': message_id, 'message_saved': True, 'finalization_status': 'saved'})
+        _touch_conversation(record['conversation_id'], record['user_id'])
+        _record_cited_documents(record['conversation_id'], record['user_id'], documents)
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_RUNS] Terminal message publication failed.',
+            extra={'run_id': record['id'], 'error_type': type(exc).__name__}, level=logging.ERROR,
+        )
+        if not saved:
+            persistence_failure = build_failure('message_not_saved')
+            failures.append(persistence_failure)
+            failure = failures[0]
+            status, outcome = 'failed', 'failed'
+            public['recovery']['eligible'] = False
+            public['recovery'].update({'reason_code': 'message_not_saved', 'message': persistence_failure['message']})
+            lease.update({
+                'message_saved': False, 'recovery_blocked_code': 'message_not_saved',
+                'finalization_status': 'failed',
+                'status': status, 'outcome': outcome, 'failure': failure, 'failures': failures,
+                'error': persistence_failure['message'],
+            })
+    finalized = lease.close(release=True)
+    public = public_execution_fields(finalized)
+    frame = build_run_done_event(
+        record['conversation_id'], message_id=message_id if saved else None, run_id=record['id'],
+        turn_id=record.get('turn_id'), full_content=answer, citations=documents, web_citations=web,
+        agent_citations=tools, artifacts=result.get('artifacts'), plan_summary=summary,
+        status=status, outcome=outcome, attempt_index=public['attempt_index'],
+        retry_of_run_id=public['retry_of_run_id'], failure=failure, failures=failures,
+        recovery=public['recovery'], message_saved=saved,
+        finalization_status=public.get('finalization_status'), **answer_model.metadata(), **reasoning,
+    )
+    return ([build_content_event(answer)] if saved else [build_error_event(build_failure('message_not_saved')['message'], record['conversation_id'])]) + [frame]
 
 
 def _plan_edit_identity(data, settings):
@@ -1661,6 +1922,43 @@ def register_route_backend_orchestration(bp):
         streamed.call_on_close(lambda: release_plan_revision(claim))
         return streamed
 
+    @bp.route("/api/v2/orchestration/runs/<run_id>/retry", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_retry(run_id):
+        settings = get_settings()
+        if not _orchestration_enabled(settings):
+            return jsonify({'error': 'Chat orchestration is not enabled.'}), 403
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        data = request.get_json(silent=True)
+        conversation_id = data.get('conversation_id') if isinstance(data, dict) else None
+        try:
+            child = prepare_retry(
+                run_id, user_id, data,
+                authorize=lambda: _authorize_context_conversation(conversation_id, user_id),
+                validate=lambda record: _validate_retry_context(record, user_id, settings, preparing=True),
+                message_container=cosmos_messages_container,
+            )
+            return jsonify({'run': _run_detail_row(child)}), 200
+        except RecoveryError as exc:
+            payload = {'error': exc.message, 'code': exc.code}
+            if exc.recovery:
+                payload['recovery'] = exc.recovery
+            if exc.current_run_id:
+                payload['current_run_id'] = exc.current_run_id
+            return jsonify(payload), exc.status_code
+        except (ConversationContextError, PermissionError, LookupError):
+            return jsonify({'error': 'Run not found.', 'code': 'not_found'}), 404
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Recovery preparation failed closed.',
+                extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            return jsonify({'error': 'Saved progress could not be verified. Please retry.', 'code': 'recovery_unavailable'}), 503
+
     @bp.route("/api/v2/orchestration/run", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1690,12 +1988,18 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'Run not found.'}), 404
 
         plan = record.get('plan') or {}
-        if record.get('status') in (PLAN_STATUS_RUNNING, PLAN_STATUS_COMPLETED):
+        if record.get('started_at') or record.get('status') in (PLAN_STATUS_RUNNING, PLAN_STATUS_COMPLETED):
             return jsonify({'error': 'This plan has already been run.', 'code': 'already_run'}), 409
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
         try:
             snapshot = _conversation_context_for_run(record, user_id, settings)
+            if record.get('retry_of_run_id'):
+                if data.get('edits'):
+                    raise CheckpointError('recovery_changed')
+                _validate_retry_context(record, user_id, settings)
+        except CheckpointError:
+            return jsonify({'error': 'Saved progress or access changed. Create a new plan.', 'code': 'recovery_unavailable'}), 409
         except ConversationContextError:
             return jsonify({
                 'error': 'Conversation context changed or is unavailable. Create a new plan.',
@@ -1858,6 +2162,22 @@ def register_route_backend_orchestration(bp):
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
         plan = record['plan']
+        lease = ExecutionLease(
+            record, lambda: _authorize_context_conversation(conversation_id, user_id),
+            message_container=cosmos_messages_container,
+        )
+        try:
+            lease.start()
+        except Exception as exc:
+            close_models()
+            log_event(
+                '[ORCHESTRATION_RUNS] Execution publication guard could not be initialized.',
+                extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            return jsonify({
+                'error': 'Execution could not start because its durable status could not be saved.',
+                'code': 'recovery_unavailable', 'message_saved': False,
+            }), 503
 
         def generate():
             nonlocal worker_started
@@ -1891,33 +2211,26 @@ def register_route_backend_orchestration(bp):
                 frames.put(build_step_event(
                     event.get('step_id'), phase, _text(event.get('summary')),
                     event.get('step_index'), event.get('capability_id'),
+                    **{key: event[key] for key in (
+                        'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
+                    ) if key in event},
                 ))
                 if event.get('capability_id') == 'respond':
                     frames.put(build_synthesis_thought(
                         event.get('step_index') or 0,
-                        status='completed' if phase != 'running' else 'running',
+                        status=phase or 'running',
                     ))
                 else:
                     frames.put(build_step_thought(
                         step, event.get('step_index') or 0,
                         event.get('completed') or 0, event.get('total') or 1,
-                        status='running' if phase == 'running' else 'completed',
+                        status=phase or 'running',
                         summary=_text(event.get('summary')) or None,
                     ))
 
             def persist(record_type, payload):
-                try:
-                    if record_type == 'step':
-                        save_orchestration_step(run_id, payload)
-                    elif record_type == 'run':
-                        update_orchestration_run(
-                            run_id, user_id,
-                            {k: v for k, v in (payload or {}).items() if k != 'run_id'},
-                            conversation_id=conversation_id,
-                        )
-                except Exception as exc:
-                    log_event(f"[ORCHESTRATION] Progress not persisted: {exc}",
-                              level=logging.WARNING)
+                if record_type == 'run':
+                    lease.update({k: v for k, v in (payload or {}).items() if k != 'run_id'})
 
             def reload_memory_context():
                 nonlocal memory_context
@@ -1940,6 +2253,7 @@ def register_route_backend_orchestration(bp):
                 conversation_id=conversation_id,
                 user_id=user_id,
                 turn_index=record.get('turn_index') or 0,
+                attempt_index=record.get('attempt_index') or 1,
                 invoke_prompt=invoke_prompt,
                 planner_client=research_model.as_planner_client(),
                 planner_deployment=research_model.deployment,
@@ -1976,7 +2290,10 @@ def register_route_backend_orchestration(bp):
                 agent_execution_identity=agent_execution_identity,
             )
 
-            cancel_requested = _make_cancel_probe(run_id, user_id, conversation_id)
+            context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
+            context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
+            context.prompt_token_usage = run_token_usage
+            cancel_requested = lease.cancel_requested
             outcome = {}
 
             def worker():
@@ -1988,6 +2305,7 @@ def register_route_backend_orchestration(bp):
                         emit=emit,
                         cancel_requested=cancel_requested,
                         persist=persist,
+                        checkpoints=lambda ctx: ExecutionCheckpoints(record, ctx, settings, lease),
                     )
                 except Exception as exc:
                     outcome['error'] = exc
@@ -2000,7 +2318,24 @@ def register_route_backend_orchestration(bp):
                     # thrown worker cannot leave the response waiting on a queue nothing
                     # will ever write to again.
                     try:
-                        close_models()
+                        try:
+                            for frame in _finalize_execution(
+                                record, outcome.get('result'), outcome.get('error'), context, lease,
+                                answer_model, research_model, run_token_usage,
+                            ):
+                                frames.put(frame)
+                        except Exception as exc:
+                            log_event(
+                                '[ORCHESTRATION_RUNS] Execution finalization could not be committed.',
+                                extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+                            )
+                            frames.put(build_error_event(
+                                'The execution status could not be saved. Reload the run to check its durable state.',
+                                conversation_id,
+                            ))
+                        finally:
+                            lease.close()
+                            close_models()
                     finally:
                         frames.put(None)
 
@@ -2025,121 +2360,12 @@ def register_route_backend_orchestration(bp):
 
             thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
 
-            failed_result = outcome.get('result') or {}
-            reasoning_metadata = build_model_reasoning_metadata(answer_model)
-            reasoning_metadata['reasoning_adjustments'] = merge_reasoning_adjustments(
-                plan.get('reasoning_adjustments'), reasoning_metadata.get('reasoning_adjustments'),
-                build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
-                if research_model is not answer_model else [],
-            )
-            if (
-                'error' in outcome or 'result' not in outcome
-                or failed_result.get('status') == PLAN_STATUS_FAILED
-            ):
-                error_message = (
-                    'Conversation context changed. Create a new plan.'
-                    if isinstance(outcome.get('error'), ConversationContextError)
-                    else 'The run could not be completed.'
-                )
-                try:
-                    update_orchestration_run(run_id, user_id, {
-                        'status': PLAN_STATUS_FAILED,
-                        'error': error_message,
-                        'completed_at': _now_iso(),
-                        'reasoning_adjustments': reasoning_metadata['reasoning_adjustments'],
-                        'token_usage': _combined_token_usage(
-                            run_token_usage, failed_result.get('token_usage'),
-                        ),
-                    }, conversation_id=conversation_id)
-                except AzureError as exc:
-                    log_event(
-                        '[ORCHESTRATION] Could not persist a failed run.',
-                        level=logging.ERROR, extra={'error_type': type(exc).__name__},
-                    )
-                yield build_error_event(error_message, conversation_id)
-                return
-
-            result = outcome['result']
-            combined_usage = _combined_token_usage(run_token_usage, result.get('token_usage'))
-            answer = _text(result.get('message'))
-            if (result.get('reauthorization') or {}).get('reason') == 'elicitation_context_unavailable':
-                yield build_error_event(
-                    'Accepted answer context is no longer available. Please update the answer or retry.',
-                    conversation_id,
-                )
-                return
-            if result.get('status') == PLAN_STATUS_CANCELLED:
-                yield build_cancelled_event(conversation_id, run_id, answer)
-                return
-
-            summary = summarize_plan(plan)
-            summary['status'] = result.get('status')
-            summary['capabilities_used'] = list(result.get('capabilities_used') or [])
-
-            # Everything the run gathered, split the way an assistant message carries it.
-            document_citations, web_citations, tool_citations = _partition_citations(result.get('citations'))
-
-            # The answer is an ordinary assistant message. Written before the terminal
-            # frame so that a client which reloads the moment it arrives finds the answer
-            # in the conversation rather than an empty turn where one just streamed.
-            message_id = _save_message(
-                conversation_id, 'assistant', answer,
-                metadata={
-                    'orchestration': {
-                        'run_id': run_id,
-                        'turn_id': record.get('turn_id'),
-                        'plan_summary': summary,
-                    },
-                    'token_usage': combined_usage,
-                    **reasoning_metadata,
-                },
-                extra={
-                    **answer_model.metadata(),
-                    **reasoning_metadata,
-                    'hybrid_citations': document_citations,
-                    'web_search_citations': web_citations,
-                    'agent_citations': tool_citations,
-                    'generated_artifacts': result.get('artifacts') or [],
-                    'augmented': bool(document_citations or web_citations or tool_citations),
-                },
-            ) if answer else None
-
-            if answer:
-                _touch_conversation(conversation_id, user_id)
-                # What the Documents drawer reads. The drawer works from the conversation's
-                # used-document list rather than from the message's citations, so citing a
-                # document is not enough on its own to make it appear there.
-                _record_cited_documents(conversation_id, user_id, document_citations)
-                yield build_content_event(answer)
-
-            try:
-                update_orchestration_run(run_id, user_id, {
-                    'assistant_message_id': message_id,
-                    'token_usage': combined_usage,
-                    'reasoning_adjustments': reasoning_metadata['reasoning_adjustments'],
-                }, conversation_id=conversation_id)
-            except Exception:
-                # The answer is already saved and streamed; failing to cross-reference it
-                # is not worth failing the run over.
-                pass
-
-            answer_metadata = {**answer_model.metadata(), **reasoning_metadata}
-            yield build_run_done_event(
-                conversation_id,
-                message_id=message_id,
-                run_id=run_id,
-                full_content=answer,
-                citations=document_citations,
-                web_citations=web_citations,
-                agent_citations=tool_citations,
-                artifacts=result.get('artifacts'),
-                plan_summary=summary,
-                status=result.get('status') or PLAN_STATUS_COMPLETED,
-                **answer_metadata,
-            )
-
         response = _sse(generate())
-        response.call_on_close(lambda: close_models() if not worker_started else None)
+        def close_unstarted():
+            if not worker_started:
+                lease.close()
+                close_models()
+        response.call_on_close(close_unstarted)
         return response
 
     @bp.route("/api/v2/orchestration/cancel/<run_id>", methods=["POST"])
@@ -2164,10 +2390,11 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'Run not found.'}), 404
 
         try:
-            update_orchestration_run(run_id, user_id, {
-                'cancellation_requested_at': _now_iso(),
-                'cancellation_requested_by': user_id,
-            }, conversation_id=conversation_id or record.get('conversation_id'))
+            conversation_id = conversation_id or record.get('conversation_id')
+            request_cancellation(
+                run_id, user_id, conversation_id,
+                lambda: _authorize_context_conversation(conversation_id, user_id),
+            )
         except Exception as exc:
             log_event(f"[ORCHESTRATION] Could not record a cancellation: {exc}",
                       level=logging.ERROR)
@@ -2203,7 +2430,11 @@ def register_route_backend_orchestration(bp):
         include_plan = _text(request.args.get('include_plan')).lower() in ('1', 'true', 'yes')
 
         try:
-            runs = list_conversation_runs(conversation_id, user_id, limit=limit)
+            _authorize_context_conversation(conversation_id, user_id)
+            runs = list_conversation_runs(conversation_id, user_id, limit=limit, strict=True)
+            runs = [reconcile_checkpoints(run, lambda: _authorize_context_conversation(conversation_id, user_id)) for run in runs]
+        except ConversationContextError:
+            return jsonify({'error': 'Conversation not found.'}), 404
         except Exception as exc:
             log_event(f"[ORCHESTRATION] Could not list runs: {exc}", level=logging.ERROR)
             return jsonify({'error': 'The run history could not be loaded.'}), 500
@@ -2236,7 +2467,7 @@ def register_route_backend_orchestration(bp):
 
         try:
             record = get_orchestration_run(
-                run_id, user_id, conversation_id=conversation_id or None
+                run_id, user_id, conversation_id=conversation_id or None, strict=True,
             )
         except Exception as exc:
             log_event(f"[ORCHESTRATION] Could not read run {run_id}: {exc}",
@@ -2246,6 +2477,15 @@ def register_route_backend_orchestration(bp):
         if not record:
             return jsonify({'error': 'Run not found.'}), 404
 
+        try:
+            _authorize_context_conversation(record['conversation_id'], user_id)
+            record = reconcile_checkpoints(
+                record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
+            )
+        except ConversationContextError:
+            return jsonify({'error': 'Run not found.'}), 404
+        except CheckpointError:
+            return jsonify({'error': 'Saved progress could not be verified.', 'code': 'recovery_unavailable'}), 503
         return jsonify({'run': _run_detail_row(record)}), 200
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/steps", methods=["GET"])
@@ -2260,7 +2500,25 @@ def register_route_backend_orchestration(bp):
 
         conversation_id = _text(request.args.get('conversation_id'))
         try:
-            steps = list_run_steps(run_id, user_id=user_id, conversation_id=conversation_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record:
+                return jsonify({'error': 'Run not found.'}), 404
+            _authorize_context_conversation(record['conversation_id'], user_id)
+            steps = list_run_steps(run_id, user_id=user_id, conversation_id=conversation_id, strict=True)
+            reconciled = reconcile_checkpoints(record, lambda: _authorize_context_conversation(record['conversation_id'], user_id))
+            committed = {
+                step['step_id']: step for step in reconciled.get('execution_steps') or []
+                if step.get('status') == 'completed' and step.get('checkpoint_available')
+            }
+            steps = [public_step_record(committed[step['step_id']]) if step.get('step_id') in committed else step for step in steps]
+            listed = {step.get('step_id') for step in steps}
+            steps.extend(
+                public_step_record({**step, 'run_id': run_id})
+                for step_id, step in committed.items() if step_id not in listed
+            )
+            steps.sort(key=lambda step: step.get('step_index', 0))
+        except ConversationContextError:
+            return jsonify({'error': 'Run not found.'}), 404
         except Exception as exc:
             log_event(f"[ORCHESTRATION] Could not list run steps: {exc}", level=logging.ERROR)
             return jsonify({'error': 'The run steps could not be loaded.'}), 500

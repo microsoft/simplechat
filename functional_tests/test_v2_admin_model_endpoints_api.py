@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were
@@ -401,6 +401,7 @@ def _load_persistence_helper():
         "get_settings": lambda: calls["settings"],
         "read_embedding_settings": lambda: calls["settings"],
         "preflight_embedding_settings": lambda current, candidate: calls["events"].append("preflight"),
+        "validate_custom_model_endpoints": import_app_module("functions_model_endpoint_validation").validate_custom_model_endpoints,
         "update_settings": fake_update_settings,
         "resolve_default_model_selection": selection_helpers[
             "resolve_default_model_selection"

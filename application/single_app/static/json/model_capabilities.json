@@ -18,17 +18,17 @@
     "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses.",
     "supportsStreaming": "Supports incremental token streaming for chat responses. SimpleChat wraps models without streaming support so they still deliver through the stream.",
     "reasoning": "Performs extended reasoning or thinking before responding.",
-    "imageGenerationTool": "Verified support for orchestrating the hosted image_generation tool in the Responses API, not native image output or vision. Deployment, provider, region, API version, and image-backend prerequisites still apply.",
+    "imageGenerationTool": "Publisher documentation for the hosted image_generation tool, not native image output or vision. Runtime eligibility requires a matching provider-qualified imageProfiles entry or a compatible explicit Custom declaration.",
     "generatesEmbeddings": "Produces embedding vectors. Runtime eligibility additionally requires validated embeddingPolicy metadata and a supported OpenAI-compatible operation; this is not chat or image generation."
   },
   "coverageNotes": [
-    "OpenAI coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
+    "The audited OpenAI token-capacity subset starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
     "Microsoft coverage includes public Phi and MAI model cards with clear capability statements.",
     "Google coverage includes current, preview and historically retired Gemini API models; Vertex context and lifecycle qualifications remain host-scoped.",
-    "Numeric capacities were verified against primary sources on 2026-09-19. Shared context, independent input, and output are distinct; missing maxima, adjustable defaults and configuration-only values are never fabricated into capacities.",
+    "Audited chat/generation token capacities were verified against primary sources on 2026-09-19. Shared context, independent input, and output are distinct; missing maxima, adjustable defaults and configuration-only values are never fabricated into capacities.",
     "Legacy aliases, model IDs and qualitative capabilities remain compatible. Only verifiedAliases and exact IDs are appropriate for numeric matching; deployment labels and family/prefix heuristics are not evidence.",
     "Root limits describe publisher-native specifications or checkpoint capacity, not every hosting deployment. Apply generic host profiles before more specific protocol/version profiles; explicit null clears inherited capacity. Retired snapshots preserve historical evidence without asserting cross-host retirement.",
     "OpenAI coverage includes GPT-5.x model IDs seen through Foundry, older Responses orchestration models, and direct GPT Image models.",
@@ -37,14 +37,20 @@
     "Azure lists GPT-5.6 Sol, Terra, and Luna version 2026-07-09 for Responses. Its image-tool examples may require a deployed GPT Image backend and the x-ms-oai-image-generation-deployment header. Catalog support does not promise deployment-free routing, entitlement, region availability, or a successful live request.",
     "Azure -chat entries are not automatically equated with OpenAI -chat-latest model IDs. OpenAI's documented tools for a similarly named chat snapshot do not establish the Azure entry's image tool support.",
     "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service.",
-    "OpenAI boolean capability coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry; reasoning-only entries additionally cover legacy GPT and o-series models.",
+    "The original OpenAI boolean capability subset covers GPT-5.x model families, including Azure OpenAI IDs seen through Foundry. Additional operation records cover older chat and image models; reasoning-only entries cover legacy GPT and o-series policies without declaring capabilities.",
     "Reasoning policies describe effort support, not endpoint/API availability. No Responses API migration is implied. Responses-only max effort is excluded from this Chat Completions policy. Models without verified level lists remain unknown.",
     "Embedding specifications and aliases were checked against primary sources on 2026-09-16. OpenAI embeddings use cl100k_base; text-embedding-ada-002 version 1 accepts 2,046 tokens, while version 2 and text-embedding-3 accept 8,192. Uncataloged Ada version metadata requires explicit administrator-verified limits rather than inheriting a newer version's context.",
     "Cohere model knowledge does not establish a supported current OpenAI-compatible embeddings route. Its task-sensitive native APIs and the deprecated Azure Model Inference API are not implemented. An explicit compatible-gateway declaration must attest that the gateway handles input_type and any dimensions translation; SimpleChat never sends vendor-native fields to a standard OpenAI operation.",
     "Azure lists embed-v-4-0 with a 512-token hosting limit; Cohere lists embed-v4.0 with 128k model context. The default policy retains the 512-token Azure limit and records 128,000 separately as model_context_tokens. A larger verified hosting limit must be declared explicitly, never inferred from the model context.",
     "Cohere batch count is bounded by its documented 96-text limit. The 49,152-token default batch budget is a conservative application bound derived from 96 inputs of 512 tokens, not a claim about a vendor aggregate-token limit.",
     "The 2026-09-19 token audit covers the original 75 records with tokenLimitEvidence. Additional qualitative and reasoning-only records omit unreviewed token fields and qualitative flags rather than guessing them. Embedding policies preserve their sourced dimensions, hosting/version input limits, and application batch budgets separately from chat context, generation limits, accounting, and verified numeric aliases.",
-    "Historical source review dates remain independent: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and embedding metadata on 2026-09-16. These retained dates do not claim a new source review or a chat-token audit of the additional models."
+    "Historical source review dates remain independent: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and embedding metadata on 2026-09-16. These retained dates do not claim a new source review or a chat-token audit of the additional models.",
+    "The 2026-09-19 token-capacity audit covers the original 75 records with tokenLimitEvidence. Operation-only records retain documented qualitative flags without token limits, accounting, profiles, or numeric aliases; reasoning-only records retain only their policy and identifiers. Missing limits and flags remain unknown, not inferred from an operation or policy.",
+    "Historical React V2 source review dates are retained independently: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and provider-qualified image profiles on 2026-09-16. These dates do not claim a new source review or a token-capacity audit of the additional models.",
+    "OpenAI model pages describe api.openai.com, not Azure deployment readiness. imageProfiles separates direct OpenAI, Azure OpenAI, and Foundry image operations. The application hosting cloud never establishes endpoint capabilities or availability.",
+    "Azure documents Responses image generation with a separate GPT Image deployment. SimpleChat deliberately offers only dedicated image models on Azure/Foundry; the conditional Azure Responses integration is not enabled by publisher imageGenerationTool flags or administrator overrides.",
+    "Government image-model availability is not established by the reviewed Government model table. Unknown is not unavailable, and a Government-hosted app may use an explicitly configured commercial endpoint without relabeling that endpoint as Government.",
+    "Image operation profiles describe the implemented single-image workflow. MAI and FLUX support source-image edits where stated, but their reviewed APIs do not document uploaded masks. Masking is not inferred from vision, tool calling, or inpainting prose."
   ],
   "sources": [
     {
@@ -1305,6 +1311,48 @@
       "title": "Cohere Azure hosting and distinct embedding operation schemas",
       "url": "https://docs.cohere.com/docs/cohere-on-microsoft-azure#embeddings",
       "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "image-profiles-openai-tools",
+      "provider": "openai",
+      "title": "Direct OpenAI image-generation tools, model eligibility and source/mask editing (reviewed 2026-09-16)",
+      "url": "https://developers.openai.com/api/docs/guides/tools-image-generation",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "image-profiles-openai-images",
+      "provider": "openai",
+      "title": "Direct OpenAI generation, image edits and mask requirements",
+      "url": "https://developers.openai.com/api/docs/guides/image-generation",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "image-profiles-mai",
+      "provider": "microsoft",
+      "title": "Foundry MAI Image 2.5/2.6 APIs and constraints (reviewed 2026-09-16)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "image-profiles-flux",
+      "provider": "microsoft",
+      "title": "Foundry FLUX generation and reference-image editing APIs",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-flux",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "image-profiles-government",
+      "provider": "microsoft",
+      "title": "Azure Government model availability; image-model availability not established (reviewed 2026-09-16)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-gov",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "openai-gpt6-astra",
+      "provider": "openai",
+      "title": "GPT-6 Astra model and supported Responses tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "verifiedAt": "2026-09-16"
     }
   ],
   "models": [
@@ -1482,6 +1530,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -1654,6 +1705,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -1827,6 +1881,9 @@
           "azure-openai-reasoning",
           "luna-deployed-contract"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -1985,6 +2042,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -2319,6 +2379,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -2454,6 +2517,9 @@
         "sourceIds": [
           "openai-gpt5-4-pro"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -2591,6 +2657,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -2728,6 +2797,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -3258,6 +3330,9 @@
         "sourceIds": [
           "openai-gpt5-2"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -3517,6 +3592,9 @@
         "sourceIds": [
           "azure-openai-reasoning"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -4183,6 +4261,9 @@
           "azure-openai-reasoning",
           "openai-gpt5"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -4726,6 +4807,9 @@
           "azure-openai-reasoning",
           "openai-gpt5"
         ]
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
       }
     },
     {
@@ -9872,6 +9956,17 @@
     },
     {
       "id": "gpt-4o",
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      },
       "provider": "openai",
       "displayName": "GPT-4o",
       "aliases": [],
@@ -9900,18 +9995,13 @@
       "sourceIds": [
         "openai-gpt4o",
         "azure-openai-responses"
-      ],
-      "reasoningPolicy": {
-        "status": "unsupported",
-        "efforts": [],
-        "default_effort": null,
-        "sourceIds": [
-          "openai-chat-completions"
-        ]
-      }
+      ]
     },
     {
       "id": "gpt-4o-mini",
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
       "provider": "openai",
       "displayName": "GPT-4o Mini",
       "aliases": [],
@@ -9944,6 +10034,17 @@
     },
     {
       "id": "gpt-4.1",
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      },
       "provider": "openai",
       "displayName": "GPT-4.1",
       "aliases": [],
@@ -9971,15 +10072,7 @@
       "sourceIds": [
         "openai-gpt4-1",
         "azure-openai-responses"
-      ],
-      "reasoningPolicy": {
-        "status": "unsupported",
-        "efforts": [],
-        "default_effort": null,
-        "sourceIds": [
-          "openai-chat-completions"
-        ]
-      }
+      ]
     },
     {
       "id": "gpt-4.1-mini",
@@ -10014,6 +10107,9 @@
     },
     {
       "id": "gpt-4.1-nano",
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
       "provider": "openai",
       "displayName": "GPT-4.1 Nano",
       "aliases": [],
@@ -10092,6 +10188,21 @@
     },
     {
       "id": "o3",
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      },
       "provider": "openai",
       "displayName": "o3",
       "aliases": [],
@@ -10121,19 +10232,7 @@
         "openai-o3",
         "azure-openai-responses",
         "openai-deprecations"
-      ],
-      "reasoningPolicy": {
-        "status": "supported",
-        "efforts": [
-          "low",
-          "medium",
-          "high"
-        ],
-        "default_effort": "low",
-        "sourceIds": [
-          "azure-openai-reasoning"
-        ]
-      }
+      ]
     },
     {
       "id": "o3-mini",
@@ -10227,6 +10326,14 @@
     },
     {
       "id": "gpt-image-2",
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "current",
+        "azure_openai": "current"
+      },
       "provider": "openai",
       "displayName": "GPT Image 2",
       "aliases": [],
@@ -10258,6 +10365,14 @@
     },
     {
       "id": "gpt-image-1.5",
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "deprecated",
+        "azure_openai": "limited_access_preview"
+      },
       "provider": "openai",
       "displayName": "GPT Image 1.5",
       "aliases": [],
@@ -10291,6 +10406,14 @@
     },
     {
       "id": "gpt-image-1",
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "deprecated",
+        "azure_openai": "limited_access_preview"
+      },
       "provider": "openai",
       "displayName": "GPT Image 1",
       "aliases": [],
@@ -10325,6 +10448,14 @@
     },
     {
       "id": "gpt-image-1-mini",
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "deprecated",
+        "azure_openai": "limited_access_preview"
+      },
       "provider": "openai",
       "displayName": "GPT Image 1 Mini",
       "aliases": [],
@@ -10359,6 +10490,10 @@
     },
     {
       "id": "dall-e-3",
+      "imageLifecycle": {
+        "openai": "retired",
+        "azure_openai": "retired"
+      },
       "provider": "openai",
       "displayName": "DALL-E 3 (retired)",
       "aliases": [
@@ -10733,6 +10868,592 @@
         "cohere-embedding-api",
         "cohere-azure-embeddings"
       ]
+    },
+    {
+      "id": "gpt-6-astra",
+      "provider": "openai",
+      "displayName": "GPT-6 Astra",
+      "aliases": [],
+      "family": "gpt-6",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "toolCalling": true
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "notes": [
+        "Image generation is a direct OpenAI Responses tool, not native image output or an Azure image deployment."
+      ],
+      "sourceIds": [
+        "openai-gpt6-astra"
+      ]
+    },
+    {
+      "id": "gpt-image-2.5-flare",
+      "provider": "openai",
+      "displayName": "GPT Image 2.5 Flare",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "current",
+        "azure_openai": "current"
+      },
+      "notes": [
+        "Dedicated image model. Azure model version 2026-09-09 is separate from the direct OpenAI 2026-09-08 snapshot. Consult current regional availability before deployment."
+      ],
+      "sourceIds": [
+        "image-profiles-openai-tools",
+        "azure-openai-images"
+      ]
+    },
+    {
+      "id": "gpt-image-2.5-sunburst",
+      "provider": "openai",
+      "displayName": "GPT Image 2.5 Sunburst",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "openai": "openai-images",
+        "azure_openai": "azure-images"
+      },
+      "imageLifecycle": {
+        "openai": "current",
+        "azure_openai": "current"
+      },
+      "notes": [
+        "Dedicated image model. Azure model version 2026-09-09 is separate from the direct OpenAI 2026-09-08 snapshot. Consult current regional availability before deployment."
+      ],
+      "sourceIds": [
+        "image-profiles-openai-tools",
+        "azure-openai-images"
+      ]
+    },
+    {
+      "id": "MAI-Image-2.5",
+      "provider": "microsoft",
+      "displayName": "MAI Image 2.5",
+      "aliases": [],
+      "family": "mai-image",
+      "lifecycle": "preview",
+      "releaseDate": "2026-06-02",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "mai-images"
+      },
+      "imageLifecycle": {
+        "foundry": "preview"
+      },
+      "notes": [
+        "Foundry generation and reference-image editing. The reviewed API does not document mask uploads; inpainting prose is not a mask contract."
+      ],
+      "sourceIds": [
+        "image-profiles-mai"
+      ]
+    },
+    {
+      "id": "MAI-Image-2.5-Flash",
+      "provider": "microsoft",
+      "displayName": "MAI Image 2.5 Flash",
+      "aliases": [],
+      "family": "mai-image",
+      "lifecycle": "preview",
+      "releaseDate": "2026-06-02",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "mai-images"
+      },
+      "imageLifecycle": {
+        "foundry": "preview"
+      },
+      "sourceIds": [
+        "image-profiles-mai"
+      ]
+    },
+    {
+      "id": "MAI-Image-2.5-Pro",
+      "provider": "microsoft",
+      "displayName": "MAI Image 2.5 Pro",
+      "aliases": [],
+      "family": "mai-image",
+      "lifecycle": "preview",
+      "releaseDate": "2026-06-19",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "mai-images"
+      },
+      "imageLifecycle": {
+        "foundry": "preview"
+      },
+      "sourceIds": [
+        "image-profiles-mai"
+      ]
+    },
+    {
+      "id": "MAI-Image-2.6",
+      "provider": "microsoft",
+      "displayName": "MAI Image 2.6",
+      "aliases": [],
+      "family": "mai-image",
+      "lifecycle": "preview",
+      "releaseDate": "2026-07-31",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "mai-images"
+      },
+      "imageLifecycle": {
+        "foundry": "preview"
+      },
+      "notes": [
+        "Optional web grounding is not enabled by the SimpleChat image adapter."
+      ],
+      "sourceIds": [
+        "image-profiles-mai"
+      ]
+    },
+    {
+      "id": "MAI-Image-2.6-Flash",
+      "provider": "microsoft",
+      "displayName": "MAI Image 2.6 Flash",
+      "aliases": [],
+      "family": "mai-image",
+      "lifecycle": "preview",
+      "releaseDate": "2026-07-31",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "mai-images"
+      },
+      "imageLifecycle": {
+        "foundry": "preview"
+      },
+      "notes": [
+        "Optional web grounding is not enabled by the SimpleChat image adapter."
+      ],
+      "sourceIds": [
+        "image-profiles-mai"
+      ]
+    },
+    {
+      "id": "FLUX.2-pro",
+      "provider": "blackforestlabs",
+      "displayName": "FLUX.2 Pro",
+      "aliases": [],
+      "family": "flux",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "flux-2-pro"
+      },
+      "sourceIds": [
+        "image-profiles-flux"
+      ]
+    },
+    {
+      "id": "FLUX.2-flex",
+      "provider": "blackforestlabs",
+      "displayName": "FLUX.2 Flex",
+      "aliases": [],
+      "family": "flux",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "flux-2-flex"
+      },
+      "sourceIds": [
+        "image-profiles-flux"
+      ]
+    },
+    {
+      "id": "FLUX.1-Kontext-pro",
+      "provider": "blackforestlabs",
+      "displayName": "FLUX.1 Kontext Pro",
+      "aliases": [],
+      "family": "flux",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "flux-kontext"
+      },
+      "sourceIds": [
+        "image-profiles-flux"
+      ]
+    },
+    {
+      "id": "FLUX-1.1-pro",
+      "provider": "blackforestlabs",
+      "displayName": "FLUX 1.1 Pro",
+      "aliases": [],
+      "family": "flux",
+      "lifecycle": "current",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": false,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "imageProfiles": {
+        "foundry": "flux-1.1"
+      },
+      "sourceIds": [
+        "image-profiles-flux"
+      ]
     }
-  ]
+  ],
+  "imageOperationProfiles": {
+    "openai-responses": {
+      "api": "responses",
+      "editing": true,
+      "masking": true,
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "backgrounds": [
+        "opaque",
+        "transparent"
+      ],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-openai-tools",
+        "image-profiles-openai-images"
+      ]
+    },
+    "openai-images": {
+      "api": "images",
+      "editing": true,
+      "masking": true,
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "backgrounds": [
+        "opaque",
+        "transparent"
+      ],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-openai-images"
+      ]
+    },
+    "azure-images": {
+      "api": "images",
+      "editing": true,
+      "masking": true,
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "backgrounds": [
+        "opaque",
+        "transparent"
+      ],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "maxMaskBytes": 4194304,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "azure-openai-images",
+        "image-profiles-government"
+      ]
+    },
+    "mai-images": {
+      "api": "mai",
+      "editing": true,
+      "masking": false,
+      "maskEvidence": "unknown",
+      "sizes": [
+        "1024x1024",
+        "1024x768",
+        "768x1024"
+      ],
+      "qualities": [],
+      "backgrounds": [],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "outputFormats": [
+        "image/png"
+      ],
+      "minDimension": 768,
+      "maxPixels": 1048576,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-mai",
+        "image-profiles-government"
+      ]
+    },
+    "flux-2-pro": {
+      "api": "flux",
+      "modelPath": "flux-2-pro",
+      "editing": true,
+      "masking": false,
+      "maskEvidence": "unknown",
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [],
+      "backgrounds": [],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "maxPixels": 4000000,
+      "maxReferenceImages": 8,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-flux",
+        "image-profiles-government"
+      ]
+    },
+    "flux-2-flex": {
+      "api": "flux",
+      "modelPath": "flux-2-flex",
+      "editing": true,
+      "masking": false,
+      "maskEvidence": "unknown",
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [],
+      "backgrounds": [],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "maxPixels": 4000000,
+      "maxReferenceImages": 10,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-flux",
+        "image-profiles-government"
+      ]
+    },
+    "flux-kontext": {
+      "api": "flux",
+      "modelPath": "flux-kontext-pro",
+      "transport": "openai_images",
+      "editing": true,
+      "masking": false,
+      "maskEvidence": "unknown",
+      "sizes": [
+        "1024x1024"
+      ],
+      "qualities": [],
+      "backgrounds": [],
+      "inputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "maxPixels": 1048576,
+      "maxReferenceImages": 1,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-flux",
+        "image-profiles-government"
+      ]
+    },
+    "flux-1.1": {
+      "api": "flux",
+      "modelPath": "flux-pro-1.1",
+      "editing": false,
+      "masking": false,
+      "maskEvidence": "unknown",
+      "sizes": [
+        "1024x1024",
+        "1536x1024",
+        "1024x1536"
+      ],
+      "qualities": [],
+      "backgrounds": [],
+      "inputFormats": [],
+      "outputFormats": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "maxPixels": 1600000,
+      "availability": {
+        "commercial": "documented",
+        "government": "unknown",
+        "unknown": "unknown"
+      },
+      "sourceIds": [
+        "image-profiles-flux",
+        "image-profiles-government"
+      ]
+    }
+  }
 }

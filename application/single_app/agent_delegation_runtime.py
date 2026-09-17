@@ -17,6 +17,7 @@ import uuid
 
 from agent_execution_context import (
     AgentDelegationError,
+    AgentDelegationTimeout,
     AgentExecutionCancelled,
     AgentExecutionFrame,
     DelegationBudget,
@@ -59,7 +60,7 @@ def _check_cancelled(frame):
     if frame.cancel_requested and frame.cancel_requested():
         raise AgentExecutionCancelled("Agent execution was cancelled. Already submitted remote effects may continue.")
     if frame.deadline is not None and time.monotonic() >= frame.deadline:
-        raise AgentDelegationError("The delegated agent call timed out.")
+        raise AgentDelegationTimeout("The delegated agent call timed out.")
 
 
 async def await_agent_operation(awaitable, frame):
@@ -71,7 +72,7 @@ async def await_agent_operation(awaitable, frame):
             frame.budget.raise_authentication_requirement(frame.identity)
             remaining = frame.deadline - time.monotonic() if frame.deadline is not None else None
             if remaining is not None and remaining <= 0:
-                raise AgentDelegationError("The delegated agent call timed out.")
+                raise AgentDelegationTimeout("The delegated agent call timed out.")
             done, _ = await asyncio.wait(
                 {operation},
                 timeout=min(CANCELLATION_POLL_SECONDS, remaining) if remaining is not None else CANCELLATION_POLL_SECONDS,

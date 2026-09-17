@@ -136,6 +136,11 @@ export function shouldGroupStartOpen(
         // the controls that explain what the groups below are for.
         return true;
     }
+    if (group.collapsed) {
+        // The schema asked for this one closed. Built-in actions that are always on
+        // are the case: worth listing, not worth reading past every time.
+        return false;
+    }
     if (!capabilityOn) {
         return false;
     }

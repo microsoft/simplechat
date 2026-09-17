@@ -534,6 +534,16 @@ ARCHIVE_ORIGIN_PREFIXES = {
     "anthropic": "https://docs.anthropic.com/",
     "google": "https://ai.google.dev/",
 }
+IMAGE_PROFILE_HOSTS = {
+    "openai-responses": {"openai"},
+    "openai-images": {"openai"},
+    "azure-images": {"azure_openai", "foundry"},
+    "mai-images": {"foundry"},
+    "flux-2-pro": {"foundry"},
+    "flux-2-flex": {"foundry"},
+    "flux-kontext": {"foundry"},
+    "flux-1.1": {"foundry"},
+}
 
 
 def validate_catalog_integrity(catalog):
@@ -582,6 +592,20 @@ def validate_catalog_integrity(catalog):
             if owner != model["id"]:
                 raise ValueError(f"Ambiguous embedding identity: {identity}")
 
+    image_profiles = catalog.get("imageOperationProfiles", {})
+    for profile_id, profile in image_profiles.items():
+        if profile_id not in IMAGE_PROFILE_HOSTS:
+            raise ValueError(f"Image profile lacks a hosting contract: {profile_id}")
+        for source_id in profile["sourceIds"]:
+            if source_id not in sources:
+                raise ValueError(f"Unresolved image profile source: {profile_id}/{source_id}")
+        for size in profile["sizes"]:
+            width, height = map(int, size.split("x"))
+            if min(width, height) < profile.get("minDimension", 1):
+                raise ValueError(f"Image size is below its minimum dimension: {profile_id}/{size}")
+            if "maxPixels" in profile and width * height > profile["maxPixels"]:
+                raise ValueError(f"Image size exceeds its pixel limit: {profile_id}/{size}")
+
     model_ids = set()
     identities = {}
     for model in catalog["models"]:
@@ -618,6 +642,16 @@ def validate_catalog_integrity(catalog):
                     raise ValueError(f"Unresolved reasoning source: {model_id}/{source_id}")
             if policy["status"] == "supported" and policy["default_effort"] not in policy["efforts"]:
                 raise ValueError(f"Reasoning fallback is not a supported effort: {model_id}")
+
+        for host, profile_id in model.get("imageProfiles", {}).items():
+            if profile_id not in image_profiles:
+                raise ValueError(f"Unresolved image profile: {model_id}/{profile_id}")
+            if host not in IMAGE_PROFILE_HOSTS[profile_id]:
+                raise ValueError(f"Image profile belongs to another host: {model_id}/{host}")
+            operation = image_profiles[profile_id]
+            capability = "imageGenerationTool" if operation["api"] == "responses" else "generatesImages"
+            if model.get("capabilities", {}).get(capability) is not True:
+                raise ValueError(f"Image profile lacks its declared operation: {model_id}/{profile_id}")
 
         if "tokenLimitEvidence" not in model:
             if TOKEN_METADATA_FIELDS.intersection(model):

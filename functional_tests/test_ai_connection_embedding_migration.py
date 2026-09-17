@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_migration.py
 """
 Functional coverage for independent legacy embedding connection import.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Exercise pure planning, vector-profile preservation, optimistic concurrency and
@@ -9,15 +9,22 @@ startup credential staging without importing Azure clients or calling providers.
 """
 
 import copy
+import json
 import sys
+import time
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+from azure.core import MatchConditions
+from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
+from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD, WRITE_LEASE_SECONDS
 from functions_ai_connection_migration import (
     EMBEDDING_MIGRATION_NOTICE_KEY,
     MIGRATION_NOTICE_KEY,
@@ -45,6 +52,7 @@ from functions_ai_connections import (
 from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
 from test_ai_connection_credential_staging import load_secret_save_helper
 from test_ai_connection_image_migration import legacy_settings as legacy_image_settings
+from test_app_settings_store_consistency import FakeRedis
 
 
 def legacy_embedding_settings():
@@ -94,11 +102,11 @@ def selected_endpoint(updates):
     return next(item for item in updates["model_endpoints"] if item["id"] == selection["endpoint_id"])
 
 
-class FakeAzureError(Exception):
+class FakeAzureError(AzureError):
     pass
 
 
-class FakeCosmosConflict(FakeAzureError):
+class FakeCosmosConflict(CosmosAccessConditionFailedError):
     pass
 
 
@@ -114,25 +122,52 @@ class MigrationRuntime:
         self.discards = []
         self.resolutions = []
         self.cache_updates = []
+        self.guards = []
         self.logs = []
         self.prepare_hook = None
         self.write_hook = None
         self.cleanup_hook = None
         self.save_secret = load_secret_save_helper(self.vault)
+        self.cache = FakeRedis()
+        redis_eval = self.cache.eval
+
+        def publish(*args):
+            updated = redis_eval(*args)
+            state = json.loads(args[-1])
+            if updated and state["state"] == "ready":
+                self.cache_updates.append((
+                    copy.deepcopy(state["document"]), {"context": "shared_settings_store"},
+                ))
+            return updated
+
+        self.cache.eval = publish
+        self.app_store = AppSettingsStore(
+            SimpleNamespace(read_item=self.read, replace_item=self.write),
+            self.cache, redis_required=True,
+        )
 
     def read(self, **kwargs):
         self.reads.append(kwargs)
+        if kwargs.get("response_hook"):
+            kwargs["response_hook"]({"x-ms-session-token": self.settings["_etag"]}, self.settings)
         return copy.deepcopy(self.settings)
 
-    def write(self, *, item, body, etag, match_condition):
+    def write(self, *, item, body, etag, match_condition, session_token=None, response_hook=None):
+        assert match_condition == MatchConditions.IfNotModified
         self.writes.append((copy.deepcopy(body), etag))
         if self.write_hook:
             self.write_hook(body, etag)
         if etag != self.settings["_etag"]:
-            raise FakeCosmosConflict()
+            raise FakeCosmosConflict(status_code=412, message="Settings changed")
         self.settings = copy.deepcopy(body)
         self.settings["_etag"] = f"committed-{len(self.writes)}"
+        if response_hook:
+            response_hook({"x-ms-session-token": self.settings["_etag"]}, self.settings)
         return copy.deepcopy(self.settings)
+
+    def guard(self, current, candidate, **kwargs):
+        self.guards.append((copy.deepcopy(current), copy.deepcopy(candidate), kwargs))
+        return nullcontext()
 
     def prepare(self, endpoint, owner, **kwargs):
         self.stages.append((copy.deepcopy(endpoint), owner, kwargs))
@@ -167,13 +202,6 @@ class MigrationRuntime:
             return result
 
         modules = {
-            "azure": module("azure", __path__=[]),
-            "azure.core": module("azure.core", __path__=[], MatchConditions=SimpleNamespace(IfNotModified="etag")),
-            "azure.core.exceptions": module("azure.core.exceptions", AzureError=FakeAzureError),
-            "azure.cosmos": module("azure.cosmos", __path__=[]),
-            "azure.cosmos.exceptions": module(
-                "azure.cosmos.exceptions", CosmosAccessConditionFailedError=FakeCosmosConflict,
-            ),
             "config": module(
                 "config", cosmos_settings_container=SimpleNamespace(read_item=self.read, replace_item=self.write),
             ),
@@ -192,9 +220,10 @@ class MigrationRuntime:
             "functions_settings": module(
                 "functions_settings",
                 normalize_model_endpoints=lambda values: (copy.deepcopy(values), False),
-                _refresh_app_settings_cache_after_write=lambda value, **kwargs: self.cache_updates.append(
-                    (copy.deepcopy(value), kwargs)
-                ),
+                _get_app_settings_store=lambda: self.app_store,
+            ),
+            "functions_embedding_compatibility": module(
+                "functions_embedding_compatibility", embedding_settings_write_guard=self.guard,
             ),
         }
         with patch.dict(sys.modules, modules):
@@ -837,8 +866,10 @@ class EmbeddingMigrationInitializationTests(unittest.TestCase):
         self.assertEqual(1, result[EMBEDDING_MIGRATION_VERSION_KEY])
         self.assertEqual(1, len(runtime.writes))
         self.assertEqual(1, len(result["model_endpoints"]))
-        self.assertEqual(2, len(runtime.reads))
-        self.assertEqual("ai_connections_embedding_import", runtime.cache_updates[-1][1]["context"])
+        self.assertEqual(3, len(runtime.reads))
+        self.assertEqual(result, runtime.cache_updates[-1][0])
+        self.assertEqual(1, result[SETTINGS_REVISION_FIELD])
+        self.assertTrue(runtime.guards[-1][2]["force_check"])
 
     def test_startup_imports_use_separate_transactions_and_new_etags(self):
         source = {**legacy_image_settings(), **legacy_embedding_settings()}
@@ -891,7 +922,8 @@ class EmbeddingMigrationInitializationTests(unittest.TestCase):
         }
         with MigrationRuntime(source).installed() as runtime:
             result = initialize_ai_connections(source)
-        self.assertEqual([], runtime.writes)
+        self.assertEqual(2, len(runtime.writes))
+        self.assertEqual([], runtime.settings["model_endpoints"])
         self.assertEqual("error", result[MIGRATION_NOTICE_KEY]["status"])
         self.assertEqual("error", result[EMBEDDING_MIGRATION_NOTICE_KEY]["status"])
         self.assertNotIn(IMAGE_MIGRATION_VERSION_KEY, result)
@@ -947,7 +979,8 @@ class EmbeddingMigrationInitializationTests(unittest.TestCase):
             runtime.cleanup_hook = fail_cleanup
             result = initialize_ai_connections(source)
         self.assertEqual(1, len(runtime.discards))
-        self.assertEqual([], runtime.writes)
+        self.assertEqual(1, len(runtime.writes))
+        self.assertEqual([], runtime.settings["model_endpoints"])
         self.assertFalse(embedding_settings_use_connections(result))
         self.assertEqual("error", result[EMBEDDING_MIGRATION_NOTICE_KEY]["status"])
         self.assertNotIn("synthetic-private", str(runtime.logs))
@@ -962,7 +995,8 @@ class EmbeddingMigrationInitializationTests(unittest.TestCase):
         with MigrationRuntime(live).installed() as runtime:
             result = initialize_ai_connections(initial)
         self.assertEqual([], runtime.stages)
-        self.assertEqual([], runtime.writes)
+        self.assertEqual(1, len(runtime.writes))
+        self.assertEqual([], runtime.settings["model_endpoints"])
         self.assertEqual("keep me", result["concurrent_admin_value"])
         self.assertFalse(embedding_settings_use_connections(result))
         self.assertEqual("error", result[EMBEDDING_MIGRATION_NOTICE_KEY]["status"])
@@ -971,6 +1005,56 @@ class EmbeddingMigrationInitializationTests(unittest.TestCase):
         source = {IMAGE_MIGRATION_VERSION_KEY: 1, EMBEDDING_MIGRATION_VERSION_KEY: 1}
         with patch.dict(sys.modules, {"config": None, "functions_settings": None}):
             self.assertIs(source, initialize_ai_connections(source))
+
+    def test_shared_store_conflict_rebuilds_import_and_discards_only_uncommitted_credentials(self):
+        source = {
+            **legacy_embedding_settings(), IMAGE_MIGRATION_VERSION_KEY: 1,
+            "enable_key_vault_secret_storage": True, "key_vault_name": "synthetic-vault",
+        }
+        with MigrationRuntime(source).installed() as runtime:
+            def concurrent_admin_save(_endpoint):
+                runtime.prepare_hook = None
+                runtime.app_store.write(lambda current: {**current, "app_title": "Concurrent edit"})
+
+            runtime.prepare_hook = concurrent_admin_save
+            result = initialize_ai_connections(source)
+        self.assertEqual("Concurrent edit", result["app_title"])
+        self.assertEqual(2, result[SETTINGS_REVISION_FIELD])
+        self.assertEqual(2, len(runtime.stages))
+        self.assertEqual(1, len(runtime.discards))
+        self.assertEqual(1, len(runtime.vault))
+        self.assertIn(selected_endpoint(result)["auth"]["api_key"], runtime.vault)
+        self.assertEqual(result, runtime.cache_updates[-1][0])
+
+    def test_unconfirmed_publication_retains_credentials_and_can_be_confirmed_after_recovery(self):
+        source = {
+            **legacy_embedding_settings(), IMAGE_MIGRATION_VERSION_KEY: 1,
+            "enable_key_vault_secret_storage": True, "key_vault_name": "synthetic-vault",
+        }
+        with MigrationRuntime(source).installed() as runtime:
+            runtime.cache.fail_publication = True
+            result = initialize_ai_connections(source)
+            reference = selected_endpoint(result)["auth"]["api_key"]
+            self.assertEqual(1, result[EMBEDDING_MIGRATION_VERSION_KEY])
+            self.assertEqual("error", result[EMBEDDING_MIGRATION_NOTICE_KEY]["status"])
+            self.assertEqual("pending", json.loads(runtime.cache.raw)["state"])
+            self.assertEqual([], runtime.cache_updates)
+            self.assertEqual([], runtime.discards)
+            self.assertIn(reference, runtime.vault)
+            self.assertNotIn("settings are unchanged", result[EMBEDDING_MIGRATION_NOTICE_KEY]["message"])
+
+            runtime.cache.fail_publication = False
+            after_expiry = time.time() + WRITE_LEASE_SECONDS + 1
+            with patch("app_settings_store.time.time", return_value=after_expiry):
+                recovered = initialize_ai_connections(result)
+
+        self.assertEqual("complete", recovered[EMBEDDING_MIGRATION_NOTICE_KEY]["status"])
+        self.assertEqual(reference, selected_endpoint(recovered)["auth"]["api_key"])
+        self.assertEqual(1, len(runtime.stages))
+        self.assertEqual([], runtime.discards)
+        self.assertEqual(2, len(runtime.guards))
+        self.assertTrue(runtime.guards[-1][2]["force_check"])
+        self.assertEqual(recovered, runtime.cache_updates[-1][0])
 
 
 class EmbeddingRecoveryFormTests(unittest.TestCase):

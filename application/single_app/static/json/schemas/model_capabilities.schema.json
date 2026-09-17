@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "title": "SimpleChat model capability catalog",
-  "description": "Schema version 3: independently evidenced chat/generation capacities coexist with closed qualitative-capability, reasoning-only, and embedding-policy records. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Embedding dimensions, input limits and batch policies do not authorize chat-token budgets.",
+  "description": "Schema version 3: independently evidenced chat/generation capacities coexist with closed capability, reasoning-only, and embedding-policy records plus provider-qualified image profiles. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Image operations, reasoning policies, and embedding dimensions/input/batch policies do not authorize chat-token budgets.",
   "type": "object",
-  "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models"],
+  "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models", "imageOperationProfiles"],
   "properties": {
     "$schema": {
       "type": "string",
@@ -38,6 +38,17 @@
     },
     "coverageNotes": {
       "$ref": "#/$defs/stringList"
+    },
+    "imageOperationProfiles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/imageOperation"
+      }
     },
     "sources": {
       "type": "array",
@@ -359,7 +370,7 @@
           "$ref": "#/$defs/nonemptyString"
         },
         "provider": {
-          "enum": ["openai", "anthropic", "google", "xai", "meta", "microsoft"]
+          "enum": ["openai", "anthropic", "google", "xai", "meta", "microsoft", "blackforestlabs"]
         },
         "displayName": {
           "$ref": "#/$defs/nonemptyString"
@@ -395,6 +406,12 @@
         },
         "reasoningPolicy": {
           "$ref": "#/$defs/reasoningPolicy"
+        },
+        "imageProfiles": {
+          "$ref": "#/$defs/imageProfiles"
+        },
+        "imageLifecycle": {
+          "$ref": "#/$defs/imageLifecycle"
         },
         "notes": {
           "$ref": "#/$defs/stringList"
@@ -478,7 +495,9 @@
         "capabilities": {"$ref": "#/$defs/operationCapabilityMap"},
         "sourceIds": {"$ref": "#/$defs/sourceIdList"},
         "notes": {"$ref": "#/$defs/stringList"},
-        "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"}
+        "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"},
+        "imageProfiles": {"$ref": "#/$defs/imageProfiles"},
+        "imageLifecycle": {"$ref": "#/$defs/imageLifecycle"}
       },
       "additionalProperties": false
     },
@@ -663,6 +682,92 @@
         }
       },
       "additionalProperties": false
+    },
+    "imageProvider": {
+      "enum": ["openai", "azure_openai", "foundry"]
+    },
+    "imageProfiles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/imageProvider"},
+      "additionalProperties": {"$ref": "#/$defs/nonemptyString"}
+    },
+    "imageLifecycle": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/imageProvider"},
+      "additionalProperties": {
+        "enum": ["current", "preview", "limited_access_preview", "deprecated", "retired"]
+      }
+    },
+    "imageOperation": {
+      "type": "object",
+      "required": [
+        "api", "editing", "masking", "sizes", "qualities", "backgrounds",
+        "inputFormats", "outputFormats", "availability", "sourceIds"
+      ],
+      "properties": {
+        "api": {"enum": ["images", "responses", "mai", "flux"]},
+        "modelPath": {"enum": ["flux-2-pro", "flux-2-flex", "flux-kontext-pro", "flux-pro-1.1"]},
+        "transport": {"enum": ["native", "openai_images"]},
+        "editing": {"type": "boolean"},
+        "masking": {"type": "boolean"},
+        "maskEvidence": {"enum": ["documented", "unknown", "unsupported"]},
+        "sizes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[1-9][0-9]*x[1-9][0-9]*$"}
+        },
+        "qualities": {"$ref": "#/$defs/stringList"},
+        "backgrounds": {"$ref": "#/$defs/stringList"},
+        "inputFormats": {"$ref": "#/$defs/imageFormats"},
+        "outputFormats": {
+          "allOf": [{"$ref": "#/$defs/imageFormats"}, {"minItems": 1}]
+        },
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"},
+        "maxMaskBytes": {"type": "integer", "minimum": 1},
+        "maxReferenceImages": {"type": "integer", "minimum": 1},
+        "minDimension": {"type": "integer", "minimum": 1},
+        "maxPixels": {"type": "integer", "minimum": 1},
+        "availability": {
+          "type": "object",
+          "required": ["commercial", "government", "unknown"],
+          "properties": {
+            "commercial": {"enum": ["documented", "unknown", "unavailable"]},
+            "government": {"enum": ["documented", "unknown", "unavailable"]},
+            "unknown": {"const": "unknown"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"masking": {"const": true}}},
+          "then": {
+            "properties": {
+              "editing": {"const": true},
+              "maskEvidence": {"const": "documented"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"editing": {"const": true}}},
+          "then": {"properties": {"inputFormats": {"minItems": 1}}},
+          "else": {"properties": {"inputFormats": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"api": {"const": "flux"}}},
+          "then": {"required": ["modelPath"]},
+          "else": {"not": {"required": ["modelPath"]}}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "imageFormats": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["image/png", "image/jpeg", "image/webp"]}
     },
     "capabilityName": {
       "enum": [

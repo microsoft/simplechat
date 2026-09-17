@@ -5,10 +5,10 @@ Version: 0.261.122
 Implemented in: 0.261.122
 
 Protect audited, qualitative-capability, reasoning-only, and embedding-policy
-records present on this topic, historical source reviews, and their independent
-resolvers. Operation eligibility must never widen exact chat-capacity matching
-or turn unknown limits into a budget. No external services or Git history are
-required; provider-qualified image profiles belong to a separate topic.
+records, provider-qualified image profiles, historical source reviews, and their
+independent resolvers. Operation eligibility must never widen exact chat-capacity
+matching or turn unknown limits into a budget. Tests require neither Git history
+nor a fixed total catalog size, external services, or ephemeral merge stages.
 """
 
 import copy
@@ -35,7 +35,11 @@ from functions_embedding_policy import EmbeddingPolicyError, resolve_embedding_p
 OPERATION_ONLY_IDS = {
     "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
     "o1", "o3", "o3-mini", "o4-mini", "gpt-image-2", "gpt-image-1.5",
-    "gpt-image-1", "gpt-image-1-mini", "dall-e-3",
+    "gpt-image-1", "gpt-image-1-mini", "dall-e-3", "gpt-6-astra",
+    "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    "MAI-Image-2.5", "MAI-Image-2.5-Flash", "MAI-Image-2.5-Pro",
+    "MAI-Image-2.6", "MAI-Image-2.6-Flash",
+    "FLUX.2-pro", "FLUX.2-flex", "FLUX.1-Kontext-pro", "FLUX-1.1-pro",
 }
 REASONING_ONLY_IDS = {
     "gpt-4", "gpt-4.5", "gpt-35-turbo", "o1-mini", "o1-preview", "o3-pro",
@@ -114,6 +118,16 @@ EXPECTED_EMBEDDING_POLICIES = {
     },
 }
 EMBEDDING_IDS = set(EXPECTED_EMBEDDING_POLICIES)
+RESPONSES_IMAGE_IDS = {
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
+    "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-nano",
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-nano", "o3", "gpt-6-astra",
+}
+DIRECT_IMAGE_IDS = {
+    "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+    "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+}
 SOURCE_REVIEW_HISTORY = {
     "2026-09-07": {
         "azure-openai-reasoning", "luna-deployed-contract", "openai-chat-completions",
@@ -136,6 +150,9 @@ SOURCE_REVIEW_HISTORY = {
         "azure-embedding-models", "azure-cohere-embedding-models",
         "azure-partner-embedding-models", "cohere-embedding-models",
         "cohere-embedding-api", "cohere-azure-embeddings",
+        "image-profiles-openai-tools", "image-profiles-openai-images",
+        "image-profiles-mai", "image-profiles-flux", "image-profiles-government",
+        "openai-gpt6-astra",
     },
 }
 
@@ -179,6 +196,8 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
         models["embed-v-4-0"]["embeddingPolicy"]["allowed_dimensions"].clear()
         models["embed-v-4-0"]["embeddingPolicy"]["hosting_limits"]["azure"]["max_input_tokens"] = 128000
         models["text-embedding-ada-002"]["embeddingPolicy"]["versions"]["1"]["max_input_tokens"] = 8192
+        sol["imageProfiles"]["openai"] = "azure-images"
+        models["gpt-image-1.5"]["imageLifecycle"]["openai"] = "current"
         records.clear()
 
         self.assertEqual(
@@ -188,6 +207,10 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
         self.assertEqual(budget.context_window, 1050000)
         self.assertTrue(
             capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageGenerationTool"]
+        )
+        self.assertEqual(
+            capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageProfiles"],
+            {"openai": "openai-responses"},
         )
 
     def test_operation_records_do_not_invent_unreviewed_fields(self):
@@ -301,6 +324,61 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                 )
         self.assertEqual(self.models["dall-e-3"]["lifecycle"], "retired")
 
+    def test_image_bindings_separate_publishers_and_hosting_contracts(self):
+        for model_id in RESPONSES_IMAGE_IDS:
+            self.assertEqual(self.models[model_id]["imageProfiles"], {"openai": "openai-responses"})
+            self.assertTrue(self.models[model_id]["capabilities"]["imageGenerationTool"])
+            self.assertFalse(self.models[model_id]["capabilities"]["generatesImages"])
+        for model_id in DIRECT_IMAGE_IDS:
+            self.assertEqual(self.models[model_id]["imageProfiles"], {
+                "openai": "openai-images", "azure_openai": "azure-images",
+            })
+        for model_id in OPERATION_ONLY_IDS:
+            if model_id.startswith("MAI-"):
+                self.assertEqual(self.models[model_id]["provider"], "microsoft")
+                self.assertEqual(self.models[model_id]["imageProfiles"], {"foundry": "mai-images"})
+        for model_id, profile_id in (
+            ("FLUX.2-pro", "flux-2-pro"), ("FLUX.2-flex", "flux-2-flex"),
+            ("FLUX.1-Kontext-pro", "flux-kontext"), ("FLUX-1.1-pro", "flux-1.1"),
+        ):
+            self.assertEqual(self.models[model_id]["provider"], "blackforestlabs")
+            self.assertEqual(self.models[model_id]["imageProfiles"], {"foundry": profile_id})
+        self.assertEqual(self.sources["image-profiles-flux"]["provider"], "microsoft")
+        self.assertEqual(self.models["gpt-image-1.5"]["imageLifecycle"], {
+            "openai": "deprecated", "azure_openai": "limited_access_preview",
+        })
+        self.assertEqual(self.models["dall-e-3"]["imageLifecycle"], {
+            "openai": "retired", "azure_openai": "retired",
+        })
+
+    def test_image_operation_profiles_remain_independent_and_isolated(self):
+        for profile_id, api, editing, masking in (
+            ("openai-responses", "responses", True, True),
+            ("openai-images", "images", True, True),
+            ("azure-images", "images", True, True),
+            ("mai-images", "mai", True, False),
+            ("flux-2-pro", "flux", True, False),
+            ("flux-2-flex", "flux", True, False),
+            ("flux-kontext", "flux", True, False),
+            ("flux-1.1", "flux", False, False),
+        ):
+            with self.subTest(profile=profile_id):
+                profile = capabilities.get_image_operation_profile(profile_id)
+                self.assertEqual(profile, self.catalog["imageOperationProfiles"][profile_id])
+                self.assertEqual((profile["api"], profile["editing"], profile["masking"]),
+                                 (api, editing, masking))
+                self.assertEqual(profile["availability"], {
+                    "commercial": "documented", "government": "unknown", "unknown": "unknown",
+                })
+                profile["sizes"].clear()
+                self.assertTrue(capabilities.get_image_operation_profile(profile_id)["sizes"])
+        kontext = capabilities.get_image_operation_profile("flux-kontext")
+        self.assertEqual(kontext["modelPath"], "flux-kontext-pro")
+        self.assertEqual(kontext["transport"], "openai_images")
+        self.assertEqual(kontext["maxReferenceImages"], 1)
+        mai = capabilities.get_image_operation_profile("mai-images")
+        self.assertEqual((mai["minDimension"], mai["maxPixels"]), (768, 1048576))
+
     def test_historical_metadata_reviews_are_not_relabelled_as_token_audits(self):
         for reviewed_at, source_ids in SOURCE_REVIEW_HISTORY.items():
             for source_id in source_ids:
@@ -311,7 +389,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
     def test_metadata_only_variants_reject_token_fields(self):
         audited = self.models["gpt-5.6-sol"]
         for model_id, field in product(
-            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "gpt-image-2",
+            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "gpt-6-astra", "gpt-image-2",
              "text-embedding-ada-002", "embed-v-4-0"),
             TOKEN_METADATA_FIELDS,
         ):
@@ -354,6 +432,8 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
             (("capabilities", "imageGenerationTool"), "true"),
             (("reasoningPolicy", "unexpected"), True),
             (("reasoningPolicy", "sourceIds"), []),
+            (("imageProfiles", "private"), "openai-responses"),
+            (("imageLifecycle",), {"openai": "unknown"}),
         ):
             with self.subTest(path=path):
                 record = copy.deepcopy(self.models["gpt-4o"])
@@ -364,20 +444,69 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     self.validate_model(record)
 
-    def test_integrity_rejects_unresolved_metadata_sources(self):
-        for target in ("reasoning", "model"):
+    def test_image_operation_schema_requires_true_positive_integers(self):
+        for field, invalid in product(
+            ("maxMaskBytes", "maxReferenceImages", "minDimension", "maxPixels"),
+            (True, 0, -1, 1.0, 1.5, "1024"),
+        ):
+            with self.subTest(field=field, value=invalid):
+                document = copy.deepcopy(self.catalog)
+                document["imageOperationProfiles"]["openai-images"][field] = invalid
+                with self.assertRaises(ValidationError):
+                    self.validator.validate(document)
+
+    def test_image_operation_schema_rejects_inconsistent_or_unbounded_metadata(self):
+        for profile_id, changes in (
+            ("mai-images", {"masking": True}),
+            ("openai-images", {"editing": False}),
+            ("openai-images", {"sourceIds": []}),
+            ("openai-images", {"availability": {
+                "commercial": "documented", "government": "unknown", "unknown": "documented",
+            }}),
+            ("openai-images", {"unexpected": True}),
+            ("openai-images", {"sizes": ["0x1024"]}),
+            ("openai-images", {"outputFormats": []}),
+            ("openai-images", {"api": "guessed"}),
+        ):
+            with self.subTest(profile=profile_id, changes=changes):
+                document = copy.deepcopy(self.catalog)
+                document["imageOperationProfiles"][profile_id].update(changes)
+                with self.assertRaises(ValidationError):
+                    self.validator.validate(document)
+        document = copy.deepcopy(self.catalog)
+        del document["imageOperationProfiles"]["flux-2-pro"]["modelPath"]
+        with self.assertRaises(ValidationError):
+            self.validator.validate(document)
+
+    def test_integrity_rejects_unresolved_metadata_sources_and_cross_host_profiles(self):
+        for target in (
+            "reasoning", "operation", "model", "legacy_model", "profile", "host", "capability"
+        ):
             with self.subTest(target=target):
                 document = copy.deepcopy(self.catalog)
                 models = {record["id"]: record for record in document["models"]}
                 if target == "reasoning":
                     models["o3-pro"]["reasoningPolicy"]["sourceIds"].append("missing")
-                else:
+                elif target == "operation":
+                    document["imageOperationProfiles"]["openai-images"]["sourceIds"].append("missing")
+                elif target == "model":
+                    models["gpt-6-astra"]["sourceIds"].append("missing")
+                elif target == "legacy_model":
                     models["gpt-4o"]["sourceIds"].append("missing")
+                elif target == "profile":
+                    models["gpt-6-astra"]["imageProfiles"]["openai"] = "missing"
+                elif target == "host":
+                    models["gpt-6-astra"]["imageProfiles"] = {"azure_openai": "openai-responses"}
+                else:
+                    models["gpt-6-astra"]["capabilities"]["imageGenerationTool"] = False
                 with self.assertRaises(ValueError):
                     validate_catalog_integrity(document)
 
-    def test_integrity_rejects_new_identity_and_provenance_corruption(self):
-        for target in ("identity", "alias", "publisher", "date", "capacity"):
+    def test_integrity_rejects_new_identity_provenance_and_dimension_corruption(self):
+        for target in (
+            "identity", "alias", "publisher", "legacy_publisher",
+            "date", "legacy_date", "size", "capacity",
+        ):
             with self.subTest(target=target):
                 document = copy.deepcopy(self.catalog)
                 models = {record["id"]: record for record in document["models"]}
@@ -388,10 +517,16 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                     document["models"].append(duplicate)
                 elif target == "alias":
                     models["gpt-5.6-sol"]["verifiedAliases"].append("gpt-4")
-                elif target == "publisher":
+                elif target == "legacy_publisher":
                     sources["azure-openai-images"]["provider"] = "openai"
-                elif target == "date":
+                elif target == "legacy_date":
                     sources["azure-openai-images"]["verifiedAt"] = "2099-01-01"
+                elif target == "publisher":
+                    sources["image-profiles-mai"]["provider"] = "openai"
+                elif target == "date":
+                    sources["image-profiles-mai"]["verifiedAt"] = "2099-01-01"
+                elif target == "size":
+                    document["imageOperationProfiles"]["mai-images"]["sizes"].append("512x512")
                 else:
                     models["gpt-4"]["contextWindow"] = 128000
                 with self.assertRaises(ValueError):
@@ -437,6 +572,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                         identifier, strict_identity=True
                     )
                     self.assertTrue(resolved["generatesEmbeddings"])
+                    self.assertEqual(resolved["publisher"], record["provider"])
                     self.assertEqual(resolved["embeddingPolicy"], record["embeddingPolicy"])
                     resolved["embeddingPolicy"]["max_input_tokens"] = 1
                     again = capabilities.get_model_catalog_capabilities(
@@ -604,7 +740,6 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                     source["provider"] = "microsoft"
                 with self.assertRaises(ValueError):
                     validate_catalog_integrity(document)
-
 
 if __name__ == "__main__":
     unittest.main()

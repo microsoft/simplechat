@@ -19,6 +19,7 @@ from functions_model_endpoint_validation import (
 )
 from functions_settings import *
 from functions_appinsights import log_event
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_ai_connections import (
     AIConnectionError,
     EMBEDDINGS_CAPABILITY,
@@ -1104,6 +1105,7 @@ def register_route_frontend_admin_settings(bp):
                 'admin_settings.html',
                 app_settings=settings_for_template,
                 settings=settings_for_template,
+                custom_model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
                 azure_environment=AZURE_ENVIRONMENT,
                 content_understanding_supported=is_content_understanding_supported_environment(),
                 content_understanding_api_version_default=CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
@@ -1743,9 +1745,9 @@ def register_route_frontend_admin_settings(bp):
                 else:
                     raise ValueError("Invalid format: model_endpoints must be a list.")
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Error processing model_endpoints_json: {e}")
-                flash(f"Error processing model endpoints: {e}. Changes for endpoints not saved.", 'danger')
-                parsed_model_endpoints = settings.get('model_endpoints', [])
+                log_event("[MODEL_ENDPOINT] Invalid model endpoint settings payload.", level=logging.WARNING)
+                flash('Model endpoint data is invalid. No settings were saved.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
             enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
@@ -1814,6 +1816,9 @@ def register_route_frontend_admin_settings(bp):
             custom_endpoint_validation_settings['allow_insecure_custom_model_endpoints'] = (
                 form_data.get('allow_insecure_custom_model_endpoints') == 'on'
             )
+            custom_endpoint_validation_settings['custom_model_endpoint_ca_bundle_path'] = (
+                form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
+            )
             try:
                 validate_custom_model_endpoints(
                     parsed_model_endpoints,
@@ -1825,7 +1830,7 @@ def register_route_frontend_admin_settings(bp):
                     extra={"exception_type": type(exc).__name__},
                     level=logging.WARNING,
                 )
-                flash(str(exc), 'danger')
+                flash(exc.public_message, 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_endpoints_by_id = {

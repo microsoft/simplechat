@@ -1,7 +1,7 @@
 # ai_connections_admin.py
 """
 Closed API fixtures for shared AI Connections admin browser tests.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.105; embeddings added in 0.261.106
 
 Reuse the built-SPA and local/Azure browser fixtures. All requests are intercepted;
@@ -17,6 +17,8 @@ from v2_admin_settings import AdminSettingsFixture, ORIGIN, SPA_INDEX, STATIC_RO
 from test_support.app_stubs import import_app_module
 from test_support.nav import ADMIN_NAV
 
+CONNECTIONS = import_app_module("functions_ai_connections")
+ENDPOINT_TYPES = import_app_module("functions_model_endpoint_types")
 
 COHERE_EMBEDDING_MODELS = {
     "embed-v-4-0", "embed-v4.0", "cohere-embed-v3-english", "cohere-embed-v3-multilingual",
@@ -33,11 +35,12 @@ def support(supported=True, api="chat", source="catalog"):
     return {"supported": supported, "available": supported, "source": source, "api": api, "reason": ""}
 
 
-def connection(identifier, name, models):
+def connection(identifier, name, models, provider="aoai"):
     return {
-        "id": identifier, "name": name, "provider": "aoai", "enabled": True,
+        "id": identifier, "name": name, "provider": provider, "enabled": True,
+        **({"api_type": "openai"} if provider == "custom" else {}),
         "connection": {
-            "endpoint": f"https://{identifier}.example.test",
+            "endpoint": "https://api.openai.com/v1" if provider == "custom" else f"https://{identifier}.openai.azure.com",
             "openai_api_version": "2024-05-01-preview",
             "operation_settings": {"image_generation": {"api_version": "2025-04-01-preview"}},
         },
@@ -107,9 +110,11 @@ class AIConnectionsFixture(AdminSettingsFixture):
             if field.get("key") and "default" in field
         }
         self.settings.update({"enable_multi_model_endpoints": True, "enable_image_generation": True})
+        self.custom_api_types = import_app_module("functions_model_endpoint_providers").get_model_endpoint_provider_ui_options()
+        self.default_notices = {}
         self.payload.update({"admin_nav": [group], "field_schema": self.schema, "settings": self.settings})
         dual = {
-            "id": "same:model", "deploymentName": "same-deployment", "modelName": "gpt-5.6",
+            "id": "same:model", "deploymentName": "same-deployment", "modelName": "gpt-5.6-sol",
             "displayName": "Dual model", "enabled": True,
             "capability_status": {
                 "chat": support(), "image_generation": support(api="responses"),
@@ -123,16 +128,17 @@ class AIConnectionsFixture(AdminSettingsFixture):
             "capability_status": {"chat": support(False), "image_generation": support(api="images")},
         }
         self.endpoints = [
-            connection("team", "Team Azure", [dual]),
-            connection("studio", "Imported Studio", [imported]),
+            connection("team", "Team OpenAI", [dual], provider="custom"),
+            connection("studio", "Imported Studio", [imported], provider="custom"),
             connection("images", "Image Resource", [image]),
             connection("vectors", "Vector Resource", [embedding_model()]),
         ]
         self.selections = {
-            "chat": reference("team", "same:model", "aoai"),
-            "image_generation": reference("studio", "same:model", "aoai"),
+            "chat": reference("team", "same:model", "custom"),
+            "image_generation": reference("studio", "same:model", "custom"),
             "embeddings": reference("vectors", "embedding-model", "aoai"),
         }
+        self.refresh_capabilities()
         self.migration = {"status": "complete", "message": "Existing image configuration is now managed through AI Connections.", "imported_connections": 1}
         self.embedding_migration = {"status": "complete", "message": "Existing embedding configuration is now managed through AI Connections.", "imported_connections": 1}
         self.embedding_compatibility = {"status": "compatible", "message": "Existing vectors use the current embedding profile.", "dimensions": 1536, "profile_id": "fixture-profile"}
@@ -141,6 +147,7 @@ class AIConnectionsFixture(AdminSettingsFixture):
         self.image_tests = []
         self.embedding_tests = []
         self.connection_tests = []
+        self.chat_tests = []
         self.reject_selection = False
         self.reject_connection = False
         self.reject_image_test = False
@@ -154,30 +161,11 @@ class AIConnectionsFixture(AdminSettingsFixture):
 
     def resolve_models(self, endpoint):
         for model in endpoint["models"]:
-            name = model.get("modelName") or model.get("deploymentName")
-            openai_embedding = name in {"text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large"}
-            cohere = str(name).lower() in COHERE_EMBEDDING_MODELS
-            known_embedding = openai_embedding or cohere
-            custom = endpoint["provider"] == "openai_compatible"
-            image_only = name == "gpt-image-1"
-            previous = model.get("capability_status", {})
-            config = model.get("embedding_config", {})
-            embedding_supported = config.get("openai_compatible") is True if cohere else model.get("supportsEmbeddings", previous.get("embeddings", {}).get("supported", openai_embedding))
-            model["capability_status"] = {
-                "chat": support(False if known_embedding or custom else model.get("supportsChat", previous.get("chat", {}).get("supported", not image_only))),
-                "image_generation": support(False if known_embedding or custom else model.get("supportsImageGeneration", previous.get("image_generation", {}).get("supported", image_only)), api=previous.get("image_generation", {}).get("api", "images")),
-                "embeddings": support(embedding_supported, api="openai", source="catalog" if known_embedding else "declared"),
-            }
+            model["capability_status"] = CONNECTIONS.describe_model_capabilities(
+                model, endpoint["provider"], endpoint=endpoint,
+            )
             if model["capability_status"]["embeddings"]["supported"]:
-                policy = copy.deepcopy(model.get("embedding_policy") or {})
-                default_dimensions = 1024 if cohere and "v3" in str(name).lower() else 3072 if name == "text-embedding-3-large" else 1536 if known_embedding else None
-                policy.update({
-                    "dimensions": config.get("dimensions", policy.get("dimensions", default_dimensions)),
-                    "max_input_tokens": config.get("max_input_tokens", policy.get("max_input_tokens", 512 if cohere else 8192 if openai_embedding else None)),
-                    "api": "openai", "requires_input_type": False,
-                    "tokenizer": "cl100k_base" if openai_embedding else "conservative",
-                })
-                model["embedding_policy"] = policy
+                model["embedding_policy"] = CONNECTIONS.resolve_embedding_policy(model)
 
     @staticmethod
     def editor_endpoint(endpoint):
@@ -186,6 +174,71 @@ class AIConnectionsFixture(AdminSettingsFixture):
         for model in result.get("models", []):
             model.pop("embedding_policy", None)
         return result
+    def refresh_capabilities(self):
+        for endpoint in self.endpoints:
+            self.resolve_models(endpoint)
+
+    def add_custom_embedding_connection(self, api_type="openai", auth_type="api_key"):
+        embedding = embedding_model("custom-embedding")
+        embedding["deploymentName"] = "embedding-wire-alias"
+        embedding["embedding_config"] = {
+            "max_batch_size": 2, "model_revision": "fixture-revision",
+            "document_prefix": "passage: ", "query_prefix": "query: ",
+        }
+        embedding["vendorOptions"] = {"future": ["retained"]}
+        image = copy.deepcopy(self.endpoints[0]["models"][0])
+        image.update({
+            "supportsImageEditing": True, "supportsImageMasking": True,
+            "image_generation_api": "responses",
+        })
+        endpoint = connection("custom-vectors", "Custom Mixed Gateway", [image, embedding], provider="custom")
+        endpoint["api_type"] = api_type
+        endpoint["connection"].update(endpoint="https://gateway.example.test/prefix/api/v1", url_mode="exact")
+        endpoint["connection"].pop("openai_api_version", None)
+        if api_type == "azure_openai":
+            endpoint["connection"]["api_version"] = "2025-04-01-preview"
+        endpoint["auth"] = {"type": auth_type}
+        endpoint["has_api_key"] = auth_type == "api_key"
+        endpoint["has_bearer_token"] = auth_type == "bearer"
+        endpoint["has_client_secret"] = auth_type == "oauth2_client_credentials"
+        if auth_type == "oauth2_client_credentials":
+            endpoint["auth"].update(token_url="https://identity.example.test/token", client_id="fixture-client")
+        self.endpoints.append(endpoint)
+        self.refresh_capabilities()
+        return endpoint
+
+    def add_embedding_alias(self):
+        embedding = embedding_model("alias-embedding")
+        embedding["deploymentName"] = "saved-wire-alias"
+        endpoint = connection("alias-vectors", "Saved Embedding Alias", [embedding], provider="openai_compatible")
+        endpoint["connection"] = {
+            "endpoint": "https://gateway.example.test/preserved/base",
+            "operation_settings": {"embeddings": {"api": "openai", "auth_header": "authorization"}},
+        }
+        self.endpoints.append(endpoint)
+        self.refresh_capabilities()
+        return endpoint
+
+    def add_provider_image_connection(self, model_name):
+        endpoint = connection("provider-image", "Provider Images", [{
+            "id": "provider-image-model", "deploymentName": "image-wire-alias",
+            "modelName": model_name, "displayName": model_name, "enabled": True,
+            "supportsChat": True,
+        }], provider="new_foundry")
+        endpoint["connection"].update({
+            "endpoint": "https://resource.services.ai.azure.com/api/projects/project",
+            "openai_api_version": "v1", "project_api_version": "v1",
+        })
+        self.endpoints.append(endpoint)
+        self.refresh_capabilities()
+        return endpoint
+
+    @staticmethod
+    def retain_credentials(endpoint, previous=None):
+        auth = endpoint.setdefault("auth", {})
+        for field in ("api_key", "bearer_token", "client_secret"):
+            marker = f"has_{field}"
+            endpoint[marker] = bool(auth.pop(field, "")) or endpoint.get(marker, False) or (previous or {}).get(marker, False)
 
     def capability_response(self, capability):
         choices = []
@@ -200,14 +253,15 @@ class AIConnectionsFixture(AdminSettingsFixture):
                 if capability == "embeddings":
                     policy = model.get("embedding_policy", {})
                     if (
-                        policy.get("api") != "openai" or policy.get("requires_input_type")
+                        policy.get("api") != "openai"
                         or any(type(policy.get(key)) is not int or policy[key] <= 0 for key in ("dimensions", "max_input_tokens"))
                     ):
                         continue
                 choices.append({
                     **reference(endpoint["id"], model["id"], endpoint["provider"]),
                     "connection_name": endpoint["name"], "label": model["displayName"],
-                    "deployment_name": model["deploymentName"], "capability": status,
+                    "deployment_name": ENDPOINT_TYPES.resolve_model_endpoint_request_model(endpoint, model),
+                    "capability": status,
                     **({"embedding_policy": {
                         key: value for key, value in model.get("embedding_policy", {}).items()
                         if key in PUBLIC_EMBEDDING_POLICY_FIELDS
@@ -261,13 +315,19 @@ class AIConnectionsFixture(AdminSettingsFixture):
             route.fulfill(json={
                 "endpoints": [self.editor_endpoint(endpoint) for endpoint in self.endpoints], "multi_endpoint_enabled": self.settings["enable_multi_model_endpoints"],
                 "migration": self.migration, "embedding_migration": self.embedding_migration,
+                "default_notices": self.default_notices, "custom_api_types": self.custom_api_types,
+                "custom_network_policy": {
+                    "allow_private_custom_model_endpoints": self.settings.get("allow_private_custom_model_endpoints", False),
+                    "allow_insecure_custom_model_endpoints": self.settings.get("allow_insecure_custom_model_endpoints", False),
+                    "custom_model_endpoint_ca_bundle_path": self.settings.get("custom_model_endpoint_ca_bundle_path", ""),
+                },
             })
         elif path == "/api/v2/admin/model-endpoints" and request.method == "POST":
             saved = request.post_data_json
             self.connection_writes.append(copy.deepcopy(saved))
             saved["id"] = "manual-connection"
             self.resolve_models(saved)
-            saved["has_api_key"] = bool(saved.get("auth", {}).pop("api_key", ""))
+            self.retain_credentials(saved)
             self.endpoints.append(saved)
             route.fulfill(json={"endpoint": self.editor_endpoint(saved)})
         elif path.startswith("/api/v2/admin/model-endpoints/") and request.method == "PATCH":
@@ -279,9 +339,19 @@ class AIConnectionsFixture(AdminSettingsFixture):
                 self.expected_http_errors += 1
                 route.fulfill(status=self.connection_error_status, json={"error": self.connection_error or "The connection could not be saved."})
             else:
+                previous = copy.deepcopy(endpoint)
                 endpoint.update(changes)
+                self.retain_credentials(endpoint, previous)
                 self.resolve_models(endpoint)
                 route.fulfill(json={"endpoint": self.editor_endpoint(endpoint)})
+        elif path.startswith("/api/v2/admin/model-endpoints/") and request.method == "DELETE":
+            if self.reject_connection:
+                self.reject_connection = False
+                self.expected_http_errors += 1
+                route.fulfill(status=self.connection_error_status, json={"error": self.connection_error or "The connection could not be deleted."})
+            else:
+                self.endpoints = [endpoint for endpoint in self.endpoints if endpoint["id"] != path.rsplit("/", 1)[-1]]
+                route.fulfill(json={"success": True})
         elif path == "/api/v2/admin/settings/test-connection" and request.method == "POST":
             if request.post_data_json.get("test_type") == "embedding":
                 self.embedding_tests.append(request.post_data_json)
@@ -295,6 +365,9 @@ class AIConnectionsFixture(AdminSettingsFixture):
         elif path == "/api/models/test-connection":
             self.connection_tests.append(request.post_data_json)
             route.fulfill(json={"success": True, "count": 2})
+        elif path == "/api/models/test-model":
+            self.chat_tests.append(request.post_data_json)
+            route.fulfill(json={"success": True})
         elif path == "/api/models/vision-capability":
             route.fulfill(json={"models": {}})
         else:

@@ -22,9 +22,12 @@ import type {
     ImageRevisionChatTurn,
     ImageRevisionEntry,
     ImageRevisionOrigin,
+    ImageRevisionOperation,
 } from './endpoints';
+import type { ImageEditCapability } from './types';
 
-export type { ImageRevision, ImageRevisionChatTurn, ImageRevisionOrigin } from './endpoints';
+export type { ImageRevision, ImageRevisionChatTurn, ImageRevisionOrigin, ImageRevisionOperation } from './endpoints';
+export type { ImageEditCapability } from './types';
 
 /** Longest instruction the server accepts. Matches MAX_INSTRUCTION_LENGTH. */
 export const MAX_IMAGE_INSTRUCTION_LENGTH = 2000;
@@ -32,16 +35,14 @@ export const MAX_IMAGE_INSTRUCTION_LENGTH = 2000;
 /** Longest prompt the server stores. Matches MAX_PROMPT_LENGTH. */
 export const MAX_IMAGE_PROMPT_LENGTH = 4000;
 
-/** Sizes the GPT image models emit. Anything else is rejected by the API. */
-export const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536'] as const;
+/** Friendly labels only; the server profile decides which sizes are offered. */
 export const IMAGE_SIZE_LABELS: Record<string, string> = {
     '1024x1024': 'Square',
     '1536x1024': 'Landscape',
     '1024x1536': 'Portrait',
+    '1024x768': 'Landscape',
+    '768x1024': 'Portrait',
 };
-
-export const IMAGE_QUALITIES = ['low', 'medium', 'high'] as const;
-export const IMAGE_BACKGROUNDS = ['opaque', 'transparent'] as const;
 
 /** How a version came about, in words a reader recognises. */
 export const IMAGE_ORIGIN_LABELS: Record<string, string> = {
@@ -51,33 +52,126 @@ export const IMAGE_ORIGIN_LABELS: Record<string, string> = {
     control: 'Rendering change',
 };
 
-/** What the deployment can do to an existing image. */
-export interface ImageEditCapability {
-    /** `masked` supports changing a region; `regenerate` can only replace the whole image. */
-    mode: 'masked' | 'regenerate';
-    model_name: string;
-    /** Why region editing is unavailable, worth showing rather than hiding. */
-    reason: string;
+function text(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
 }
 
-const DEFAULT_CAPABILITY: ImageEditCapability = {
-    mode: 'regenerate',
-    model_name: '',
-    reason: '',
-};
+function options(value: unknown): string[] {
+    return Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
+}
 
-/**
- * What the configured image deployment can do.
- *
- * Resolved server-side, because the answer depends on which model the selected deployment runs
- * and which API version is set, and neither is something the browser can see. Defaulting to
- * `regenerate` matters: it is the conservative answer, so a bootstrap that has not resolved
- * offers the operation that always works rather than one that might not.
- */
+/** Missing or inconsistent capabilities must never become permission to run inference. */
+export function toImageEditCapability(value: unknown): ImageEditCapability {
+    const source = value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+    const editing = source.editing === true;
+    const masking = source.masking === true;
+    const mode = (
+        source.mode === 'masked' && editing && masking
+        || source.mode === 'edit' && editing && !masking
+        || source.mode === 'regenerate' && !editing && !masking
+    ) && typeof source.editing === 'boolean' && typeof source.masking === 'boolean'
+        ? source.mode as ImageEditCapability['mode']
+        : 'unavailable';
+    const availability = source.availability === 'documented' || source.availability === 'unavailable'
+        ? source.availability
+        : 'unknown';
+    const enabled = source.enabled === true && mode !== 'unavailable' && availability !== 'unavailable';
+    return {
+        enabled,
+        mode: enabled ? mode : 'unavailable',
+        model_name: text(source.model_name),
+        reason: text(source.reason) || (enabled
+            ? ''
+            : 'Image generation and editing are unavailable. Ask an administrator to review the image model.'),
+        provider_label: text(source.provider_label),
+        cloud_label: text(source.cloud_label),
+        availability,
+        availability_reason: text(source.availability_reason),
+        editing: enabled && editing,
+        masking: enabled && masking,
+        sizes: options(source.sizes),
+        qualities: options(source.qualities),
+        backgrounds: options(source.backgrounds),
+    };
+}
+
+/** Read only safe, authoritative operation metadata, never model-name or hosting-cloud guesses. */
 export function useImageEditCapability(): ImageEditCapability {
-    return useBootstrapStore(
-        (state) => state.data?.capabilities?.image_edit ?? DEFAULT_CAPABILITY,
+    const capability = useBootstrapStore((state) => state.data?.capabilities?.image_edit);
+    return useMemo(() => toImageEditCapability(capability), [capability]);
+}
+
+export interface ImageRenderingOptions {
+    size?: string;
+    quality?: string;
+    background?: string;
+}
+
+export interface ImageRevisionChange extends ImageRenderingOptions {
+    origin?: ImageRevisionOrigin;
+    operation?: ImageRevisionOperation;
+    instruction?: string;
+    prompt?: string;
+    mask?: string;
+    maskRegions?: number;
+}
+
+/** Drop local option selections that no longer belong to the selected profile. */
+export function imageOptionsForCapability(
+    capability: ImageEditCapability,
+    selected: ImageRenderingOptions,
+): ImageRenderingOptions {
+    return {
+        ...(selected.size && capability.sizes.includes(selected.size) ? { size: selected.size } : {}),
+        ...(selected.quality && capability.qualities.includes(selected.quality) ? { quality: selected.quality } : {}),
+        ...(selected.background && capability.backgrounds.includes(selected.background) ? { background: selected.background } : {}),
+    };
+}
+
+export function imageRevisionOperation(
+    capability: ImageEditCapability,
+    request: ImageRevisionChange,
+): ImageRevisionOperation {
+    return request.operation ?? (
+        (request.origin ?? 'ai') === 'ai' && (capability.mode === 'masked' || capability.mode === 'edit')
+            ? 'edit'
+            : 'regenerate'
     );
+}
+
+/** Recheck at submission too, so a refreshed bootstrap cannot leave a stale paid operation. */
+export function describeImageRevisionProblem(
+    capability: ImageEditCapability,
+    request: ImageRevisionChange,
+): string | null {
+    if (!capability.enabled || capability.mode === 'unavailable' || capability.availability === 'unavailable') {
+        return capability.reason || 'Image generation and editing are unavailable. You can still restore saved versions.';
+    }
+    const operation = imageRevisionOperation(capability, request);
+    if (operation !== 'edit' && operation !== 'regenerate') {
+        return 'The image operation is unavailable. Reopen the editor and choose a supported operation.';
+    }
+    if (operation === 'edit' && (!capability.editing
+        || (capability.mode !== 'masked' && capability.mode !== 'edit'))) {
+        return 'The selected image model cannot edit a source image. Use whole-image regeneration instead.';
+    }
+    if ((request.mask || request.maskRegions)
+        && (operation !== 'edit' || capability.mode !== 'masked' || !capability.masking)) {
+        return 'The selected operation cannot use a region mask. Clear the selection and review the image model.';
+    }
+    for (const [key, allowed] of [
+        ['size', capability.sizes],
+        ['quality', capability.qualities],
+        ['background', capability.backgrounds],
+    ] as const) {
+        const value = request[key];
+        if (value !== undefined && !allowed.includes(value)) {
+            return `The selected image model does not support that ${key}. Review the rendering controls and try again.`;
+        }
+    }
+    return null;
 }
 
 /** The revisions in a stored entry, ignoring anything that is not one. */
@@ -149,16 +243,7 @@ export interface ImageRevisionState {
     /** The prompt describing the version showing, which the Prompt tab edits. */
     prompt: string;
     /** Ask the model to change the image. */
-    revise: (request: {
-        origin?: ImageRevisionOrigin;
-        instruction?: string;
-        prompt?: string;
-        mask?: string;
-        maskRegions?: number;
-        size?: string;
-        quality?: string;
-        background?: string;
-    }) => Promise<boolean>;
+    revise: (request: ImageRevisionChange) => Promise<boolean>;
     /** Show one of the stored versions. Nothing is discarded. */
     restore: (revisionId: string) => Promise<boolean>;
     /** The URL of one stored version, for the history thumbnails. */
@@ -251,23 +336,15 @@ export function useImageRevisions(
     );
 
     const revise = useCallback(
-        (request: {
-            origin?: ImageRevisionOrigin;
-            instruction?: string;
-            prompt?: string;
-            mask?: string;
-            maskRegions?: number;
-            size?: string;
-            quality?: string;
-            background?: string;
-        }) => {
+        (request: ImageRevisionChange) => {
+            const capability = toImageEditCapability(useBootstrapStore.getState().data?.capabilities?.image_edit);
             const origin = request.origin ?? 'ai';
-            const problem =
+            const problem = describeImageRevisionProblem(capability, request) || (
                 origin === 'ai'
                     ? describeInstructionProblem(request.instruction ?? '')
                     : origin === 'prompt'
                       ? describePromptProblem(request.prompt ?? '')
-                      : null;
+                      : null);
             if (problem) {
                 setError(problem);
                 return Promise.resolve(false);
@@ -279,6 +356,7 @@ export function useImageRevisions(
                     conversationId,
                     conversationKind,
                     origin,
+                    operation: imageRevisionOperation(capability, request),
                     instruction: (request.instruction ?? '')
                         .trim()
                         .slice(0, MAX_IMAGE_INSTRUCTION_LENGTH),

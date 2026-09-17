@@ -127,6 +127,11 @@ def load_model_capability_catalog(force_refresh=False, *, strict_identity=False)
             capabilities["reasoningPolicy"] = copy.deepcopy(record["reasoningPolicy"])
         if "embeddingPolicy" in record:
             capabilities["embeddingPolicy"] = copy.deepcopy(record["embeddingPolicy"])
+        for field_name in ("imageProfiles", "imageLifecycle"):
+            if isinstance(record.get(field_name), Mapping):
+                capabilities[field_name] = copy.deepcopy(record[field_name])
+        if record.get("provider"):
+            capabilities["publisher"] = record["provider"]
         identifiers = _iter_catalog_record_identifiers(record)
         if strict_identity:
             identifiers = (
@@ -137,6 +142,13 @@ def load_model_capability_catalog(force_refresh=False, *, strict_identity=False)
         for identifier in identifiers:
             catalog[identifier] = copy.deepcopy(capabilities)
     return catalog
+
+
+def get_image_operation_profile(profile_id):
+    """Return an isolated provider operation profile from the same cached catalog."""
+    profiles = _load_model_capability_catalog_document().get("imageOperationProfiles") or {}
+    profile = profiles.get(profile_id) if isinstance(profiles, Mapping) else None
+    return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
 
 
 def get_model_capability_catalog_records():
@@ -264,13 +276,13 @@ def get_model_catalog_capabilities(model, *, strict_identity=False):
     Vision retains its legacy deployment-name heuristic separately. Image tool
     support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
     """
-    underlying = next((
-        _get_record_field(model, field_name)
-        for field_name in ("modelName", "behavior_name")
-        if isinstance(_get_record_field(model, field_name), str)
-        and _get_record_field(model, field_name).strip()
-    ), "")
-    identifiers = [underlying] if str(underlying or "").strip() else _iter_model_identifiers(model)
+    underlying = ""
+    for field_name in ("modelName", "behavior_name"):
+        value = _get_record_field(model, field_name)
+        if isinstance(value, str) and value.strip():
+            underlying = value
+            break
+    identifiers = [underlying] if underlying else _iter_model_identifiers(model)
     if strict_identity and not underlying and not isinstance(model, str):
         identifiers = next((
             [_get_record_field(model, field_name)]

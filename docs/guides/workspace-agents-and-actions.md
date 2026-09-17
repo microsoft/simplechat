@@ -4,7 +4,7 @@ title: "Build agents and actions in My Workspace"
 description: "Configure a reusable assistant and its approved tools without leaving the V2 workspace."
 section: "Guides"
 audience: user
-version: "0.261.096"
+version: "0.261.122"
 ---
 
 ## What this does
@@ -16,6 +16,8 @@ the classic popup wizards.
 
 Implemented in version: **0.261.096**, recorded in
 `application/single_app/config.py`.
+
+Remote-only MCP integration updated in version: **0.261.122**.
 
 This guide concerns your personal workspace. Group and administrator management
 continue to use their existing interfaces and permissions.
@@ -61,6 +63,16 @@ specific without expanding the agent's permissions.
 then configure only the connection, authentication, and capability fields that
 apply to that type. For example, OpenAPI actions use a specification, while MCP
 actions can discover the server's available tools.
+
+MCP actions use remote streamable HTTP, SSE, or WebSocket transports. Local commands
+and stdio are retired in every scope, including administrator-managed global actions.
+An existing stdio action can still be reviewed or deleted. To use it again, explicitly
+select a supported remote transport and provide its endpoint; opening the editor
+does not convert the action or run its old command.
+
+For new Microsoft 365 integrations, use a source-specific Microsoft 365 action.
+Existing combined Microsoft Graph actions remain editable, but cannot be created,
+cloned, or restored after deletion.
 
 If an OpenAPI specification is hosted at a URL, download it first and import its
 content. Direct URL import remains disabled; entering the API's base URL is not
