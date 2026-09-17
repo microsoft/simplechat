@@ -11,6 +11,11 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from functions_embedding_policy import (
+    EmbeddingPolicyError,
+    normalize_embedding_config,
+    resolve_embedding_policy,
+)
 from functions_model_capabilities import (
     get_model_catalog_capabilities,
     resolve_model_vision_support,
@@ -20,14 +25,26 @@ from functions_image_capabilities import (
     IMAGE_PROVIDERS,
     resolve_image_model_capability,
 )
+from functions_model_endpoint_types import get_model_endpoint_api_type
 
 
 CHAT_CAPABILITY = "chat"
 IMAGE_GENERATION_CAPABILITY = "image_generation"
+EMBEDDINGS_CAPABILITY = "embeddings"
 IMAGE_SELECTION_KEY = "image_generation_model_selection"
 IMAGE_MIGRATION_VERSION_KEY = "ai_connections_image_migration_version"
 IMAGE_MIGRATION_VERSION = 1
+EMBEDDING_SELECTION_KEY = "embedding_model_selection"
+EMBEDDING_MIGRATION_VERSION_KEY = "ai_connections_embedding_migration_version"
+EMBEDDING_MIGRATION_VERSION = 1
 EMPTY_MODEL_SELECTION = {"endpoint_id": "", "model_id": "", "provider": ""}
+EMBEDDING_PROVIDERS = ("aoai", "aifoundry", "new_foundry", "custom", "openai_compatible")
+_EMBEDDING_OVERRIDE_FIELDS = ("supportsEmbeddings", "supports_embeddings")
+_PUBLIC_EMBEDDING_POLICY_FIELDS = (
+    "default_dimensions", "dimensions", "supports_dimensions", "request_dimensions",
+    "min_dimensions", "max_dimensions", "allowed_dimensions", "max_input_tokens",
+    "max_batch_size", "max_batch_tokens", "tokenizer", "api", "requires_input_type",
+)
 _DIRECT_IMAGE_PATTERN = re.compile(r"^(?:gpt-image(?:-|$)|dall-e(?:-|$)|dalle(?:-|$))")
 _NON_CHAT_PATTERN = re.compile(
     r"embedding|^whisper|(?:^|-)(?:tts|transcribe|realtime)(?:-|$)"
@@ -60,6 +77,14 @@ CAPABILITY_DEFINITIONS = {
         "generatesImages",
         IMAGE_PROVIDERS,
         feature_flag="enable_image_generation", api_routes=IMAGE_APIS,
+    ),
+    EMBEDDINGS_CAPABILITY: CapabilityDefinition(
+        EMBEDDINGS_CAPABILITY,
+        "Embeddings",
+        EMBEDDING_SELECTION_KEY,
+        "generatesEmbeddings",
+        EMBEDDING_PROVIDERS,
+        api_routes=("azure_openai", "openai"),
     ),
 }
 _CLIENT_FACTORIES = {}
@@ -150,14 +175,11 @@ def _model_name(model):
         return model.strip().lower().replace("_", "-")
     if not isinstance(model, Mapping):
         return ""
-    return str(
-        model.get("modelName")
-        or model.get("deploymentName")
-        or model.get("deployment")
-        or model.get("name")
-        or model.get("id")
-        or ""
-    ).strip().lower().replace("_", "-")
+    for field_name in ("modelName", "behavior_name", "deploymentName", "deployment", "name"):
+        value = model.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower().replace("_", "-")
+    return str(model.get("id") or "").strip().lower().replace("_", "-")
 
 
 def _declared_flag(model, *names):
@@ -168,6 +190,17 @@ def _declared_flag(model, *names):
         if isinstance(value, bool):
             return value
     return None
+
+
+def _declared_embedding_flag(model):
+    if not isinstance(model, Mapping):
+        return None
+    values = [model[field] for field in _EMBEDDING_OVERRIDE_FIELDS if field in model]
+    if any(value is False for value in values):
+        return False
+    if any(not isinstance(value, bool) for value in values):
+        raise EmbeddingPolicyError("Embedding support must be true or false.")
+    return True if values else None
 
 
 def _support(supported, source, reason="", api=""):
@@ -182,9 +215,11 @@ def _support(supported, source, reason="", api=""):
 def resolve_model_capability(model, capability, provider="aoai", *, endpoint=None):
     """Describe technical support; availability and transient service health are separate."""
     definition = get_capability_definition(capability)
-    provider = str(provider or "aoai").lower()
+    provider = str(provider or "aoai").strip().lower()
     if definition.supported_providers and provider not in definition.supported_providers:
         return _support(False, "provider", "This connection type has no supported adapter for this capability.")
+    if capability == CHAT_CAPABILITY and provider == "openai_compatible":
+        return _support(False, "provider", "Custom OpenAI-compatible connections support embeddings only.")
 
     if definition.support_resolver is not None:
         result = definition.support_resolver(model, provider)
@@ -198,27 +233,72 @@ def resolve_model_capability(model, capability, provider="aoai", *, endpoint=Non
         )
 
     name = _model_name(model)
-    catalog = get_model_catalog_capabilities(model)
+    catalog = get_model_catalog_capabilities(model, strict_identity=capability == EMBEDDINGS_CAPABILITY)
     direct_image = bool(_DIRECT_IMAGE_PATTERN.search(name))
     if capability == CHAT_CAPABILITY:
         underlying_is_named = isinstance(model, str) or (
-            isinstance(model, Mapping) and bool(str(model.get("modelName") or "").strip())
+            isinstance(model, Mapping) and any(
+                isinstance(model.get(field_name), str) and model[field_name].strip()
+                for field_name in ("modelName", "behavior_name")
+            )
         )
+        embedding_only = catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False
         image_only = catalog and catalog.get("generatesImages") is True and catalog.get("generatesText") is False
-        if direct_image or image_only or (underlying_is_named and _NON_CHAT_PATTERN.search(name)):
+        if direct_image or image_only or embedding_only or (underlying_is_named and _NON_CHAT_PATTERN.search(name)):
             return _support(False, "model", "This model is not supported by the text-chat adapter.")
         declared = _declared_flag(model, "supportsChat", "supports_chat")
         if declared is not None:
             return _support(declared, "declared", "" if declared else "Chat is not supported by this model.", "chat")
-        if catalog is not None:
+        if catalog is not None and "generatesText" in catalog:
             supported = bool(catalog.get("generatesText"))
             return _support(supported, "catalog", "" if supported else "This model does not produce text.", "chat")
+        if _declared_flag(model, "supportsEmbeddings", "supports_embeddings") is True:
+            return _support(False, "declared", "This embedding deployment has not been declared as a chat model.")
         # Existing manually named chat deployments must not disappear on upgrade.
         return _support(bool(name), "legacy", "" if name else "A deployment name is required.", "chat")
 
     if capability == IMAGE_GENERATION_CAPABILITY:
+        if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesImages") is False:
+            return _support(False, "model", "This embedding model does not generate images.")
         support = resolve_image_model_capability(model, endpoint, provider)
         return _support(support["supported"], support["source"], support["reason"], support["api"])
+
+    if capability == EMBEDDINGS_CAPABILITY:
+        if provider == "openai_compatible" and isinstance(endpoint, Mapping):
+            auth_type = str((endpoint.get("auth") or {}).get("type") or "api_key").strip().lower()
+            if auth_type not in ("api_key", "key"):
+                return _support(False, "provider", "The embedding-only connection type requires API key authentication.")
+        if provider == "custom":
+            connection = endpoint if isinstance(endpoint, Mapping) else {}
+            auth = connection.get("auth") or {}
+            auth_type = str(auth.get("type") or "api_key").strip().lower()
+            if get_model_endpoint_api_type(connection) not in ("openai", "azure_openai") or auth_type not in ("api_key", "key", "bearer"):
+                return _support(
+                    False, "provider",
+                    "Embeddings require a Custom OpenAI or Azure OpenAI API connection with API key or bearer authentication.",
+                )
+        try:
+            declared = _declared_embedding_flag(model)
+        except EmbeddingPolicyError as error:
+            return _support(False, "declared", error.public_message)
+        if declared is False:
+            return _support(False, "declared", "Embeddings are not supported by this model.")
+        if declared is not True and not (catalog and catalog.get("generatesEmbeddings") is True):
+            return _support(
+                False, "unknown",
+                "Embedding support is not established. Select a catalog model or declare supportsEmbeddings with verified embedding limits.",
+            )
+        try:
+            policy = resolve_embedding_policy(model)
+        except EmbeddingPolicyError as error:
+            return _support(False, "policy", error.public_message)
+        if policy["api"] != "openai":
+            return _support(
+                False, "provider",
+                "This model requires an explicitly declared OpenAI-compatible gateway that handles its embedding semantics. Native and deprecated APIs are not supported.",
+                "unsupported",
+            )
+        return _support(True, "declared" if declared is True else "catalog", api=policy["api"])
 
     supported = bool(catalog and catalog.get(definition.catalog_flag))
     return _support(
@@ -254,7 +334,10 @@ def normalize_model_capability_fields(model):
     """Validate new metadata without discarding unrelated, existing model properties."""
     normalized = dict(model)
     normalized.pop("capability_status", None)
-    for field in ("supportsChat", "supportsImageGeneration", "supportsImageEditing", "supportsImageMasking"):
+    for field in (
+        "supportsChat", "supportsImageGeneration", "supportsImageEditing", "supportsImageMasking",
+        "supportsEmbeddings", "supports_embeddings",
+    ):
         if field in normalized and not isinstance(normalized[field], bool):
             raise AIConnectionError(f"{field} must be true or false.")
     if "enabled_capabilities" in normalized:
@@ -268,6 +351,18 @@ def normalize_model_capability_fields(model):
         raise AIConnectionError("The image-generation API must name an implemented image operation.")
     if normalized.get("supportsImageMasking") is True and normalized.get("supportsImageEditing") is False:
         raise AIConnectionError("Masked image editing requires image-editing support.")
+    try:
+        if "embedding_config" in normalized:
+            normalized["embedding_config"] = normalize_embedding_config(normalized["embedding_config"])
+        catalog = get_model_catalog_capabilities(normalized, strict_identity=True)
+        if (
+            normalized.get("embedding_config")
+            or _declared_embedding_flag(normalized) is True
+            or (catalog and catalog.get("generatesEmbeddings") is True)
+        ):
+            resolve_embedding_policy(normalized)
+    except EmbeddingPolicyError as error:
+        raise AIConnectionError(error.public_message) from None
     return normalized
 
 
@@ -369,6 +464,19 @@ def image_settings_use_connections(settings):
     )
 
 
+def embedding_connection_import_is_complete(settings):
+    version = settings.get(EMBEDDING_MIGRATION_VERSION_KEY) if isinstance(settings, Mapping) else None
+    return isinstance(version, int) and not isinstance(version, bool) and version >= EMBEDDING_MIGRATION_VERSION
+
+
+def embedding_settings_use_connections(settings):
+    """Embedding handoff is independent of image import and never resurrects a cleared default."""
+    return isinstance(settings, Mapping) and (
+        EMBEDDING_SELECTION_KEY in settings
+        or embedding_connection_import_is_complete(settings)
+    )
+
+
 def build_capability_model_catalog(endpoints, capability=CHAT_CAPABILITY):
     """Return non-secret, ID-qualified picker entries from enabled global connections."""
     choices = []
@@ -392,7 +500,7 @@ def build_capability_model_catalog(endpoints, capability=CHAT_CAPABILITY):
                 else resolve_model_capability(model, capability, endpoint.get("provider"), endpoint=endpoint)
             )
             support.pop("connection_provider", None)
-            choices.append({
+            choice = {
                 "endpoint_id": endpoint_id,
                 "model_id": model_id,
                 "provider": str(endpoint.get("provider") or "aoai"),
@@ -400,7 +508,14 @@ def build_capability_model_catalog(endpoints, capability=CHAT_CAPABILITY):
                 "label": str(model.get("displayName") or model.get("modelName") or model.get("deploymentName") or model_id),
                 "deployment_name": request_model,
                 "capability": support,
-            })
+            }
+            if capability == EMBEDDINGS_CAPABILITY:
+                policy = resolve_embedding_policy(model)
+                choice["embedding_policy"] = {
+                    field: copy.deepcopy(policy[field])
+                    for field in _PUBLIC_EMBEDDING_POLICY_FIELDS if field in policy
+                }
+            choices.append(choice)
     return sorted(choices, key=lambda item: (item["connection_name"].lower(), item["label"].lower(), item["endpoint_id"], item["model_id"]))
 
 

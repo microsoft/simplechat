@@ -1,9 +1,9 @@
-# Shared AI Connections Framework (v0.261.107)
+# Shared AI Connections Framework (v0.261.108)
 
 ## Overview
 
-AI Connections reuses the existing `model_endpoints` registry for chat and image
-generation. Administrators configure a resource and its authentication once, publish
+AI Connections reuses the existing `model_endpoints` registry for chat, image
+generation, and text embeddings. Administrators configure a resource and its authentication once, publish
 appropriate models, and choose a separate default for each task. An image-only resource
 can remain separate from the chat resource without needing a second endpoint manager.
 
@@ -20,10 +20,14 @@ storage is enabled, and operation-specific clients for an existing supported dep
 Azure discovery and inference require their respective permissions; Custom
 connections use their configured API contract and credentials.
 
-Only `chat` and `image_generation` are registered product capabilities in this release.
-Embeddings, transcription, speech, computer use, and other integrations are deferred;
-their existing configuration is neither migrated nor replaced. Image integration
-does not add personal/group image defaults or a separate OpenAI credential manager.
+Embedding support was implemented in version **0.261.106**; the original chat/image
+framework was implemented in **0.261.105**. The registered capabilities are `chat`,
+`image_generation`, and `embeddings`. Transcription, speech, and computer use remain
+separate. See [Embedding connections](AI_CONNECTIONS_EMBEDDINGS.md) for supported
+transports, configuration import, and vector-compatibility restrictions.
+The combined Custom/image and embedding integration is available in **0.261.108**.
+Image integration does not add personal/group image defaults or a separate
+OpenAI credential manager.
 
 ## Architecture and persisted data
 
@@ -46,7 +50,8 @@ Defaults are references, not copies of endpoints or credentials:
 ```
 
 Chat keeps `default_model_selection`. Images use
-`image_generation_model_selection`. Resolving either reference finds the exact stored
+`image_generation_model_selection`. Embeddings use `embedding_model_selection`.
+Resolving a reference finds the exact stored
 connection/model pair and derives the provider from that connection. A caller cannot
 redirect it by supplying another provider, endpoint URL, or credential.
 
@@ -86,6 +91,8 @@ These are different questions and must remain separate:
 | --- | --- |
 | `supportsChat` | Optional boolean declaration of text-chat support |
 | `supportsImageGeneration` | Optional boolean declaration of image-generation support, not proof that the service is currently usable |
+| `supportsEmbeddings` | Optional declaration of compatible text embedding support; a model's vector dimensions and operation requirements are resolved separately |
+| `embedding_config` | Embedding dimension/input-budget overrides, model revision, and optional document/query prefixes; not a second credential record |
 | `supportsImageEditing` | Separate declaration of source-image editing for a compatible Custom operation |
 | `supportsImageMasking` | Separate uploaded-mask declaration; requires editing and cannot override a known missing mask adapter |
 | `image_generation_api` | Implemented image-operation metadata: `images`, `responses`, `mai`, or `flux`. Known catalog models select their operation automatically; unknown Custom declarations must identify a compatible API |
@@ -237,8 +244,9 @@ image settings that no longer control generation. Integrations must use
 `GET`/`PUT /api/v2/admin/capability-models/image_generation` and its `selection`
 reference instead of retrying a legacy catalog write.
 
-The legacy embedding endpoint,
-`GET`/`PUT /api/v2/admin/model-selection/embedding`, is unchanged.
+The legacy embedding selector follows the same handoff after embedding import:
+`GET`/`PUT /api/v2/admin/model-selection/embedding` returns `409` once embeddings use
+the shared default. Use `/api/v2/admin/capability-models/embeddings` instead.
 
 ## Automatic legacy image import
 
@@ -343,13 +351,13 @@ An extension needs more than a new key in the registry:
    persistence failures with targeted tests. Update the relevant settings/feature
    documentation and generated application-surface inventory when the UI changes.
 
-Registration does not provision resources, add providers, or implement embeddings,
+Registration does not provision resources, add providers, or implement
 speech, transcription, or computer use automatically.
 
 For example, a future adapter could describe service-provided voices through a
 resolver rather than a text-model catalog flag. This is an extension example, not
-a shipped voice integration: the active product capabilities remain chat and image
-generation, and their existing configuration boundaries are unchanged.
+a shipped voice integration. Chat, image generation, and embeddings have independent
+defaults and operation adapters.
 
 ## Testing and validation
 

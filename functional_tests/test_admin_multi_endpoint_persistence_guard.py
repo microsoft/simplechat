@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.261.107
+Version: 0.261.122
 Implemented in: 0.239.199; updated in 0.250.172
 
 This test ensures that once multi-endpoint model management is enabled, admin
@@ -15,7 +15,10 @@ import logging
 import os
 import sys
 import types
+from contextlib import nullcontext
+from unittest.mock import patch
 from test_support.versioning import assert_app_version_at_least
+from test_app_settings_store_consistency import FakeCosmos, FakeRedis, load_update_settings, store_module
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,39 +75,35 @@ def test_update_settings_preserves_enabled_multi_endpoint_flag():
     """Verify shared settings persistence cannot turn multi-endpoint back off."""
     print('🔍 Testing shared settings multi-endpoint persistence guard...')
 
-    functions_settings, original_modules = _load_functions_settings_module()
-    saved_items = []
-
-    try:
-        functions_settings.get_settings = lambda: {
-            'id': 'app_settings',
-            'enable_multi_model_endpoints': True,
-            'enable_enhanced_citations': True,
-            'model_endpoints': [{'id': 'endpoint-1'}],
-        }
-        functions_settings.cosmos_settings_container = types.SimpleNamespace(
-            upsert_item=lambda item: saved_items.append(json.loads(json.dumps(item)))
-        )
-        functions_settings.app_settings_cache = types.SimpleNamespace(
-            update_settings_cache=lambda settings: None
-        )
-
-        result = functions_settings.update_settings({
+    container = FakeCosmos()
+    container.document.update({
+        'enable_multi_model_endpoints': True,
+        'enable_enhanced_citations': True,
+        'model_endpoints': [{'id': 'endpoint-1'}],
+    })
+    cache = FakeRedis()
+    store = store_module.AppSettingsStore(container, cache, redis_required=True)
+    update_settings = load_update_settings(store)
+    coerce = update_settings.__globals__["coerce_multi_model_endpoint_enablement"]
+    compatibility = types.SimpleNamespace(
+        embedding_settings_write_guard=lambda *_args, **_kwargs: nullcontext(),
+    )
+    with patch.dict(sys.modules, {"functions_embedding_compatibility": compatibility}):
+        result = update_settings({
             'enable_multi_model_endpoints': False,
             'app_title': 'Updated Title',
         })
 
-        assert result is True, 'Expected update_settings to succeed'
-        assert saved_items, 'Expected update_settings to persist an updated settings item'
-        assert saved_items[-1]['enable_multi_model_endpoints'] is True, 'Multi-endpoint flag should remain enabled once set'
-        assert functions_settings.coerce_multi_model_endpoint_enablement(True, False) is True
-        assert functions_settings.coerce_multi_model_endpoint_enablement(False, True) is True
-        assert functions_settings.coerce_multi_model_endpoint_enablement(False, False) is False
+    assert result is True, 'Expected update_settings to succeed'
+    assert container.writes == 1, 'Expected one authoritative settings write'
+    assert container.document['enable_multi_model_endpoints'] is True
+    assert json.loads(cache.raw)["document"] == container.document
+    assert coerce(True, False) is True
+    assert coerce(False, True) is True
+    assert coerce(False, False) is False
 
-        print('✅ Shared settings multi-endpoint persistence guard passed')
-        return True
-    finally:
-        _restore_modules(original_modules)
+    print('✅ Shared settings multi-endpoint persistence guard passed')
+    return True
 
 
 def test_config_version_is_bumped_for_multi_endpoint_persistence_fix():

@@ -5,7 +5,8 @@
  * Implemented in: 0.261.122
  *
  * Loads the real editor, shared modal markup, and capacity editor with a small DOM
- * fixture. All fetches are intercepted; no app, browser service, or provider runs.
+ * fixture. Covers Custom auth, images, embeddings, capacity, and draft preservation.
+ * All fetches are intercepted; no app, browser service, or provider runs.
  * Run: node --experimental-vm-modules --test functional_tests\test_admin_model_endpoint_editor_integration.js
  */
 
@@ -229,7 +230,37 @@ function endpointFixture() {
     };
 }
 
-async function createHarness(endpoint = endpointFixture(), { visionLookup } = {}) {
+function embeddingFixture() {
+    const endpoint = endpointFixture();
+    endpoint.provider = "openai_compatible";
+    delete endpoint.api_type;
+    endpoint.auth = { type: "api_key" };
+    endpoint.has_api_key = true;
+    endpoint.has_bearer_token = false;
+    endpoint.connection = {
+        endpoint: "https://gateway.example.test/embedding/v1",
+        operation_settings: {
+            embeddings: { api: "openai", auth_header: "authorization", is_apim: false },
+            image_generation: { api: "images", futureOptions: [1, 2] }
+        }
+    };
+    endpoint.models = [{
+        id: 'embedding"][data-model-row-id="other',
+        deploymentName: "private-embedding", modelName: "private-underlying-model",
+        enabled: true, enabled_capabilities: ["embeddings", "future_task"], supportsEmbeddings: true,
+        contextWindow: 4096, inputTokenLimit: 2048,
+        embedding_config: {
+            dimensions: 768, max_input_tokens: 1024, model_revision: "revision-one",
+            openai_compatible: true, max_batch_size: 8, max_batch_tokens: 8192,
+            document_prefix: "passage: ", query_prefix: "query: "
+        },
+        embedding_policy: { dimensions: 768, default_dimensions: 768, max_input_tokens: 1024, api: "openai" },
+        capability_status: { embeddings: { supported: true, source: "declared", api: "openai" } }
+    }];
+    return endpoint;
+}
+
+async function createHarness(endpoint = endpointFixture(), { visionLookup, operationResult } = {}) {
     const document = new Element("document");
     document.ownerDocument = document;
     document.readyState = "loading";
@@ -244,9 +275,11 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup } = {}
         document.appendChild(element);
         return element;
     };
-    const template = addElement("template", "custom-model-endpoint-fields-template");
-    template.content = document.createDocumentFragment();
-    parseMarkup(paneMarkup.match(/<template id="custom-model-endpoint-fields-template">([\s\S]*?)<\/template>/)[1], template.content);
+    for (const [, id, markup] of paneMarkup.matchAll(/<template id="([^"]+)">([\s\S]*?)<\/template>/g)) {
+        const template = addElement("template", id);
+        template.content = document.createDocumentFragment();
+        parseMarkup(markup, template.content);
+    }
     addElement("div", "model-endpoints").dataset.customApiTypes = JSON.stringify(apiTypes);
     document.getElementById("model-endpoint-api-type").dataset.apiTypes = JSON.stringify(apiTypes.slice(0, 3));
     addElement("input", "model_endpoints_json");
@@ -285,7 +318,7 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup } = {}
             } else if (url === "/api/models/test-model") {
                 data = { resolved: { request_url: "https://gateway.example.test/prefix/v1/chat/completions" } };
             } else if (url === "/api/v2/admin/settings/test-connection") {
-                data = { success: true };
+                data = operationResult || { success: true, dimensions: 768 };
             } else {
                 throw new Error(`Unexpected offline request: ${url}`);
             }
@@ -303,8 +336,8 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup } = {}
     const editor = new vm.SourceTextModule(`${fs.readFileSync(editorPath, "utf8")}
         export {
             init, openModalForEndpoint, collectModalModels, buildEndpointPayload,
-            saveEndpoint, testModelConnection, testSavedImageModel,
-            cloneEndpointForDuplicate, requestModelName
+            saveEndpoint, testModelConnection, testSavedImageModel, testSavedOperationModel,
+            cloneEndpointForDuplicate, requestModelName, validateEmbeddingModels
         };
         export const readState = () => ({
             modelEndpoints, modalModels, modelVisionCapability, connectionDraftChanged, modalDraftChanged
@@ -342,13 +375,14 @@ test("shared controls and registry options occur once, including all Custom auth
     }
     const h = await createHarness();
     await h.open();
-    for (const id of ["model-endpoint-api-type", "model-endpoint-anthropic-version", "model-endpoint-api-type-help"]) {
+    for (const id of ["model-endpoint-api-type", "model-endpoint-anthropic-version", "model-endpoint-api-type-help", "model-endpoint-embedding-settings"]) {
         assert.equal(h.document.querySelectorAll("[id]").filter(element => element.id === id).length, 1);
     }
     assert.equal(h.get("model-endpoint-provider").options.filter(option => option.value === "custom").length, 1);
     assert.deepEqual(h.get("model-endpoint-api-type").options.map(option => option.value), apiTypes.map(option => option.value));
     assert.equal(h.get("model-endpoint-auth-type").value, "bearer");
     assert.equal(h.get("model-endpoint-auth-type").disabled, false);
+    assert.deepEqual(h.get("model-endpoint-auth-type").options.filter(option => !option.disabled).map(option => option.value), ["api_key", "bearer", "oauth2_client_credentials"]);
     assert.equal(h.get("model-endpoint-url-mode").value, "exact");
     assert.equal(h.get("model-endpoint-url-mode-group").classList.contains("d-none"), true);
     assert.equal(h.get("model-endpoint-bearer-group").classList.contains("d-none"), false);
@@ -568,6 +602,19 @@ test("late vision responses cannot restore capabilities from an old protocol or 
     assert.equal(h.rows()[0].querySelector("[data-supports-vision-for]").checked, false);
     resolveVision({ models: {} });
     await h.flush();
+
+    const mixedModelEndpoint = endpointFixture();
+    mixedModelEndpoint.models[0].supportsEmbeddings = true;
+    mixedModelEndpoint.models[0].embedding_config = { dimensions: 768, max_input_tokens: 1024 };
+    await h.open(mixedModelEndpoint);
+    const dimensions = h.rows()[0].querySelector('[data-config-key="dimensions"]');
+    dimensions.value = "1e3";
+    await dimensions.fire("input");
+    resolveVision({ models: { "request-model": { supports_vision: true, source: "catalog" } } });
+    await h.flush();
+    assert.equal(h.rows()[0].querySelector('[data-config-key="dimensions"]'), dimensions);
+    assert.equal(dimensions.value, "1e3");
+    assert.match(h.toasts.at(-1).message, /positive whole numbers/);
 });
 
 test("image tests use only a saved binding and duplicates need new credentials", async () => {
@@ -601,4 +648,184 @@ test("image tests use only a saved binding and duplicates need new credentials",
     assert.equal(h.staged()[1].enabled, false);
     assert.deepEqual(h.staged()[1].operation_profiles, endpointFixture().operation_profiles);
     assert.equal(h.staged()[1].models[0].contextWindow, 16000);
+});
+
+test("embedding metadata and operation edits preserve hidden image profiles, batch policy, and capacity", async () => {
+    const endpoint = embeddingFixture();
+    const h = await createHarness(endpoint);
+    await h.open();
+    assert.equal(h.get("model-endpoint-provider").options.filter(option => option.value === "openai_compatible").length, 1);
+    assert.equal(h.get("model-endpoint-auth-type").value, "api_key");
+    assert.deepEqual(h.get("model-endpoint-auth-type").options.filter(option => !option.disabled).map(option => option.value), ["api_key"]);
+    assert.equal(h.get("custom-model-endpoint-fields").classList.contains("d-none"), true);
+    const row = h.rows()[0];
+    assert.equal(row.querySelector("[data-supports-vision-for]"), null);
+    assert.equal(row.querySelector('[data-action="test-model"]').classList.contains("d-none"), true);
+    assert.equal(row.querySelector('[data-action="test-image"]').classList.contains("d-none"), true);
+    assert.equal(row.querySelector('[data-action="test-embeddings"]').classList.contains("d-none"), false);
+    row.querySelector('[data-config-key="dimensions"]').value = "1024";
+    row.querySelector('[data-config-key="max_input_tokens"]').value = "1536";
+    row.querySelector('[data-config-key="model_revision"]').value = "revision-two";
+    h.get("model-endpoint-embedding-apim").value = "true";
+    h.api.saveEndpoint();
+    const saved = h.staged()[0];
+    assert.equal(saved.models[0].embedding_config.dimensions, 1024);
+    assert.equal(saved.models[0].embedding_config.max_input_tokens, 1536);
+    assert.equal(saved.models[0].embedding_config.model_revision, "revision-two");
+    assert.equal(saved.models[0].embedding_config.document_prefix, "passage: ");
+    assert.equal(saved.models[0].embedding_config.query_prefix, "query: ");
+    assert.equal(saved.models[0].embedding_config.max_batch_size, 8);
+    assert.equal(saved.models[0].embedding_config.max_batch_tokens, 8192);
+    assert.equal(saved.models[0].contextWindow, 4096);
+    assert.equal(saved.models[0].inputTokenLimit, 2048);
+    assert.deepEqual(saved.models[0].enabled_capabilities, ["embeddings", "future_task"]);
+    assert.deepEqual(saved.operation_profiles, endpoint.operation_profiles);
+    assert.deepEqual(saved.connection.operation_settings.image_generation, endpoint.connection.operation_settings.image_generation);
+    assert.equal(saved.connection.operation_settings.embeddings.is_apim, true);
+    assert.equal(saved.connection.operation_settings.embeddings.auth_header, "authorization");
+    assert.equal(saved.has_api_key, true);
+    assert.equal(saved.auth.api_key, undefined);
+    assert.equal(saved.connection.openai_api_version, undefined);
+    assert.equal(h.events.at(-1).detail.saved, false);
+    assert.deepEqual(h.requests, []);
+    assert.deepEqual(h.errors, []);
+});
+
+test("embedding-only authentication does not constrain general Custom providers", async () => {
+    const h = await createHarness();
+    await h.open();
+    h.get("model-endpoint-provider").value = "openai_compatible";
+    await h.get("model-endpoint-provider").fire("change");
+    assert.equal(h.get("model-endpoint-auth-type").value, "api_key");
+    assert.deepEqual(h.get("model-endpoint-auth-type").options.filter(option => !option.disabled).map(option => option.value), ["api_key"]);
+    assert.equal(h.get("custom-model-endpoint-fields").classList.contains("d-none"), true);
+    h.get("model-endpoint-provider").value = "custom";
+    await h.get("model-endpoint-provider").fire("change");
+    assert.deepEqual(h.get("model-endpoint-auth-type").options.filter(option => !option.disabled).map(option => option.value), ["api_key", "bearer", "oauth2_client_credentials"]);
+    h.get("model-endpoint-auth-type").value = "bearer";
+    await h.get("model-endpoint-auth-type").fire("change");
+    assert.equal(h.get("model-endpoint-bearer-group").classList.contains("d-none"), false);
+    h.api.saveEndpoint();
+    assert.equal(h.staged()[0].auth.type, "bearer");
+    assert.equal(h.staged()[0].has_bearer_token, true);
+    assert.equal(h.staged()[0].models[0].modelName, "request-model");
+    assert.equal(h.staged()[0].models[0].image_generation_api, "images");
+    assert.deepEqual(h.staged()[0].operation_profiles, endpointFixture().operation_profiles);
+    assert.deepEqual(h.errors, []);
+});
+
+test("embedding dimensions require exact positive integers and unknown models cannot invent defaults", async () => {
+    const h = await createHarness(embeddingFixture());
+    await h.open();
+    const dimensions = h.rows()[0].querySelector('[data-config-key="dimensions"]');
+    assert.equal(dimensions.type, "text");
+    for (const key of ["dimensions", "max_input_tokens"]) {
+        const field = h.rows()[0].querySelector(`[data-config-key="${key}"]`);
+        const original = field.value;
+        for (const value of ["0", "-1", "1.5", "1e3", "NaN", "9007199254740992"]) {
+            field.value = value;
+            assert.throws(() => h.api.collectModalModels(), /positive whole numbers/);
+        }
+        field.value = original;
+    }
+    dimensions.value = "9007199254740992";
+    h.get("model-endpoint-provider").value = "aoai";
+    await h.get("model-endpoint-provider").fire("change");
+    assert.equal(h.get("model-endpoint-provider").value, "openai_compatible");
+    assert.equal(dimensions.value, "9007199254740992");
+    dimensions.value = "";
+    h.api.saveEndpoint();
+    assert.match(h.toasts.at(-1).message, /explicit dimensions and an input token limit/);
+    assert.equal(h.staged()[0].models[0].embedding_config.dimensions, 768);
+    assert.equal(h.get("modelEndpointModal").visible, true);
+    assert.equal(h.events.length, 0);
+
+    const undeclared = embeddingFixture().models[0];
+    delete undeclared.supportsEmbeddings;
+    assert.throws(() => h.api.validateEmbeddingModels([undeclared], h.api.buildEndpointPayload()), /explicit administrator declaration/);
+    undeclared.enabled = false;
+    assert.doesNotThrow(() => h.api.validateEmbeddingModels([undeclared], h.api.buildEndpointPayload()));
+});
+
+test("catalog embedding models never enter the chat default or receive invented dimension overrides", async () => {
+    const endpoint = embeddingFixture();
+    endpoint.provider = "aoai";
+    endpoint.connection.endpoint = "https://resource.example.test";
+    endpoint.connection.operation_settings.embeddings = { api: "azure_openai" };
+    endpoint.models[0].catalogModelId = "text-embedding-3-small";
+    endpoint.models[0].supportsChat = true;
+    endpoint.models[0].supportsImageGeneration = true;
+    endpoint.models[0].embedding_config = { model_revision: "verified-snapshot" };
+    endpoint.models[0].capability_status.embeddings.source = "catalog";
+    const h = await createHarness(endpoint);
+    await h.open();
+    assert.equal(h.get("default-model-selection").options.length, 1);
+    assert.equal(h.rows()[0].querySelector('[data-action="test-model"]').classList.contains("d-none"), true);
+    assert.equal(h.rows()[0].querySelector('[data-action="test-image"]').classList.contains("d-none"), true);
+    h.api.saveEndpoint();
+    const config = h.staged()[0].models[0].embedding_config;
+    assert.equal(config.dimensions, undefined);
+    assert.equal(config.max_input_tokens, undefined);
+    assert.equal(config.model_revision, "verified-snapshot");
+    assert.equal(h.staged()[0].models[0].deploymentName, "private-embedding");
+    assert.deepEqual(h.errors, []);
+});
+
+test("embedding inference overrides choose their own API and never rewrite Foundry project routing", async () => {
+    const endpoint = embeddingFixture();
+    endpoint.provider = "aoai";
+    endpoint.connection.endpoint = "https://resource.example.test";
+    endpoint.connection.operation_settings.embeddings = { endpoint: "https://resource.example.test/openai/v1/" };
+    const h = await createHarness(endpoint);
+    await h.open();
+    assert.match(h.get("model-endpoint-embedding-api").options[0].textContent, /OpenAI-compatible/);
+    assert.equal(h.get("model-endpoint-embedding-version-group").classList.contains("d-none"), true);
+    h.get("model-endpoint-embedding-endpoint").value = "https://resource.example.test";
+    await h.get("model-endpoint-embedding-endpoint").fire("input");
+    assert.match(h.get("model-endpoint-embedding-api").options[0].textContent, /Azure OpenAI versioned/);
+    assert.equal(h.get("model-endpoint-embedding-version-group").classList.contains("d-none"), false);
+
+    endpoint.provider = "new_foundry";
+    endpoint.connection.endpoint = "https://project.example.test/api/projects/example";
+    endpoint.connection.operation_settings.embeddings = {};
+    const foundry = await createHarness(endpoint);
+    await foundry.open();
+    assert.throws(() => foundry.api.validateEmbeddingModels(foundry.api.collectModalModels(), foundry.api.buildEndpointPayload()), /Foundry project endpoints do not route embeddings/);
+    foundry.get("model-endpoint-embedding-endpoint").value = "https://resource.example.test/openai/v1/";
+    foundry.api.saveEndpoint();
+    assert.equal(foundry.staged()[0].connection.endpoint, endpoint.connection.endpoint);
+    assert.equal(foundry.staged()[0].connection.project_name, "example");
+    assert.equal(foundry.staged()[0].connection.operation_settings.embeddings.endpoint, "https://resource.example.test/openai/v1/");
+    assert.deepEqual(foundry.staged()[0].connection.operation_settings.image_generation, endpoint.connection.operation_settings.image_generation);
+});
+
+test("embedding tests require saved bindings, validate dimensions, and never change defaults", async () => {
+    const h = await createHarness(embeddingFixture());
+    await h.open();
+    const before = h.get("default_model_selection_json").value;
+    const model = h.api.collectModalModels()[0];
+    await h.api.testSavedOperationModel(model, "embeddings");
+    assert.deepEqual(h.requests.at(-1).body, {
+        test_type: "embedding",
+        selection: { endpoint_id: "saved-endpoint", model_id: model.id, provider: "openai_compatible" }
+    });
+    assert.match(h.toasts.at(-1).message, /768 dimensions/);
+    assert.match(h.toasts.at(-1).message, /No vectors were stored and the default was not changed/);
+    assert.equal(h.get("default_model_selection_json").value, before);
+    assert.equal(h.window.hasUnsavedAIConnectionEdits(), false);
+    assert.equal(h.events.length, 0);
+    h.rows()[0].querySelector('[data-config-key="dimensions"]').value = "1024";
+    await h.rows()[0].querySelector('[data-config-key="dimensions"]').fire("input");
+    const count = h.requests.length;
+    await h.api.testSavedOperationModel(model, "embeddings");
+    assert.equal(h.requests.length, count);
+    assert.match(h.toasts.at(-1).message, /Save the connection first/);
+
+    for (const dimensions of [0, -1, 1.5, "768", null]) {
+        const invalid = await createHarness(embeddingFixture(), { operationResult: { success: true, dimensions } });
+        await invalid.open();
+        await invalid.api.testSavedOperationModel(invalid.api.collectModalModels()[0], "embeddings");
+        assert.equal(invalid.toasts.at(-1).tone, "danger");
+        assert.match(invalid.toasts.at(-1).message, /valid vector dimensions/);
+    }
 });

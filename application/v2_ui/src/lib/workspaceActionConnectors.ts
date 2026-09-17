@@ -597,7 +597,7 @@ export function applyMcpPreconfiguration(
     if (entry.scopeEligibility?.length && !entry.scopeEligibility.includes('personal')) {
         throw new Error('This preconfiguration is not available in a personal workspace.');
     }
-    if (entry.transport === 'stdio') throw new Error('Personal actions cannot use stdio.');
+    if (entry.transport === 'stdio') throw new Error('Stdio actions are no longer supported. Select a remote transport.');
     let next = applyMcpPreset(draft, preset);
     let fields = mergeConnectorObjects(next.additionalFields, {
         ...entry.defaults, preconfiguration_id: entry.id, server_profile: entry.presetId ?? preset.id,
@@ -785,7 +785,7 @@ export function validateConnectorConfiguration(
     }
     if (!allowedMcpTransports(preset).some(({ value }) => value === transport)) {
         errors['additionalFields.transport'] = transport === 'stdio'
-            ? 'Stdio is only available for admin-managed global actions. Select a remote transport.'
+            ? 'Stdio actions are no longer supported. Select a remote transport.'
             : 'Select a personal-workspace transport supported by this preset.';
     }
     for (const field of MCP_NUMBER_FIELDS) {

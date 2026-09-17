@@ -1,7 +1,7 @@
 // SecretField.tsx
 // A stored credential: masked, replaceable, and clearable, but never displayed.
 //
-// The server never sends the real value. It sends `REDACTED_SECRET` when one is stored,
+// The server never sends the real value. It sends `SECRET_PLACEHOLDER` when one is stored,
 // and treats that same string coming back as "leave it alone", so an untouched field
 // round-trips without the credential reaching the browser.
 //
@@ -16,7 +16,7 @@
 import { clsx } from 'clsx';
 import { useState } from 'react';
 import { Eye, EyeOff, TriangleAlert } from 'lucide-react';
-import { asString, REDACTED_SECRET, type AdminField } from '../../lib/adminFields';
+import { asString, SECRET_PLACEHOLDER, type AdminField } from '../../lib/adminFields';
 import { FieldShell, inputClass } from './fields';
 
 export function SecretField({
@@ -41,8 +41,8 @@ export function SecretField({
     const [revealed, setRevealed] = useState(false);
 
     const current = asString(value);
-    const isConfigured = asString(storedValue) === REDACTED_SECRET;
-    const isUntouched = current === REDACTED_SECRET;
+    const isConfigured = asString(storedValue) === SECRET_PLACEHOLDER;
+    const isUntouched = current === SECRET_PLACEHOLDER;
     // Configured, and the pending value is empty: saving now removes the credential.
     // Reached by pressing Clear and also by simply erasing what was typed.
     const willBeRemoved = isConfigured && !isUntouched && current === '';
@@ -78,7 +78,7 @@ export function SecretField({
                         disabled={disabled}
                         // Restoring the mask is what marks the field untouched again, so
                         // the save leaves the stored credential alone.
-                        onClick={() => onChange(REDACTED_SECRET)}
+                        onClick={() => onChange(SECRET_PLACEHOLDER)}
                     >
                         Undo
                     </button>

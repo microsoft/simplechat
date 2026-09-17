@@ -2,7 +2,7 @@ model-routing:
   name: "Model routing and endpoints"
   area: "Platform and operations"
   audience: "Admins"
-  summary: "Configures how chat and embeddings reach approved Azure OpenAI or model endpoint routes."
+  summary: "Shares approved AI connections across independent chat, image, and embedding defaults, including compatible custom embedding endpoints."
   why: "Use this when a deployment needs API Management in front of model services or multiple endpoint choices for different teams. Keep it simple when one approved endpoint is enough, because endpoint sprawl makes governance and troubleshooting harder."
   default_state: "Mixed"
   admin_tab: ai-models
@@ -10,6 +10,9 @@ model-routing:
     - enable_gpt_apim
     - enable_embedding_apim
     - enable_multi_model_endpoints
+  guides:
+    - title: "Configure AI connections"
+      url: /guides/configure-ai-connections/
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/

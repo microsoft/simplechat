@@ -10,6 +10,8 @@ response length is not the model's maximum output.
 
 **Implemented in version: 0.261.035**
 
+**Combined capability, image, and embedding integration: 0.261.122**
+
 - Application version owner: `application\single_app\config.py`.
 - Catalog data contract: **schemaVersion 3**.
 - Token-capacity audit date: **2026-09-19**. Operation and reasoning source reviews
@@ -19,7 +21,7 @@ response length is not the model's maximum output.
 - Provider-qualified image operations were implemented in **0.261.107**.
 
 All **75 audited model IDs** retain an explicit token-limit disposition. Additional
-image and reasoning records do not inherit those audits or their capacities. An
+image, embedding, and reasoning records do not inherit those audits or their capacities. An
 unknown limit is a researched result, not zero, unlimited capacity, or permission
 to borrow a sibling model's limit. Existing IDs, qualitative flags, display
 metadata, and legacy aliases are retained.
@@ -31,6 +33,7 @@ metadata, and legacy aliases are retained.
 | `application\single_app\static\json\model_capabilities.json` | Maintained model records, public sources, evidence, and conditional profiles |
 | `application\single_app\static\json\schemas\model_capabilities.schema.json` | Strict Draft 2020-12 data contract |
 | `application\single_app\functions_model_capabilities.py` | Dependency-light capability and capacity resolution |
+| `application\single_app\functions_embedding_policy.py` | Validated embedding dimensions, input/batch limits, and vector-space metadata |
 | `functional_tests\test_model_capability_catalog_resolution.py` | Schema validation and qualitative resolver compatibility |
 | `functional_tests\test_model_catalog_token_evidence.py` | Exact-ID audit, provenance, profile, and rejection regressions |
 | `functional_tests\test_model_catalog_rebase_integration.py` | Audit preservation, metadata-only record boundaries, and nested lookup isolation |
@@ -93,6 +96,7 @@ literal Azure ID.
 |---|---|
 | `processesText` / `generatesText` | Accepts text / produces text |
 | `processesImages` / `generatesImages` | Accepts images / produces images |
+| `generatesEmbeddings` | Produces embedding vectors; does not imply chat or image-generation support |
 | `processesAudio` / `generatesAudio` | Accepts audio / produces audio |
 | `processesVideo` / `generatesVideo` | Accepts video / produces video |
 | `processesBinaryFiles` | Accepts uploaded files or binary document payloads |
@@ -106,6 +110,33 @@ Qualitative records describe supported behavior with boolean capability flags.
 Reasoning-only records supply policy metadata without inventing qualitative
 capabilities or numeric capacity. A capability flag alone does not prove
 compatible request parameters, entitlement, or support for every API.
+
+### Embedding operation metadata
+
+An embedding model's `embeddingPolicy` describes its default and supported
+dimensions, input and batch limits, tokenizer, model revision, document/query
+prefixes, and embedding API requirements. These are embedding-operation facts,
+not inferred text-generation token capacities. Host and exact-version policies
+remain scoped to the applicable embedding deployment.
+
+Embedding consumers call `get_model_catalog_capabilities(..., strict_identity=True)`.
+This mode prefers the actual `modelName` or `behavior_name`; otherwise it uses an
+actual deployment/name field. Only canonical catalog IDs and declared aliases
+match. Display labels, configuration IDs, arbitrary deployment suffixes, and
+inferred dated snapshots cannot supply another model's vector dimensions or policy.
+This operation-specific identity contract is separate from numeric token budgets,
+which still require verified aliases and applicable host/protocol evidence.
+
+`resolve_embedding_policy()` validates catalog data and explicit
+`embedding_config` values. Newly configured unknown models require explicit
+`dimensions` and `max_input_tokens`; the legacy migration compatibility path is
+not a default for publishing new unknown models. A dimension parameter is sent
+only when an explicit configuration and the selected API/model support it.
+
+The shared catalog retains embedding policy alongside reasoning policy, image
+profiles, and image lifecycle metadata. Indexed capability views, raw records,
+and image operation profiles are deep copies, so one consumer cannot alter another
+consumer's cached metadata.
 
 ## Token-capacity contract
 
@@ -496,7 +527,8 @@ Run the focused offline suites:
 python -m pytest -q `
     .\functional_tests\test_model_capability_catalog_resolution.py `
     .\functional_tests\test_model_catalog_token_evidence.py `
-    .\functional_tests\test_model_catalog_rebase_integration.py
+    .\functional_tests\test_model_catalog_rebase_integration.py `
+    .\functional_tests\test_ai_connection_embedding_capabilities.py
 python .\functional_tests\test_model_capability_catalog_resolution.py
 python .\functional_tests\test_model_catalog_token_evidence.py
 python .\functional_tests\test_model_catalog_rebase_integration.py

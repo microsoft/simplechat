@@ -19,10 +19,13 @@ from functions_appinsights import log_event
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
+    EMBEDDING_SELECTION_KEY,
     describe_model_capabilities,
+    embedding_settings_use_connections,
     normalize_model_capability_fields,
     supports_model_capability,
 )
+from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
@@ -2045,12 +2048,24 @@ def update_settings(new_settings, *, expected_etag=None):
         return settings_item
 
     try:
-        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
+        # Compatibility checks initialize storage clients only for settings writes.
+        from functions_embedding_compatibility import embedding_settings_write_guard
+
+        def guard_embedding_write(current, candidate):
+            return embedding_settings_write_guard(
+                current, candidate, force_check=EMBEDDING_SELECTION_KEY in updates,
+            )
+
+        _get_app_settings_store().write(
+            apply_updates, expected_etag=expected_etag, write_guard=guard_embedding_write,
+        )
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO
         )
         return True
+    except AIConnectionError:
+        raise
     except Exception as e:
         log_event(
             "[ASC] Unable to confirm settings save; reload and verify before retrying.",
@@ -2108,8 +2123,17 @@ def get_chunk_size_defaults():
 
 def get_embedding_context_tokens(settings=None):
     """Return the selected embedding model's context window in tokens."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            return resolve_embedding_profile(settings).policy["max_input_tokens"]
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+            log_event("[EMBEDDING] No active model for chunk-budget configuration", debug_only=True)
+            # Keep the settings editor usable while unconfigured; inference still fails closed.
+            return EMBEDDING_CONTEXT_FALLBACK_TOKENS
     try:
-        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
@@ -2139,11 +2163,31 @@ def get_embedding_usable_tokens(settings=None):
 
 def get_embedding_safe_chunk_characters(settings=None):
     """Return the largest chunk length in characters expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 4))
     return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
 
 
 def get_embedding_safe_chunk_words(settings=None):
     """Return the largest chunk length in words expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 12))
     return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
 
 
@@ -2661,6 +2705,9 @@ def normalize_model_endpoints(endpoints):
             for capability, profile in operation_settings.items():
                 if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
                     raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                if capability == "embeddings":
+                    operation_settings[capability] = normalize_embedding_operation(profile)
+                    continue
                 allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
                 if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
                     raise AIConnectionError("The connection operation API is not supported.")
@@ -2688,6 +2735,10 @@ def normalize_model_endpoints(endpoints):
 
         if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
+        if endpoint_copy.get("provider") == "openai_compatible":
+            auth = endpoint_copy.get("auth") or {}
+            if auth.get("type") != "api_key":
+                raise AIConnectionError("OpenAI-compatible custom connections require API key authentication.")
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
@@ -2778,6 +2829,7 @@ def is_frontend_visible_model_endpoint_provider(provider):
         "aoai",
         "aifoundry",
         "new_foundry",
+        "openai_compatible",
         MODEL_ENDPOINT_PROVIDER_CUSTOM,
     }
 
@@ -3499,7 +3551,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if k in {
             'support_feedback_recipient_email', 'm365_trusted_download_hosts',
             'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
-            'client_key_path', 'bearer_token', 'token_url',
+            'client_key_path', 'bearer_token', 'token_url', 'embedding_vector_profile',
         }:
             continue
         if k == 'agents_page_promoted_popular_agents':

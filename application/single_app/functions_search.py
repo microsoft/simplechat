@@ -5,6 +5,13 @@ import logging
 from typing import List, Dict, Any
 from config import *
 from functions_content import *
+from functions_embedding_compatibility import (
+    active_embedding_profile,
+    embedding_query_slot,
+    embedding_search_filter,
+    read_embedding_settings,
+    search_with_embedding_profile,
+)
 from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
 from utils_cache import (
     generate_search_cache_key,
@@ -340,7 +347,9 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             conditions = " or ".join([_build_odata_eq("document_id", did) for did in document_ids])
             doc_id_filter = f"({conditions})"
 
-    # Generate cache key including document set fingerprints and tags filter
+    embedding_settings = read_embedding_settings()
+    embedding_profile = active_embedding_profile(embedding_settings)
+    # Profile identity prevents old-model retrieval results from surviving a model change.
     cache_key = generate_search_cache_key(
         query=query,
         user_id=user_id,
@@ -352,19 +361,21 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         top_n=top_n,
         enable_file_sharing=enable_file_sharing,
         tags_filter=tags_filter,
-        document_filter_mode=document_filter_mode
+        document_filter_mode=document_filter_mode,
+        embedding_profile_id=embedding_profile.profile_id,
     )
 
     # Check cache first (pass scope parameters for correct partition key)
     cached_results = None
     if not normalization_changed:
-        cached_results = get_cached_search_results(
-            cache_key,
-            user_id,
-            doc_scope,
-            active_group_ids=active_group_ids,
-            active_public_workspace_id=active_public_workspace_ids
-        )
+        with embedding_query_slot(embedding_profile.profile_id):
+            cached_results = get_cached_search_results(
+                cache_key,
+                user_id,
+                doc_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_ids
+            )
     if cached_results is not None:
         query_length, query_hash = _query_log_context(query)
         debug_print(
@@ -391,7 +402,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     logger.info("Cache miss - executing search for query hash %s", query_hash)
 
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
-    result = generate_embedding(query)
+    result = generate_embedding(query, purpose="query", profile=embedding_profile)
     if result is None:
         return None
 
@@ -440,8 +451,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
 
     try:
         if doc_scope == "all":
-            user_filter = _combine_odata_filters(user_access_filter, content_filter)
-            user_results = search_client_user.search(
+            user_filter = _combine_odata_filters(
+                user_access_filter, content_filter,
+                embedding_search_filter(search_client_user, embedding_profile, embedding_settings),
+            )
+            user_results = search_with_embedding_profile(
+                search_client_user, embedding_profile, top=top_n,
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=user_filter,
@@ -453,8 +468,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             )
 
             if group_access_filter:
-                group_filter = _combine_odata_filters(group_access_filter, content_filter)
-                group_results = search_client_group.search(
+                group_filter = _combine_odata_filters(
+                    group_access_filter, content_filter,
+                    embedding_search_filter(search_client_group, embedding_profile, embedding_settings),
+                )
+                group_results = search_with_embedding_profile(
+                    search_client_group, embedding_profile, top=top_n,
                     search_text=query,
                     vector_queries=[vector_query],
                     filter=group_filter,
@@ -468,8 +487,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 group_results = []
 
             if public_workspace_filter:
-                public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
-                public_results = search_client_public.search(
+                public_filter = _combine_odata_filters(
+                    public_workspace_filter, content_filter,
+                    embedding_search_filter(search_client_public, embedding_profile, embedding_settings),
+                )
+                public_results = search_with_embedding_profile(
+                    search_client_public, embedding_profile, top=top_n,
                     search_text=query,
                     vector_queries=[vector_query],
                     filter=public_filter,
@@ -510,8 +533,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             )
 
         elif doc_scope == "personal":
-            user_filter = _combine_odata_filters(user_access_filter, content_filter)
-            user_results = search_client_user.search(
+            user_filter = _combine_odata_filters(
+                user_access_filter, content_filter,
+                embedding_search_filter(search_client_user, embedding_profile, embedding_settings),
+            )
+            user_results = search_with_embedding_profile(
+                search_client_user, embedding_profile, top=top_n,
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=user_filter,
@@ -527,8 +554,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             if not group_access_filter:
                 results = []
             else:
-                group_filter = _combine_odata_filters(group_access_filter, content_filter)
-                group_results = search_client_group.search(
+                group_filter = _combine_odata_filters(
+                    group_access_filter, content_filter,
+                    embedding_search_filter(search_client_group, embedding_profile, embedding_settings),
+                )
+                group_results = search_with_embedding_profile(
+                    search_client_group, embedding_profile, top=top_n,
                     search_text=query,
                     vector_queries=[vector_query],
                     filter=group_filter,
@@ -542,8 +573,12 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
 
         elif doc_scope == "public":
             if public_workspace_filter:
-                public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
-                public_results = search_client_public.search(
+                public_filter = _combine_odata_filters(
+                    public_workspace_filter, content_filter,
+                    embedding_search_filter(search_client_public, embedding_profile, embedding_settings),
+                )
+                public_results = search_with_embedding_profile(
+                    search_client_public, embedding_profile, top=top_n,
                     search_text=query,
                     vector_queries=[vector_query],
                     filter=public_filter,

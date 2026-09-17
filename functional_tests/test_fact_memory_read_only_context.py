@@ -1,7 +1,7 @@
 # test_fact_memory_read_only_context.py
 """Functional tests for shared read-only saved-memory context.
 
-Version: 0.261.104
+Version: 0.261.106
 Implemented in: 0.261.104
 
 Executes the real leaf module with storage, membership, embeddings and network
@@ -16,6 +16,7 @@ import socket
 import sys
 import types
 import unittest
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 
@@ -42,6 +43,7 @@ class MemoryContextTests(unittest.TestCase):
             'functions_content': types.SimpleNamespace(
                 generate_embedding=self.embedding, generate_embeddings_batch=self.batch_embeddings,
             ),
+            'functions_embedding_compatibility': types.SimpleNamespace(embedding_query_slot=lambda _: nullcontext()),
             'functions_group': types.SimpleNamespace(assert_group_role=self.membership),
             'functions_message_artifacts': types.SimpleNamespace(make_json_serializable=lambda value: value),
             'semantic_kernel_fact_memory_store': types.SimpleNamespace(FactMemoryStore=self.store_factory),
@@ -86,6 +88,40 @@ class MemoryContextTests(unittest.TestCase):
         self.membership.assert_not_called()
         self.embedding.assert_not_called()
         self.batch_embeddings.assert_not_called()
+
+    def test_read_only_recall_does_not_compare_different_vector_spaces(self):
+        class TaggedVector(list):
+            profile_id = "active-profile"
+            legacy = False
+
+        self.embedding.return_value = (TaggedVector([1.0, 0.0]), None)
+        self.add_fact(1, embedding_profile_id="active-profile")
+        self.add_fact(2, embedding_profile_id="old-profile")
+        self.add_fact(3)
+        payload = self.payload()
+        self.assertEqual(
+            [fact["id"] for fact in payload["recall_payload"]["matched_facts"]],
+            ["memory-1"],
+        )
+        self.embedding.assert_called_once_with("Relevant request", purpose="query")
+        self.batch_embeddings.assert_not_called()
+        self.store.update_fact_embedding.assert_not_called()
+
+    def test_unchanged_legacy_profile_can_read_untagged_facts_without_relabeling(self):
+        class TaggedVector(list):
+            profile_id = "legacy-profile"
+            legacy = True
+
+        self.embedding.return_value = (TaggedVector([1.0, 0.0]), None)
+        self.add_fact(1)
+        self.add_fact(2, embedding_profile_id="another-profile")
+        payload = self.payload()
+        self.assertEqual(
+            [fact["id"] for fact in payload["recall_payload"]["matched_facts"]],
+            ["memory-1"],
+        )
+        self.batch_embeddings.assert_not_called()
+        self.store.update_fact_embedding.assert_not_called()
 
     def test_unauthorized_scopes_fail_before_storage(self):
         for kwargs in (

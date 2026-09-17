@@ -4,10 +4,11 @@ Offline regression tests for audited token and React V2 metadata coexistence.
 Version: 0.261.122
 Implemented in: 0.261.122
 
-Protect the strict schema's three record kinds, historical source reviews,
-provider-qualified image operations, and independent reasoning policy resolver.
-Operation eligibility must never widen exact numeric-capacity matching or turn
-unknown limits into a budget. No external services or Git history are required.
+Protect audited, qualitative-capability, reasoning-only, and embedding-policy
+records, provider-qualified image profiles, historical source reviews, and their
+independent resolvers. Operation eligibility must never widen exact chat-capacity
+matching or turn unknown limits into a budget. Tests require neither Git history
+nor a fixed total catalog size, external services, or ephemeral merge stages.
 """
 
 import copy
@@ -28,6 +29,7 @@ from test_model_catalog_token_evidence import (
     TOKEN_METADATA_FIELDS,
     validate_catalog_integrity,
 )
+from functions_embedding_policy import EmbeddingPolicyError, resolve_embedding_policy
 
 
 OPERATION_ONLY_IDS = {
@@ -50,6 +52,72 @@ REASONING_POLICY_IDS = REASONING_ONLY_IDS | {
     "gpt-5", "gpt-5-pro", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano",
     "gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini",
 }
+OPENAI_EMBEDDING_POLICY = {
+    "max_input_tokens": 8192,
+    "max_batch_size": 2048,
+    "max_batch_tokens": 300000,
+    "tokenizer": "cl100k_base",
+    "document_prefix": "",
+    "query_prefix": "",
+    "api": "openai",
+    "requires_input_type": False,
+}
+COHERE_EMBEDDING_POLICY = {
+    "max_input_tokens": 512,
+    "max_batch_size": 96,
+    "max_batch_tokens": 49152,
+    "tokenizer": "conservative",
+    "document_prefix": "",
+    "query_prefix": "",
+    "api": "unsupported",
+    "requires_input_type": True,
+}
+EXPECTED_EMBEDDING_POLICIES = {
+    "text-embedding-ada-002": {
+        **OPENAI_EMBEDDING_POLICY,
+        "default_dimensions": 1536, "supports_dimensions": False,
+        "min_dimensions": 1536, "max_dimensions": 1536,
+        "model_revision": "text-embedding-ada-002:2",
+        "versions": {
+            "1": {"max_input_tokens": 2046, "model_revision": "text-embedding-ada-002:1"},
+            "2": {"max_input_tokens": 8192, "model_revision": "text-embedding-ada-002:2"},
+        },
+    },
+    "text-embedding-3-small": {
+        **OPENAI_EMBEDDING_POLICY,
+        "default_dimensions": 1536, "supports_dimensions": True,
+        "min_dimensions": 1, "max_dimensions": 1536,
+        "model_revision": "text-embedding-3-small",
+    },
+    "text-embedding-3-large": {
+        **OPENAI_EMBEDDING_POLICY,
+        "default_dimensions": 3072, "supports_dimensions": True,
+        "min_dimensions": 1, "max_dimensions": 3072,
+        "model_revision": "text-embedding-3-large",
+    },
+    "embed-v-4-0": {
+        **COHERE_EMBEDDING_POLICY,
+        "default_dimensions": 1536, "supports_dimensions": True,
+        "min_dimensions": 256, "max_dimensions": 1536,
+        "allowed_dimensions": [256, 512, 1024, 1536],
+        "model_context_tokens": 128000,
+        "hosting_limits": {"azure": {"max_input_tokens": 512}},
+        "model_revision": "embed-v4.0",
+    },
+    "Cohere-embed-v3-english": {
+        **COHERE_EMBEDDING_POLICY,
+        "default_dimensions": 1024, "supports_dimensions": False,
+        "min_dimensions": 1024, "max_dimensions": 1024,
+        "model_revision": "embed-english-v3.0",
+    },
+    "Cohere-embed-v3-multilingual": {
+        **COHERE_EMBEDDING_POLICY,
+        "default_dimensions": 1024, "supports_dimensions": False,
+        "min_dimensions": 1024, "max_dimensions": 1024,
+        "model_revision": "embed-multilingual-v3.0",
+    },
+}
+EMBEDDING_IDS = set(EXPECTED_EMBEDDING_POLICIES)
 RESPONSES_IMAGE_IDS = {
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
     "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
@@ -78,6 +146,10 @@ SOURCE_REVIEW_HISTORY = {
         "openai-gpt-image-1-mini", "openai-dalle3", "openai-deprecations",
     },
     "2026-09-16": {
+        "azure-openai-embeddings", "azure-openai-embeddings-rest",
+        "azure-embedding-models", "azure-cohere-embedding-models",
+        "azure-partner-embedding-models", "cohere-embedding-models",
+        "cohere-embedding-api", "cohere-azure-embeddings",
         "image-profiles-openai-tools", "image-profiles-openai-images",
         "image-profiles-mai", "image-profiles-flux", "image-profiles-government",
         "openai-gpt6-astra",
@@ -104,6 +176,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
         self.assertTrue(set(AUDITED_NATIVE_LIMITS).issubset(self.models))
         self.assertTrue(OPERATION_ONLY_IDS.issubset(self.models))
         self.assertTrue(REASONING_ONLY_IDS.issubset(self.models))
+        self.assertTrue(EMBEDDING_IDS.issubset(self.models))
         self.validator.validate(self.catalog)
         validate_catalog_integrity(self.catalog)
         self.assertEqual(
@@ -119,9 +192,12 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
         sol["tokenLimitEvidence"]["contextWindow"]["sourceIds"].clear()
         sol["tokenLimitProfiles"][0]["contextWindow"] = 1
         sol["reasoningPolicy"]["efforts"].clear()
+        models["o3-pro"]["reasoningPolicy"]["default_effort"] = "none"
+        models["embed-v-4-0"]["embeddingPolicy"]["allowed_dimensions"].clear()
+        models["embed-v-4-0"]["embeddingPolicy"]["hosting_limits"]["azure"]["max_input_tokens"] = 128000
+        models["text-embedding-ada-002"]["embeddingPolicy"]["versions"]["1"]["max_input_tokens"] = 8192
         sol["imageProfiles"]["openai"] = "azure-images"
         models["gpt-image-1.5"]["imageLifecycle"]["openai"] = "current"
-        models["o3-pro"]["reasoningPolicy"]["default_effort"] = "none"
         records.clear()
 
         self.assertEqual(
@@ -129,6 +205,9 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
         )
         budget = capabilities.resolve_model_token_budget("gpt-5.6-sol", provider="openai")
         self.assertEqual(budget.context_window, 1050000)
+        self.assertTrue(
+            capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageGenerationTool"]
+        )
         self.assertEqual(
             capabilities.get_model_catalog_capabilities("gpt-5.6-sol")["imageProfiles"],
             {"openai": "openai-responses"},
@@ -228,6 +307,23 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
             self.assertEqual(capabilities.get_model_capability_catalog_records(), [record])
             self.assertIn("policy-test", capabilities.load_model_capability_catalog())
 
+    def test_legacy_image_tool_flags_do_not_imply_native_images_or_vision(self):
+        for model_id, vision, native_images, image_tool in (
+            ("gpt-4o", True, False, True),
+            ("gpt-4.1-mini", True, False, False),
+            ("o1", True, False, False),
+            ("o3-mini", False, False, True),
+            ("gpt-image-2", True, True, False),
+            ("dall-e-3", False, True, False),
+        ):
+            with self.subTest(model=model_id):
+                flags = capabilities.get_model_catalog_capabilities(model_id)
+                self.assertEqual(
+                    (flags["processesImages"], flags["generatesImages"], flags["imageGenerationTool"]),
+                    (vision, native_images, image_tool),
+                )
+        self.assertEqual(self.models["dall-e-3"]["lifecycle"], "retired")
+
     def test_image_bindings_separate_publishers_and_hosting_contracts(self):
         for model_id in RESPONSES_IMAGE_IDS:
             self.assertEqual(self.models[model_id]["imageProfiles"], {"openai": "openai-responses"})
@@ -293,7 +389,9 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
     def test_metadata_only_variants_reject_token_fields(self):
         audited = self.models["gpt-5.6-sol"]
         for model_id, field in product(
-            ("gpt-4", "gpt-4o", "gpt-6-astra", "gpt-image-2"), TOKEN_METADATA_FIELDS
+            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "gpt-6-astra", "gpt-image-2",
+             "text-embedding-ada-002", "embed-v-4-0"),
+            TOKEN_METADATA_FIELDS,
         ):
             with self.subTest(model=model_id, field=field):
                 record = copy.deepcopy(self.models[model_id])
@@ -332,11 +430,13 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
             (("provider",), "foundry"),
             (("capabilities", "unexpected"), True),
             (("capabilities", "imageGenerationTool"), "true"),
+            (("reasoningPolicy", "unexpected"), True),
+            (("reasoningPolicy", "sourceIds"), []),
             (("imageProfiles", "private"), "openai-responses"),
             (("imageLifecycle",), {"openai": "unknown"}),
         ):
             with self.subTest(path=path):
-                record = copy.deepcopy(self.models["gpt-6-astra"])
+                record = copy.deepcopy(self.models["gpt-4o"])
                 target = record
                 for key in path[:-1]:
                     target = target[key]
@@ -379,7 +479,9 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
             self.validator.validate(document)
 
     def test_integrity_rejects_unresolved_metadata_sources_and_cross_host_profiles(self):
-        for target in ("reasoning", "operation", "model", "profile", "host", "capability"):
+        for target in (
+            "reasoning", "operation", "model", "legacy_model", "profile", "host", "capability"
+        ):
             with self.subTest(target=target):
                 document = copy.deepcopy(self.catalog)
                 models = {record["id"]: record for record in document["models"]}
@@ -389,6 +491,8 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                     document["imageOperationProfiles"]["openai-images"]["sourceIds"].append("missing")
                 elif target == "model":
                     models["gpt-6-astra"]["sourceIds"].append("missing")
+                elif target == "legacy_model":
+                    models["gpt-4o"]["sourceIds"].append("missing")
                 elif target == "profile":
                     models["gpt-6-astra"]["imageProfiles"]["openai"] = "missing"
                 elif target == "host":
@@ -399,7 +503,10 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                     validate_catalog_integrity(document)
 
     def test_integrity_rejects_new_identity_provenance_and_dimension_corruption(self):
-        for target in ("identity", "alias", "publisher", "date", "size", "capacity"):
+        for target in (
+            "identity", "alias", "publisher", "legacy_publisher",
+            "date", "legacy_date", "size", "capacity",
+        ):
             with self.subTest(target=target):
                 document = copy.deepcopy(self.catalog)
                 models = {record["id"]: record for record in document["models"]}
@@ -410,6 +517,10 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                     document["models"].append(duplicate)
                 elif target == "alias":
                     models["gpt-5.6-sol"]["verifiedAliases"].append("gpt-4")
+                elif target == "legacy_publisher":
+                    sources["azure-openai-images"]["provider"] = "openai"
+                elif target == "legacy_date":
+                    sources["azure-openai-images"]["verifiedAt"] = "2099-01-01"
                 elif target == "publisher":
                     sources["image-profiles-mai"]["provider"] = "openai"
                 elif target == "date":
@@ -421,6 +532,214 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_catalog_integrity(document)
 
+    def test_embedding_records_keep_exact_operation_policies_without_chat_metadata(self):
+        for model_id, expected_policy in EXPECTED_EMBEDDING_POLICIES.items():
+            with self.subTest(model=model_id):
+                record = self.models[model_id]
+                self.assertEqual(record["embeddingPolicy"], expected_policy)
+                self.assertFalse(TOKEN_METADATA_FIELDS.intersection(record))
+                self.assertNotIn("lifecycle", record)
+                self.assertNotIn("imageProfiles", record)
+                self.assertEqual(set(record["capabilities"]), {
+                    "processesText", "generatesText", "generatesEmbeddings", "processesImages",
+                    "generatesImages", "imageGenerationTool", "toolCalling",
+                })
+                for identifier in (model_id, *record["aliases"]):
+                    budget = capabilities.resolve_model_token_budget(identifier, provider="azure")
+                    self.assertEqual(
+                        (budget.context_window, budget.input_limit, budget.output_limit,
+                         budget.effective_context_window),
+                        (None, None, None, None),
+                    )
+                    self.assertEqual(budget.output_accounting, "unknown")
+                    self.assertEqual(budget.provenance, ())
+                    with self.assertRaises(capabilities.ModelTokenBudgetError):
+                        budget.remaining_input()
+        self.assertEqual(self.models["embed-v-4-0"]["provider"], "cohere")
+        self.assertEqual(self.sources["azure-cohere-embedding-models"]["provider"], "microsoft")
+        self.assertTrue(any(
+            "49,152-token" in note and "conservative application bound" in note
+            and "not a claim" in note
+            for note in self.catalog["coverageNotes"]
+        ))
+
+    def test_embedding_policies_and_aliases_survive_isolated_strict_lookups(self):
+        for model_id in EMBEDDING_IDS:
+            record = self.models[model_id]
+            for identifier in (model_id, *record["aliases"]):
+                with self.subTest(identifier=identifier):
+                    resolved = capabilities.get_model_catalog_capabilities(
+                        identifier, strict_identity=True
+                    )
+                    self.assertTrue(resolved["generatesEmbeddings"])
+                    self.assertEqual(resolved["publisher"], record["provider"])
+                    self.assertEqual(resolved["embeddingPolicy"], record["embeddingPolicy"])
+                    resolved["embeddingPolicy"]["max_input_tokens"] = 1
+                    again = capabilities.get_model_catalog_capabilities(
+                        identifier, strict_identity=True
+                    )
+                    self.assertEqual(again["embeddingPolicy"], record["embeddingPolicy"])
+        for identifier in (
+            "text-embedding-3-small-2026-09-16",
+            "text-embedding-3-small-eastus",
+            "Cohere Embed v4",
+            {"displayName": "text-embedding-3-small"},
+            {"modelName": "private-model", "deploymentName": "text-embedding-3-small"},
+        ):
+            with self.subTest(unverified_identifier=identifier):
+                self.assertIsNone(capabilities.get_model_catalog_capabilities(
+                    identifier, strict_identity=True
+                ))
+
+    def test_embedding_version_limits_and_host_limits_remain_distinct(self):
+        for version, expected in (("1", 2046), ("2", 8192)):
+            policy = resolve_embedding_policy({
+                "modelName": "text-embedding-ada-002", "modelVersion": version,
+            })
+            self.assertEqual(policy["max_input_tokens"], expected)
+            self.assertEqual(policy["model_revision"], f"text-embedding-ada-002:{version}")
+        with self.assertRaisesRegex(EmbeddingPolicyError, "version is not cataloged"):
+            resolve_embedding_policy({
+                "modelName": "text-embedding-ada-002", "modelVersion": "future",
+            })
+        cohere = resolve_embedding_policy("embed-v4.0")
+        self.assertEqual(cohere["max_input_tokens"], 512)
+        self.assertEqual(cohere["max_batch_tokens"], 49152)
+        self.assertEqual(cohere["api"], "unsupported")
+        self.assertTrue(cohere["requires_input_type"])
+        raw_policy = self.models["embed-v-4-0"]["embeddingPolicy"]
+        self.assertEqual(raw_policy["model_context_tokens"], 128000)
+        self.assertEqual(raw_policy["hosting_limits"], {"azure": {"max_input_tokens": 512}})
+
+    def test_embedding_schema_requires_positive_true_integers_and_bounded_values(self):
+        for field, invalid in product(
+            ("default_dimensions", "min_dimensions", "max_dimensions", "max_input_tokens",
+             "model_context_tokens", "max_batch_size", "max_batch_tokens"),
+            (True, False, None, 0, -1, 1.0, 1.5, "512", float("nan"), float("inf")),
+        ):
+            with self.subTest(field=field, value=invalid):
+                record = copy.deepcopy(self.models["embed-v-4-0"])
+                record["embeddingPolicy"][field] = invalid
+                with self.assertRaises(ValidationError):
+                    self.validate_model(record)
+        for field, invalid in (
+            ("default_dimensions", 65537), ("max_input_tokens", 1048577),
+            ("max_batch_size", 2049), ("max_batch_tokens", 16777217),
+        ):
+            with self.subTest(field=field, value=invalid):
+                record = copy.deepcopy(self.models["embed-v-4-0"])
+                record["embeddingPolicy"][field] = invalid
+                with self.assertRaises(ValidationError):
+                    self.validate_model(record)
+
+    def test_embedding_schema_requires_complete_closed_operation_contracts(self):
+        required = {
+            "default_dimensions", "supports_dimensions", "min_dimensions", "max_dimensions",
+            "max_input_tokens", "max_batch_size", "max_batch_tokens", "tokenizer",
+            "model_revision", "document_prefix", "query_prefix", "api", "requires_input_type",
+        }
+        for field in required:
+            with self.subTest(missing=field):
+                record = copy.deepcopy(self.models["text-embedding-3-small"])
+                del record["embeddingPolicy"][field]
+                with self.assertRaises(ValidationError):
+                    self.validate_model(record)
+        for field, invalid in (
+            ("api", "cohere"), ("tokenizer", "guessed-tokenizer"),
+            ("supports_dimensions", "true"), ("requires_input_type", 1),
+            ("model_revision", ""), ("model_revision", "   "),
+            ("model_revision", "revision\n"), ("query_prefix", "\u0000"),
+            ("default_dimensions_typo", 1024),
+        ):
+            with self.subTest(field=field, value=invalid):
+                record = copy.deepcopy(self.models["text-embedding-3-small"])
+                record["embeddingPolicy"][field] = invalid
+                with self.assertRaises(ValidationError):
+                    self.validate_model(record)
+        for model_id in ("gpt-5.6-sol", "gpt-4o", "gpt-4"):
+            record = copy.deepcopy(self.models[model_id])
+            record.setdefault("capabilities", {})["generatesEmbeddings"] = True
+            with self.subTest(non_embedding_record=model_id), self.assertRaises(ValidationError):
+                self.validate_model(record)
+        for field, value in (
+            ("generatesEmbeddings", False), ("generatesEmbeddings", 1),
+            ("generatesText", True), ("imageGenerationTool", True), ("unverifiedFlag", False),
+        ):
+            record = copy.deepcopy(self.models["text-embedding-3-small"])
+            record["capabilities"][field] = value
+            with self.subTest(capability=field, value=value), self.assertRaises(ValidationError):
+                self.validate_model(record)
+
+    def test_embedding_schema_rejects_invalid_dimensions_hosts_and_versions(self):
+        for allowed in ([], [256, 256], [True], [256.0], [0], [65537]):
+            record = copy.deepcopy(self.models["embed-v-4-0"])
+            record["embeddingPolicy"]["allowed_dimensions"] = allowed
+            with self.subTest(allowed=allowed), self.assertRaises(ValidationError):
+                self.validate_model(record)
+        for host_limits in (
+            {}, {"unknown-host": {"max_input_tokens": 512}},
+            {"azure": {"max_input_tokens": True}},
+            {"azure": {"max_input_tokens": 512.0}},
+            {"azure": {"max_input_tokens": 512, "contextWindow": 128000}},
+        ):
+            record = copy.deepcopy(self.models["embed-v-4-0"])
+            record["embeddingPolicy"]["hosting_limits"] = host_limits
+            with self.subTest(hosting_limits=host_limits), self.assertRaises(ValidationError):
+                self.validate_model(record)
+        for versions in (
+            {}, {" ": {"max_input_tokens": 2046, "model_revision": "ada:1"}},
+            {"1": {"max_input_tokens": 2046}},
+            {"1": {"max_input_tokens": 2046.0, "model_revision": "ada:1"}},
+            {"1": {"max_input_tokens": 2046, "model_revision": "ada:1", "outputTokenLimit": 4096}},
+        ):
+            record = copy.deepcopy(self.models["text-embedding-ada-002"])
+            record["embeddingPolicy"]["versions"] = versions
+            with self.subTest(versions=versions), self.assertRaises(ValidationError):
+                self.validate_model(record)
+
+    def test_embedding_integrity_rejects_contradictory_policy_relationships(self):
+        for changes in (
+            {"max_dimensions": 1024},
+            {"supports_dimensions": False},
+            {"allowed_dimensions": [256, 512, 1024]},
+            {"allowed_dimensions": [256, 512, 1024, 1536, 2048]},
+            {"max_batch_tokens": 511},
+            {"max_input_tokens": 128001},
+            {"hosting_limits": {"azure": {"max_input_tokens": 128001}}},
+        ):
+            with self.subTest(changes=changes):
+                document = copy.deepcopy(self.catalog)
+                record = next(model for model in document["models"] if model["id"] == "embed-v-4-0")
+                record["embeddingPolicy"].update(changes)
+                with self.assertRaises(ValueError):
+                    validate_catalog_integrity(document)
+        document = copy.deepcopy(self.catalog)
+        ada = next(model for model in document["models"] if model["id"] == "text-embedding-ada-002")
+        ada["embeddingPolicy"]["versions"]["1"]["max_input_tokens"] = 300001
+        with self.assertRaises(ValueError):
+            validate_catalog_integrity(document)
+
+    def test_embedding_integrity_preserves_source_and_identity_boundaries(self):
+        for target in ("source", "alias", "chat_alias", "policy", "capability", "publisher"):
+            with self.subTest(target=target):
+                document = copy.deepcopy(self.catalog)
+                models = {record["id"]: record for record in document["models"]}
+                record = models["embed-v-4-0"]
+                if target == "source":
+                    record["sourceIds"].append("missing-embedding-evidence")
+                elif target == "alias":
+                    models["Cohere-embed-v3-english"]["aliases"].append("embed-v4.0")
+                elif target == "chat_alias":
+                    models["gpt-5.6-sol"]["aliases"].append("embed-v4.0")
+                elif target == "policy":
+                    del record["embeddingPolicy"]
+                elif target == "capability":
+                    record["capabilities"]["generatesEmbeddings"] = False
+                else:
+                    source = next(source for source in document["sources"] if source["id"] == "cohere-embedding-models")
+                    source["provider"] = "microsoft"
+                with self.assertRaises(ValueError):
+                    validate_catalog_integrity(document)
 
 if __name__ == "__main__":
     unittest.main()

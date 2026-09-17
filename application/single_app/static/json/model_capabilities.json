@@ -2,7 +2,7 @@
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 3,
   "lastUpdated": "2026-09-19",
-  "description": "SimpleChat model capability, operation-policy, and token-capacity catalog. Published numeric limits retain independently verified evidence and hosting profiles; operation metadata never supplies a token limit.",
+  "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",
@@ -18,18 +18,17 @@
     "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses.",
     "supportsStreaming": "Supports incremental token streaming for chat responses. SimpleChat wraps models without streaming support so they still deliver through the stream.",
     "reasoning": "Performs extended reasoning or thinking before responding.",
-    "imageGenerationTool": "Publisher documentation for the hosted image_generation tool, not native image output or vision. Runtime eligibility requires a matching provider-qualified imageProfiles entry or a compatible explicit Custom declaration."
+    "imageGenerationTool": "Publisher documentation for the hosted image_generation tool, not native image output or vision. Runtime eligibility requires a matching provider-qualified imageProfiles entry or a compatible explicit Custom declaration.",
+    "generatesEmbeddings": "Produces embedding vectors. Runtime eligibility additionally requires validated embeddingPolicy metadata and a supported OpenAI-compatible operation; this is not chat or image generation."
   },
   "coverageNotes": [
-    "OpenAI coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
+    "The audited OpenAI token-capacity subset starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
     "Microsoft coverage includes public Phi and MAI model cards with clear capability statements.",
     "Google coverage includes current, preview and historically retired Gemini API models; Vertex context and lifecycle qualifications remain host-scoped.",
-    "Numeric capacities were verified against primary sources on 2026-09-19. Shared context, independent input, and output are distinct; missing maxima, adjustable defaults and configuration-only values are never fabricated into capacities.",
-    "The 2026-09-19 token-capacity audit covers the original 75 records with tokenLimitEvidence. Operation-only records retain documented qualitative flags without token limits, accounting, profiles, or numeric aliases; reasoning-only records retain only their policy and identifiers. Missing limits and flags remain unknown, not inferred from an operation or policy.",
-    "Historical React V2 source review dates are retained independently: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and provider-qualified image profiles on 2026-09-16. These dates do not claim a new source review or a token-capacity audit of the additional models.",
+    "Audited chat/generation token capacities were verified against primary sources on 2026-09-19. Shared context, independent input, and output are distinct; missing maxima, adjustable defaults and configuration-only values are never fabricated into capacities.",
     "Legacy aliases, model IDs and qualitative capabilities remain compatible. Only verifiedAliases and exact IDs are appropriate for numeric matching; deployment labels and family/prefix heuristics are not evidence.",
     "Root limits describe publisher-native specifications or checkpoint capacity, not every hosting deployment. Apply generic host profiles before more specific protocol/version profiles; explicit null clears inherited capacity. Retired snapshots preserve historical evidence without asserting cross-host retirement.",
     "OpenAI coverage includes GPT-5.x model IDs seen through Foundry, older Responses orchestration models, and direct GPT Image models.",
@@ -38,8 +37,16 @@
     "Azure lists GPT-5.6 Sol, Terra, and Luna version 2026-07-09 for Responses. Its image-tool examples may require a deployed GPT Image backend and the x-ms-oai-image-generation-deployment header. Catalog support does not promise deployment-free routing, entitlement, region availability, or a successful live request.",
     "Azure -chat entries are not automatically equated with OpenAI -chat-latest model IDs. OpenAI's documented tools for a similarly named chat snapshot do not establish the Azure entry's image tool support.",
     "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service.",
-    "OpenAI boolean capability coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry; reasoning-only entries additionally cover legacy GPT and o-series models.",
+    "The original OpenAI boolean capability subset covers GPT-5.x model families, including Azure OpenAI IDs seen through Foundry. Additional operation records cover older chat and image models; reasoning-only entries cover legacy GPT and o-series policies without declaring capabilities.",
     "Reasoning policies describe effort support, not endpoint/API availability. No Responses API migration is implied. Responses-only max effort is excluded from this Chat Completions policy. Models without verified level lists remain unknown.",
+    "Embedding specifications and aliases were checked against primary sources on 2026-09-16. OpenAI embeddings use cl100k_base; text-embedding-ada-002 version 1 accepts 2,046 tokens, while version 2 and text-embedding-3 accept 8,192. Uncataloged Ada version metadata requires explicit administrator-verified limits rather than inheriting a newer version's context.",
+    "Cohere model knowledge does not establish a supported current OpenAI-compatible embeddings route. Its task-sensitive native APIs and the deprecated Azure Model Inference API are not implemented. An explicit compatible-gateway declaration must attest that the gateway handles input_type and any dimensions translation; SimpleChat never sends vendor-native fields to a standard OpenAI operation.",
+    "Azure lists embed-v-4-0 with a 512-token hosting limit; Cohere lists embed-v4.0 with 128k model context. The default policy retains the 512-token Azure limit and records 128,000 separately as model_context_tokens. A larger verified hosting limit must be declared explicitly, never inferred from the model context.",
+    "Cohere batch count is bounded by its documented 96-text limit. The 49,152-token default batch budget is a conservative application bound derived from 96 inputs of 512 tokens, not a claim about a vendor aggregate-token limit.",
+    "The 2026-09-19 token audit covers the original 75 records with tokenLimitEvidence. Additional qualitative and reasoning-only records omit unreviewed token fields and qualitative flags rather than guessing them. Embedding policies preserve their sourced dimensions, hosting/version input limits, and application batch budgets separately from chat context, generation limits, accounting, and verified numeric aliases.",
+    "Historical source review dates remain independent: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and embedding metadata on 2026-09-16. These retained dates do not claim a new source review or a chat-token audit of the additional models.",
+    "The 2026-09-19 token-capacity audit covers the original 75 records with tokenLimitEvidence. Operation-only records retain documented qualitative flags without token limits, accounting, profiles, or numeric aliases; reasoning-only records retain only their policy and identifiers. Missing limits and flags remain unknown, not inferred from an operation or policy.",
+    "Historical React V2 source review dates are retained independently: reasoning metadata on 2026-09-07, image-tool metadata on 2026-09-08, and provider-qualified image profiles on 2026-09-16. These dates do not claim a new source review or a token-capacity audit of the additional models.",
     "OpenAI model pages describe api.openai.com, not Azure deployment readiness. imageProfiles separates direct OpenAI, Azure OpenAI, and Foundry image operations. The application hosting cloud never establishes endpoint capabilities or availability.",
     "Azure documents Responses image generation with a separate GPT Image deployment. SimpleChat deliberately offers only dedicated image models on Azure/Foundry; the conditional Azure Responses integration is not enabled by publisher imageGenerationTool flags or administrator overrides.",
     "Government image-model availability is not established by the reviewed Government model table. Unknown is not unavailable, and a Government-hosted app may use an explicitly configured commercial endpoint without relabeling that endpoint as Government.",
@@ -1248,6 +1255,62 @@
       "title": "Chat Completions reasoning_effort is supported only by reasoning models",
       "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
       "verifiedAt": "2026-09-07"
+    },
+    {
+      "id": "azure-openai-embeddings",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embeddings: per-input, batch-count and aggregate-token limits (verified 2026-09-16)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-openai-embeddings-rest",
+      "provider": "microsoft",
+      "title": "Current Azure OpenAI embeddings REST contract and supported dimensions parameter",
+      "url": "https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embedding model dimensions and version-specific input limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#embeddings",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-cohere-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure Cohere Embed v4 identifier, dimensions and 512-token hosting limit",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#cohere-models-sold-by-azure",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "azure-partner-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure partner catalog: Cohere English and multilingual v3 identifiers and limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners#cohere",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-embedding-models",
+      "provider": "cohere",
+      "title": "Cohere embedding model identifiers, dimensions and model context lengths",
+      "url": "https://docs.cohere.com/docs/cohere-embed",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-embedding-api",
+      "provider": "cohere",
+      "title": "Cohere native Embed API: required input_type, output_dimension and 96-text batch limit",
+      "url": "https://docs.cohere.com/v2/reference/embed",
+      "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "cohere-azure-embeddings",
+      "provider": "cohere",
+      "title": "Cohere Azure hosting and distinct embedding operation schemas",
+      "url": "https://docs.cohere.com/docs/cohere-on-microsoft-azure#embeddings",
+      "verifiedAt": "2026-09-16"
     },
     {
       "id": "image-profiles-openai-tools",
@@ -10535,6 +10598,276 @@
           "azure-openai-reasoning"
         ]
       }
+    },
+    {
+      "id": "text-embedding-ada-002",
+      "provider": "openai",
+      "displayName": "Text Embedding Ada 002",
+      "aliases": [],
+      "family": "text-embedding-ada",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": false,
+        "min_dimensions": 1536,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-ada-002:2",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false,
+        "versions": {
+          "1": {
+            "max_input_tokens": 2046,
+            "model_revision": "text-embedding-ada-002:1"
+          },
+          "2": {
+            "max_input_tokens": 8192,
+            "model_revision": "text-embedding-ada-002:2"
+          }
+        }
+      },
+      "notes": [
+        "Fixed 1,536-dimensional output; the dimensions request parameter is unsupported.",
+        "Azure version 1 has a 2,046-token limit; the default policy describes version 2. Model-version metadata is resolved before administrator overrides."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Small",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-small",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": [
+        "Default output is 1,536 dimensions. Send dimensions only when the administrator explicitly selects a supported output size."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "text-embedding-3-large",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Large",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 3072,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 3072,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-large",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": [
+        "Default output is 3,072 dimensions. A 1,536-dimensional selection is an explicit output-size choice, not evidence of compatibility with Ada or another model's vector space."
+      ],
+      "sourceIds": [
+        "azure-embedding-models",
+        "azure-openai-embeddings",
+        "azure-openai-embeddings-rest"
+      ]
+    },
+    {
+      "id": "embed-v-4-0",
+      "provider": "cohere",
+      "displayName": "Cohere Embed v4",
+      "aliases": [
+        "embed-v4.0"
+      ],
+      "family": "cohere-embed-v4",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 256,
+        "max_dimensions": 1536,
+        "allowed_dimensions": [
+          256,
+          512,
+          1024,
+          1536
+        ],
+        "max_input_tokens": 512,
+        "model_context_tokens": 128000,
+        "hosting_limits": {
+          "azure": {
+            "max_input_tokens": 512
+          }
+        },
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-v4.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "Cataloged model knowledge only: native task-sensitive Cohere inference is not a supported runtime adapter.",
+        "Azure's 512-token hosting limit is retained separately from Cohere's 128k model context. Use an explicit verified hosting limit for a compatible gateway.",
+        "A compatible gateway must handle input_type semantics and translate the OpenAI dimensions parameter to the provider's supported output_dimension operation. Text embeddings only are integrated."
+      ],
+      "sourceIds": [
+        "azure-cohere-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
+    },
+    {
+      "id": "Cohere-embed-v3-english",
+      "provider": "cohere",
+      "displayName": "Cohere Embed English v3",
+      "aliases": [
+        "embed-english-v3.0"
+      ],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-english-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "English embedding model with fixed 1,024-dimensional output and 512-token inputs.",
+        "Azure and Cohere identifiers are documented aliases, not a promise of a compatible OpenAI operation. A gateway must explicitly handle the required task semantics."
+      ],
+      "sourceIds": [
+        "azure-partner-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
+    },
+    {
+      "id": "Cohere-embed-v3-multilingual",
+      "provider": "cohere",
+      "displayName": "Cohere Embed Multilingual v3",
+      "aliases": [
+        "embed-multilingual-v3.0"
+      ],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-multilingual-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": [
+        "Multilingual embedding model with fixed 1,024-dimensional output and 512-token inputs.",
+        "Azure documents text input for this hosted model; Cohere also documents image input at the model level. Neither establishes a supported image-understanding or native embedding adapter in SimpleChat."
+      ],
+      "sourceIds": [
+        "azure-partner-embedding-models",
+        "cohere-embedding-models",
+        "cohere-embedding-api",
+        "cohere-azure-embeddings"
+      ]
     },
     {
       "id": "gpt-6-astra",

@@ -29,6 +29,7 @@ from test_model_capability_catalog_resolution import (
     CATALOG_PATH,
     load_catalog_schema_validator,
 )
+from functions_embedding_policy import _catalog_policy
 
 
 VERIFIED_AT = "2026-09-19"
@@ -512,6 +513,7 @@ SOURCE_HOSTS = {
     "developers.openai.com", "learn.microsoft.com", "platform.claude.com",
     "docs.anthropic.com", "web.archive.org", "github.com", "huggingface.co",
     "docs.x.ai", "ai.google.dev", "cloud.google.com", "docs.cloud.google.com",
+    "docs.cohere.com",
 }
 SOURCE_PROVIDER_HOSTS = {
     "openai": {"developers.openai.com"},
@@ -522,6 +524,7 @@ SOURCE_PROVIDER_HOSTS = {
     "xai": {"docs.x.ai"},
     "meta": {"github.com", "huggingface.co"},
     "microsoft": {"learn.microsoft.com", "huggingface.co"},
+    "cohere": {"docs.cohere.com"},
 }
 GITHUB_PUBLISHER_PREFIXES = {
     "meta": "/meta-llama/llama-models/",
@@ -579,6 +582,16 @@ def validate_catalog_integrity(catalog):
             if not source["url"].endswith(original):
                 raise ValueError(f"Archive and original disagree: {source_id}")
 
+    embedding_identities = {}
+    for model in catalog["models"]:
+        if "embeddingPolicy" not in model:
+            continue
+        for identity in (model["id"], *model.get("aliases", [])):
+            normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
+            owner = embedding_identities.setdefault(normalized, model["id"])
+            if owner != model["id"]:
+                raise ValueError(f"Ambiguous embedding identity: {identity}")
+
     image_profiles = catalog.get("imageOperationProfiles", {})
     for profile_id, profile in image_profiles.items():
         if profile_id not in IMAGE_PROFILE_HOSTS:
@@ -600,6 +613,11 @@ def validate_catalog_integrity(catalog):
         if model_id in model_ids:
             raise ValueError(f"Duplicate model ID: {model_id}")
         model_ids.add(model_id)
+        for identity in (model_id, *model.get("aliases", []), *model.get("verifiedAliases", [])):
+            normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
+            embedding_owner = embedding_identities.get(normalized)
+            if embedding_owner is not None and embedding_owner != model_id:
+                raise ValueError(f"Ambiguous embedding identity: {identity}")
         for identity in (model_id, *model.get("verifiedAliases", [])):
             normalized = re.sub(r"[\s_.]+", "-", identity.strip().lower())
             owner = identities.setdefault(normalized, model_id)
@@ -608,6 +626,14 @@ def validate_catalog_integrity(catalog):
         for source_id in model.get("sourceIds", []):
             if source_id not in sources:
                 raise ValueError(f"Unresolved model source: {model_id}/{source_id}")
+
+        embeds = model.get("capabilities", {}).get("generatesEmbeddings") is True
+        if embeds != ("embeddingPolicy" in model):
+            raise ValueError(f"Embedding operation and policy disagree: {model_id}")
+        if embeds:
+            embedding_policy = _catalog_policy(model["embeddingPolicy"])
+            for version_policy in embedding_policy.get("versions", {}).values():
+                _catalog_policy({**embedding_policy, **version_policy})
 
         policy = model.get("reasoningPolicy")
         if policy is not None:

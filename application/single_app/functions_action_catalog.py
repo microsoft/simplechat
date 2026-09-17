@@ -12,9 +12,9 @@ import base64
 import binascii
 import re
 from collections.abc import Iterable
-from copy import deepcopy
 from importlib import import_module
 
+from functions_action_manifest import bind_action_origin, is_retired_mcp_stdio
 from functions_agent_delegation import AGENT_PLUGIN_TYPE, _identifier
 
 
@@ -189,6 +189,7 @@ def _eligible_record(action, scope_type, scope_id):
         or not action_type.strip()
         or action_type.strip().lower() == AGENT_PLUGIN_TYPE
         or action.get("is_enabled", True) is not True
+        or is_retired_mcp_stdio(action)
     ):
         return False
     try:
@@ -378,12 +379,19 @@ def resolve_action_manifest(user_id, action_ref, *, settings=None, user_groups=N
 
     # NAME preserves stored references; do not call the identity-hydrating action getters.
     keyvault = import_module("functions_keyvault")
+    manifest = bind_action_origin(
+        {key: value for key, value in action.items() if not key.startswith("_")},
+        scope_type,
+        scope_id,
+    )
     manifest = keyvault.keyvault_plugin_get_helper(
-        deepcopy({key: value for key, value in action.items() if not key.startswith("_")}),
+        manifest,
         scope_value=action_id if scope_type == "global" else scope_id,
         scope="user" if scope_type == "personal" else scope_type,
         return_type=keyvault.SecretReturnType.NAME,
     )
+    # Key Vault's shared helper returns a plain dictionary; retain the authorized origin.
+    manifest = bind_action_origin(manifest, scope_type, scope_id)
     manifest.update({
         "user_id": scope_id if scope_type == "personal" else None,
         "group_id": scope_id if scope_type == "group" else None,

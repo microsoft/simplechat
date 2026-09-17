@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "title": "SimpleChat model capability catalog",
-  "description": "Schema version 3: independently evidenced token capacities coexist with strictly bounded operation-only and reasoning-only records. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service; operation and reasoning metadata never authorize numeric budgets.",
+  "description": "Schema version 3: independently evidenced chat/generation capacities coexist with closed capability, reasoning-only, and embedding-policy records plus provider-qualified image profiles. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Image operations, reasoning policies, and embedding dimensions/input/batch policies do not authorize chat-token budgets.",
   "type": "object",
   "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models", "imageOperationProfiles"],
   "properties": {
@@ -104,7 +104,7 @@
           "pattern": "^[a-z0-9][a-z0-9._-]*$"
         },
         "provider": {
-          "enum": ["openai", "azure", "anthropic", "google", "vertex", "xai", "meta", "microsoft", "publisher"]
+          "enum": ["openai", "azure", "anthropic", "google", "vertex", "xai", "meta", "microsoft", "publisher", "cohere"]
         },
         "title": {
           "$ref": "#/$defs/nonemptyString"
@@ -338,11 +338,12 @@
       "additionalProperties": false
     },
     "modelRecord": {
-      "description": "Audited token records retain the complete v3 evidence contract. Operation-only records declare only documented qualitative facts, and reasoning-only records declare no capabilities or token metadata.",
+      "description": "Audited token records retain the complete v3 evidence contract. Operation-only records declare documented qualitative facts; reasoning-only records declare no capabilities or token metadata. Embedding records have separately sourced operation limits, never chat context or generation capacity.",
       "oneOf": [
         {"$ref": "#/$defs/tokenModelRecord"},
         {"$ref": "#/$defs/operationModelRecord"},
-        {"$ref": "#/$defs/reasoningOnlyModelRecord"}
+        {"$ref": "#/$defs/reasoningOnlyModelRecord"},
+        {"$ref": "#/$defs/embeddingModelRecord"}
       ]
     },
     "tokenModelRecord": {
@@ -500,6 +501,141 @@
       },
       "additionalProperties": false
     },
+    "embeddingModelRecord": {
+      "type": "object",
+      "description": "Sourced text-embedding operation metadata. Lifecycle and unrelated capabilities remain absent unless documented. An embedding input limit is not a chat context window, and a conservative batch budget is not a published aggregate-token maximum.",
+      "required": [
+        "id", "provider", "displayName", "aliases", "family",
+        "capabilities", "embeddingPolicy", "sourceIds"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonemptyString"},
+        "provider": {"enum": ["openai", "cohere"]},
+        "displayName": {"$ref": "#/$defs/nonemptyString"},
+        "aliases": {"$ref": "#/$defs/tokenModelRecord/properties/aliases"},
+        "family": {"$ref": "#/$defs/nonemptyString"},
+        "lifecycle": {"$ref": "#/$defs/tokenModelRecord/properties/lifecycle"},
+        "releaseDate": {"$ref": "#/$defs/tokenModelRecord/properties/releaseDate"},
+        "capabilities": {"$ref": "#/$defs/embeddingCapabilityMap"},
+        "embeddingPolicy": {"$ref": "#/$defs/embeddingPolicy"},
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"},
+        "notes": {"$ref": "#/$defs/stringList"}
+      },
+      "additionalProperties": false
+    },
+    "embeddingCapabilityMap": {
+      "type": "object",
+      "required": [
+        "processesText", "generatesText", "generatesEmbeddings", "processesImages",
+        "generatesImages", "imageGenerationTool", "toolCalling"
+      ],
+      "properties": {
+        "processesText": {"const": true},
+        "generatesText": {"const": false},
+        "generatesEmbeddings": {"const": true},
+        "processesImages": {"type": "boolean"},
+        "generatesImages": {"const": false},
+        "imageGenerationTool": {"const": false},
+        "toolCalling": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "embeddingDimensions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65536
+    },
+    "embeddingInputTokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    },
+    "embeddingRevision": {
+      "allOf": [
+        {"$ref": "#/$defs/nonemptyString"},
+        {
+          "maxLength": 256,
+          "not": {"pattern": "[\\u0000-\\u001f\\u007f]"}
+        }
+      ]
+    },
+    "embeddingPrefix": {
+      "type": "string",
+      "maxLength": 8192,
+      "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+    },
+    "embeddingPolicy": {
+      "type": "object",
+      "required": [
+        "default_dimensions", "supports_dimensions", "min_dimensions", "max_dimensions",
+        "max_input_tokens", "max_batch_size", "max_batch_tokens", "tokenizer",
+        "model_revision", "document_prefix", "query_prefix", "api", "requires_input_type"
+      ],
+      "properties": {
+        "default_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "supports_dimensions": {"type": "boolean"},
+        "min_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "max_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "allowed_dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/embeddingDimensions"}
+        },
+        "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"},
+        "model_context_tokens": {
+          "$ref": "#/$defs/embeddingInputTokens",
+          "description": "Publisher model context, not permission to increase a hosting input limit."
+        },
+        "max_batch_size": {"type": "integer", "minimum": 1, "maximum": 2048},
+        "max_batch_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "description": "Operation batch budget. A conservative application bound is not evidence of a vendor's aggregate-token maximum."
+        },
+        "tokenizer": {"enum": ["cl100k_base", "conservative"]},
+        "model_revision": {"$ref": "#/$defs/embeddingRevision"},
+        "document_prefix": {"$ref": "#/$defs/embeddingPrefix"},
+        "query_prefix": {"$ref": "#/$defs/embeddingPrefix"},
+        "api": {"enum": ["openai", "unsupported"]},
+        "requires_input_type": {"type": "boolean"},
+        "hosting_limits": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"enum": ["azure", "openai", "cohere"]},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_input_tokens"],
+            "properties": {
+              "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "versions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "allOf": [
+              {"$ref": "#/$defs/embeddingRevision"},
+              {"maxLength": 64}
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_input_tokens", "model_revision"],
+            "properties": {
+              "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"},
+              "model_revision": {"$ref": "#/$defs/embeddingRevision"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "reasoningOnlyModelRecord": {
       "type": "object",
       "description": "An allowlisted reasoning-parameter policy only. It cannot assert vision, chat, image operations, lifecycle, provider-native limits, or verified numeric aliases.",
@@ -638,7 +774,8 @@
         "processesText", "generatesText", "processesImages", "generatesImages",
         "processesAudio", "generatesAudio", "processesVideo", "generatesVideo",
         "processesBinaryFiles", "optimizedForCoding", "toolCalling",
-        "structuredOutput", "supportsStreaming", "reasoning", "imageGenerationTool"
+        "structuredOutput", "supportsStreaming", "reasoning", "imageGenerationTool",
+        "generatesEmbeddings"
       ]
     },
     "operationCapabilityMap": {
@@ -648,6 +785,9 @@
         "processesText", "generatesText", "processesImages", "generatesImages",
         "imageGenerationTool", "toolCalling"
       ],
+      "properties": {
+        "generatesEmbeddings": {"const": false}
+      },
       "propertyNames": {"$ref": "#/$defs/capabilityName"},
       "additionalProperties": {"type": "boolean"}
     },
@@ -670,6 +810,9 @@
         "supportsStreaming",
         "reasoning"
       ],
+      "properties": {
+        "generatesEmbeddings": {"const": false}
+      },
       "propertyNames": {
         "$ref": "#/$defs/capabilityName"
       },
