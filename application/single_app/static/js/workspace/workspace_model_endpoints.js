@@ -14,6 +14,10 @@ const endpointModal = endpointModalEl && window.bootstrap ? bootstrap.Modal.getO
 const endpointIdInput = document.getElementById("model-endpoint-id");
 const endpointNameInput = document.getElementById("model-endpoint-name");
 const endpointProviderSelect = document.getElementById("model-endpoint-provider");
+const endpointApiTypeGroup = document.getElementById("model-endpoint-api-type-group");
+const endpointUrlModeGroup = document.getElementById("model-endpoint-url-mode-group");
+const endpointUrlModeExactInput = document.getElementById("model-endpoint-url-mode-exact");
+const endpointApiTypeSelect = document.getElementById("model-endpoint-api-type");
 const endpointUrlInput = document.getElementById("model-endpoint-endpoint");
 const endpointUrlLabel = document.getElementById("model-endpoint-endpoint-label");
 const endpointUrlHelp = document.getElementById("model-endpoint-endpoint-help");
@@ -25,6 +29,8 @@ const endpointProjectApiVersionCustomInput = document.getElementById("model-endp
 const endpointOpenAiApiVersionGroup = document.getElementById("model-endpoint-openai-api-version-group");
 const endpointOpenAiApiVersionInput = document.getElementById("model-endpoint-openai-api-version");
 const endpointOpenAiApiVersionCustomInput = document.getElementById("model-endpoint-openai-api-version-custom");
+const endpointAnthropicVersionGroup = document.getElementById("model-endpoint-anthropic-version-group");
+const endpointAnthropicVersionInput = document.getElementById("model-endpoint-anthropic-version");
 const endpointSubscriptionGroup = document.getElementById("model-endpoint-subscription-group");
 const endpointResourceGroup = document.getElementById("model-endpoint-resource-group-group");
 const endpointSubscriptionInput = document.getElementById("model-endpoint-subscription-id");
@@ -37,6 +43,7 @@ const endpointCustomAuthorityInput = document.getElementById("model-endpoint-cus
 const endpointFoundryScopeGroup = document.getElementById("model-endpoint-foundry-scope-group");
 const endpointFoundryScopeInput = document.getElementById("model-endpoint-foundry-scope");
 const apiKeyNote = document.getElementById("model-endpoint-api-key-note");
+const apiKeyNoteText = document.getElementById("model-endpoint-api-key-note-text");
 
 const miTypeGroup = document.getElementById("model-endpoint-mi-type-group");
 const miClientGroup = document.getElementById("model-endpoint-mi-client-group");
@@ -70,6 +77,7 @@ let modalModels = [];
 const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
 const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
+const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
 const CUSTOM_VERSION_VALUE = "custom";
 const MODEL_ICON_CLASS_PATTERN = /^bi-[a-z0-9][a-z0-9-]{0,80}$/;
 const MODEL_ICON_CONTROL_CONFIG = Object.freeze({
@@ -124,6 +132,77 @@ function isFoundryProvider(provider) {
     return provider === "aifoundry" || provider === "new_foundry";
 }
 
+function isCustomProvider(provider = endpointProviderSelect?.value) {
+    return provider === "custom";
+}
+
+// The API type registry is rendered server-side from
+// functions_model_endpoint_providers so the option list, the model identifier
+// field, and the version field are declared in exactly one place.
+let customApiTypeRegistry = null;
+
+function getCustomApiTypeRegistry() {
+    if (customApiTypeRegistry) {
+        return customApiTypeRegistry;
+    }
+    customApiTypeRegistry = {};
+    try {
+        const rawRegistry = endpointApiTypeSelect?.dataset?.apiTypes;
+        if (rawRegistry) {
+            JSON.parse(rawRegistry).forEach((apiType) => {
+                customApiTypeRegistry[apiType.value] = apiType;
+            });
+        }
+    } catch (error) {
+        console.error("Unable to parse the model endpoint API type registry.", error);
+    }
+    return customApiTypeRegistry;
+}
+
+function getCustomApiTypeDescriptor(apiType = getCustomApiType()) {
+    return getCustomApiTypeRegistry()[apiType] || null;
+}
+
+function getCustomApiType() {
+    return endpointApiTypeSelect?.value || "openai";
+}
+
+function customApiTypeUsesModelName(apiType = getCustomApiType()) {
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return descriptor ? Boolean(descriptor.usesModelName) : true;
+}
+
+function customApiTypeRequiresApiVersion(apiType = getCustomApiType()) {
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return Boolean(descriptor?.requiresApiVersion);
+}
+
+function customApiTypeVersionField(apiType = getCustomApiType()) {
+    return getCustomApiTypeDescriptor(apiType)?.versionField || "";
+}
+
+function getModelRequestName(model) {
+    if (isCustomProvider() && customApiTypeUsesModelName()) {
+        return String(model?.modelName || "").trim();
+    }
+    return String(model?.deploymentName || model?.deployment || "").trim();
+}
+
+function setModelRequestName(model, value) {
+    const requestName = String(value || "").trim();
+    if (isCustomProvider() && customApiTypeUsesModelName()) {
+        model.modelName = requestName;
+        delete model.deploymentName;
+        delete model.deployment;
+        return;
+    }
+    model.deploymentName = requestName;
+    if (isCustomProvider()) {
+        delete model.modelName;
+        delete model.name;
+    }
+}
+
 function endpointIncludesProject(endpoint) {
     return String(endpoint || "").toLowerCase().includes("/api/projects/");
 }
@@ -173,9 +252,13 @@ function syncEndpointCopyForProvider() {
             : "Endpoint Fully Qualified Domain Name (FQDN)";
     }
     if (endpointUrlHelp) {
-        endpointUrlHelp.textContent = isFoundryProvider(provider)
-            ? "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name."
-            : "For Azure OpenAI, paste the resource endpoint.";
+        if (isFoundryProvider(provider)) {
+            endpointUrlHelp.textContent = "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name.";
+        } else if (isCustomProvider(provider)) {
+            endpointUrlHelp.textContent = "Enter the HTTPS FQDN for the Custom endpoint.";
+        } else {
+            endpointUrlHelp.textContent = "For Azure OpenAI, paste the resource endpoint.";
+        }
     }
 }
 
@@ -242,7 +325,7 @@ function syncOpenAiApiVersionForProvider() {
         return;
     }
 
-    if (!currentValue) {
+    if (!currentValue || currentValue === DEFAULT_FOUNDRY_OPENAI_API_VERSION) {
         setSelectedVersionValue(
             endpointOpenAiApiVersionInput,
             endpointOpenAiApiVersionCustomInput,
@@ -257,6 +340,9 @@ function formatProviderLabel(provider) {
     }
     if (provider === "new_foundry") {
         return "New Foundry";
+    }
+    if (provider === "custom") {
+        return "Custom";
     }
     return "Azure OpenAI";
 }
@@ -318,18 +404,36 @@ function renderEndpoints() {
 }
 
 function updateAuthVisibility() {
-    const authType = endpointAuthTypeSelect?.value || "managed_identity";
+    const modelsPlaceholder = document.getElementById("model-endpoint-models-placeholder");
     const provider = endpointProviderSelect?.value || "aoai";
+    const customProvider = isCustomProvider(provider);
+    if (customProvider && endpointAuthTypeSelect) {
+        endpointAuthTypeSelect.value = "api_key";
+    }
+    if (endpointAuthTypeSelect) {
+        endpointAuthTypeSelect.disabled = customProvider;
+    }
+    setElementVisibility(endpointApiTypeGroup, customProvider);
+    // The exact-URL escape hatch only applies to URL-built protocols, not to the
+    // Azure resource endpoint, which the SDK consumes as given.
+    setElementVisibility(
+        endpointUrlModeGroup,
+        customProvider && customApiTypeVersionField(getCustomApiType()) !== "api_version"
+    );
+
+    const apiType = getCustomApiType();
+    const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const isApiKey = authType === "api_key";
-    const isFoundry = isFoundryProvider(provider);
+    const isFoundry = !customProvider && isFoundryProvider(provider);
     const projectNameFromEndpoint = syncProjectNameFromEndpoint();
     syncEndpointCopyForProvider();
     syncVersionCustomVisibility();
     setElementVisibility(endpointProjectGroup, isFoundry && !projectNameFromEndpoint);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
-    setElementVisibility(endpointOpenAiApiVersionGroup, true);
-    setElementVisibility(endpointSubscriptionGroup, provider === "aoai" && !isApiKey);
-    setElementVisibility(endpointResourceGroup, provider === "aoai" && !isApiKey);
+    setElementVisibility(endpointOpenAiApiVersionGroup, !customProvider || customApiTypeRequiresApiVersion(apiType));
+    setElementVisibility(endpointAnthropicVersionGroup, customProvider && customApiTypeVersionField(apiType) === "anthropic_version");
+    setElementVisibility(endpointSubscriptionGroup, !customProvider && provider === "aoai" && !isApiKey);
+    setElementVisibility(endpointResourceGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(miTypeGroup, authType === "managed_identity");
     setElementVisibility(miClientGroup, authType === "managed_identity" && (miTypeSelect?.value === "user_assigned"));
     setElementVisibility(tenantGroup, authType === "service_principal");
@@ -339,15 +443,28 @@ function updateAuthVisibility() {
     setElementVisibility(endpointManagementCloudGroup, authType === "service_principal" && isFoundry);
     setElementVisibility(endpointCustomAuthorityGroup, authType === "service_principal" && isFoundry && endpointManagementCloudSelect?.value === "custom");
     setElementVisibility(endpointFoundryScopeGroup, authType === "service_principal" && isFoundry && endpointManagementCloudSelect?.value === "custom");
-    setElementVisibility(apiKeyNote, authType === "api_key");
-    setElementVisibility(addModelBtn, authType === "api_key");
-    setElementVisibility(fetchBtn, authType !== "api_key");
+    setElementVisibility(apiKeyNote, customProvider || authType === "api_key");
+    setElementVisibility(addModelBtn, customProvider || authType === "api_key");
+    setElementVisibility(fetchBtn, !customProvider && authType !== "api_key");
+    if (apiKeyNoteText) {
+        apiKeyNoteText.textContent = customProvider
+            ? "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable."
+            : "API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.";
+    }
+    if (modelsPlaceholder) {
+        modelsPlaceholder.textContent = customProvider
+            ? "Add a model manually."
+            : (authType === "api_key"
+                ? "Add a model manually, or switch authentication to discover deployments."
+                : "Fetch models or add a model manually.");
+    }
 }
 
 function resetModal() {
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
+    if (endpointApiTypeSelect) endpointApiTypeSelect.value = "openai";
     if (endpointUrlInput) endpointUrlInput.value = "";
     if (endpointProjectInput) endpointProjectInput.value = "";
     setSelectedVersionValue(
@@ -360,6 +477,7 @@ function resetModal() {
         endpointOpenAiApiVersionCustomInput,
         getDefaultOpenAiApiVersion("aoai")
     );
+    if (endpointAnthropicVersionInput) endpointAnthropicVersionInput.value = DEFAULT_ANTHROPIC_VERSION;
     if (endpointSubscriptionInput) endpointSubscriptionInput.value = "";
     if (endpointResourceGroupInput) endpointResourceGroupInput.value = "";
     if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = "managed_identity";
@@ -376,7 +494,7 @@ function resetModal() {
     if (apiKeyInput) apiKeyInput.placeholder = "";
 
     modalModels = [];
-    if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\">Fetch models to begin selection.</p>";
+    if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">Fetch models to begin selection.</p>";
 
     updateAuthVisibility();
 }
@@ -392,6 +510,10 @@ function openModalForEndpoint(endpoint) {
         if (endpointIdInput) endpointIdInput.value = endpoint.id || "";
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
+        if (endpointApiTypeSelect) endpointApiTypeSelect.value = endpoint.api_type || "openai";
+        if (endpointUrlModeExactInput) {
+            endpointUrlModeExactInput.checked = (endpoint.connection?.url_mode || "") === "exact";
+        }
         if (endpointUrlInput) endpointUrlInput.value = endpoint.connection?.endpoint || "";
         if (endpointProjectInput) endpointProjectInput.value = endpoint.connection?.project_name || "";
         setSelectedVersionValue(
@@ -404,6 +526,9 @@ function openModalForEndpoint(endpoint) {
             endpointOpenAiApiVersionCustomInput,
             endpoint.connection?.openai_api_version || endpoint.connection?.api_version || getDefaultOpenAiApiVersion(endpoint.provider || "aoai")
         );
+        if (endpointAnthropicVersionInput) {
+            endpointAnthropicVersionInput.value = endpoint.connection?.anthropic_version || DEFAULT_ANTHROPIC_VERSION;
+        }
         if (endpointSubscriptionInput) endpointSubscriptionInput.value = endpoint.management?.subscription_id || "";
         if (endpointResourceGroupInput) endpointResourceGroupInput.value = endpoint.management?.resource_group || "";
         if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = endpoint.auth?.type || "managed_identity";
@@ -455,6 +580,44 @@ function createModelTextInput(modelId, datasetKey, value, disabled = false) {
     input.dataset[datasetKey] = modelId;
     input.value = value || "";
     input.disabled = disabled;
+    return input;
+}
+
+function normalizeModelResponseLength(value) {
+    const valueText = String(value ?? "").trim();
+    if (!valueText) {
+        return "";
+    }
+    if (!/^\d+$/.test(valueText)) {
+        return null;
+    }
+
+    const parsedValue = Number.parseInt(valueText, 10);
+    return parsedValue > 0 ? parsedValue : null;
+}
+
+function getModelResponseLength(model) {
+    return normalizeModelResponseLength(
+        model.responseLength
+        ?? model.response_length
+        ?? model.maxTokens
+        ?? model.max_tokens
+        ?? model.maxCompletionTokens
+        ?? model.max_completion_tokens
+    );
+}
+
+function createModelResponseLengthInput(modelId, value) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "form-control form-control-sm";
+    input.min = "1";
+    input.step = "1";
+    input.placeholder = "Optional";
+    input.dataset.responseLengthFor = modelId;
+    input.id = getModelIconDomId(modelId, "response-length");
+    input.value = value || "";
+    input.setAttribute("aria-describedby", getModelIconDomId(modelId, "response-length-help"));
     return input;
 }
 
@@ -596,7 +759,7 @@ function renderModalModels(models) {
     }
 
     if (!models || !models.length) {
-        modelsListEl.innerHTML = "<p class=\"text-muted\">No models loaded yet.</p>";
+        modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">No models loaded yet.</p>";
         return;
     }
 
@@ -604,10 +767,14 @@ function renderModalModels(models) {
     models.forEach((model) => {
         const wrapper = document.createElement("div");
         wrapper.className = "border rounded p-2 mb-2";
-        const deploymentName = model.deploymentName || "";
+        const requestName = getModelRequestName(model);
         const modelName = model.modelName || "";
-        const displayName = model.displayName || deploymentName;
+        const displayName = model.displayName || requestName;
         const description = model.description || "";
+        const responseLength = getModelResponseLength(model);
+        const requestNameLabel = isCustomProvider() && customApiTypeUsesModelName()
+            ? "Model Name"
+            : "Deployment Name";
         const modelId = model.id || generateId();
         model.id = modelId;
 
@@ -624,18 +791,29 @@ function renderModalModels(models) {
 
         const fieldsRow = createElement("div", "row g-2 mt-2");
         const deploymentCol = createElement("div", "col-md-4");
-        deploymentCol.appendChild(createSmallLabel("Deployment"));
-        deploymentCol.appendChild(createModelTextInput(modelId, "deploymentNameFor", deploymentName));
+        deploymentCol.appendChild(createSmallLabel(requestNameLabel));
+        deploymentCol.appendChild(createModelTextInput(modelId, "requestModelFor", requestName));
         const displayCol = createElement("div", "col-md-4");
         displayCol.appendChild(createSmallLabel("Display Name"));
         displayCol.appendChild(createModelTextInput(modelId, "displayNameFor", displayName));
-        const modelNameCol = createElement("div", "col-md-4");
-        modelNameCol.appendChild(createSmallLabel("Model Name"));
-        const modelNameInput = createModelTextInput(modelId, "modelNameFor", modelName, true);
-        modelNameCol.appendChild(modelNameInput);
+        const responseLengthCol = createElement("div", "col-md-4");
+        const responseLengthLabel = createSmallLabel("Response Length");
+        responseLengthLabel.htmlFor = getModelIconDomId(modelId, "response-length");
+        responseLengthCol.appendChild(responseLengthLabel);
+        responseLengthCol.appendChild(createModelResponseLengthInput(modelId, responseLength));
+        const responseLengthHelp = createElement("div", "form-text");
+        responseLengthHelp.id = getModelIconDomId(modelId, "response-length-help");
+        responseLengthHelp.textContent = "Optional output token ceiling for standard chat responses.";
+        responseLengthCol.appendChild(responseLengthHelp);
         fieldsRow.appendChild(deploymentCol);
         fieldsRow.appendChild(displayCol);
-        fieldsRow.appendChild(modelNameCol);
+        fieldsRow.appendChild(responseLengthCol);
+        if (!isCustomProvider()) {
+            const modelNameCol = createElement("div", "col-md-4");
+            modelNameCol.appendChild(createSmallLabel("Model Name"));
+            modelNameCol.appendChild(createModelTextInput(modelId, "modelNameFor", modelName, true));
+            fieldsRow.appendChild(modelNameCol);
+        }
 
         const descriptionWrapper = createElement("div", "mt-2");
         descriptionWrapper.appendChild(createSmallLabel("Description"));
@@ -650,10 +828,27 @@ function renderModalModels(models) {
         iconWrapper.appendChild(createSmallLabel("Icon"));
         iconWrapper.appendChild(createModelIconEditor(model, modelId));
 
+        const actions = createElement("div", "d-flex gap-2 mt-2");
+        const testButton = document.createElement("button");
+        testButton.type = "button";
+        testButton.className = "btn btn-sm btn-outline-secondary";
+        testButton.dataset.action = "test-model";
+        testButton.dataset.modelId = modelId;
+        testButton.textContent = "Test Connection";
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "btn btn-sm btn-outline-danger";
+        removeButton.dataset.action = "remove-model";
+        removeButton.dataset.modelId = modelId;
+        removeButton.textContent = "Remove";
+        actions.appendChild(testButton);
+        actions.appendChild(removeButton);
+
         wrapper.appendChild(checkWrapper);
         wrapper.appendChild(fieldsRow);
         wrapper.appendChild(descriptionWrapper);
         wrapper.appendChild(iconWrapper);
+        wrapper.appendChild(actions);
 
         fragment.appendChild(wrapper);
     });
@@ -670,31 +865,42 @@ function collectModalModels() {
     const updated = modalModels.map((model) => ({ ...model }));
     updated.forEach((model) => {
         const checkbox = modelsListEl.querySelector(`input[data-model-id="${model.id}"]`);
-        const deploymentInput = modelsListEl.querySelector(`input[data-deployment-name-for="${model.id}"]`);
+        const requestModelInput = modelsListEl.querySelector(`input[data-request-model-for="${model.id}"]`);
         const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
         const descriptionInput = modelsListEl.querySelector(`textarea[data-description-for="${model.id}"]`);
+        const responseLengthInput = modelsListEl.querySelector(`input[data-response-length-for="${model.id}"]`);
         const iconEditor = findModelEditor(model.id);
+        const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
+        if (responseLength === null) {
+            throw new Error("Response length must be a positive whole number.");
+        }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
-        model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
+        setModelRequestName(model, requestModelInput ? requestModelInput.value : getModelRequestName(model));
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
+        if (responseLength) {
+            model.responseLength = responseLength;
+        } else {
+            delete model.responseLength;
+        }
     });
     return updated;
 }
 
 async function testModelConnection(model) {
     const payload = buildEndpointPayload();
-    if (!payload || !model?.deploymentName) {
-        showToast("Model deployment name is required for testing.", "warning");
+    const requestModel = getModelRequestName(model);
+    if (!payload || !requestModel) {
+        showToast(`${isCustomProvider() && customApiTypeUsesModelName() ? "Model" : "Deployment"} name is required for testing.`, "warning");
         return;
     }
 
+    const testModel = {};
+    setModelRequestName(testModel, requestModel);
     const requestBody = {
         ...payload,
-        model: {
-            deploymentName: model.deploymentName
-        }
+        model: testModel
     };
 
     try {
@@ -707,7 +913,15 @@ async function testModelConnection(model) {
         if (!response.ok) {
             throw new Error(data.error || "Connection test failed.");
         }
-        showToast("Model connection successful.", "success");
+        // Report the URL that was actually called. Normalization can rewrite the
+        // configured endpoint, and that rewrite was previously invisible.
+        const resolvedUrl = data.resolved?.request_url || "";
+        showToast(
+            resolvedUrl
+                ? `Model connection successful. Called ${resolvedUrl}`
+                : "Model connection successful.",
+            "success"
+        );
     } catch (error) {
         console.error("Model connection failed", error);
         showToast(error.message || "Model connection failed.", "danger");
@@ -715,6 +929,10 @@ async function testModelConnection(model) {
 }
 
 async function fetchModels() {
+    if (isCustomProvider()) {
+        showToast("Model discovery is unavailable for Custom endpoints. Add models manually.", "warning");
+        return;
+    }
     const payload = buildEndpointPayload();
     if (!payload) {
         return;
@@ -780,6 +998,8 @@ function buildEndpointPayload() {
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
     const provider = endpointProviderSelect?.value || "aoai";
+    const customProvider = isCustomProvider(provider);
+    const apiType = getCustomApiType();
     const projectNameFromEndpoint = isFoundryProvider(provider) ? syncProjectNameFromEndpoint() : "";
     const projectName = projectNameFromEndpoint || endpointProjectInput?.value.trim() || "";
     const projectApiVersion = getSelectedVersionValue(
@@ -794,11 +1014,21 @@ function buildEndpointPayload() {
     );
     const subscriptionId = endpointSubscriptionInput?.value.trim() || "";
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
-    const authType = endpointAuthTypeSelect?.value || "managed_identity";
+    const authType = customProvider ? "api_key" : (endpointAuthTypeSelect?.value || "managed_identity");
     const existingEndpoint = workspaceEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
 
-    if (!name || !endpoint || !openAiApiVersion) {
-        showToast("Endpoint name, URL, and OpenAI API version are required.", "warning");
+    if (!name || !endpoint) {
+        showToast("Endpoint name and URL are required.", "warning");
+        return null;
+    }
+
+    if (customProvider && !/^https:\/\//i.test(endpoint)) {
+        showToast("Custom endpoint URLs must use HTTPS.", "warning");
+        return null;
+    }
+
+    if ((!customProvider || customApiTypeRequiresApiVersion(apiType)) && !openAiApiVersion) {
+        showToast("OpenAI API version is required.", "warning");
         return null;
     }
 
@@ -817,7 +1047,7 @@ function buildEndpointPayload() {
         return null;
     }
 
-    const auth = {
+    let auth = {
         type: authType,
         managed_identity_type: miTypeSelect?.value || "system_assigned",
         managed_identity_client_id: miClientIdInput?.value.trim() || "",
@@ -829,6 +1059,12 @@ function buildEndpointPayload() {
         custom_authority: endpointCustomAuthorityInput?.value.trim() || "",
         foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
     };
+    if (customProvider) {
+        auth = {
+            type: "api_key",
+            api_key: apiKeyInput?.value.trim() || ""
+        };
+    }
 
     const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
     const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);
@@ -854,17 +1090,25 @@ function buildEndpointPayload() {
         return null;
     }
 
-    const management = provider === "aoai" ? {
+    const management = !customProvider && provider === "aoai" ? {
         subscription_id: subscriptionId,
         resource_group: resourceGroup
     } : {};
 
-    const connection = {
-        endpoint,
-        openai_api_version: openAiApiVersion
-    };
+    const connection = { endpoint };
+    const versionField = customProvider ? customApiTypeVersionField(apiType) : "";
+    if (customProvider && endpointUrlModeExactInput?.checked) {
+        connection.url_mode = "exact";
+    }
+    if (customProvider && versionField === "api_version") {
+        connection.api_version = openAiApiVersion;
+    } else if (customProvider && versionField === "anthropic_version") {
+        connection.anthropic_version = endpointAnthropicVersionInput?.value.trim() || DEFAULT_ANTHROPIC_VERSION;
+    } else if (!customProvider) {
+        connection.openai_api_version = openAiApiVersion;
+    }
 
-    if (isFoundryProvider(provider)) {
+    if (!customProvider && isFoundryProvider(provider)) {
         connection.project_api_version = projectApiVersion;
         if (projectName) {
             connection.project_name = projectName;
@@ -874,6 +1118,7 @@ function buildEndpointPayload() {
     return {
         id: endpointId,
         provider,
+        ...(customProvider ? { api_type: apiType } : {}),
         name,
         connection,
         management,
@@ -881,7 +1126,8 @@ function buildEndpointPayload() {
     };
 }
 
-function saveEndpoint() {
+async function saveEndpoint() {
+    const previousEndpoints = [...workspaceEndpoints];
     try {
         const payload = buildEndpointPayload();
         if (!payload) {
@@ -899,7 +1145,8 @@ function saveEndpoint() {
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
-            enabled: true,
+            ...(payload.api_type ? { api_type: payload.api_type } : {}),
+            enabled: existingEndpoint ? existingEndpoint.enabled !== false : true,
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
@@ -915,41 +1162,60 @@ function saveEndpoint() {
             workspaceEndpoints.push(endpointData);
         }
 
-        persistEndpoints();
+        await persistEndpoints();
         renderEndpoints();
         endpointModal.hide();
         showToast("Endpoint saved successfully.", "success");
     } catch (error) {
+        workspaceEndpoints = previousEndpoints;
         console.error("Error saving endpoint", error);
         showToast(error.message || "Failed to save endpoint.", "danger");
     }
 }
 
-function persistEndpoints() {
-    fetch(endpointsApi, {
+async function persistEndpoints() {
+    const response = await fetch(endpointsApi, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoints: workspaceEndpoints })
-    }).catch((error) => {
-        console.error("Failed to save endpoints", error);
-        showToast("Failed to save endpoints.", "danger");
     });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || "Failed to save endpoints.");
+    }
+    if (Array.isArray(data.endpoints)) {
+        workspaceEndpoints = [...data.endpoints];
+    }
 }
 
-function toggleEndpoint(endpointId) {
+async function toggleEndpoint(endpointId) {
     const endpoint = workspaceEndpoints.find((item) => item.id === endpointId);
     if (!endpoint) {
         return;
     }
+    const previousEnabled = endpoint.enabled;
     endpoint.enabled = !endpoint.enabled;
-    persistEndpoints();
-    renderEndpoints();
+    try {
+        await persistEndpoints();
+        renderEndpoints();
+    } catch (error) {
+        endpoint.enabled = previousEnabled;
+        console.error("Failed to update endpoint", error);
+        showToast(error.message || "Failed to update endpoint.", "danger");
+    }
 }
 
-function deleteEndpoint(endpointId) {
+async function deleteEndpoint(endpointId) {
+    const previousEndpoints = workspaceEndpoints;
     workspaceEndpoints = workspaceEndpoints.filter((item) => item.id !== endpointId);
-    persistEndpoints();
-    renderEndpoints();
+    try {
+        await persistEndpoints();
+        renderEndpoints();
+    } catch (error) {
+        workspaceEndpoints = previousEndpoints;
+        console.error("Failed to delete endpoint", error);
+        showToast(error.message || "Failed to delete endpoint.", "danger");
+    }
 }
 
 function handleTableClick(event) {
@@ -979,16 +1245,46 @@ function handleTableClick(event) {
 
 function addManualModel() {
     modalModels = collectModalModels();
-    modalModels.push({
+    const model = {
         id: generateId(),
-        deploymentName: "",
-        modelName: "",
         displayName: "",
         icon: {},
         description: "",
         enabled: true
-    });
+    };
+    setModelRequestName(model, "");
+    modalModels.push(model);
     renderModalModels(modalModels);
+}
+
+function handleModelListClick(event) {
+    const button = event.target.closest("button[data-action]");
+    if (!button) {
+        return;
+    }
+
+    try {
+        modalModels = collectModalModels();
+    } catch (error) {
+        showToast(error?.message || "Unable to update the model.", "danger");
+        return;
+    }
+
+    const modelId = button.dataset.modelId;
+    const model = modalModels.find((item) => item.id === modelId);
+    if (!model) {
+        return;
+    }
+
+    if (button.dataset.action === "remove-model") {
+        modalModels = modalModels.filter((item) => item.id !== modelId);
+        renderModalModels(modalModels);
+        return;
+    }
+
+    if (button.dataset.action === "test-model") {
+        testModelConnection(model);
+    }
 }
 
 function escapeHtml(value) {
@@ -1054,8 +1350,29 @@ function initialize() {
 
     if (endpointProviderSelect) {
         endpointProviderSelect.addEventListener("change", () => {
-            updateAuthVisibility();
+            try {
+                modalModels = collectModalModels();
+            } catch (error) {
+                showToast(error?.message || "Unable to update the endpoint provider.", "danger");
+                return;
+            }
             syncOpenAiApiVersionForProvider();
+            renderModalModels(modalModels);
+            updateAuthVisibility();
+        });
+    }
+
+    if (endpointApiTypeSelect) {
+        endpointApiTypeSelect.addEventListener("change", () => {
+            try {
+                modalModels = collectModalModels();
+            } catch (error) {
+                showToast(error?.message || "Unable to update the API type.", "danger");
+                return;
+            }
+            syncOpenAiApiVersionForProvider();
+            renderModalModels(modalModels);
+            updateAuthVisibility();
         });
     }
 
@@ -1093,6 +1410,10 @@ function initialize() {
 
     if (addModelBtn) {
         addModelBtn.addEventListener("click", addManualModel);
+    }
+
+    if (modelsListEl) {
+        modelsListEl.addEventListener("click", handleModelListClick);
     }
 }
 

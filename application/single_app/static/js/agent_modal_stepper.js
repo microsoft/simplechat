@@ -4777,7 +4777,9 @@ export class AgentModalStepper {
       // Using global model - need to set at least one deployment field
       // We'll use the selected model as the deployment name for now
       if (formData.model) {
-        const deploymentName = selectedModelOption?.dataset?.deploymentName || formData.model;
+        const deploymentName = selectedModelOption?.dataset?.requestModel
+          || selectedModelOption?.dataset?.deploymentName
+          || formData.model;
         formData.azure_openai_gpt_deployment = deploymentName;
       }
     }

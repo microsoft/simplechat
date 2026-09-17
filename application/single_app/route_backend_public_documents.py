@@ -136,7 +136,8 @@ def register_route_backend_public_documents(bp):
                     user_id=user_id,
                     document_id=doc_id,
                     num_file_chunks=0,
-                    status='Queued'
+                    status='Queued',
+                    source_file_path=tmp_path,
                 )
                 update_document(
                     document_id=doc_id,

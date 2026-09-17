@@ -691,6 +691,13 @@
     const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
     window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
+    window.simplechatModelEndpointApiTypes = {{ model_endpoint_api_types | default([]) | tojson }};
+    window.simplechatCustomApiTypeUsesModelName = function(apiType) {
+      const normalized = String(apiType || '').trim().toLowerCase().replace(/-/g, '_');
+      const descriptor = (window.simplechatModelEndpointApiTypes || [])
+        .find(entry => entry.value === normalized);
+      return descriptor ? Boolean(descriptor.usesModelName) : false;
+    };
     window.simplechatLatestFeaturesNav = {{ {
       'currentVersion': latest_features_current_version | default(config['VERSION']),
       'hiddenByDevelopment': latest_features_nav_hidden_by_development | default(false),

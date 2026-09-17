@@ -3,12 +3,22 @@
 
 import json
 import asyncio
+import re
+import ssl
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
 from urllib.parse import urlparse
 
+import anyio
+import httpcore
+import httpx
 import requests
-from openai import OpenAI
+from openai import (
+    DEFAULT_CONNECTION_LIMITS,
+    DefaultAsyncHttpxClient,
+    DefaultHttpxClient,
+    OpenAI,
+)
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.function_calling_utils import update_settings_from_function_call_configuration
@@ -24,6 +34,23 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
+from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
+from functions_model_endpoint_providers import (
+    CUSTOM_ENDPOINT_URL_MODE_EXACT,
+    URL_POLICY_APPEND_V1_IF_MISSING,
+    URL_POLICY_AS_GIVEN,
+    get_model_endpoint_provider,
+)
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    normalize_model_endpoint_api_type,
+)
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    resolve_custom_model_endpoint_addresses,
+)
 
 
 MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI = "azure_openai"
@@ -131,9 +158,22 @@ def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
     )
 
 
-def infer_model_endpoint_protocol(provider: Any, endpoint: Any, deployment_name: Any = "") -> str:
+def infer_model_endpoint_protocol(
+    provider: Any,
+    endpoint: Any,
+    deployment_name: Any = "",
+    api_type: Any = "",
+) -> str:
     """Infer the runtime protocol from provider, endpoint path, and deployment name."""
     normalized_provider = str(provider or "aoai").strip().lower()
+    if normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+        registered_provider = get_model_endpoint_provider(
+            normalize_model_endpoint_api_type(normalized_provider, api_type)
+        )
+        if registered_provider is None:
+            raise ValueError("Custom model endpoints require a supported API type.")
+        return registered_provider.protocol
+
     endpoint_path = get_endpoint_path(endpoint)
 
     if normalized_provider in ("anthropic", "claude"):
@@ -173,13 +213,101 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
     return endpoint.rstrip("/") + "/openai/v1/"
 
 
-def normalize_anthropic_messages_url(raw_endpoint: Any) -> str:
+CUSTOM_OPENAI_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/models")
+# The optional suffix must start with a letter. Allowing it to start with a digit
+# would make it ambiguous with the preceding \d+, which backtracks quadratically
+# on a long run of digits.
+CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(
+    r"^v\d+(?:[a-z][a-z0-9]*)?$",
+    re.IGNORECASE,
+)
+
+
+def _endpoint_path_names_a_version(endpoint: str) -> bool:
+    """Return whether the endpoint's last path segment is already a version."""
+    try:
+        path = urlparse(endpoint).path
+    except ValueError:
+        return False
+    segments = [segment for segment in path.split("/") if segment]
+    if not segments:
+        return False
+    return bool(CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN.fullmatch(segments[-1]))
+
+
+def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:
+    """Normalize a Custom OpenAI-compatible endpoint to its base URL.
+
+    "/v1" is appended only when the configured URL does not already say where the
+    API lives. It is not appended when the last path segment is already a version
+    such as "v1", "v2", or "v1beta", and it is not appended when the administrator
+    pasted a full operation URL, because that URL states the base exactly.
+    """
+    endpoint = normalize_endpoint_text(raw_endpoint)
+    if not endpoint:
+        raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
+
+    lowered_endpoint = endpoint.lower()
+    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
+        if lowered_endpoint.endswith(suffix):
+            # A full operation URL states the base exactly, so trust it as given.
+            return endpoint[: -len(suffix)].rstrip("/") + "/"
+
+    if _endpoint_path_names_a_version(endpoint):
+        return endpoint.rstrip("/") + "/"
+    return endpoint.rstrip("/") + "/v1/"
+
+
+def resolve_custom_openai_base_url(
+    raw_endpoint: Any,
+    api_type: Any = "",
+    url_mode: Any = "",
+) -> str:
+    """Resolve a Custom endpoint base URL using the provider's URL policy.
+
+    Appending "/v1" is correct for OpenAI and OpenAI-compatible gateways, but wrong
+    for surfaces that already carry their own version segment. Google Gemini's
+    compatible base ends in "/v1beta/openai/", and appending "/v1" to it produces a
+    404, so that provider declares the as-given policy instead.
+
+    An administrator can also force the as-given policy for any API type by setting
+    the endpoint's url_mode to "exact", which covers gateways that mount the
+    OpenAI surface at a path SimpleChat cannot infer.
+    """
+    provider = get_model_endpoint_provider(api_type)
+    url_policy = provider.url_policy if provider else URL_POLICY_APPEND_V1_IF_MISSING
+    if str(url_mode or "").strip().lower() == CUSTOM_ENDPOINT_URL_MODE_EXACT:
+        url_policy = URL_POLICY_AS_GIVEN
+
+    if url_policy == URL_POLICY_AS_GIVEN:
+        endpoint = normalize_endpoint_text(raw_endpoint)
+        if not endpoint:
+            raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
+        return endpoint.rstrip("/") + "/"
+
+    return normalize_custom_openai_base_url(raw_endpoint)
+
+
+def normalize_anthropic_messages_url(
+    raw_endpoint: Any,
+    *,
+    direct_custom: bool = False,
+) -> str:
     """Normalize a Foundry endpoint to the Anthropic messages URL."""
     endpoint = normalize_endpoint_text(raw_endpoint)
     if not endpoint:
-        raise ValueError("A Foundry endpoint is required for Anthropic inference.")
+        raise ValueError("An endpoint is required for Anthropic inference.")
 
     lowered_endpoint = endpoint.lower()
+    if direct_custom:
+        if lowered_endpoint.endswith("/v1/messages"):
+            return endpoint
+        if lowered_endpoint.endswith("/v1"):
+            return endpoint.rstrip("/") + "/messages"
+        if lowered_endpoint.endswith("/messages"):
+            return endpoint
+        return endpoint.rstrip("/") + "/v1/messages"
+
     messages_index = lowered_endpoint.find("/anthropic/v1/messages")
     if messages_index >= 0:
         return endpoint[: messages_index + len("/anthropic/v1/messages")]
@@ -196,10 +324,44 @@ def resolve_openai_style_request_api_version(raw_api_version: Any) -> str:
     return ""
 
 
+SYNTHETIC_STREAM_CHUNK_CHARACTERS = 24
+_SYNTHETIC_STREAM_TOKEN_PATTERN = re.compile(r"\S+\s*|\s+")
+
+
+def iter_synthetic_stream_text_chunks(
+    text: Any,
+    chunk_characters: int = SYNTHETIC_STREAM_CHUNK_CHARACTERS,
+) -> Iterator[str]:
+    """Split a completed response into stream-sized chunks at word boundaries.
+
+    SimpleChat only supports streaming responses, so a provider or code path that
+    can only return a completed answer still has to deliver it through the stream.
+    Emitting the whole answer as one chunk technically satisfies that, but the user
+    sees nothing and then everything at once, which reads as a hang.
+
+    Chunking is lossless: concatenating every chunk reproduces the original text
+    exactly, including its whitespace, because the frontend accumulates chunks.
+    """
+    normalized_text = str(text or "")
+    if not normalized_text:
+        return
+    if chunk_characters < 1:
+        yield normalized_text
+        return
+
+    buffer = ""
+    for token in _SYNTHETIC_STREAM_TOKEN_PATTERN.findall(normalized_text):
+        buffer += token
+        if len(buffer) >= chunk_characters:
+            yield buffer
+            buffer = ""
+    if buffer:
+        yield buffer
+
+
 def normalize_chat_completion_text(content: Any) -> str:
     """Normalize text content returned by OpenAI-compatible chat responses."""
-    if content is None:
-        return ""
+    if content is None:        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, (list, tuple)):
@@ -231,36 +393,449 @@ def extract_chat_completion_response_text(response: Any) -> str:
     return normalize_chat_completion_text(getattr(message, "content", None))
 
 
+def _resolve_custom_connection_addresses(host, port, allow_private):
+    hostname = host.decode("ascii") if isinstance(host, bytes) else str(host)
+    try:
+        return resolve_custom_model_endpoint_addresses(
+            hostname,
+            port,
+            allow_private=allow_private,
+        )
+    except ModelEndpointValidationError:
+        raise httpcore.ConnectError("Custom endpoint connection blocked.") from None
+
+
+class _PinnedCustomEndpointSyncBackend(httpcore.NetworkBackend):
+    """Connect only to addresses returned by the validated DNS lookup."""
+
+    def __init__(self, *, allow_private=False):
+        self._allow_private = allow_private
+        self._backend = httpcore.SyncBackend()
+
+    def connect_tcp(
+        self,
+        host,
+        port,
+        timeout=None,
+        local_address=None,
+        socket_options=None,
+    ):
+        addresses = _resolve_custom_connection_addresses(
+            host,
+            port,
+            self._allow_private,
+        )
+        last_error = None
+        for address in addresses:
+            try:
+                return self._backend.connect_tcp(
+                    address,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise httpcore.ConnectError("Custom endpoint connection failed.")
+
+    def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        raise httpcore.ConnectError("Custom endpoint UNIX sockets are not supported.")
+
+    def sleep(self, seconds):
+        self._backend.sleep(seconds)
+
+
+class _PinnedCustomEndpointAsyncBackend(httpcore.AsyncNetworkBackend):
+    """Async counterpart to the validated synchronous DNS backend."""
+
+    def __init__(self, *, allow_private=False):
+        self._allow_private = allow_private
+        self._backend = httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host,
+        port,
+        timeout=None,
+        local_address=None,
+        socket_options=None,
+    ):
+        addresses = await anyio.to_thread.run_sync(
+            _resolve_custom_connection_addresses,
+            host,
+            port,
+            self._allow_private,
+        )
+        last_error = None
+        for address in addresses:
+            try:
+                return await self._backend.connect_tcp(
+                    address,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise httpcore.ConnectError("Custom endpoint connection failed.")
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        raise httpcore.ConnectError("Custom endpoint UNIX sockets are not supported.")
+
+    async def sleep(self, seconds):
+        await self._backend.sleep(seconds)
+
+
+def build_custom_endpoint_ssl_context(ca_bundle_path: Any = "", client_cert: Any = None):
+    """Return the TLS context for Custom endpoint requests.
+
+    The default context trusts only certifi's public roots, and deliberately does
+    not read SSL_CERT_FILE, so ambient environment variables cannot silently widen
+    what SimpleChat trusts. That leaves an on-premises gateway with an
+    enterprise-issued certificate untrustable, so an administrator may name a CA
+    bundle explicitly. Naming a bundle is an explicit decision, not an ambient one.
+
+    ``client_cert`` supplies an mTLS client certificate, as either a combined PEM
+    path or a (certificate, key) pair of paths.
+    """
+    bundle_path = str(ca_bundle_path or "").strip()
+    if bundle_path:
+        try:
+            context = ssl.create_default_context(cafile=bundle_path)
+        except (OSError, ssl.SSLError):
+            # A missing or unreadable bundle must not silently fall back to a
+            # weaker context, so the failure is surfaced to the caller.
+            raise ModelEndpointValidationError(
+                "The configured Custom endpoint CA bundle could not be loaded."
+            ) from None
+    else:
+        context = httpx.create_ssl_context(verify=True, trust_env=False)
+
+    if client_cert:
+        try:
+            if isinstance(client_cert, (tuple, list)):
+                context.load_cert_chain(*client_cert)
+            else:
+                context.load_cert_chain(client_cert)
+        except (OSError, ssl.SSLError):
+            raise ModelEndpointValidationError(
+                "The configured Custom endpoint client certificate could not be loaded."
+            ) from None
+
+    return context
+
+
+class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
+    """HTTPX transport whose TCP connection uses the validated DNS results."""
+
+    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
+            max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
+            max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
+            keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
+            network_backend=_PinnedCustomEndpointSyncBackend(
+                allow_private=allow_private,
+            ),
+        )
+
+
+class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """Async HTTPX transport whose TCP connection uses validated DNS results."""
+
+    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
+            max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
+            max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
+            keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
+            network_backend=_PinnedCustomEndpointAsyncBackend(
+                allow_private=allow_private,
+            ),
+        )
+
+
+def build_custom_openai_sync_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
+    """Return a no-redirect SDK transport pinned to validated DNS addresses."""
+    return DefaultHttpxClient(
+        transport=_PinnedCustomEndpointHTTPTransport(
+            allow_private=allow_private,
+            ca_bundle_path=ca_bundle_path,
+            client_cert=client_cert,
+        ),
+        follow_redirects=False,
+        trust_env=False,
+    )
+
+
+def build_custom_openai_async_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
+    """Return an async no-redirect transport pinned to validated DNS addresses."""
+    return DefaultAsyncHttpxClient(
+        transport=_PinnedCustomEndpointAsyncHTTPTransport(
+            allow_private=allow_private,
+            ca_bundle_path=ca_bundle_path,
+            client_cert=client_cert,
+        ),
+        follow_redirects=False,
+        trust_env=False,
+    )
+
+
 def build_openai_style_chat_client(
     token_or_key: str,
     base_url: str,
     api_version: Any = "",
     default_headers: Dict[str, str] | None = None,
+    *,
+    direct_custom: bool = False,
+    allow_private_custom_endpoints: bool = False,
+    api_type: Any = "",
+    url_mode: Any = "",
+    ca_bundle_path: Any = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
     client_kwargs: Dict[str, Any] = {
         "api_key": token_or_key,
-        "base_url": normalize_openai_style_base_url(base_url),
+        "base_url": (
+            resolve_custom_openai_base_url(base_url, api_type, url_mode)
+            if direct_custom
+            else normalize_openai_style_base_url(base_url)
+        ),
     }
+    if direct_custom:
+        client_kwargs["http_client"] = build_custom_openai_sync_http_client(
+            allow_private=allow_private_custom_endpoints,
+            ca_bundle_path=ca_bundle_path,
+        )
     if default_headers:
         client_kwargs["default_headers"] = default_headers
     if request_api_version:
         client_kwargs["default_query"] = {"api-version": request_api_version}
-    return OpenAIStyleChatCompletionClient(OpenAI(**client_kwargs))
+    return OpenAIStyleChatCompletionClient(
+        OpenAI(**client_kwargs),
+        sanitize_errors=direct_custom,
+        api_type=api_type,
+        request_url=client_kwargs["base_url"],
+    )
 
 
 class OpenAIStyleChatCompletionClient:
     """Small wrapper that makes OpenAI-compatible Foundry calls tolerant of Azure-only options."""
 
-    def __init__(self, client: OpenAI):
+    def __init__(
+        self,
+        client: OpenAI,
+        *,
+        sanitize_errors: bool = False,
+        api_type: Any = "",
+        request_url: Any = "",
+    ):
         self._client = client
+        self._sanitize_errors = sanitize_errors
+        self._api_type = api_type
+        self._request_url = request_url
+        provider = get_model_endpoint_provider(api_type) if sanitize_errors else None
+        self._supports_stream_options = bool(provider and provider.supports_stream_options)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
         request_kwargs = dict(kwargs)
-        request_kwargs.pop("stream_options", None)
-        return self._client.chat.completions.create(**request_kwargs)
+        # stream_options is how a streaming response reports token usage. It is
+        # dropped only for surfaces that reject it, rather than for everyone.
+        if not self._supports_stream_options:
+            request_kwargs.pop("stream_options", None)
+        try:
+            response = self._client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            if self._sanitize_errors:
+                raise build_sanitized_model_endpoint_error(
+                    "Custom model request failed.",
+                    exc,
+                    api_type=self._api_type,
+                    protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                    request_url=self._request_url,
+                    status_code=getattr(exc, "status_code", None),
+                    detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+                ) from None
+            raise
+        if self._sanitize_errors and request_kwargs.get("stream"):
+            return _SanitizedSyncIterator(
+                response,
+                api_type=self._api_type,
+                request_url=self._request_url,
+            )
+        return response
+
+
+class _SanitizedSyncIterator:
+    """Proxy a streaming response without exposing provider exception details."""
+
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
+        self._iterator = iterator
+        self._items = iter(iterator)
+        self._api_type = api_type
+        self._request_url = request_url
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self._items)
+        except StopIteration:
+            raise
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model stream failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                request_url=self._request_url,
+            ) from None
+
+    def __enter__(self):
+        enter = getattr(self._iterator, "__enter__", None)
+        if callable(enter):
+            enter()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        exit_method = getattr(self._iterator, "__exit__", None)
+        if callable(exit_method):
+            return exit_method(exc_type, exc_value, traceback)
+        return False
+
+    def close(self):
+        close_method = getattr(self._iterator, "close", None)
+        if callable(close_method):
+            return close_method()
+        return None
+
+    def __getattr__(self, name: str):
+        return getattr(self._iterator, name)
+
+
+class _SanitizedAsyncIterator:
+    """Proxy an async streaming response without exposing provider exception details."""
+
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
+        self._iterator = iterator
+        self._items = iterator.__aiter__()
+        self._api_type = api_type
+        self._request_url = request_url
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return await self._items.__anext__()
+        except StopAsyncIteration:
+            raise
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model stream failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                request_url=self._request_url,
+            ) from None
+
+    async def __aenter__(self):
+        enter = getattr(self._iterator, "__aenter__", None)
+        if callable(enter):
+            await enter()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        exit_method = getattr(self._iterator, "__aexit__", None)
+        if callable(exit_method):
+            return await exit_method(exc_type, exc_value, traceback)
+        return False
+
+    async def close(self):
+        close_method = getattr(self._iterator, "close", None)
+        if callable(close_method):
+            result = close_method()
+            if asyncio.iscoroutine(result):
+                return await result
+        return None
+
+    def __getattr__(self, name: str):
+        return getattr(self._iterator, name)
+
+
+class SanitizedCustomChatCompletionClient:
+    """Expose an SDK chat client while replacing direct Custom provider errors."""
+
+    def __init__(self, client: Any, *, api_type: Any = "", request_url: Any = ""):
+        self._client = client
+        self._api_type = api_type
+        self._request_url = request_url
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def create(self, **kwargs: Any):
+        try:
+            response = self._client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model request failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+                request_url=self._request_url,
+                status_code=getattr(exc, "status_code", None),
+                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+            ) from None
+        if kwargs.get("stream"):
+            return _SanitizedSyncIterator(
+                response,
+                api_type=self._api_type,
+                request_url=self._request_url,
+            )
+        return response
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+
+def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", request_url: Any = ""):
+    """Replace async SDK chat errors with safe direct-Custom messages."""
+    if getattr(client, "_simplechat_custom_errors_sanitized", False):
+        return client
+
+    original_create = client.chat.completions.create
+
+    async def sanitized_create(*args, **kwargs):
+        try:
+            response = await original_create(*args, **kwargs)
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model request failed.",
+                exc,
+                api_type=api_type,
+                request_url=request_url,
+                status_code=getattr(exc, "status_code", None),
+                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+            ) from None
+        if kwargs.get("stream"):
+            return _SanitizedAsyncIterator(
+                response,
+                api_type=api_type,
+                request_url=request_url,
+            )
+        return response
+
+    client.chat.completions.create = sanitized_create
+    client._simplechat_custom_errors_sanitized = True
+    return client
 
 
 def build_anthropic_chat_client(
@@ -270,6 +845,10 @@ def build_anthropic_chat_client(
     bearer_token: str = "",
     extra_headers: Dict[str, str] | None = None,
     timeout: int = 90,
+    anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
+    direct_custom: bool = False,
+    allow_private_custom_endpoints: bool = False,
+    custom_endpoint_ca_bundle_path: str = "",
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
     return AnthropicChatCompletionClient(
@@ -278,6 +857,10 @@ def build_anthropic_chat_client(
         bearer_token=bearer_token,
         extra_headers=extra_headers,
         timeout=timeout,
+        anthropic_version=anthropic_version,
+        direct_custom=direct_custom,
+        allow_private_custom_endpoints=allow_private_custom_endpoints,
+        custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
     )
 
 
@@ -292,23 +875,40 @@ class AnthropicChatCompletionClient:
         bearer_token: str = "",
         extra_headers: Dict[str, str] | None = None,
         timeout: int = 90,
+        anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
+        direct_custom: bool = False,
+        allow_private_custom_endpoints: bool = False,
+        custom_endpoint_ca_bundle_path: str = "",
     ):
-        self.endpoint = normalize_anthropic_messages_url(endpoint)
+        self.endpoint = normalize_anthropic_messages_url(
+            endpoint,
+            direct_custom=direct_custom,
+        )
         self.api_key = api_key
         self.bearer_token = bearer_token
         self.extra_headers = extra_headers or {}
         self.timeout = timeout
+        self.anthropic_version = str(
+            anthropic_version or DEFAULT_ANTHROPIC_VERSION
+        ).strip()
+        self.direct_custom = direct_custom
+        self.allow_private_custom_endpoints = allow_private_custom_endpoints
+        self.custom_endpoint_ca_bundle_path = custom_endpoint_ca_bundle_path
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
         payload = self._build_payload(kwargs)
         stream = bool(kwargs.get("stream"))
+        if self.direct_custom:
+            return self._create_direct_custom(payload, stream=stream)
+
         response = requests.post(
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
             timeout=(30, self.timeout),
             stream=stream,
+            allow_redirects=not self.direct_custom,
         )
         if response.status_code >= 400:
             self._raise_response_error(response)
@@ -318,16 +918,86 @@ class AnthropicChatCompletionClient:
 
         return self._build_completion_response(response.json())
 
+    def _create_direct_custom(self, payload, *, stream):
+        http_client = build_custom_openai_sync_http_client(
+            allow_private=self.allow_private_custom_endpoints,
+            ca_bundle_path=self.custom_endpoint_ca_bundle_path,
+        )
+        request = http_client.build_request(
+            "POST",
+            self.endpoint,
+            headers=self._build_headers(stream=stream),
+            json=payload,
+            timeout=httpx.Timeout(self.timeout, connect=30),
+        )
+        try:
+            response = http_client.send(
+                request,
+                stream=stream,
+                follow_redirects=False,
+            )
+        except Exception as exc:
+            http_client.close()
+            raise build_sanitized_model_endpoint_error(
+                "Custom Anthropic model request failed.",
+                exc,
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
+            ) from None
+
+        if response.status_code >= 400:
+            status_code = response.status_code
+            # Read the upstream body before closing so the log can explain the
+            # failure, even though the browser only ever sees the status code.
+            error_detail = ""
+            try:
+                if not stream:
+                    error_detail = response.text
+            except Exception:
+                error_detail = ""
+            response.close()
+            http_client.close()
+            raise build_sanitized_model_endpoint_error(
+                f"Custom Anthropic model request failed with status {status_code}.",
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
+                status_code=status_code,
+                detail=error_detail,
+            )
+
+        if stream:
+            return self._iter_stream_chunks(
+                response,
+                http_client=http_client,
+            )
+
+        try:
+            return self._build_completion_response(response.json())
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom Anthropic model returned an invalid response.",
+                exc,
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
+            ) from None
+        finally:
+            response.close()
+            http_client.close()
+
     def _build_headers(self, *, stream: bool = False) -> Dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream" if stream else "application/json",
-            "anthropic-version": "2023-06-01",
+            "anthropic-version": self.anthropic_version,
         }
         if self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         elif self.api_key:
-            headers["api-key"] = self.api_key
+            if not self.direct_custom:
+                headers["api-key"] = self.api_key
             headers["x-api-key"] = self.api_key
         else:
             raise ValueError("Anthropic model endpoints require an API key or bearer token.")
@@ -340,7 +1010,7 @@ class AnthropicChatCompletionClient:
     def _build_payload(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         model = str(kwargs.get("model") or "").strip()
         if not model:
-            raise ValueError("Anthropic model requests require a deployment name.")
+            raise ValueError("Anthropic model requests require a model name.")
 
         messages, system_prompt = self._convert_messages(kwargs.get("messages") or [])
         payload: Dict[str, Any] = {
@@ -447,8 +1117,13 @@ class AnthropicChatCompletionClient:
                     text_parts.append(item)
                 elif isinstance(item, dict):
                     item_type = item.get("type")
-                    if item_type in ("text", "tool_use", "tool_result"):
+                    if item_type in ("text", "image", "tool_use", "tool_result"):
                         normalized_blocks.append(item)
+                        continue
+                    if item_type == "image_url":
+                        normalized_blocks.append(
+                            self._convert_openai_image_block(item)
+                        )
                         continue
                     text_value = item.get("text")
                     if isinstance(text_value, str):
@@ -461,6 +1136,33 @@ class AnthropicChatCompletionClient:
         if content is None:
             return ""
         return str(content)
+
+    def _convert_openai_image_block(self, image_block: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert an OpenAI data-URL image block to Anthropic base64 content."""
+        image_value = image_block.get("image_url")
+        image_url = (
+            image_value.get("url")
+            if isinstance(image_value, dict)
+            else image_value
+        )
+        image_url = str(image_url or "").strip()
+        if not image_url.startswith("data:") or ";base64," not in image_url:
+            raise ValueError(
+                "Anthropic image content requires a base64 data URL."
+            )
+
+        metadata, image_data = image_url.split(",", 1)
+        media_type = metadata[5:].split(";", 1)[0].strip().lower()
+        if not media_type.startswith("image/") or not image_data:
+            raise ValueError("Anthropic image content is invalid.")
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": image_data,
+            },
+        }
 
     def _content_to_text(self, content: Any) -> str:
         if isinstance(content, str):
@@ -521,11 +1223,20 @@ class AnthropicChatCompletionClient:
                 ))
         return "".join(text_parts), tool_calls
 
-    def _iter_stream_chunks(self, response: requests.Response) -> Iterator[Any]:
+    def _iter_stream_chunks(
+        self,
+        response,
+        *,
+        http_client=None,
+    ) -> Iterator[Any]:
         prompt_tokens = 0
         completion_tokens = 0
         try:
-            for raw_line in response.iter_lines(decode_unicode=True):
+            try:
+                response_lines = response.iter_lines(decode_unicode=True)
+            except TypeError:
+                response_lines = response.iter_lines()
+            for raw_line in response_lines:
                 if not raw_line:
                     continue
                 if isinstance(raw_line, bytes):
@@ -540,7 +1251,10 @@ class AnthropicChatCompletionClient:
                 try:
                     event_payload = json.loads(event_data)
                 except json.JSONDecodeError:
-                    debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
+                    if self.direct_custom:
+                        debug_print("[MODEL_ENDPOINT] Ignoring invalid Custom Anthropic stream payload.")
+                    else:
+                        debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
                     continue
 
                 event_type = event_payload.get("type")
@@ -550,6 +1264,8 @@ class AnthropicChatCompletionClient:
                         error_message = error_payload.get("message") or error_payload.get("type") or str(error_payload)
                     else:
                         error_message = str(error_payload or event_payload)
+                    if self.direct_custom:
+                        raise RuntimeError("Custom Anthropic model stream failed.")
                     raise RuntimeError(f"Anthropic model stream failed: {error_message}")
                 if event_type == "message_start":
                     usage = event_payload.get("message", {}).get("usage", {})
@@ -569,8 +1285,20 @@ class AnthropicChatCompletionClient:
                     prompt_tokens = int(usage.get("input_tokens") or prompt_tokens or 0)
                     completion_tokens = int(usage.get("output_tokens") or completion_tokens or 0)
                     continue
+        except Exception as exc:
+            if self.direct_custom:
+                raise build_sanitized_model_endpoint_error(
+                    "Custom Anthropic model stream failed.",
+                    exc,
+                    api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                    protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                    request_url=self.endpoint,
+                ) from None
+            raise
         finally:
             response.close()
+            if http_client is not None:
+                http_client.close()
 
         if prompt_tokens or completion_tokens:
             yield SimpleNamespace(
@@ -594,6 +1322,10 @@ class AnthropicChatCompletionClient:
         else:
             error_message = str(error_payload or payload)
 
+        if self.direct_custom:
+            raise RuntimeError(
+                f"Custom Anthropic model request failed with status {response.status_code}."
+            )
         raise RuntimeError(
             f"Anthropic model request failed with status {response.status_code}: {error_message}"
         )
@@ -609,6 +1341,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     bearer_token: str = ""
     extra_headers: Dict[str, str] = Field(default_factory=dict)
     timeout: int = 90
+    anthropic_version: str = DEFAULT_ANTHROPIC_VERSION
+    direct_custom: bool = False
+    allow_private_custom_endpoints: bool = False
+    custom_endpoint_ca_bundle_path: str = ""
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
 
     def __init__(
@@ -621,6 +1357,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         bearer_token: str = "",
         extra_headers: Dict[str, str] | None = None,
         timeout: int = 90,
+        anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
+        direct_custom: bool = False,
+        allow_private_custom_endpoints: bool = False,
+        custom_endpoint_ca_bundle_path: str = "",
     ):
         super().__init__(
             ai_model_id=deployment_name,
@@ -630,6 +1370,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             bearer_token=bearer_token,
             extra_headers=extra_headers or {},
             timeout=timeout,
+            anthropic_version=anthropic_version,
+            direct_custom=direct_custom,
+            allow_private_custom_endpoints=allow_private_custom_endpoints,
+            custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
         )
 
     def get_prompt_execution_settings_class(self):
@@ -714,11 +1458,18 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         function_invoke_attempt: int = 0,
     ):
         if getattr(settings, "tools", None):
+            # Tool calling is answered without streaming, because a tool call has
+            # to arrive complete. The completed answer is still delivered through
+            # the stream, chunked so it reads like one.
             request_kwargs = self._build_request_kwargs(chat_history, settings, stream=False)
             client = self._build_client()
             response = await asyncio.to_thread(client.chat.completions.create, **request_kwargs)
             for message in self._create_chat_message_contents_from_response(response):
-                yield [self._to_streaming_chat_message_content(message, function_invoke_attempt)]
+                for streaming_message in self._iter_synthetic_stream_messages(
+                    message,
+                    function_invoke_attempt,
+                ):
+                    yield [streaming_message]
             return
 
         request_kwargs = self._build_request_kwargs(chat_history, settings, stream=True)
@@ -763,6 +1514,61 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                     )
                 ]
 
+    def _iter_synthetic_stream_messages(
+        self,
+        message: ChatMessageContent,
+        function_invoke_attempt: int,
+    ) -> Iterator[StreamingChatMessageContent]:
+        """Deliver a completed message through the streaming interface, in chunks.
+
+        Text is split so the response arrives progressively. Non-text items, such
+        as function calls, must arrive whole, so they ride on the final message
+        alongside the finish reason and usage metadata. Emitting metadata only
+        once keeps token usage from being counted per chunk.
+        """
+        text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
+        other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
+
+        combined_text = "".join(item.text or "" for item in text_items)
+        text_chunks = list(iter_synthetic_stream_text_chunks(combined_text))
+
+        # Every chunk before the last carries text only.
+        for chunk_text in text_chunks[:-1]:
+            yield StreamingChatMessageContent(
+                role=message.role,
+                items=[StreamingTextContent(
+                    choice_index=0,
+                    text=chunk_text,
+                    ai_model_id=self.ai_model_id,
+                )],
+                choice_index=0,
+                ai_model_id=self.ai_model_id,
+                function_invoke_attempt=function_invoke_attempt,
+            )
+
+        final_items: List[Any] = []
+        if text_chunks:
+            final_items.append(StreamingTextContent(
+                choice_index=0,
+                text=text_chunks[-1],
+                ai_model_id=self.ai_model_id,
+                inner_content=text_items[-1].inner_content if text_items else None,
+                metadata=text_items[-1].metadata if text_items else {},
+                encoding=text_items[-1].encoding if text_items else None,
+            ))
+        final_items.extend(other_items)
+
+        yield StreamingChatMessageContent(
+            role=message.role,
+            items=final_items,
+            choice_index=0,
+            ai_model_id=self.ai_model_id,
+            inner_content=message.inner_content,
+            metadata=message.metadata,
+            finish_reason=message.finish_reason,
+            function_invoke_attempt=function_invoke_attempt,
+        )
+
     def _to_streaming_chat_message_content(
         self,
         message: ChatMessageContent,
@@ -799,6 +1605,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             bearer_token=self.bearer_token,
             extra_headers=self.extra_headers,
             timeout=self.timeout,
+            anthropic_version=self.anthropic_version,
+            direct_custom=self.direct_custom,
+            allow_private_custom_endpoints=self.allow_private_custom_endpoints,
+            custom_endpoint_ca_bundle_path=self.custom_endpoint_ca_bundle_path,
         )
 
     def _build_request_kwargs(self, chat_history, settings, *, stream: bool) -> Dict[str, Any]:

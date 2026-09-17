@@ -600,6 +600,45 @@
               </div>
             </div>
 
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-door-closed me-2"></i>Reverse Proxy Authentication
+              </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="yamcs-enable-basic-auth" />
+                <label class="form-check-label" for="yamcs-enable-basic-auth">Server is behind a proxy that requires HTTP Basic authentication</label>
+                <div class="form-text">
+                  Enable this when a reverse proxy such as Apache challenges every request before it reaches Yamcs.
+                  Leave it off for a Yamcs server you reach directly, such as a local simulator.
+                </div>
+              </div>
+              <div id="yamcs-basic-auth-fields" class="d-none">
+                <div class="alert alert-warning py-2 px-3 small mb-3 d-none" id="yamcs-basic-auth-conflict" role="alert">
+                  <i class="bi bi-exclamation-triangle me-2"></i>
+                  HTTP Basic authentication cannot be combined with username/password or access token
+                  authentication, because both use the HTTP Authorization header. Choose
+                  &quot;No Authentication&quot; or &quot;API Key&quot; above.
+                </div>
+                <div class="mb-3 d-none" id="yamcs-basic-auth-identity-group">
+                  <label for="yamcs-basic-auth-identity-select" class="form-label">Reusable Identity</label>
+                  <select class="form-select" id="yamcs-basic-auth-identity-select"></select>
+                  <div class="form-text" id="yamcs-basic-auth-identity-status">
+                    Select a saved username and password identity so the credential can be rotated without editing this action.
+                  </div>
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="yamcs-basic-auth-username" class="form-label">Proxy Username <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="yamcs-basic-auth-username" placeholder="Directory username" autocomplete="username" />
+                  </div>
+                  <div class="col-md-6">
+                    <label for="yamcs-basic-auth-password" class="form-label">Proxy Password <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control" id="yamcs-basic-auth-password" placeholder="Password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="simplechat-config-card mb-0">
               <div class="config-section-label">
                 <i class="bi bi-sliders me-2"></i>Retrieval Limits
@@ -2300,6 +2339,12 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Authentication</label>
                     <span class="fw-medium" id="summary-yamcs-auth-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Proxy Basic Auth</label>
+                    <span class="fw-medium" id="summary-yamcs-basic-auth">-</span>
                   </div>
                 </div>
                 <div class="col-md-6">

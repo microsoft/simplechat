@@ -588,7 +588,8 @@ def register_route_backend_documents(bp):
                     user_id=user_id,
                     document_id=parent_document_id,
                     num_file_chunks=0, # This likely gets updated later
-                    status="Queued for processing"
+                    status="Queued for processing",
+                    source_file_path=temp_file_path,
                 )
 
                 # (Optional) set initial percentage

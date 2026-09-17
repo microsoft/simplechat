@@ -52,7 +52,13 @@ from functions_collaboration import (
     is_group_collaboration_conversation,
     persist_collaboration_message,
 )
-from functions_documents import allowed_file, create_document, process_document_upload_background, update_document
+from functions_documents import (
+    allowed_file,
+    create_document,
+    persist_xsd_source_for_existing_document,
+    process_document_upload_background,
+    update_document,
+)
 from functions_generated_file_approvals import (
     APPROVAL_STATE_APPROVED,
     APPROVAL_STATE_AUTO_DENIED,
@@ -2443,6 +2449,16 @@ def queue_generated_document_processing(
     temp_file_path = _write_temp_generated_file(normalized_file_content_bytes, file_extension)
 
     try:
+        if file_extension == ".xsd":
+            persist_xsd_source_for_existing_document(
+                document_id=normalized_document_id,
+                user_id=normalized_owner_user_id,
+                source_file_path=temp_file_path,
+                file_name=normalized_name,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+
         if process_inline:
             process_document_upload_background(
                 document_id=normalized_document_id,
@@ -2497,6 +2513,7 @@ def _upload_generated_document_for_current_user(
                 document_id=document_id,
                 num_file_chunks=0,
                 status=initial_status,
+                source_file_path=temp_file_path,
             )
             update_document(
                 document_id=document_id,
@@ -2511,6 +2528,7 @@ def _upload_generated_document_for_current_user(
                 document_id=document_id,
                 num_file_chunks=0,
                 status=initial_status,
+                source_file_path=temp_file_path,
             )
             update_document(
                 document_id=document_id,

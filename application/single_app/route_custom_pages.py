@@ -238,11 +238,14 @@ def register_route_custom_pages(bp):
             return jsonify({"error": "; ".join(errors)}), 400
 
         saved = save_custom_page(request_access_page, user_id=_current_admin_user_id())
-        update_settings({
+        if not update_settings({
             "access_request_button_enabled": True,
             "access_request_button_text": "Request Access",
             "access_request_page_url": "/custom/request-access",
-        })
+        }):
+            return jsonify({
+                "error": "Page saved, but the access request settings could not be saved. Reload and verify before retrying."
+            }), 500
         return jsonify({"page": saved, "access_request_button_enabled": True}), 201
 
     @bp.route("/api/admin/custom-pages/<slug>", methods=["PUT"])

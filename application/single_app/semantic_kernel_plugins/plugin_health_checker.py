@@ -58,6 +58,7 @@ from functions_yamcs_operations import (
     YAMCS_AUTH_METHOD_BEARER_TOKEN,
     YAMCS_AUTH_METHOD_NONE,
     YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_BASIC_AUTH_CONFLICT_MESSAGE,
     YAMCS_MAX_MAX_ROWS,
     YAMCS_MAX_TIMEOUT,
     YAMCS_MIN_MAX_ROWS,
@@ -67,6 +68,7 @@ from functions_yamcs_operations import (
     YAMCS_SUPPORTED_AUTH_TYPES,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    yamcs_basic_auth_conflicts_with_auth_method,
 )
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
@@ -353,6 +355,18 @@ class PluginHealthChecker:
                     errors.append("Yamcs API key and bearer token auth require auth.key")
             elif auth_method == YAMCS_AUTH_METHOD_NONE and auth_type not in {'NoAuth', 'identity'}:
                 errors.append("Yamcs unauthenticated access requires auth.type='NoAuth'")
+
+            if additional_fields.get('enable_basic_auth'):
+                basic_auth_identity_id = str(additional_fields.get('basic_auth_identity_id') or '').strip()
+                if yamcs_basic_auth_conflicts_with_auth_method(auth_method):
+                    errors.append(YAMCS_BASIC_AUTH_CONFLICT_MESSAGE)
+                # A referenced identity supplies both values at runtime, so only unreferenced
+                # configurations must carry an inline username and password.
+                if not basic_auth_identity_id:
+                    if not additional_fields.get('basic_auth_username'):
+                        errors.append("Yamcs HTTP Basic authentication requires additionalFields.basic_auth_username")
+                    if not additional_fields.get('basic_auth_password'):
+                        errors.append("Yamcs HTTP Basic authentication requires additionalFields.basic_auth_password")
 
             yamcs_range_fields = {
                 'max_rows': (YAMCS_MIN_MAX_ROWS, YAMCS_MAX_MAX_ROWS),

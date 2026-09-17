@@ -37,6 +37,23 @@
       "default": false,
       "description": "Allow read-only Yamcs archive SQL statements. Disabled by default."
     },
+    "enable_basic_auth": {
+      "type": "boolean",
+      "default": false,
+      "description": "Send an HTTP Basic Authorization header on every request so a reverse proxy in front of Yamcs can authenticate the caller. Only valid when auth_method is 'none' or 'api_key'."
+    },
+    "basic_auth_username": {
+      "type": "string",
+      "description": "Username presented to the reverse proxy for HTTP Basic authentication."
+    },
+    "basic_auth_password": {
+      "type": "string",
+      "description": "Password presented to the reverse proxy for HTTP Basic authentication. Stored in Key Vault."
+    },
+    "basic_auth_identity_id": {
+      "type": "string",
+      "description": "Optional reusable workspace identity supplying the reverse-proxy username and password, so the credential can be rotated without editing the action."
+    },
     "max_rows": {
       "type": "integer",
       "default": 500,
