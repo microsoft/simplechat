@@ -49,6 +49,7 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_conversation_cache import bump_conversation_cache_version
+from functions_saved_analysis import sanitize_saved_analysis_messages
 from functions_chat_stream_events import (
     USER_MESSAGE_PERSISTED_EVENT_TYPE,
     build_user_message_persisted_stream_event,
@@ -1652,6 +1653,7 @@ def register_route_backend_collaboration(bp):
                 allow_pending=True,
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
+            messages = sanitize_saved_analysis_messages(messages, current_user['user_id'])
             attach_generated_file_approval_state(messages, current_user['user_id'])
             messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
             messages = public_history_messages(messages, current_user['user_id'])
@@ -2048,9 +2050,10 @@ def register_route_backend_collaboration(bp):
                     conversation_id=loaded['source_conversation_id'],
                     complete_content=loaded['content'],
                     origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    operation=data.get('operation', ''),
                     instruction=data.get('instruction') or '',
                     prompt=data.get('prompt') or '',
-                    mask_data_url=data.get('mask') or '',
+                    mask_data_url=data.get('mask', ''),
                     mask_regions=data.get('mask_regions') or 0,
                     size=data.get('size') or '',
                     quality=data.get('quality') or '',

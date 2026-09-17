@@ -17,7 +17,7 @@ import logging
 import sys
 import types
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import wraps
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -36,6 +36,7 @@ from content_screening import access, service
 from content_screening.contracts import (
     ContentUnit,
     InspectionResult,
+    ScreeningCitationsRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
@@ -46,6 +47,7 @@ from content_screening.contracts import (
 )
 from content_screening.policies import compose_policy, default_policy
 from app_settings_store import AppSettingsStore, COSMOS_METADATA_FIELDS, SETTINGS_REVISION_FIELD
+from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY
 from functional_tests.test_app_settings_store_consistency import FakeCosmos
 from functional_tests.test_content_screening_reviews import MemoryEvidence, MemoryStore, module
 from functional_tests.test_support.app_stubs import import_app_module
@@ -86,12 +88,15 @@ def settings_functions(**overrides):
     )
     namespace = {
         "ScreeningConfigurationError": ScreeningConfigurationError,
+        "ScreeningCitationsRequiredError": ScreeningCitationsRequiredError,
         "ScreeningConflictError": ScreeningConflictError,
         "ScreeningError": ScreeningError,
         "ScreeningValidationError": ScreeningValidationError,
         "copy": copy, "logging": logging, "log_event": Mock(),
         "COSMOS_METADATA_FIELDS": COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": SETTINGS_REVISION_FIELD,
+        "AIConnectionError": AIConnectionError,
+        "EMBEDDING_SELECTION_KEY": EMBEDDING_SELECTION_KEY,
         "TABULAR_GENERATION_BACKEND_SETTING_KEYS": set(),
         "get_public_workspace_label_context": lambda _settings: {},
         "sanitize_model_endpoints_for_frontend": lambda _endpoints: [],
@@ -129,6 +134,12 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.original_validation = service.validate_screening_configuration
         self.validate = self.stack.enter_context(patch.object(service, "validate_screening_configuration"))
+        self.stack.enter_context(patch.dict(sys.modules, {
+            "functions_embedding_compatibility": module(
+                "functions_embedding_compatibility",
+                embedding_settings_write_guard=lambda *_args, **_kwargs: nullcontext(),
+            ),
+        }))
 
     def test_activation_is_off_by_default_and_schema_declares_prerequisite(self):
         admin_settings_fields = import_app_module("admin_settings_fields")

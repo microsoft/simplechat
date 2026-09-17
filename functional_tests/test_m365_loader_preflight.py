@@ -1,12 +1,13 @@
 # test_m365_loader_preflight.py
 """
 Runtime tests for authoritative Microsoft 365 loader preflight and propagation.
-Version: 0.261.036
+Version: 0.261.122
 Implemented in: 0.261.029
 
 Loads the complete real loader module and real M365 context/capability/policy
 modules. Unrelated model, plugin, settings, and cloud adapters are scoped import
 seams; these tests verify loader control flow, not full application cold startup.
+Single-action orchestration provenance/preflight integration was added in 0.261.122.
 """
 
 import ast
@@ -57,8 +58,12 @@ def loader_runtime(monkeypatch):
     monkeypatch.setattr(execution, "_workflow_binding_resolver", None)
     tree = ast.parse((APP_ROOT / "semantic_kernel_loader.py").read_text(encoding="utf-8"))
     seams = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.lineno > 150 or node.module in REAL_MODULES:
+    for node in tree.body:
+        if (
+            not isinstance(node, ast.ImportFrom)
+            or node.module in REAL_MODULES
+            or node.module.split(".", 1)[0] in sys.stdlib_module_names
+        ):
             continue
         seam = seams.setdefault(node.module, types.ModuleType(node.module))
         for item in node.names:
@@ -154,6 +159,78 @@ def test_m365_preflight_preserves_trusted_mcp_origin(loader_runtime, monkeypatch
     assert origin.action_id == "remote"
     assert prepared[1]["enabled_functions"] == ["get_my_timezone"]
     assert "execution_status" not in mcp
+
+
+@pytest.mark.parametrize("scope,scope_id", [
+    ("personal", "owner"), ("group", "team"), ("global", "global"),
+])
+def test_orchestration_preparation_preserves_remote_mcp_origin(
+    loader_runtime, monkeypatch, scope, scope_id,
+):
+    from functions_action_manifest import bind_action_origin, get_action_origin
+
+    runtime = loader_runtime
+    manifest = bind_action_origin({
+        "id": "remote", "name": "remote", "type": "mcp",
+        "endpoint": "https://mcp.example.invalid",
+        "additionalFields": {"transport": "streamable_http"},
+        "auth": {"key": "stored-reference"},
+    }, scope, scope_id)
+    expected = get_action_origin(manifest)
+    stages = []
+
+    def secrets(prepared, settings):
+        assert get_action_origin(prepared) == expected
+        stages.append("secrets")
+        prepared["auth"]["key"] = "resolved-value"
+        return prepared
+
+    def identity(prepared):
+        assert get_action_origin(prepared) == expected
+        stages.append("identity")
+        return prepared
+
+    monkeypatch.setattr(runtime.loader, "resolve_key_vault_secrets_in_plugins", secrets)
+    monkeypatch.setattr(runtime.loader, "hydrate_workspace_identity_in_plugin", identity)
+    result = runtime.loader.prepare_action_plugin_manifest(
+        manifest, {"enable_key_vault_secret_storage": True, "key_vault_name": "vault"},
+    )
+    assert get_action_origin(result) == expected
+    assert result["auth"]["key"] == "resolved-value"
+    assert manifest["auth"]["key"] == "stored-reference"
+    assert stages == ["secrets", "identity"]
+
+
+def test_orchestration_m365_denial_precedes_credential_hydration(loader_runtime, monkeypatch):
+    runtime = loader_runtime
+    secrets = Mock(side_effect=AssertionError("Declined action must not hydrate secrets."))
+    identity = Mock(side_effect=AssertionError("Declined action must not hydrate an identity."))
+    monkeypatch.setattr(runtime.loader, "resolve_key_vault_secrets_in_plugins", secrets)
+    monkeypatch.setattr(runtime.loader, "hydrate_workspace_identity_in_plugin", identity)
+    install_preflight(monkeypatch, runtime, lambda effective: [])
+    with runtime.execution.m365_execution_context(runtime.context):
+        with pytest.raises(PermissionError, match="not available for this execution"):
+            runtime.loader.prepare_action_plugin_manifest(
+                manifests()[0], {"enable_key_vault_secret_storage": True, "key_vault_name": "vault"},
+            )
+    secrets.assert_not_called()
+    identity.assert_not_called()
+
+
+def test_orchestration_m365_unavailable_preflight_fails_closed(loader_runtime, monkeypatch):
+    runtime = loader_runtime
+    preflight = Mock(side_effect=RuntimeError("PRIVATE_PREFLIGHT_DETAIL"))
+    secrets = Mock(side_effect=AssertionError("Unverified action must not hydrate secrets."))
+    monkeypatch.setattr(runtime.loader, "resolve_key_vault_secrets_in_plugins", secrets)
+    install_preflight(monkeypatch, runtime, preflight)
+    with runtime.execution.m365_execution_context(runtime.context):
+        with pytest.raises(runtime.loader.M365PolicyError) as raised:
+            runtime.loader.prepare_action_plugin_manifest(
+                manifests()[0], {"enable_key_vault_secret_storage": True, "key_vault_name": "vault"},
+            )
+    assert raised.value.code == "m365_preflight_unavailable"
+    assert "PRIVATE_PREFLIGHT_DETAIL" not in str(raised.value)
+    secrets.assert_not_called()
 
 
 def _block_runtime_import(monkeypatch):

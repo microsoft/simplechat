@@ -669,8 +669,8 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     continue
 
                 model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
-                deployment_name = model.get('deploymentName') or model.get('deployment') or ''
                 request_model = resolve_model_endpoint_request_model(endpoint, model)
+                deployment_name = request_model
                 display_name = model.get('displayName') or model.get('modelName') or request_model or deployment_name or model.get('name') or model_id
                 selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}"
 
@@ -918,7 +918,7 @@ def register_route_frontend_chats(bp):
                         "id": model.get("id"),
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
                         "request_model": resolve_model_endpoint_request_model(endpoint, model),
-                        "deployment_name": model.get("deploymentName") or "",
+                        "deployment_name": resolve_model_endpoint_request_model(endpoint, model),
                         "endpoint_id": endpoint.get("id"),
                         "provider": endpoint.get("provider"),
                         "icon": model.get("icon") if isinstance(model.get("icon"), dict) else {}

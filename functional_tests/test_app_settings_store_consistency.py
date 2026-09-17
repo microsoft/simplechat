@@ -10,12 +10,14 @@ interrupted publication and lease expiry without network access or wall-clock sl
 
 import ast
 import copy
+from contextlib import nullcontext
 import importlib.util
 import json
 import logging
 from pathlib import Path
 import socket
 import secrets
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -316,11 +318,24 @@ def load_update_settings(store):
     ):
         namespace[name] = lambda settings: None
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    connection_tree = ast.parse((APP / "functions_ai_connections.py").read_text(encoding="utf-8-sig"))
+    connection_contract = [
+        node for node in connection_tree.body
+        if (isinstance(node, ast.ClassDef) and node.name == "AIConnectionError")
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "EMBEDDING_SELECTION_KEY" for target in node.targets)
+        )
+    ]
+    exec(compile(ast.Module(body=connection_contract, type_ignores=[]), "functions_ai_connections.py", "exec"), namespace)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "functions_settings.py", "exec"), namespace)
     return namespace["update_settings"]
 
 
-def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world):
+def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world, monkeypatch):
+    monkeypatch.setitem(sys.modules, "functions_embedding_compatibility", SimpleNamespace(
+        embedding_settings_write_guard=lambda *_args, **_kwargs: nullcontext(),
+    ))
     old = world.a.read()
     update_a, update_b = load_update_settings(world.a), load_update_settings(world.b)
     saved_a = update_a({"enabled": True})

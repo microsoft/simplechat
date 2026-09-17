@@ -24,8 +24,9 @@ from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
 from functions_image_api_route import is_image_capable_model_name
-from functions_ai_connections import describe_model_capabilities, supports_model_capability
-from functions_model_capabilities import resolve_model_vision_support
+from functions_ai_connections import AIConnectionError, describe_model_capabilities, supports_model_capability
+from functions_model_capabilities import get_model_catalog_capabilities, resolve_model_vision_support
+from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -171,7 +172,7 @@ def register_route_backend_models(bp):
             raise ValueError("Endpoint ID is required to resolve stored secrets.")
         return endpoint_id
 
-    def resolve_request_endpoint_payload(payload, scope="global"):
+    def resolve_request_endpoint_payload(payload, scope="global", *, for_chat_test=False):
         user_id = get_current_user_id()
         endpoint_id = str(payload.get("endpoint_id") or payload.get("id") or "").strip()
         persisted_endpoint = resolve_endpoint_by_id(user_id, scope, endpoint_id) if endpoint_id else None
@@ -227,6 +228,17 @@ def register_route_backend_models(bp):
 
         if endpoint_id:
             merged_payload["id"] = endpoint_id
+
+        # A draft provider override must not borrow saved custom credentials for chat.
+        if for_chat_test and any(
+            isinstance(endpoint, dict)
+            and str(endpoint.get("provider") or "").strip().lower() == "openai_compatible"
+            for endpoint in (persisted_endpoint, merged_payload)
+        ):
+            raise AIConnectionError(
+                "Custom connections support embeddings only. Save a global embedding default and use Test embeddings.",
+                "model_capability_unavailable",
+            )
 
         scope_value = merged_payload.get("id") or endpoint_id
         if scope_value:
@@ -329,6 +341,7 @@ def register_route_backend_models(bp):
         api_type="",
         anthropic_version=DEFAULT_ANTHROPIC_VERSION,
         url_mode="",
+        endpoint_config=None,
     ):
         client, runtime_protocol = build_model_endpoint_sync_chat_client(
             auth_settings,
@@ -339,9 +352,8 @@ def register_route_backend_models(bp):
             api_type=api_type,
             url_mode=url_mode,
             anthropic_version=anthropic_version,
-            allow_private_custom_endpoints=bool(
-                get_settings().get("allow_private_custom_model_endpoints", False)
-            ),
+            settings=get_settings(),
+            endpoint_config=endpoint_config,
         )
         log_models_debug(
             f"Inference client provider={provider} protocol={runtime_protocol}"
@@ -355,6 +367,7 @@ def register_route_backend_models(bp):
                 return normalize_anthropic_messages_url(
                     endpoint,
                     direct_custom=provider == MODEL_ENDPOINT_PROVIDER_CUSTOM,
+                    url_mode=url_mode,
                 )
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
                 if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
@@ -405,13 +418,28 @@ def register_route_backend_models(bp):
 
     def handle_fetch_model_list(scope="global"):
         try:
-            data = request.get_json() or {}
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Model endpoint payload must be an object."}), 400
             data = resolve_request_endpoint_payload(data, scope=scope)
             provider = (data.get("provider") or "aoai").lower()
+            if provider == "openai_compatible":
+                return jsonify({
+                    "error": "Custom OpenAI-compatible connections use manually configured embedding models. Azure discovery is not supported.",
+                    "code": "model_discovery_unsupported",
+                }), 400
             connection = data.get("connection") or {}
             auth_settings = data.get("auth") or {}
             management = data.get("management") or {}
             auth_type = (auth_settings.get("type") or "managed_identity").lower()
+            if provider == "custom":
+                if not get_model_endpoint_api_type(data):
+                    return jsonify({"error": "Custom endpoint API type is not supported."}), 400
+                return jsonify({
+                    "models": [],
+                    "manual_models_required": True,
+                    "message": "Custom connections use manually configured model names or deployments; management discovery is not available.",
+                })
             log_models_debug(
                 "Fetch model list request"
                 f" provider={provider} auth_type={auth_type}"
@@ -440,12 +468,18 @@ def register_route_backend_models(bp):
                     model_name = item.get("modelName")
                     if not model_name and isinstance(item.get("model"), dict):
                         model_name = item["model"].get("name")
-                    mapped.append({
+                    model_version = item.get("modelVersion")
+                    if not model_version and isinstance(item.get("model"), dict):
+                        model_version = item["model"].get("version")
+                    mapped_model = {
                         "deploymentName": deployment_name,
                         "modelName": model_name or ""
-                    })
+                    }
+                    if isinstance(model_version, (str, int)) and not isinstance(model_version, bool):
+                        mapped_model["modelVersion"] = str(model_version)
+                    mapped.append(mapped_model)
                 for model in mapped:
-                    model["capability_status"] = describe_model_capabilities(model, provider)
+                    model["capability_status"] = describe_model_capabilities(model, provider, endpoint=data)
                 return jsonify({"models": mapped})
 
             if provider == "aoai":
@@ -475,14 +509,23 @@ def register_route_backend_models(bp):
                     if model_name and (
                         "gpt" in model_name.lower() or
                         re.search(r"o\d+", model_name.lower()) or
-                        supports_model_capability({"modelName": model_name}, "image_generation", provider)
+                        supports_model_capability({"modelName": model_name}, "image_generation", provider) or
+                        supports_model_capability({"modelName": model_name}, "embeddings", provider) or
+                        (
+                            get_model_catalog_capabilities({"modelName": model_name}, strict_identity=True)
+                            or {}
+                        ).get("generatesEmbeddings") is True
                     ):
-                        mapped.append({
+                        mapped_model = {
                             "deploymentName": deployment.name,
                             "modelName": model_name
-                        })
+                        }
+                        model_version = getattr(deployment.properties.model, "version", None)
+                        if isinstance(model_version, (str, int)) and not isinstance(model_version, bool):
+                            mapped_model["modelVersion"] = str(model_version)
+                        mapped.append(mapped_model)
                 for model in mapped:
-                    model["capability_status"] = describe_model_capabilities(model, provider)
+                    model["capability_status"] = describe_model_capabilities(model, provider, endpoint=data)
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
@@ -513,12 +556,37 @@ def register_route_backend_models(bp):
 
     def handle_test_model_connection(scope="global"):
         try:
-            data = request.get_json() or {}
-            data = resolve_request_endpoint_payload(data, scope=scope)
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                raise AIConnectionError("Model endpoint payload must be an object.", "invalid_model_selection")
+            data = resolve_request_endpoint_payload(data, scope=scope, for_chat_test=True)
             provider = (data.get("provider") or "aoai").lower()
+            if provider == "openai_compatible":
+                return jsonify({
+                    "error": "Custom connections support embeddings only. Save a global embedding default and use Test embeddings.",
+                    "code": "model_capability_unavailable",
+                }), 400
             connection = data.get("connection") or {}
             auth_settings = data.get("auth") or {}
             model = data.get("model") or {}
+            if not isinstance(model, dict):
+                raise AIConnectionError("Supply the model as an object.", "invalid_model_selection")
+            if any(
+                model.get(key) is not None and not isinstance(model[key], str)
+                for key in ("id", "deploymentName", "modelName")
+            ):
+                raise AIConnectionError("Model selection identifiers must be text.", "invalid_model_selection")
+            configured_model = next((
+                item for item in data.get("models") or []
+                if isinstance(item, dict) and (
+                    (model.get("id") and item.get("id") == model["id"])
+                    or (
+                        model.get("deploymentName")
+                        and item.get("deploymentName") == model["deploymentName"]
+                    )
+                )
+            ), None)
+            model = configured_model or model
 
             endpoint = connection.get("endpoint") or ""
             api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
@@ -553,6 +621,12 @@ def register_route_backend_models(bp):
             if not endpoint or not request_model:
                 return jsonify({"error": "Endpoint and model identifier are required."}), 400
 
+            if not supports_model_capability(model, "chat", provider):
+                return jsonify({
+                    "error": "This model is not available for chat. Use the test for its published capability; embedding models use Test embeddings.",
+                    "code": "model_capability_unavailable",
+                }), 400
+
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version:
                 return jsonify({"error": "Endpoint, API version, and model identifier are required."}), 400
 
@@ -575,13 +649,19 @@ def register_route_backend_models(bp):
                 api_type=api_type,
                 anthropic_version=anthropic_version,
                 url_mode=connection.get("url_mode") or "",
+                endpoint_config={**data, "models": [model]},
             )
-            response = gpt_client.chat.completions.create(
-                model=request_model,
-                messages=[{"role": "user", "content": "Testing access."}]
-            )
+            try:
+                response = gpt_client.chat.completions.create(
+                    model=request_model,
+                    messages=[{"role": "user", "content": "Testing access."}]
+                )
+            finally:
+                close_client = getattr(gpt_client, "close", None)
+                if callable(close_client):
+                    close_client()
 
-            if response:
+            if getattr(response, "choices", None):
                 # Report what was actually called. URL normalization can rewrite
                 # the configured endpoint, and that rewrite was previously
                 # invisible, so a working test could still hide a surprise.
@@ -603,6 +683,12 @@ def register_route_backend_models(bp):
 
             return jsonify({"error": "No response returned from model."}), 400
 
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message}), 400
+        except SanitizedModelEndpointError as exc:
+            return jsonify({"error": exc.public_message}), 400
         except LookupError as exc:
             log_event(
                 "[MODELS] Test model request blocked because the model endpoint was not found",
@@ -786,11 +872,9 @@ def register_route_backend_models(bp):
         """
         Fetch available image-capable Azure OpenAI deployments using Azure Management API.
 
-        Two kinds qualify. A gpt-image or DALL-E deployment serves /images/generations
-        directly. A chat model serves no image endpoint at all, but can still produce an
-        image through the Responses API's image_generation tool, and where gpt-image is
-        unavailable it is the only deployment that can. Both are listed; which route a
-        selection takes is decided from its model name at call time.
+        This legacy Azure discovery path offers compatible dedicated image deployments.
+        GPT chat deployments are excluded by the standalone-only Azure image policy.
+        Direct OpenAI image tools and other Foundry image APIs use shared connections.
         """
         settings = get_settings()
 
@@ -838,22 +922,36 @@ def register_route_backend_models(bp):
     @user_required
     @admin_required
     def test_model_inference_connection():
-        data = request.get_json() or {}
-        data = resolve_request_endpoint_payload(data, scope="global")
-        provider = (data.get("provider") or "aoai").lower()
-        connection = data.get("connection") or {}
-        management = data.get("management") or {}
-        auth_settings = data.get("auth") or {}
-        auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        log_models_debug(
-            "Test connection request"
-            f" provider={provider} auth_type={auth_type}"
-            f" endpoint={connection.get('endpoint') or ''}"
-            f" subscription_id_present={bool(management.get('subscription_id'))}"
-            f" resource_group_present={bool(management.get('resource_group'))}"
-        )
-
         try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Model endpoint payload must be an object."}), 400
+            data = resolve_request_endpoint_payload(data, scope="global")
+            provider = (data.get("provider") or "aoai").lower()
+            if provider == "openai_compatible":
+                return jsonify({
+                    "error": "Custom OpenAI-compatible connections use manually configured embedding models. Azure discovery is not supported.",
+                    "code": "model_discovery_unsupported",
+                }), 400
+            connection = data.get("connection") or {}
+            management = data.get("management") or {}
+            auth_settings = data.get("auth") or {}
+            auth_type = (auth_settings.get("type") or "managed_identity").lower()
+            log_models_debug(
+                "Test connection request"
+                f" provider={provider} auth_type={auth_type}"
+                f" endpoint={connection.get('endpoint') or ''}"
+                f" subscription_id_present={bool(management.get('subscription_id'))}"
+                f" resource_group_present={bool(management.get('resource_group'))}"
+            )
+
+            if provider == "custom":
+                validate_custom_model_endpoint(data, get_settings())
+                return jsonify({
+                    "success": True,
+                    "validation_only": True,
+                    "message": "Custom configuration is valid. Use Test Model to verify authentication and inference.",
+                })
             if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
@@ -883,16 +981,25 @@ def register_route_backend_models(bp):
 
                 count = 0
                 for deployment in deployments:
+                    if not is_deployment_enabled(deployment):
+                        continue
                     model_name = deployment.properties.model.name
                     if model_name and (
                         "gpt" in model_name.lower() or
                         re.search(r"o\d+", model_name.lower()) or
-                        supports_model_capability({"modelName": model_name}, "image_generation", provider)
+                        supports_model_capability({"modelName": model_name}, "image_generation", provider) or
+                        supports_model_capability({"modelName": model_name}, "embeddings", provider) or
+                        (
+                            get_model_catalog_capabilities({"modelName": model_name}, strict_identity=True)
+                            or {}
+                        ).get("generatesEmbeddings") is True
                     ):
                         count += 1
                 return jsonify({"success": True, "count": count})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message}), 400
         except LookupError as e:
             log_event(
                 "[MODELS] Test connection blocked because the model endpoint was not found",
@@ -901,7 +1008,7 @@ def register_route_backend_models(bp):
             return build_safe_error_response("The selected model endpoint could not be found.", 404)
         except PermissionError as e:
             log_models_exception("Test connection blocked by governance policy", e, level=logging.WARNING)
-            return build_safe_error_response(str(e), 403)
+            return build_safe_error_response("You do not have access to this model connection.", 403)
         except ValueError as e:
             log_models_exception("Test connection validation failed", e, level=logging.WARNING)
             return build_safe_error_response(

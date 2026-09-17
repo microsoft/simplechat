@@ -12,6 +12,9 @@ from functions_debug import debug_print
 from config import *
 from azure.ai.documentintelligence.models import DocumentAnalysisFeature
 from functions_office_media import extract_office_embedded_images
+from functions_embeddings import generate_embedding_batch
+from functions_embedding_compatibility import active_embedding_profile, embedding_query_slot, read_embedding_settings
+from functions_ai_connections import AIConnectionError
 import functions_settings
 from functions_settings import *
 from functions_logging import *
@@ -1217,185 +1220,39 @@ def generate_embedding(
     text,
     max_retries=5,
     initial_delay=1.0,
-    delay_multiplier=2.0
+    delay_multiplier=2.0,
+    *,
+    purpose="document",
+    profile=None,
 ):
-    settings = get_settings()
-
-    retries = 0
-    current_delay = initial_delay
-
-    enable_embedding_apim = settings.get('enable_embedding_apim', False)
-
-    if enable_embedding_apim:
-        embedding_model = settings.get('azure_apim_embedding_deployment')
-        embedding_client = AzureOpenAI(
-            api_version = settings.get('azure_apim_embedding_api_version'),
-            azure_endpoint = settings.get('azure_apim_embedding_endpoint'),
-            api_key=settings.get('azure_apim_embedding_subscription_key'))
-    else:
-        if (settings.get('azure_openai_embedding_authentication_type') == 'managed_identity'):
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            
-            embedding_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_embedding_api_version'),
-                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
-                azure_ad_token_provider=token_provider
-            )
-        
-            embedding_model_obj = settings.get('embedding_model', {})
-            if embedding_model_obj and embedding_model_obj.get('selected'):
-                selected_embedding_model = embedding_model_obj['selected'][0]
-                embedding_model = selected_embedding_model['deploymentName']
-        else:
-            embedding_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_embedding_api_version'),
-                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
-                api_key=settings.get('azure_openai_embedding_key')
-            )
-            
-            embedding_model_obj = settings.get('embedding_model', {})
-            if embedding_model_obj and embedding_model_obj.get('selected'):
-                selected_embedding_model = embedding_model_obj['selected'][0]
-                embedding_model = selected_embedding_model['deploymentName']
-
-    while True:
-        random_delay = random.uniform(0.05, 0.2)
-        time.sleep(random_delay)
-
-        try:
-            response = embedding_client.embeddings.create(
-                model=embedding_model,
-                input=text
-            )
-
-            embedding = response.data[0].embedding
-            
-            # Capture token usage for embedding tracking
-            token_usage = None
-            if hasattr(response, 'usage') and response.usage:
-                token_usage = {
-                    'prompt_tokens': response.usage.prompt_tokens,
-                    'total_tokens': response.usage.total_tokens,
-                    'model_deployment_name': embedding_model
-                }
-            
-            return embedding, token_usage
-
-        except RateLimitError as e:
-            retries += 1
-            if retries > max_retries:
-                return None
-
-            wait_time = _get_rate_limit_wait_time(e, current_delay)
-            debug_print(
-                f"[EMBEDDING] Rate limited, retrying in {wait_time:.2f}s "
-                f"(attempt {retries}/{max_retries})"
-            )
-            time.sleep(wait_time)
-            current_delay *= delay_multiplier
-
-        except Exception as e:
-            raise
+    """Return one vector and optional usage using the global embedding binding."""
+    return generate_embeddings_batch(
+        [text], purpose=purpose, profile=profile,
+        max_retries=max_retries, initial_delay=initial_delay,
+        delay_multiplier=delay_multiplier,
+    )[0]
 
 def generate_embeddings_batch(
     texts,
     batch_size=16,
     max_retries=5,
     initial_delay=1.0,
-    delay_multiplier=2.0
+    delay_multiplier=2.0,
+    *,
+    purpose="document",
+    profile=None,
 ):
-    """Generate embeddings for multiple texts in batches.
-
-    Azure OpenAI embeddings API accepts a list of strings as input.
-    This reduces per-call overhead and delay significantly.
-
-    Args:
-        texts: List of text strings to embed.
-        batch_size: Number of texts per API call (default 16).
-        max_retries: Max retries on rate limit errors.
-        initial_delay: Initial retry delay in seconds.
-        delay_multiplier: Multiplier for exponential backoff.
-
-    Returns:
-        list of (embedding, token_usage) tuples, one per input text.
-    """
-    settings = get_settings()
-
-    enable_embedding_apim = settings.get('enable_embedding_apim', False)
-
-    if enable_embedding_apim:
-        embedding_model = settings.get('azure_apim_embedding_deployment')
-        embedding_client = AzureOpenAI(
-            api_version=settings.get('azure_apim_embedding_api_version'),
-            azure_endpoint=settings.get('azure_apim_embedding_endpoint'),
-            api_key=settings.get('azure_apim_embedding_subscription_key'))
-    else:
-        if (settings.get('azure_openai_embedding_authentication_type') == 'managed_identity'):
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-
-            embedding_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_embedding_api_version'),
-                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
-                azure_ad_token_provider=token_provider
-            )
-
-            embedding_model_obj = settings.get('embedding_model', {})
-            if embedding_model_obj and embedding_model_obj.get('selected'):
-                selected_embedding_model = embedding_model_obj['selected'][0]
-                embedding_model = selected_embedding_model['deploymentName']
-        else:
-            embedding_client = AzureOpenAI(
-                api_version=settings.get('azure_openai_embedding_api_version'),
-                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
-                api_key=settings.get('azure_openai_embedding_key')
-            )
-
-            embedding_model_obj = settings.get('embedding_model', {})
-            if embedding_model_obj and embedding_model_obj.get('selected'):
-                selected_embedding_model = embedding_model_obj['selected'][0]
-                embedding_model = selected_embedding_model['deploymentName']
-
-    results = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        retries = 0
-        current_delay = initial_delay
-
-        while True:
-            random_delay = random.uniform(0.05, 0.2)
-            time.sleep(random_delay)
-
-            try:
-                response = embedding_client.embeddings.create(
-                    model=embedding_model,
-                    input=batch
-                )
-
-                for item in response.data:
-                    token_usage = None
-                    if hasattr(response, 'usage') and response.usage:
-                        token_usage = {
-                            'prompt_tokens': response.usage.prompt_tokens // len(batch),
-                            'total_tokens': response.usage.total_tokens // len(batch),
-                            'model_deployment_name': embedding_model
-                        }
-                    results.append((item.embedding, token_usage))
-                break
-
-            except RateLimitError as e:
-                retries += 1
-                if retries > max_retries:
-                    raise
-
-                wait_time = _get_rate_limit_wait_time(e, current_delay)
-                debug_print(
-                    f"[EMBEDDING_BATCH] Rate limited, retrying in {wait_time:.2f}s "
-                    f"(attempt {retries}/{max_retries})"
-                )
-                time.sleep(wait_time)
-                current_delay *= delay_multiplier
-
-            except Exception as e:
-                raise
-
-    return results
+    """Return ordered vectors and optional usage, bounded by the model's batch limits."""
+    if isinstance(texts, (list, tuple)) and not texts:
+        return []
+    settings = read_embedding_settings()
+    current_profile = active_embedding_profile(settings)
+    if profile is not None and profile.profile_id != current_profile.profile_id:
+        raise AIConnectionError("The embedding model changed. Retry the operation.", "embedding_profile_changed")
+    with embedding_query_slot(current_profile.profile_id):
+        pass
+    return generate_embedding_batch(
+        texts, settings=settings, purpose=purpose, profile=profile or current_profile,
+        batch_size=batch_size, max_retries=max_retries, initial_delay=initial_delay,
+        delay_multiplier=delay_multiplier, retry_delay=_get_rate_limit_wait_time,
+    )

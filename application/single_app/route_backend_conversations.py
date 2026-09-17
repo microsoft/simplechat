@@ -72,6 +72,12 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 from functions_orchestration_recovery import cleanup_conversation_checkpoints
+from functions_saved_analysis import (
+    cleanup_chat_analysis_conversation,
+    cleanup_chat_analysis_messages,
+    is_saved_analysis_unavailable,
+    sanitize_saved_analysis_messages,
+)
 from utils_cache import invalidate_personal_search_cache
 
 def normalize_chat_type(conversation_item):
@@ -1081,6 +1087,7 @@ def register_route_backend_conversations(bp):
             all_items = filtered_items
             debug_print(f"After filtering: {len(all_items)} items remaining")
 
+            all_items = sanitize_saved_analysis_messages(all_items, user_id)
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
             all_items = public_history_messages(all_items, user_id)
 
@@ -1537,6 +1544,7 @@ def register_route_backend_conversations(bp):
             query=message_query,
             partition_key=conversation_id
         ))
+        cleanup_chat_analysis_conversation(conversation_id, conversation_item.get('user_id'), results)
 
         if delete_workspace_document_ids:
             try:
@@ -1672,6 +1680,7 @@ def register_route_backend_conversations(bp):
                     query=message_query,
                     partition_key=conversation_id
                 ))
+                cleanup_chat_analysis_conversation(conversation_id, user_id, messages)
 
                 if not archiving_enabled:
                     delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
@@ -2410,6 +2419,7 @@ def register_route_backend_conversations(bp):
                 'page': page,
                 'per_page': per_page,
                 'access': access_parameters,
+                'analysis_result_policy_version': 1,
             }
             search_cache_key = None
             if cache_settings.get('enabled') and access_parameters is not None:
@@ -2526,6 +2536,23 @@ def register_route_backend_conversations(bp):
             ))
             
             debug_print(f"Found {len(all_matching_messages)} total messages across all conversations")
+
+            accessible_matches = [
+                message for message in all_matching_messages
+                if message.get('conversation_id') in conversation_ids
+            ]
+            if any(
+                any((message.get('metadata') or {}).get(field) for field in (
+                    'saved_analysis', 'saved_analyses', 'analysis_result_contexts',
+                ))
+                for message in accessible_matches
+            ):
+                # Source-bound snippets must recheck access rather than outlive it in a cache.
+                search_cache_key = None
+            all_matching_messages = [
+                message for message in sanitize_saved_analysis_messages(accessible_matches, user_id)
+                if not is_saved_analysis_unavailable(message)
+            ]
             
             # Group messages by conversation and filter
             messages_by_conversation = {}
@@ -2839,6 +2866,10 @@ def register_route_backend_conversations(bp):
                         print(f"Promoted thread_attempt {next_attempt_number} to active after deleting active thread {thread_id}")
             
             deleted_message_ids = []
+
+            cleanup_chat_analysis_messages(
+                messages_to_delete, conversation_id=conversation_id, owner_user_id=user_id,
+            )
             
             for msg in messages_to_delete:
                 msg_id = msg['id']

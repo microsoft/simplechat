@@ -1,9 +1,10 @@
 # test_document_analysis_structured_output.py
 """
 Functional test for analysis structured output preservation.
-Version: 0.250.112
+Version: 0.261.109
 Implemented in: 0.241.117
 Updated in: 0.250.112
+Updated in: 0.261.106
 
 This test ensures document analysis preserves one structured JSON
 result per analyzed document instead of making a lossy global reduction call
@@ -11,11 +12,15 @@ that can collapse a large per-comment analysis into only a few final objects.
 """
 
 import ast
+import importlib
 import json
 import logging
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional
+
+from test_support.app_stubs import stubbed_app_imports
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +39,8 @@ def assert_equal(actual, expected, label):
 
 
 def load_module_functions(file_path, extra_globals=None):
+    with stubbed_app_imports():
+        output_helpers = importlib.import_module('functions_generated_file_exports')
     with open(file_path, 'r', encoding='utf-8') as handle:
         source = handle.read()
 
@@ -55,6 +62,7 @@ def load_module_functions(file_path, extra_globals=None):
         'json': json,
         'logging': logging,
         're': re,
+        'get_requested_structured_artifact_format': output_helpers.get_requested_structured_artifact_format,
     }
     if extra_globals:
         namespace.update(extra_globals)
@@ -316,7 +324,7 @@ def test_structured_analyze_skips_lossy_global_reduction():
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.250.112', 'config version')
+    assert_app_version_at_least('0.250.112')
     print('Version alignment passed.')
     return True
 

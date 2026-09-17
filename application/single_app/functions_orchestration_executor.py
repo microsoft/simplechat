@@ -65,6 +65,7 @@ from functions_orchestration_schema import (
     STEP_STATUS_CANCELLED,
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
+    STEP_STATUS_PENDING,
     STEP_STATUS_RUNNING,
     STEP_STATUS_SKIPPED,
     build_step_result,
@@ -213,6 +214,8 @@ class RunContext:
         user_enable_agents=True,
         agent_execution_identity=None,
         delegation_budget=None,
+        saved_analyses=None,
+        analysis_result_contexts=None,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -295,6 +298,11 @@ class RunContext:
         self.citations = []
         self.artifacts = []
         self.notes = []
+        self.saved_analyses = deepcopy(saved_analyses or [])
+        self.analysis_result_contexts = deepcopy(self.conversation_context.get('analysis_result_contexts') or [])
+        for reference in analysis_result_contexts or []:
+            if reference not in self.analysis_result_contexts:
+                self.analysis_result_contexts.append(deepcopy(reference))
         self.token_usage = {}
         self.failures = []
         self.step_token_usage = {}
@@ -328,6 +336,9 @@ class RunContext:
         self.citations.extend(result.get('citations') or [])
         self.artifacts.extend(result.get('artifacts') or [])
         self.notes.extend(result.get('notes') or [])
+        for descriptor in result.get('saved_analyses') or []:
+            if descriptor not in self.saved_analyses:
+                self.saved_analyses.append(deepcopy(descriptor))
 
         found_here = []
         for envelope in result.get('evidence') or []:
@@ -477,7 +488,7 @@ def _dependency_blocked(step, statuses):
 
 def _step_record(context, step, index, status, result, started_at, completed_at, duration_ms):
     result = result if isinstance(result, dict) else {}
-    return {
+    record = {
         'run_id': getattr(context, 'run_id', None),
         'step_id': step.get('step_id'),
         'step_index': index,
@@ -497,6 +508,9 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         'reused_from_run_id': None,
         'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in ('agent_invoke', 'action_invoke'),
     }
+    if result.get('saved_analyses'):
+        record['saved_analyses'] = deepcopy(result['saved_analyses'])
+    return record
 
 
 def _persist(persist, record_type, record):
@@ -549,7 +563,7 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
-        if getattr(context, 'durable_checkpoints', False):
+        if getattr(context, 'durable_checkpoints', False) or context.saved_analyses:
             raise ElicitationContextError('Sources could not be reauthorized.') from exc
         if context.elicitation_references:
             log_event(
@@ -565,7 +579,7 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         fresh_manifest = None
 
     if not fresh_manifest:
-        if getattr(context, 'durable_checkpoints', False):
+        if getattr(context, 'durable_checkpoints', False) or context.saved_analyses:
             raise ElicitationContextError('Sources could not be reauthorized.')
         if context.elicitation_references:
             raise ElicitationContextError('Accepted answer sources could not be rechecked. Please retry the run.')
@@ -595,7 +609,7 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         raise ElicitationContextError('An accepted answer source is no longer available. Please update the answer.')
 
     if dropped:
-        if getattr(context, 'durable_checkpoints', False):
+        if getattr(context, 'durable_checkpoints', False) or context.saved_analyses:
             raise ElicitationContextError('A saved source is no longer available.')
         context.evidence = [
             envelope for envelope in evidence
@@ -972,7 +986,9 @@ def execute_plan(
     )
     if cancelled:
         run_status = PLAN_STATUS_CANCELLED
-    elif terminal_completed and not context.failures:
+    elif terminal_completed and not context.failures and not any(
+        row['status'] == STEP_STATUS_PENDING for row in step_records
+    ):
         run_status = PLAN_STATUS_COMPLETED
     else:
         run_status = PLAN_STATUS_FAILED
@@ -1020,6 +1036,12 @@ def execute_plan(
         'completed_at': _now_iso(),
         'error': first_error if run_status == PLAN_STATUS_FAILED else None,
     }
+    if context.saved_analyses:
+        run_result['saved_analyses'] = deepcopy(context.saved_analyses)
+    if context.analysis_result_contexts:
+        run_result['analysis_result_contexts'] = deepcopy(context.analysis_result_contexts)
+    if (terminal_result or {}).get('analysis_consumption'):
+        run_result['analysis_consumption'] = deepcopy(terminal_result['analysis_consumption'])
 
     _persist(persist, 'run', {
         'run_id': getattr(context, 'run_id', None),
@@ -1033,6 +1055,9 @@ def execute_plan(
         'artifacts': run_result['artifacts'],
         'capabilities_used': capabilities_used,
         'token_usage': run_result['token_usage'],
+        **({'saved_analyses': run_result['saved_analyses']} if context.saved_analyses else {}),
+        **({'analysis_result_contexts': context.analysis_result_contexts} if context.analysis_result_contexts else {}),
+        **({'analysis_consumption': run_result['analysis_consumption']} if run_result.get('analysis_consumption') else {}),
     })
 
     _emit(emit, {'type': 'run', 'phase': run_status, 'run_id': getattr(context, 'run_id', None)})

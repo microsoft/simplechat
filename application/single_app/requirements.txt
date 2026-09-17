@@ -9,6 +9,7 @@ requests==2.33.1
 jsonschema==4.25.1
 regex==2026.5.9
 openai==1.109.1
+tiktoken==0.12.0
 docx2txt==0.8
 olefile==0.47
 Markdown==3.8.1

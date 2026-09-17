@@ -43,6 +43,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_workflow_context import wrap_workflow_model_client
 
 
 def model(name="gpt-4o", **overrides):
@@ -106,7 +107,8 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
         "normalize_model_endpoints": lambda values: (deepcopy(values), False),
-        "sanitize_model_endpoints_for_frontend": deepcopy,
+        "sanitize_model_endpoints_for_frontend": lambda endpoints, **_kwargs: deepcopy(endpoints),
+        "wrap_workflow_model_client": wrap_workflow_model_client,
         "keyvault_model_endpoint_get_helper": Mock(side_effect=lambda value, *args, **kwargs: deepcopy(value)),
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_model_endpoint_identity_headers": Mock(return_value={}),
@@ -336,15 +338,12 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
                     helpers["build_anthropic_chat_client"].assert_called_once_with(
                         endpoint="https://selected.services.ai.azure.com/api/projects/test",
                         api_key="test-only-key", extra_headers={},
-                        anthropic_version=DEFAULT_ANTHROPIC_VERSION, direct_custom=False,
-                        allow_private_custom_endpoints=False, custom_endpoint_ca_bundle_path="",
                     )
                     helpers["build_openai_style_chat_client"].assert_not_called()
                 else:
                     helpers["build_openai_style_chat_client"].assert_called_once_with(
                         "test-only-key", "https://selected.services.ai.azure.com/api/projects/test", "v1",
-                        default_headers={}, direct_custom=False, allow_private_custom_endpoints=False,
-                        api_type="", url_mode="", ca_bundle_path="",
+                        default_headers={},
                     )
                     helpers["build_anthropic_chat_client"].assert_not_called()
 

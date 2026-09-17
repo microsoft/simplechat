@@ -19,6 +19,7 @@ from datetime import datetime
 
 from functions_appinsights import log_event
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_embedding_compatibility import embedding_query_slot
 from functions_message_artifacts import make_json_serializable
 from semantic_kernel_fact_memory_store import FactMemoryStore
 
@@ -283,7 +284,12 @@ def retrieve_relevant_fact_memory_entries(
         result['search_mode'] = 'embedding_unavailable'
         return result
     try:
-        query_embedding_result = generate_embedding(query_text)
+        query_embedding_result = generate_embedding(query_text, purpose="query")
+        query_embedding, _ = _coerce_embedding_result(query_embedding_result)
+        query_profile = getattr(query_embedding, 'profile_id', None)
+        if query_profile:
+            with embedding_query_slot(query_profile):
+                pass
     except Exception as exc:
         log_event(
             '[FACT_MEMORY] Unable to generate memory query embedding.',
@@ -292,15 +298,22 @@ def retrieve_relevant_fact_memory_entries(
         )
         result['search_mode'] = 'embedding_unavailable'
         return result
-    query_embedding, _ = _coerce_embedding_result(query_embedding_result)
     if not query_embedding:
         result['search_mode'] = 'embedding_unavailable'
         return result
     candidates = []
+    incompatible_count = 0
     for fact in facts:
         value = str(fact.get('value') or '').strip()
         embedding_vector = fact.get('value_embedding')
         if not value or not _is_embedding_vector(embedding_vector):
+            continue
+        stored_profile = fact.get('embedding_profile_id')
+        if query_profile and (
+            (stored_profile and stored_profile != query_profile)
+            or (not stored_profile and not getattr(query_embedding, 'legacy', False))
+        ):
+            incompatible_count += 1
             continue
         similarity = _cosine_similarity(query_embedding, embedding_vector)
         if similarity <= 0:
@@ -308,6 +321,12 @@ def retrieve_relevant_fact_memory_entries(
         normalized_fact = dict(fact)
         normalized_fact['similarity'] = round(similarity, 6)
         candidates.append(normalized_fact)
+    if incompatible_count:
+        log_event(
+            '[FACT_MEMORY] Omitted incompatible embedding profiles.',
+            extra={'count': incompatible_count},
+            debug_only=True,
+        )
     candidates.sort(
         key=lambda fact: (
             float(fact.get('similarity') or 0.0),

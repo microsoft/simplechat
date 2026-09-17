@@ -38,7 +38,6 @@ from content_screening.contracts import (
 )
 from content_screening.policies import DEFAULT_LIMITS, compose_policy, default_policy, normalize_limits
 from functions_model_capabilities import resolve_model_reasoning_effort
-from functions_model_endpoint_types import DEFAULT_ANTHROPIC_VERSION
 from test_ai_connection_text_consumers import load_boundaries
 from test_model_endpoints_key_vault_secret_storage import (
     load_functions_keyvault_module,
@@ -2211,8 +2210,6 @@ class ModelScreeningTests(unittest.TestCase):
             endpoint=selected["connection"]["endpoint"],
             api_key=selected["auth"]["api_key"],
             extra_headers={"x-test-identity": "test-identity-digest"},
-            anthropic_version=DEFAULT_ANTHROPIC_VERSION, direct_custom=False,
-            allow_private_custom_endpoints=False, custom_endpoint_ca_bundle_path="",
         )
         self.assertGreater(self.adapters["requests"].post.call_count, 1)
         for call in self.adapters["requests"].post.call_args_list:

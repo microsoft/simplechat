@@ -1,5 +1,5 @@
 // test_v2_workspace_action_connectors_logic.mjs
-// Version: 0.261.096
+// Version: 0.261.122
 // Implemented in: 0.261.096
 // Executes the real OpenAPI/MCP connector parsing, draft, credential, and API helpers.
 
@@ -278,9 +278,15 @@ check('personal transport choices never include stdio even if a preset permits i
     assert.deepEqual(allowedMcpTransports(catalogEntry({ constraints: { allowedTransports: ['stdio'] } })), []);
     assert.equal(applyMcpPreset(action('mcp'), catalogEntry({ defaults: { transport: 'stdio' } })).additionalFields.transport, 'streamable_http');
     assert.throws(() => applyMcpPreset(action('mcp'), catalogEntry({ constraints: { allowedTransports: ['stdio'] } })), /no transport/);
-    assert.throws(() => applyMcpPreconfiguration(action('mcp'), catalogEntry({ transport: 'stdio' })), /cannot use stdio/);
+    assert.throws(() => applyMcpPreconfiguration(action('mcp'), catalogEntry({ transport: 'stdio' })), /no longer supported/);
     assert.throws(() => applyMcpPreconfiguration(action('mcp'), catalogEntry({ scopeEligibility: ['global'] })), /not available/);
     assert.deepEqual(allowedMcpAuthMethods('websocket').map(({ value }) => value), ['none']);
+});
+check('retired transport validation does not suggest an administrator exception', () => {
+    const draft = action('mcp');
+    draft.additionalFields.transport = 'stdio';
+    const message = validateConnectorConfiguration(draft, 'mcp')['additionalFields.transport'];
+    assert.equal(message, 'Stdio actions are no longer supported. Select a remote transport.');
 });
 check('preset application preserves false, zero, secret masks and unknown tool selections', () => {
     const draft = action('mcp');

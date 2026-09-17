@@ -27,19 +27,18 @@ from content_screening.access import (
 from content_screening.contracts import ScreeningError
 from functions_authentication import login_required, user_required, get_current_user_id, get_current_user_info
 from functions_appinsights import log_event
+from functions_artifact_publication import publish_generated_chat_artifact_for_user
 from functions_settings import get_settings, enabled_required
-from functions_documents import create_document, get_document_blob_storage_info, get_document_record, update_document
+from functions_documents import get_document_blob_storage_info, get_document_record
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
-from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
-from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
-from functions_public_workspaces import check_public_workspace_status_allows_operation, get_user_visible_public_workspace_ids_from_settings, require_active_public_workspace
+from functions_group import get_user_groups
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_collaboration import build_conversation_participation_context
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
+from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
     assert_generated_chat_artifact_is_published_for_user,
-    download_blob_content,
-    upload_generated_document_for_current_user,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
@@ -674,6 +673,8 @@ def register_enhanced_citations_routes(bp):
     def promote_chat_artifact_to_workspace():
         """Promote a generated chat artifact into a workspace document."""
         payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Invalid publication request."}), 400
         conversation_id = str(payload.get("conversation_id") or "").strip()
         message_id = str(payload.get("message_id") or "").strip()
 
@@ -690,226 +691,43 @@ def register_enhanced_citations_routes(bp):
             workspace_scope = _normalize_generated_artifact_target_scope(payload.get("workspace_scope"))
             message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
 
+            if not payload.get("workspace_scope"):
+                raise ValueError("Choose an explicit destination for this analysis artifact.")
+            authorize_analysis_artifact(user_id, message_item, for_publication=True)
             file_name = _resolve_generated_artifact_file_name(message_item)
-            artifact_metadata = message_item.get("metadata", {}) or {}
-            source_blob_container = str(message_item.get("blob_container") or "").strip()
-            source_blob_path = str(message_item.get("blob_path") or "").strip()
-
-            if workspace_scope == "personal":
-                artifact_bytes = download_blob_content(source_blob_container, source_blob_path)
-                upload_result = upload_generated_document_for_current_user(
-                    file_name=file_name,
-                    file_content=artifact_bytes,
-                    workspace_scope="personal",
-                )
-                return jsonify({
-                    "message": "Generated artifact added to your personal workspace.",
-                    "workspace_scope": "personal",
-                    "approval_required": False,
-                    "document": upload_result.get("document"),
-                }), 200
-
             requester_display_name = (
                 str(current_user_info.get("displayName") or "").strip()
                 or str(current_user_info.get("email") or "").strip()
                 or "A workspace member"
             )
-            request_timestamp = datetime.now(timezone.utc).isoformat()
-            pending_file_name = _build_workspace_generated_artifact_file_name(file_name, message_id)
-            document_id = str(uuid.uuid4())
-
-            if workspace_scope == "group":
-                requested_group_id = str(payload.get("group_id") or "").strip()
-                resolved_group_id = require_active_group(
-                    user_id,
-                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-                )
-                if requested_group_id and requested_group_id != resolved_group_id:
-                    raise PermissionError("Target group does not match your authorized active group")
-
-                group_doc = find_group_by_id(resolved_group_id)
-                if not group_doc:
-                    raise LookupError("Group not found")
-
-                allowed, reason = check_group_status_allows_operation(group_doc, "upload")
-                if not allowed:
-                    raise PermissionError(reason)
-
-                group_name = str(group_doc.get("name") or "group workspace").strip() or "group workspace"
-
-                create_document(
-                    file_name=pending_file_name,
-                    group_id=resolved_group_id,
-                    user_id=user_id,
-                    document_id=document_id,
-                    num_file_chunks=0,
-                    status="Pending approval",
-                    allow_deferred_xsd_source=True,
-                )
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    group_id=resolved_group_id,
-                    percentage_complete=0,
-                    generated_artifact_promotion_status="pending_approval",
-                    generated_artifact_original_file_name=file_name,
-                    generated_artifact_source_conversation_id=conversation_id,
-                    generated_artifact_source_message_id=message_id,
-                    generated_artifact_source_blob_container=source_blob_container,
-                    generated_artifact_source_blob_path=source_blob_path,
-                    generated_artifact_requested_by_user_id=user_id,
-                    generated_artifact_requested_by_display_name=requester_display_name,
-                    generated_artifact_requested_at=request_timestamp,
-                    generated_artifact_capability=str(artifact_metadata.get("generated_artifact_capability") or "").strip(),
-                    generated_artifact_output_format=str(artifact_metadata.get("generated_artifact_output_format") or "").strip(),
-                    generated_artifact_summary=str(artifact_metadata.get("generated_artifact_summary") or "").strip(),
-                )
-
-                create_group_notification(
-                    resolved_group_id,
-                    "approval_request_pending",
-                    "Approval required: generated artifact",
-                    f"{requester_display_name} requested approval for {pending_file_name} in {group_name}.",
-                    link_url="/group_workspaces",
-                    link_context={
-                        "workspace_type": "group",
-                        "group_id": resolved_group_id,
-                        "document_id": document_id,
-                    },
-                    metadata={
-                        "document_id": document_id,
-                        "group_id": resolved_group_id,
-                        "request_type": "generated_artifact_promotion",
-                        "conversation_id": conversation_id,
-                        "message_id": message_id,
-                    },
-                )
-                create_notification(
-                    user_id=user_id,
-                    notification_type="approval_request_pending_submitter",
-                    title="Generated artifact submitted for approval",
-                    message=f"{pending_file_name} is waiting for approval in {group_name}.",
-                    link_url="/group_workspaces",
-                    link_context={
-                        "workspace_type": "group",
-                        "group_id": resolved_group_id,
-                        "document_id": document_id,
-                    },
-                    metadata={
-                        "document_id": document_id,
-                        "group_id": resolved_group_id,
-                        "request_type": "generated_artifact_promotion",
-                    },
-                )
-
-                return jsonify({
-                    "message": f"Generated artifact submitted to {group_name} for approval.",
-                    "workspace_scope": "group",
-                    "approval_required": True,
-                    "group_id": resolved_group_id,
-                    "document": {
-                        "id": document_id,
-                        "file_name": pending_file_name,
-                        "status": "Pending approval",
-                    },
-                }), 202
-
-            requested_public_workspace_id = str(payload.get("public_workspace_id") or "").strip()
-            resolved_public_workspace_id, workspace_doc, _ = require_active_public_workspace(user_id)
-            if requested_public_workspace_id and requested_public_workspace_id != resolved_public_workspace_id:
-                raise PermissionError("Target public workspace does not match your authorized active workspace")
-
-            allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, "upload")
-            if not allowed:
-                raise PermissionError(reason)
-
-            workspace_name = str(workspace_doc.get("name") or "public workspace").strip() or "public workspace"
-
-            create_document(
-                file_name=pending_file_name,
-                public_workspace_id=resolved_public_workspace_id,
-                user_id=user_id,
-                document_id=document_id,
-                num_file_chunks=0,
-                status="Pending approval",
-                allow_deferred_xsd_source=True,
+            result = publish_generated_chat_artifact_for_user(
+                user_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                destination={
+                    "workspace_scope": workspace_scope,
+                    "group_id": payload.get("group_id"),
+                    "public_workspace_id": payload.get("public_workspace_id"),
+                },
+                request_id=payload.get("request_id") or "manual",
+                requester_display_name=requester_display_name,
+                file_name=file_name,
             )
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                public_workspace_id=resolved_public_workspace_id,
-                percentage_complete=0,
-                generated_artifact_promotion_status="pending_approval",
-                generated_artifact_original_file_name=file_name,
-                generated_artifact_source_conversation_id=conversation_id,
-                generated_artifact_source_message_id=message_id,
-                generated_artifact_source_blob_container=source_blob_container,
-                generated_artifact_source_blob_path=source_blob_path,
-                generated_artifact_requested_by_user_id=user_id,
-                generated_artifact_requested_by_display_name=requester_display_name,
-                generated_artifact_requested_at=request_timestamp,
-                generated_artifact_capability=str(artifact_metadata.get("generated_artifact_capability") or "").strip(),
-                generated_artifact_output_format=str(artifact_metadata.get("generated_artifact_output_format") or "").strip(),
-                generated_artifact_summary=str(artifact_metadata.get("generated_artifact_summary") or "").strip(),
-            )
-
-            create_public_workspace_notification(
-                resolved_public_workspace_id,
-                "approval_request_pending",
-                "Approval required: generated artifact",
-                f"{requester_display_name} requested approval for {pending_file_name} in {workspace_name}.",
-                link_url="/public_workspaces",
-                link_context={
-                    "workspace_type": "public",
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "document_id": document_id,
-                },
-                metadata={
-                    "document_id": document_id,
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "request_type": "generated_artifact_promotion",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                },
-            )
-            create_notification(
-                user_id=user_id,
-                notification_type="approval_request_pending_submitter",
-                title="Generated artifact submitted for approval",
-                message=f"{pending_file_name} is waiting for approval in {workspace_name}.",
-                link_url="/public_workspaces",
-                link_context={
-                    "workspace_type": "public",
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "document_id": document_id,
-                },
-                metadata={
-                    "document_id": document_id,
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "request_type": "generated_artifact_promotion",
-                },
-            )
-
-            return jsonify({
-                "message": f"Generated artifact submitted to {workspace_name} for approval.",
-                "workspace_scope": "public",
-                "approval_required": True,
-                "public_workspace_id": resolved_public_workspace_id,
-                "document": {
-                    "id": document_id,
-                    "file_name": pending_file_name,
-                    "status": "Pending approval",
-                },
-            }), 202
+            if result["publication"]["state"] in {"uncertain", "approval_failed"}:
+                return jsonify(result), 409
+            return jsonify(result), 202 if result["approval_required"] else 200
         except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+            return jsonify({"error": "Artifact publication is not permitted."}), 403
         except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return jsonify({"error": "The artifact or destination is unavailable."}), 404
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": "Choose an explicit, valid artifact publication destination."}), 400
         except Exception as e:
-            debug_print(f"Error promoting chat artifact: {e}")
-            return jsonify({"error": str(e)}), 500
+            log_event(
+                "[SIMPLE_CHAT] Artifact publication failed",
+                {"exception_type": type(e).__name__}, debug_only=True,
+            )
+            return jsonify({"error": "Publication could not be confirmed. Retry the same request."}), 500
 
     @bp.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
     @swagger_route(security=get_auth_security())

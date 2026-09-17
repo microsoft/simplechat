@@ -1,14 +1,14 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.261.102
+Version: 0.261.122
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
 Enhanced in: 0.250.225
 
-This test ensures workflow tasks are normalized in order, execute with bounded
-prior-task context, retry safely, and honor halt or continue error strategies.
+This test ensures workflow tasks are normalized in order, execute with durable
+prior-task results, retry safely, and honor halt or continue error strategies.
 """
 
 import ast
@@ -33,6 +33,7 @@ from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
 # Use the real import-safe capability guard in the isolated store function bodies.
 from functions_ai_connections import require_model_capability
+from test_support.workflow_results import workflow_result_helpers
 
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
@@ -88,8 +89,8 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
         "save_m365_task_checkpoint": save_m365_task_checkpoint,
         "M365ApprovalRequired": M365ApprovalRequired,
         "M365SignInRequired": M365SignInRequired,
+        **workflow_result_helpers(),
         "DOCUMENT_ACTION_TYPE_NONE": "none",
-        "WORKFLOW_TASK_CONTEXT_MAX_CHARS": 12000,
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,
         "_build_response_preview": lambda value, max_length=220: str(value or "")[:max_length],
         "_execute_workflow_dispatch": dispatch,
@@ -117,7 +118,6 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
     helpers = load_functions(
         RUNNER_FILE,
         {
-            "_truncate_workflow_task_context",
             "_truncate_workflow_file_sync_context",
             "_format_workflow_file_sync_context",
             "_apply_file_sync_changed_documents_to_action",

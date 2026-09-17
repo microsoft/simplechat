@@ -1284,6 +1284,7 @@ def get_user_plugins():
         return jsonify(plugins)
 
 def _prepare_personal_action_for_editor(user_id, plugin, settings, existing):
+    validate_legacy_action_update(plugin, existing, 'user_id', user_id)
     return _prepare_personal_action_payload(user_id, plugin, editor=True)
 
 

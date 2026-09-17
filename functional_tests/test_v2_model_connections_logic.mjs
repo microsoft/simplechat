@@ -1,8 +1,8 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.102
-// Implemented in: 0.261.059
+// Version: 0.261.106
+// Implemented in: 0.261.059; embeddings added in 0.261.106
 //
 // The classic connection editor decided which fields a provider and auth type needed by
 // toggling `d-none` across two dozen elements from three separate listeners, and reported
@@ -25,6 +25,7 @@ import './test_support/tsResolve.mjs';
 const {
     buildConnectionPayload,
     emptyConnection,
+    defaultEmbeddingApi,
     enabledModelCount,
     endpointIncludesProject,
     isFoundryProvider,
@@ -34,6 +35,7 @@ const {
     toEditableConnection,
     validateConnection,
     visibleFields,
+    setEmbeddingOperation,
 } = await import('../application/v2_ui/src/lib/modelConnections.ts');
 
 const checks = [];
@@ -129,10 +131,72 @@ check('foundry fields appear only for foundry providers', () => {
     assert.equal(foundry.management, false);
 });
 
+check('custom embedding connections show API keys only and never Azure discovery fields', () => {
+    const shown = visibleFields(validAoai({ provider: 'openai_compatible' }));
+    assert.equal(shown.apiKey, true);
+    for (const field of ['project', 'management', 'managementCloud', 'servicePrincipal', 'managedIdentity', 'customAuthority', 'foundryScope', 'userAssignedClientId', 'openAiVersion', 'discovery']) {
+        assert.equal(shown[field], false, field);
+    }
+    assert.equal(toEditableConnection({ id: 'custom', provider: 'openai_compatible' }).auth.type, 'api_key');
+});
+
 /* --------------------------------- validation -------------------------------- */
 
 check('a complete Azure OpenAI connection validates', () => {
     assert.deepEqual(validateConnection(validAoai()), {});
+});
+
+check('unknown embedding models require verified support and explicit dimensions and token limits', () => {
+    const custom = validAoai({
+        provider: 'openai_compatible', auth: { type: 'api_key', api_key: 'fixture-key' },
+        connection: { endpoint: 'https://gateway.test/api/v1', openai_api_version: '' },
+        models: [{ deploymentName: 'custom-embedding', enabled: true }],
+    });
+    assert.ok(validateConnection(custom).model_0_supportsEmbeddings);
+    custom.models[0].supportsEmbeddings = true;
+    const incomplete = validateConnection(custom);
+    assert.ok(incomplete.model_0_dimensions && incomplete.model_0_max_input_tokens);
+    custom.models[0].embedding_config = { dimensions: 768, max_input_tokens: 2048, model_revision: 'rev-1' };
+    assert.deepEqual(validateConnection(custom), {});
+    for (const invalid of [true, 0, -1, 1.5, '768', NaN]) {
+        assert.ok(validateConnection({ ...custom, models: [{ ...custom.models[0], embedding_config: { dimensions: invalid, max_input_tokens: 2048 } }] }).model_0_dimensions);
+    }
+    assert.ok(validateConnection({ ...custom, auth: { type: 'managed_identity' } }).auth_type);
+    assert.ok(validateConnection(custom, { requireDiscovery: true }).discovery);
+});
+
+check('known embedding models retain catalog defaults and do not acquire an implicit resize', () => {
+    const known = validAoai({ models: [{ deploymentName: 'text-embedding-3-large', enabled: true }] });
+    assert.deepEqual(validateConnection(known), {});
+    assert.equal(buildConnectionPayload(known).models[0].embedding_config, undefined);
+});
+
+check('Cohere gateway attestation retains catalog dimensions and input limits', () => {
+    const connection = validAoai({
+        models: [{ deploymentName: 'cohere-deployment', modelName: 'embed-v-4-0', embedding_config: { openai_compatible: true } }],
+        connection: {
+            endpoint: 'https://gateway.test/openai/v1/',
+            operation_settings: { embeddings: { api: 'openai' } },
+        },
+    });
+    assert.deepEqual(validateConnection(connection), {});
+    assert.deepEqual(buildConnectionPayload(connection).models[0].embedding_config, { openai_compatible: true });
+});
+
+check('Foundry project URLs require an explicit embedding inference base', () => {
+    const foundry = validAoai({
+        provider: 'new_foundry',
+        connection: { endpoint: 'https://resource.test/api/projects/project', openai_api_version: 'v1' },
+        models: [{ deploymentName: 'text-embedding-3-small', enabled: true }],
+    });
+    assert.match(validateConnection(foundry).embedding_endpoint, /project endpoints do not route embeddings/);
+    const configured = setEmbeddingOperation(foundry, 'endpoint', 'https://resource.test/openai/v1/');
+    assert.deepEqual(validateConnection(configured), {});
+    assert.equal(buildConnectionPayload(configured).connection.endpoint, foundry.connection.endpoint);
+    assert.equal(defaultEmbeddingApi(foundry), 'openai');
+    assert.equal(defaultEmbeddingApi(validAoai()), 'azure_openai');
+    assert.equal(defaultEmbeddingApi(validAoai({ connection: { endpoint: 'https://resource.test/openai/v1/' } })), 'openai');
+    assert.ok(validateConnection(setEmbeddingOperation(configured, 'api_version', '2024-01-01')).embedding_api_version);
 });
 
 check('validation reports the field, not just the failure', () => {
@@ -251,6 +315,31 @@ check('a provider only sends the auth fields it uses', () => {
     const identity = buildConnectionPayload(validAoai());
     assert.equal(identity.auth.managed_identity_type, 'system_assigned');
     assert.equal('client_secret' in identity.auth, false);
+});
+
+check('custom payloads preserve explicit base paths and other operation settings without Azure fields', () => {
+    const operations = {
+        image_generation: { api_version: 'image-version', is_apim: true },
+        embeddings: { api: 'openai', endpoint: 'https://gateway.test/api/v1', is_apim: false, auth_header: 'authorization' },
+    };
+    const custom = validAoai({
+        provider: 'openai_compatible',
+        connection: { endpoint: 'https://gateway.test/api/v1', operation_settings: operations, project_name: 'not-used', project_api_version: 'v1' },
+        auth: { type: 'api_key', api_key: '' }, has_api_key: true,
+        models: [{ deploymentName: 'custom-embedding', supportsEmbeddings: true, enabled_capabilities: [], embedding_config: { dimensions: 768, max_input_tokens: 2048, max_batch_size: 3, query_prefix: 'query: ' } }],
+    });
+    const payload = buildConnectionPayload(custom);
+    assert.deepEqual(payload.auth, { type: 'api_key' });
+    assert.deepEqual(payload.management, {});
+    for (const field of ['project_name', 'project_api_version', 'openai_api_version', 'api_version']) {
+        assert.equal(field in payload.connection, false);
+    }
+    assert.equal(payload.connection.endpoint, 'https://gateway.test/api/v1');
+    assert.deepEqual(payload.connection.operation_settings, operations);
+    assert.deepEqual(payload.models[0].embedding_config, custom.models[0].embedding_config);
+    assert.deepEqual(payload.models[0].enabled_capabilities, []);
+    assert.ok(validateConnection(setEmbeddingOperation(custom, 'api', 'native')).embedding_api);
+    assert.ok(validateConnection(setEmbeddingOperation(custom, 'auth_header', 'X-Arbitrary-Header')).embedding_auth_header);
 });
 
 check('foundry connections send project details and no ARM coordinates', () => {

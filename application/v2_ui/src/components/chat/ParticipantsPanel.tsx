@@ -32,8 +32,13 @@ import { useCollaborationStore, participantName } from '../../stores/collaborati
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { fetchCollaboratorSuggestions, fetchGroupMembers } from '../../lib/collaboration';
+import { panelTargetForConversation } from '../../lib/sharing';
 import { GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
-import type { CollaborationParticipant, CollaboratorSuggestion } from '../../lib/types';
+import {
+    GROUP_MULTI_USER_CHAT_TYPE,
+    type CollaborationParticipant,
+    type CollaboratorSuggestion,
+} from '../../lib/types';
 
 /** How long to wait after a keystroke before searching. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -273,7 +278,19 @@ export function ParticipantsPanel() {
     const canManageRoles = shared && Boolean(conversation?.can_manage_roles);
     const canDelete = shared && Boolean(conversation?.can_delete_conversation);
     const canLeave = shared && Boolean(conversation?.can_leave_conversation);
-    const groupId = panelTarget.groupId ?? (shared ? conversation?.group_id : null) ?? null;
+    const groupId = panelTarget.groupId
+        ?? (shared ? panelTargetForConversation(panelTarget.conversationId, conversation).groupId : null)
+        ?? null;
+    const sharedScope = shared ? conversation?.scope : null;
+    const isGroupScope = sharedScope !== null
+        && typeof sharedScope === 'object'
+        && 'type' in sharedScope
+        && sharedScope.type === 'group';
+    const missingGroupContext = !groupId && (
+        panelTarget.kind === 'group'
+        || (shared && conversation?.chat_type === GROUP_MULTI_USER_CHAT_TYPE)
+        || isGroupScope
+    );
 
     const existingIds = new Set(
         participants.map((participant) => String(participant.user_id ?? '').trim()),
@@ -463,12 +480,20 @@ export function ParticipantsPanel() {
                     )}
 
                     {canManageMembers ? (
-                        <InviteSearch
-                            groupId={groupId}
-                            excludeUserIds={existingIds}
-                            onInvite={(participant) => void invite(participant)}
-                            busy={busy}
-                        />
+                        missingGroupContext ? (
+                            <p role="alert" className="flex items-start gap-1.5 text-sm text-danger">
+                                <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+                                This conversation's group could not be identified. Reload it
+                                before adding people.
+                            </p>
+                        ) : (
+                            <InviteSearch
+                                groupId={groupId}
+                                excludeUserIds={existingIds}
+                                onInvite={(participant) => void invite(participant)}
+                                busy={busy}
+                            />
+                        )
                     ) : (
                         shared && (
                             <p className="text-xs text-text-3">

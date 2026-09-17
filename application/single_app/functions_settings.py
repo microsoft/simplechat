@@ -26,10 +26,13 @@ from functions_appinsights import log_event
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
+    EMBEDDING_SELECTION_KEY,
     describe_model_capabilities,
+    embedding_settings_use_connections,
     normalize_model_capability_fields,
     supports_model_capability,
 )
+from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
@@ -53,6 +56,12 @@ from functions_model_endpoint_identity_header import (
     normalize_model_endpoint_identity_header_name,
     normalize_model_endpoint_identity_header_override,
     normalize_model_endpoint_identity_header_value_type,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_api_type_value,
+    normalize_custom_endpoint_auth_type,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_model_endpoint_types import (
@@ -1356,9 +1365,6 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'allow_user_agents': False,
         'allow_user_custom_endpoints': False,
-        'allow_private_custom_model_endpoints': False,
-        'allow_insecure_custom_model_endpoints': False,
-        'custom_model_endpoint_ca_bundle_path': '',
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_user_workflows': False,
@@ -1460,6 +1466,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -1608,10 +1617,6 @@ def get_settings(use_cosmos=False, include_source=False):
             'model_id': '',
             'provider': ''
         },
-        
-        # Multimodal Vision
-        'enable_multimodal_vision': False,
-        'multimodal_vision_model': '',
         
         'enable_summarize_content_history_for_search': False,
         'number_of_historical_messages_to_summarize': 10,
@@ -2089,7 +2094,17 @@ def update_settings(new_settings, *, expected_etag=None):
         return settings_item
 
     try:
-        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
+        # Compatibility checks initialize storage clients only for settings writes.
+        from functions_embedding_compatibility import embedding_settings_write_guard
+
+        def guard_embedding_write(current, candidate):
+            return embedding_settings_write_guard(
+                current, candidate, force_check=EMBEDDING_SELECTION_KEY in updates,
+            )
+
+        _get_app_settings_store().write(
+            apply_updates, expected_etag=expected_etag, write_guard=guard_embedding_write,
+        )
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO
@@ -2102,6 +2117,8 @@ def update_settings(new_settings, *, expected_etag=None):
             level=logging.WARNING,
         )
         return False
+    except AIConnectionError:
+        raise
     except Exception as e:
         log_event(
             "[ASC] Unable to confirm settings save; reload and verify before retrying.",
@@ -2159,8 +2176,17 @@ def get_chunk_size_defaults():
 
 def get_embedding_context_tokens(settings=None):
     """Return the selected embedding model's context window in tokens."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            return resolve_embedding_profile(settings).policy["max_input_tokens"]
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+            log_event("[EMBEDDING] No active model for chunk-budget configuration", debug_only=True)
+            # Keep the settings editor usable while unconfigured; inference still fails closed.
+            return EMBEDDING_CONTEXT_FALLBACK_TOKENS
     try:
-        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
@@ -2190,11 +2216,31 @@ def get_embedding_usable_tokens(settings=None):
 
 def get_embedding_safe_chunk_characters(settings=None):
     """Return the largest chunk length in characters expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 4))
     return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
 
 
 def get_embedding_safe_chunk_words(settings=None):
     """Return the largest chunk length in words expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 12))
     return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
 
 
@@ -2541,6 +2587,8 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     """Normalize endpoint auth cloud fields that are owned by app environment."""
     if not isinstance(endpoint_copy, dict):
         return False
+    if str(endpoint_copy.get("provider") or "").strip().lower() == "custom":
+        return False
 
     changed = False
     auth = endpoint_copy.get("auth")
@@ -2647,6 +2695,7 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        endpoint_copy.pop("has_bearer_token", None)
         for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
             if endpoint_copy[field_name] != value:
                 endpoint_copy[field_name] = value
@@ -2659,14 +2708,15 @@ def normalize_model_endpoints(endpoints):
             endpoint_copy["provider"] = provider
             changed = True
         if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-            api_type = normalize_model_endpoint_api_type(
-                provider,
-                endpoint_copy.get("api_type"),
-            )
+            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
             if endpoint_copy.get("api_type") != api_type:
                 endpoint_copy["api_type"] = api_type
                 changed = True
             connection = json.loads(json.dumps(connection))
+            url_mode = normalize_custom_endpoint_url_mode(connection.get("url_mode"))
+            if connection.get("url_mode") != url_mode:
+                connection["url_mode"] = url_mode
+                changed = True
             if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                 if "anthropic_version" in connection:
                     connection.pop("anthropic_version", None)
@@ -2693,6 +2743,14 @@ def normalize_model_endpoints(endpoints):
                         connection.pop(field_name, None)
                         changed = True
             endpoint_copy["connection"] = connection
+            auth = endpoint_copy.get("auth") or {}
+            if not isinstance(auth, dict):
+                raise AIConnectionError("Authentication configuration must be an object.")
+            auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
+            if auth.get("type") != auth_type:
+                auth["type"] = auth_type
+                changed = True
+            endpoint_copy["auth"] = auth
         operation_settings = connection.get("operation_settings")
         if operation_settings is not None:
             if not isinstance(operation_settings, dict):
@@ -2700,6 +2758,9 @@ def normalize_model_endpoints(endpoints):
             for capability, profile in operation_settings.items():
                 if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
                     raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                if capability == "embeddings":
+                    operation_settings[capability] = normalize_embedding_operation(profile)
+                    continue
                 allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
                 if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
                     raise AIConnectionError("The connection operation API is not supported.")
@@ -2727,6 +2788,10 @@ def normalize_model_endpoints(endpoints):
 
         if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
+        if endpoint_copy.get("provider") == "openai_compatible":
+            auth = endpoint_copy.get("auth") or {}
+            if auth.get("type") != "api_key":
+                raise AIConnectionError("OpenAI-compatible custom connections require API key authentication.")
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
@@ -2817,6 +2882,7 @@ def is_frontend_visible_model_endpoint_provider(provider):
         "aoai",
         "aifoundry",
         "new_foundry",
+        "openai_compatible",
         MODEL_ENDPOINT_PROVIDER_CUSTOM,
     }
 
@@ -2830,6 +2896,14 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key", "client_secret", "bearer_token") and (
+            value in (None, "") or is_admin_settings_redacted_secret(value)
+            or (value == "Stored_In_KeyVault" and existing_auth.get(key))
+        ):
+            continue
+        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2895,7 +2969,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
     """Keep editable model metadata while stripping stored auth credentials."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
@@ -2911,16 +2985,26 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
+        has_bearer_token = bool(auth.get("bearer_token"))
         for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
             auth.pop(secret_field, None)
+        if endpoint_copy.get("provider") == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            public_auth_fields = {
+                "type", "client_id", "token_url", "scope", "api_key_header", "api_key_prefix",
+            }
+            auth = {key: value for key, value in auth.items() if key in public_auth_fields}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider")
+                    model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+        if not include_connection_details:
+            for field in ("auth", "connection", "management", "identity_header"):
+                endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
@@ -3519,7 +3603,11 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     for k, v in full_settings.items():
         if k.startswith('content_screening'):
             continue
-        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
+        if k in {
+            'support_feedback_recipient_email', 'm365_trusted_download_hosts',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url', 'embedding_vector_profile',
+        }:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
@@ -3528,7 +3616,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
-            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -3578,7 +3666,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
         if k.startswith('content_screening'):
