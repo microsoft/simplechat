@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
+  "title": "SimpleChat model capability catalog",
+  "type": "object",
+  "required": ["schemaVersion", "models", "imageOperationProfiles", "sources"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "imageOperationProfiles": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/imageOperation"}
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "url"],
+        "properties": {"id": {"type": "string", "minLength": 1}, "url": {"type": "string", "format": "uri"}}
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+          "imageProfiles": {
+            "type": "object",
+            "propertyNames": {"enum": ["openai", "azure_openai", "foundry"]},
+            "additionalProperties": {"type": "string", "minLength": 1}
+          },
+          "imageLifecycle": {
+            "type": "object",
+            "additionalProperties": {"enum": ["current", "preview", "limited_access_preview", "deprecated", "retired"]}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "strings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "imageOperation": {
+      "type": "object",
+      "required": ["api", "editing", "masking", "sizes", "qualities", "backgrounds", "inputFormats", "outputFormats", "availability", "sourceIds"],
+      "additionalProperties": false,
+      "properties": {
+        "api": {"enum": ["images", "responses", "mai", "flux"]},
+        "modelPath": {"enum": ["flux-2-pro", "flux-2-flex", "flux-kontext-pro", "flux-pro-1.1"]},
+        "transport": {"enum": ["native", "openai_images"]},
+        "editing": {"type": "boolean"},
+        "masking": {"type": "boolean"},
+        "maskEvidence": {"enum": ["documented", "unknown", "unsupported"]},
+        "sizes": {"$ref": "#/$defs/strings"},
+        "qualities": {"$ref": "#/$defs/strings"},
+        "backgrounds": {"$ref": "#/$defs/strings"},
+        "inputFormats": {"$ref": "#/$defs/strings"},
+        "outputFormats": {"$ref": "#/$defs/strings"},
+        "sourceIds": {"$ref": "#/$defs/strings"},
+        "maxMaskBytes": {"type": "integer", "minimum": 1},
+        "maxReferenceImages": {"type": "integer", "minimum": 1},
+        "minDimension": {"type": "integer", "minimum": 1},
+        "maxPixels": {"type": "integer", "minimum": 1},
+        "availability": {
+          "type": "object",
+          "required": ["commercial", "government", "unknown"],
+          "additionalProperties": {"enum": ["documented", "unknown", "unavailable"]}
+        }
+      }
+    }
+  }
+}

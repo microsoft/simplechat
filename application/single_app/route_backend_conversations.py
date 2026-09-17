@@ -66,6 +66,7 @@ from functions_simplechat_operations import (
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
+from functions_orchestration_recovery import cleanup_conversation_checkpoints
 from utils_cache import invalidate_personal_search_cache
 
 def normalize_chat_type(conversation_item):
@@ -1457,6 +1458,20 @@ def register_route_backend_conversations(bp):
                 "error": str(e)
             }), 500
 
+        try:
+            cleanup_conversation_checkpoints(
+                conversation_id, user_id,
+                lambda: _authorize_personal_conversation_read(user_id, conversation_id),
+                message_container=cosmos_messages_container,
+                conversation_container=cosmos_conversations_container,
+            )
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Conversation recovery cleanup failed.',
+                extra={'conversation_id': conversation_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            return jsonify({'error': 'Execution data could not be removed. Please retry deletion.'}), 503
+
         if archiving_enabled:
             archived_item = dict(conversation_item)
             archived_item["archived_at"] = datetime.utcnow().isoformat()
@@ -1581,6 +1596,13 @@ def register_route_backend_conversations(bp):
                 except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
                     continue
+
+                cleanup_conversation_checkpoints(
+                    conversation_id, user_id,
+                    lambda: _authorize_personal_conversation_read(user_id, conversation_id),
+                    message_container=cosmos_messages_container,
+                    conversation_container=cosmos_conversations_container,
+                )
                 
                 # Archive if enabled
                 if archiving_enabled:

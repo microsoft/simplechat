@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint payload auth type ordering.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.236.020; updated in 0.261.106
 
 This test ensures authType is defined before validation checks in buildEndpointPayload,

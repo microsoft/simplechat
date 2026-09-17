@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_capabilities.py
 """
 Functional tests for catalog-backed embedding capability and policy contracts.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Validate sourced aliases, strict limits, gateway attestations, publication,
@@ -572,7 +572,7 @@ class EmbeddingCapabilityTests(IsolatedConnectionsTestCase):
         definition = self.connections.get_capability_definition(self.embeddings)
         self.assertEqual(definition.selection_key, "embedding_model_selection")
         self.assertEqual(definition.catalog_flag, "generatesEmbeddings")
-        self.assertEqual(definition.supported_providers, ("aoai", "aifoundry", "new_foundry", "openai_compatible"))
+        self.assertEqual(definition.supported_providers, ("aoai", "aifoundry", "new_foundry", "custom", "openai_compatible"))
         self.assertEqual(definition.api_routes, ("azure_openai", "openai"))
         self.assertEqual(definition.feature_flag, "")
         settings = self.settings([self.endpoint(models=[self.embedding_model()])])

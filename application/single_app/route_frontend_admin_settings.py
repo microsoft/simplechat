@@ -12,6 +12,8 @@ from flask import current_app, jsonify, request
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
 from functions_appinsights import log_event
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoints
 from functions_ai_connections import (
     AIConnectionError,
     EMBEDDINGS_CAPABILITY,
@@ -1091,6 +1093,7 @@ def register_route_frontend_admin_settings(bp):
                 'admin_settings.html',
                 app_settings=settings_for_template,
                 settings=settings_for_template,
+                custom_model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
                 azure_environment=AZURE_ENVIRONMENT,
                 content_understanding_supported=is_content_understanding_supported_environment(),
                 content_understanding_api_version_default=CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
@@ -1724,9 +1727,9 @@ def register_route_frontend_admin_settings(bp):
                 else:
                     raise ValueError("Invalid format: model_endpoints must be a list.")
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Error processing model_endpoints_json: {e}")
-                flash(f"Error processing model endpoints: {e}. Changes for endpoints not saved.", 'danger')
-                parsed_model_endpoints = settings.get('model_endpoints', [])
+                log_event("[MODEL_ENDPOINT] Invalid model endpoint settings payload.", level=logging.WARNING)
+                flash('Model endpoint data is invalid. No settings were saved.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
             enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
@@ -1778,9 +1781,15 @@ def register_route_frontend_admin_settings(bp):
                 migration_notice['created_at'] = migrated_at
 
             parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+            custom_network_policy = {
+                'allow_private_custom_model_endpoints': form_data.get('allow_private_custom_model_endpoints') == 'on',
+                'allow_insecure_custom_model_endpoints': form_data.get('allow_insecure_custom_model_endpoints') == 'on',
+                'custom_model_endpoint_ca_bundle_path': str(form_data.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
+            }
             try:
                 parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
-            except AIConnectionError as exc:
+                validate_custom_model_endpoints(parsed_model_endpoints, {**settings, **custom_network_policy})
+            except (AIConnectionError, ModelEndpointValidationError) as exc:
                 flash(f"AI Connections were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
@@ -2448,6 +2457,7 @@ def register_route_frontend_admin_settings(bp):
                 'gpt_model': gpt_model_obj,
                 'enable_multi_model_endpoints': enable_multi_model_endpoints,
                 'model_endpoints': parsed_model_endpoints,
+                **custom_network_policy,
                 'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,

@@ -1,7 +1,7 @@
 # classic_ai_connections_admin.py
 """
 Classic admin panes with real local scripts and a closed capability API boundary.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.105; embeddings added in 0.261.106
 """
 
@@ -37,6 +37,7 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
         )
         connections = environment.get_template("admin/_panes/model-endpoints.html").render(
             settings=settings, admin_landing_tab="model-endpoints",
+            custom_model_endpoint_api_types=self.custom_api_types,
         )
         embeddings = environment.get_template("admin/_panes/embeddings.html").render(
             settings=settings, admin_landing_tab="embeddings",

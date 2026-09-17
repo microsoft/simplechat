@@ -23,6 +23,7 @@
 
 import { create } from 'zustand';
 import { normalizeReasoningAdjustments } from '../lib/reasoning';
+import { isOrchestrationRunPending, normalizeOrchestrationAttempt, normalizeOrchestrationFailure } from '../lib/orchestration';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
 import {
     applyPlanEdits,
@@ -36,6 +37,8 @@ import {
 import type {
     Elicitation,
     OrchestrationPlan,
+    OrchestrationAttempt,
+    OrchestrationFailure,
     OrchestrationStep,
     PersistedRunStep,
     PersistedRunSummary,
@@ -79,6 +82,18 @@ function coerceStepStatus(value: unknown): StepStatus | null {
 export interface StepRuntime {
     status: StepStatus;
     summary: string;
+    reused?: boolean;
+    failure?: OrchestrationFailure | null;
+}
+
+export interface RunRecoveryState extends OrchestrationAttempt {
+    status?: PlanStatus | null;
+    plan?: OrchestrationPlan;
+    busy?: boolean;
+    error?: string | null;
+    transportUnknown?: boolean;
+    checking?: boolean;
+    detailLoaded?: boolean;
 }
 
 export type StepRuntimeMap = Record<string, StepRuntime>;
@@ -142,6 +157,7 @@ export interface RunHistoryEntry {
     planStatus?: PlanStatus | null;
     stepCount?: number;
     artifactCount?: number;
+    attempt?: OrchestrationAttempt;
 }
 
 /** History is bounded per conversation; a long session should not grow one without limit. */
@@ -198,7 +214,9 @@ export function historyEntryFromPersistedRun(run: PersistedRunSummary): RunHisto
 
     const planStatus = (run.status ?? run.plan_summary?.status ?? null) as PlanStatus | null;
     let status: RunDisplayStatus;
-    if (planStatus === 'completed') {
+    if (run.outcome === 'partial' || run.outcome === 'failed') {
+        status = 'failed';
+    } else if (planStatus === 'completed') {
         status = 'completed';
     } else if (planStatus === 'failed') {
         status = 'failed';
@@ -222,6 +240,7 @@ export function historyEntryFromPersistedRun(run: PersistedRunSummary): RunHisto
         planStatus,
         stepCount: run.plan_summary?.step_count ?? 0,
         artifactCount: run.artifact_count ?? 0,
+        attempt: normalizeOrchestrationAttempt(run),
     };
 }
 
@@ -273,6 +292,9 @@ function newPlanEditorSession(): PlanEditorSession {
 }
 
 interface OrchestrationState {
+    recoveryTarget: { conversationId: string; runId: string } | null;
+    runRecovery: Record<string, RunRecoveryState>;
+    updateRunRecovery: (runId: string, patch: RunRecoveryState) => void;
     /** The current plan per turn, keyed by `scopeKey`. */
     plans: Record<string, OrchestrationPlan>;
     /** A pending question per turn, when the planner asked instead of planning. */
@@ -464,6 +486,11 @@ interface OrchestrationState {
 /* -------------------------------------------------------------------------- */
 
 export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
+    recoveryTarget: null,
+    runRecovery: {},
+    updateRunRecovery: (runId, patch) => set((state) => ({
+        runRecovery: { ...state.runRecovery, [runId]: { ...state.runRecovery[runId], ...patch } },
+    })),
     plans: {},
     elicitations: {},
     elicitationDrafts: {},
@@ -804,10 +831,13 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const current = state.stepRuntime[key] ?? EMPTY_STEP_RUNTIME;
             const existing = current[stepId] ?? { status: 'pending', summary: '' };
             const merged: StepRuntime = {
+                ...existing,
+                ...patch,
                 status: patch.status ?? existing.status,
                 summary: patch.summary ?? existing.summary,
             };
-            if (merged.status === existing.status && merged.summary === existing.summary) {
+            if (merged.status === existing.status && merged.summary === existing.summary
+                && merged.reused === existing.reused && merged.failure === existing.failure) {
                 return {};
             }
             return {
@@ -825,6 +855,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return;
         }
         const patch: Partial<StepRuntime> = {};
+        if (typeof event.reused === 'boolean') patch.reused = event.reused;
+        if (event.failure) patch.failure = normalizeOrchestrationFailure(event.failure);
         const status = coerceStepStatus(event.status);
         if (status) {
             patch.status = status;
@@ -879,6 +911,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 finishedAt: Date.now(),
                 intentSummary: summary,
                 origin: 'local',
+                attempt: state.runRecovery[runId],
             };
             const existing = state.history[run.conversationId] ?? [];
             const nextEntries = [entry, ...existing].slice(0, MAX_HISTORY_PER_CONVERSATION);
@@ -889,6 +922,15 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
             return {
                 inFlight,
+                plans: {
+                    ...state.plans,
+                    ...(state.plans[scopeKey(run.conversationId, run.turnId)]?.run_id === runId ? {
+                        [scopeKey(run.conversationId, run.turnId)]: {
+                            ...state.plans[scopeKey(run.conversationId, run.turnId)],
+                            status: outcome,
+                        },
+                    } : {}),
+                },
                 history: { ...state.history, [run.conversationId]: nextEntries },
                 pinnedRunId,
             };
@@ -927,6 +969,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         }
         set((state) => {
             const entries: RunHistoryEntry[] = [];
+            const runRecovery = { ...state.runRecovery };
             const seen = new Set<string>();
             const persistedStatus = new Map<string, PlanStatus | null>();
             for (const run of runs ?? []) {
@@ -935,6 +978,11 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                     continue;
                 }
                 seen.add(entry.runId);
+                runRecovery[entry.runId] = {
+                    ...runRecovery[entry.runId],
+                    ...normalizeOrchestrationAttempt(run),
+                    status: run.status,
+                };
                 persistedStatus.set(entry.runId, entry.planStatus ?? null);
                 entries.push(entry);
             }
@@ -956,7 +1004,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                     continue;
                 }
                 const status = persistedStatus.get(run.runId);
-                if (status && NON_TERMINAL_PLAN_STATUSES.has(status)) {
+                if ((status && NON_TERMINAL_PLAN_STATUSES.has(status))
+                    || isOrchestrationRunPending(runRecovery[run.runId] ?? {})) {
                     continue;
                 }
                 if (!changed) {
@@ -971,6 +1020,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
             return {
                 inFlight,
+                runRecovery,
                 hydratedHistory: {
                     ...state.hydratedHistory,
                     [conversationId]: entries.slice(0, MAX_HISTORY_PER_CONVERSATION),
@@ -1008,6 +1058,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 runtime[stepId] = {
                     status,
                     summary: typeof record.summary === 'string' ? record.summary : '',
+                    reused: record.reused === true,
+                    failure: normalizeOrchestrationFailure(record.failure),
                 };
             }
 

@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 
@@ -298,6 +298,7 @@ def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
         "/api/v2/orchestration/runs/<run_id>/editor": "orchestration_plan_editor",
         "/api/v2/orchestration/runs/<run_id>/edit": "orchestration_begin_plan_edit",
         "/api/v2/orchestration/runs/<run_id>/revisions": "orchestration_revise_plan",
+        "/api/v2/orchestration/runs/<run_id>/retry": "orchestration_retry",
     }
     routes = {
         route.path: route for route in iter_route_functions()

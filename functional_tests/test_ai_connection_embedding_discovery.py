@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_discovery.py
 """
 Functional tests for embedding discovery and chat-test capability isolation.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Exercise the actual global/personal/group Flask discovery and chat-test handlers
@@ -25,6 +25,10 @@ sys.path.insert(0, str(APP_ROOT))
 
 import functions_ai_connections as connections
 from functions_model_capabilities import get_model_catalog_capabilities
+from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint
+from admin_settings_secret_utils import is_admin_settings_redacted_secret
 from test_ai_connection_embedding_defaults_api import load_functions
 
 
@@ -121,7 +125,7 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
             if self.inference_error:
                 raise self.inference_error
             return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
-                create=lambda **_kwargs: {"synthetic": "chat response"}
+                create=lambda **_kwargs: SimpleNamespace(choices=[{"synthetic": "chat response"}])
             )))
 
         def assert_group_role(_user_id, _group_id, allowed_roles=None):
@@ -141,6 +145,13 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
             "supports_model_capability": connections.supports_model_capability,
             "get_model_catalog_capabilities": get_model_catalog_capabilities,
             "AIConnectionError": connections.AIConnectionError,
+            "ModelEndpointValidationError": ModelEndpointValidationError,
+            "SanitizedModelEndpointError": SanitizedModelEndpointError,
+            "get_model_endpoint_api_type": get_model_endpoint_api_type,
+            "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
+            "validate_custom_model_endpoint": validate_custom_model_endpoint,
+            "is_admin_settings_redacted_secret": is_admin_settings_redacted_secret,
+            "get_settings": lambda: dict(self.flags),
             "get_auth_security": lambda: [],
             "swagger_route": lambda **_kwargs: lambda function: function,
             "login_required": guard(lambda: self.logged_in),

@@ -1,7 +1,7 @@
 # test_orchestration_run_hydration_routes.py
 """
 Functional test for the orchestration run hydration endpoints and their projections.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.099
 
 Orchestration runs have always been persisted, but nothing in the browser read them back, so a
@@ -29,6 +29,8 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from test_support.orchestration_research import _definitions  # noqa: E402
+from test_support.app_stubs import stubbed_config  # noqa: E402
+from test_support.orchestration_revisions import AtomicMemoryContainer  # noqa: E402
 
 
 IMPLEMENTED_IN = "0.261.099"
@@ -94,10 +96,18 @@ def _load_projections():
         raise AssertionError(f"missing helpers in the route module: {sorted(missing)}")
     registry = _definitions("functions_orchestration_registry.py")
     events = _definitions("functions_orchestration_events.py")
+    with stubbed_config(
+        cosmos_orchestration_runs_container=AtomicMemoryContainer('conversation_id'),
+        cosmos_orchestration_run_steps_container=AtomicMemoryContainer('run_id'),
+    ):
+        from functions_orchestration_recovery import public_execution_fields
+        from functions_orchestration_schema import safe_failure
     namespace = {
         "deepcopy": deepcopy,
         "required_capability_ids": registry["required_capability_ids"],
         "merge_reasoning_adjustments": events["merge_reasoning_adjustments"],
+        "public_execution_fields": public_execution_fields,
+        "safe_failure": safe_failure,
     }
     exec(compile(ast.Module(body=picked, type_ignores=[]), str(ROUTE_FILE), "exec"), namespace)
     return namespace
@@ -140,6 +150,7 @@ def test_summary_projection_is_an_allowlist():
             "artifact_count",
             "revision",
             "approval",
+            "attempt_index", "retry_of_run_id", "failure", "failures", "recovery",
         }
         assert set(row) == expected_keys, (
             f"unexpected listing shape: extra={sorted(set(row) - expected_keys)} "

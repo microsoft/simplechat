@@ -41,6 +41,12 @@ from functions_model_endpoint_identity_header import (
     normalize_model_endpoint_identity_header_override,
     normalize_model_endpoint_identity_header_value_type,
 )
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_api_type_value,
+    normalize_custom_endpoint_auth_type,
+    normalize_custom_endpoint_url_mode,
+)
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
@@ -1433,6 +1439,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -2594,6 +2603,8 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     """Normalize endpoint auth cloud fields that are owned by app environment."""
     if not isinstance(endpoint_copy, dict):
         return False
+    if str(endpoint_copy.get("provider") or "").strip().lower() == "custom":
+        return False
 
     changed = False
     auth = endpoint_copy.get("auth")
@@ -2682,9 +2693,36 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        endpoint_copy.pop("has_bearer_token", None)
+        provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
+        if endpoint_copy.get("provider") != provider:
+            endpoint_copy["provider"] = provider
+            changed = True
         connection = endpoint_copy.get("connection") or {}
         if not isinstance(connection, dict):
             raise AIConnectionError("Connection configuration must be an object.")
+        if provider == "custom":
+            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
+            if endpoint_copy.get("api_type") != api_type:
+                endpoint_copy["api_type"] = api_type
+                changed = True
+            url_mode = normalize_custom_endpoint_url_mode(connection.get("url_mode"))
+            if connection.get("url_mode") != url_mode:
+                connection["url_mode"] = url_mode
+                changed = True
+            descriptor = get_model_endpoint_provider(api_type)
+            if descriptor and descriptor.default_version and not connection.get(descriptor.version_field):
+                connection[descriptor.version_field] = descriptor.default_version
+                changed = True
+            auth = endpoint_copy.get("auth") or {}
+            if not isinstance(auth, dict):
+                raise AIConnectionError("Connection authentication must be an object.")
+            auth_type = normalize_custom_endpoint_auth_type(auth.get("type") or "api_key")
+            if auth_type and auth.get("type") != auth_type:
+                auth["type"] = auth_type
+                changed = True
+            endpoint_copy["auth"] = auth
+            endpoint_copy["connection"] = connection
         operation_settings = connection.get("operation_settings")
         if operation_settings is not None:
             if not isinstance(operation_settings, dict):
@@ -2780,7 +2818,7 @@ def normalize_model_endpoints(endpoints):
 def is_frontend_visible_model_endpoint_provider(provider):
     """Return whether the provider should be exposed in user-facing endpoint UIs."""
     normalized_provider = (provider or "aoai").lower()
-    return normalized_provider in {"aoai", "aifoundry", "new_foundry", "openai_compatible"}
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry", "custom", "openai_compatible"}
 
 
 def merge_model_endpoint_auth(existing_auth, incoming_auth):
@@ -2792,6 +2830,14 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key", "client_secret", "bearer_token") and (
+            value in (None, "") or is_admin_settings_redacted_secret(value)
+            or (value == "Stored_In_KeyVault" and existing_auth.get(key))
+        ):
+            continue
+        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2854,7 +2900,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
     """Return model endpoint configs with secrets stripped for frontend use."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
@@ -2870,16 +2916,27 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
+        has_bearer_token = bool(auth.get("bearer_token"))
         auth.pop("api_key", None)
         auth.pop("client_secret", None)
+        auth.pop("bearer_token", None)
+        if endpoint_copy.get("provider") == "custom":
+            public_auth_fields = {
+                "type", "client_id", "token_url", "scope", "api_key_header", "api_key_prefix",
+            }
+            auth = {key: value for key, value in auth.items() if key in public_auth_fields}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider")
+                    model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+        if not include_connection_details:
+            for field in ("auth", "connection", "management", "identity_header"):
+                endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
@@ -3455,7 +3512,11 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k in ('support_feedback_recipient_email', 'embedding_vector_profile'):
+        if k in (
+            'support_feedback_recipient_email', 'embedding_vector_profile',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url',
+        ):
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
@@ -3464,7 +3525,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
-            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -3514,7 +3575,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
         # Skip keys with sensitive terms

@@ -65,6 +65,7 @@ VISION_SOURCE_INFERRED = "inferred"
 
 _CATALOG_LOCK = threading.Lock()
 _CATALOG_CACHE = None
+_IMAGE_OPERATION_PROFILES = {}
 
 
 def _normalize_model_identifier(value):
@@ -84,7 +85,7 @@ def load_model_capability_catalog(force_refresh=False):
     A missing or malformed catalog yields an empty mapping rather than raising.
     Vision keeps its legacy heuristic; reasoning support remains unknown.
     """
-    global _CATALOG_CACHE
+    global _CATALOG_CACHE, _IMAGE_OPERATION_PROFILES
 
     if _CATALOG_CACHE is not None and not force_refresh:
         return _CATALOG_CACHE
@@ -94,11 +95,15 @@ def load_model_capability_catalog(force_refresh=False):
             return _CATALOG_CACHE
 
         catalog = {}
+        image_profiles = {}
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CATALOG_FILENAME)
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 document = json.load(handle)
 
+            image_profiles = document.get("imageOperationProfiles") or {}
+            if not isinstance(image_profiles, Mapping):
+                raise ValueError("Image operation profiles must be an object.")
             for model in document.get("models", []):
                 if not isinstance(model, Mapping):
                     continue
@@ -110,6 +115,11 @@ def load_model_capability_catalog(force_refresh=False):
                     capabilities["reasoningPolicy"] = model["reasoningPolicy"]
                 if "embeddingPolicy" in model:
                     capabilities["embeddingPolicy"] = copy.deepcopy(model["embeddingPolicy"])
+                for field_name in ("imageProfiles", "imageLifecycle"):
+                    if isinstance(model.get(field_name), Mapping):
+                        capabilities[field_name] = copy.deepcopy(model[field_name])
+                if model.get("provider"):
+                    capabilities["publisher"] = model["provider"]
                 if not capabilities:
                     continue
 
@@ -119,9 +129,18 @@ def load_model_capability_catalog(force_refresh=False):
                         catalog[normalized] = capabilities
         except (OSError, ValueError, TypeError, AttributeError):
             catalog = {}
+            image_profiles = {}
 
+        _IMAGE_OPERATION_PROFILES = copy.deepcopy(image_profiles)
         _CATALOG_CACHE = catalog
         return _CATALOG_CACHE
+
+
+def get_image_operation_profile(profile_id):
+    """Return an isolated provider operation profile from the same cached catalog."""
+    load_model_capability_catalog()
+    profile = _IMAGE_OPERATION_PROFILES.get(profile_id)
+    return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
 
 
 def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):

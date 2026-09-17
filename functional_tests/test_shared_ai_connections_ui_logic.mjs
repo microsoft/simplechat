@@ -1,5 +1,5 @@
 // test_shared_ai_connections_ui_logic.mjs
-// Version: 0.261.106
+// Version: 0.261.108
 // Implemented in: 0.261.105; embeddings added in 0.261.106
 // Shared selection identity, technical metadata, publication policy and safe transport.
 
@@ -26,6 +26,7 @@ const {
     testImageModel,
     testEmbeddingModel,
     capabilityDescription,
+    canGenerateImage,
     embeddingPolicyDescription,
     toEmbeddingPolicy,
     toCapabilityModelsResponse,
@@ -186,6 +187,60 @@ assert.equal(changedOperation.connection.operation_settings.embeddings.endpoint,
 assert.equal(embeddingConnection.connection.operation_settings.embeddings.endpoint, 'https://gateway.test/api/v1');
 assert.deepEqual(changedOperation.connection.operation_settings.image_generation, transport.image_generation);
 assert.equal(setEmbeddingOperation(embeddingConnection, 'is_apim', false).connection.operation_settings.embeddings.is_apim, false);
+
+const imageStatus = {
+    ...supported('mai'), mode: 'edit', editing: true, masking: false,
+    provider_label: 'Microsoft Foundry MAI', cloud_label: 'Commercial endpoint',
+    availability: 'documented', model_name: 'MAI-Image-2.6', publisher: 'Microsoft',
+    sizes: ['1024x768'], qualities: [], backgrounds: [], lifecycle: 'preview',
+};
+const mixedMetadata = mergeDiscoveredModels([], [{
+    ...embedding,
+    supportsImageGeneration: true, supportsImageEditing: true, supportsImageMasking: false,
+    image_generation_api: 'mai', enabled_capabilities: ['embeddings', 'image_generation'],
+    capability_status: { ...embedding.capability_status, image_generation: imageStatus },
+    embedding_policy: embeddingPolicy,
+}]).models[0];
+const mixedPayload = buildConnectionPayload({
+    ...embeddingConnection, provider: 'custom', api_type: 'openai', models: [mixedMetadata],
+});
+assert.equal(mixedPayload.provider, 'custom');
+assert.equal(mixedPayload.models[0].supportsEmbeddings, true);
+assert.equal(mixedPayload.models[0].supportsImageEditing, true);
+assert.equal(mixedPayload.models[0].supportsImageMasking, false);
+assert.equal(mixedPayload.models[0].image_generation_api, 'mai');
+assert.deepEqual(mixedPayload.models[0].capability_status.image_generation, imageStatus);
+assert.deepEqual(mixedPayload.models[0].embedding_config, embedding.embedding_config);
+assert.deepEqual(mixedPayload.models[0].enabled_capabilities, ['embeddings', 'image_generation']);
+assert.deepEqual(mixedPayload.connection.operation_settings, operations);
+const imageMetadata = toCapabilityModelsResponse({
+    ...response,
+    choices: [{
+        ...response.choices[0], capability: { ...imageStatus, endpoint: 'https://private.example', model_revision: 'private' },
+        embedding_policy: embedding.embedding_config,
+    }],
+}, 'image_generation').choices[0];
+assert.equal(canGenerateImage(imageMetadata.capability), true);
+assert.equal(canGenerateImage({ ...imageMetadata.capability, available: false }), false);
+assert.deepEqual(imageMetadata.capability.sizes, ['1024x768']);
+assert.deepEqual(imageMetadata.capability.qualities, []);
+assert.equal(imageMetadata.capability.masking, false);
+assert.equal('endpoint' in imageMetadata.capability, false);
+assert.equal('model_revision' in imageMetadata.capability, false);
+assert.equal('embedding_policy' in imageMetadata, false);
+const embeddingMetadata = toCapabilityModelsResponse({
+    ...embeddingResponse,
+    choices: [{
+        ...embeddingResponse.choices[0], capability: { ...imageStatus, ...supported('openai') },
+        embedding_policy: { ...embeddingPolicy, endpoint: 'https://private.example', model_revision: 'private' },
+    }],
+}, 'embeddings').choices[0];
+assert.equal('masking' in embeddingMetadata.capability, false);
+assert.equal('sizes' in embeddingMetadata.capability, false);
+assert.equal('endpoint' in embeddingMetadata.embedding_policy, false);
+assert.equal('model_revision' in embeddingMetadata.embedding_policy, false);
+assert.doesNotMatch(embeddingPolicyDescription({ ...embeddingPolicy, requires_input_type: true }), /not supported/);
+assert.match(embeddingPolicyDescription({ ...embeddingPolicy, api: 'unsupported', requires_input_type: true }), /not supported/);
 
 const originalFetch = globalThis.fetch;
 const requests = [];

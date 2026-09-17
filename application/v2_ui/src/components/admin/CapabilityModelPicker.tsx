@@ -6,6 +6,7 @@ import {
     capabilityDescription,
     CAPABILITY_DETAILS,
     embeddingPolicyDescription,
+    canGenerateImage,
     fetchCapabilityModels,
     saveCapabilityModel,
     testCapabilityModel,
@@ -19,6 +20,7 @@ import {
     type ImplementedCapability,
 } from '../../lib/modelConnections';
 import { useModelConnectionsStore } from '../../stores/modelConnectionsStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { GlassButton } from '../ui/primitives';
 
@@ -53,6 +55,9 @@ export function CapabilityModelPicker({
             if (!controller.signal.aborted && request === requestId.current) {
                 setData(response);
                 setError(null);
+                if (image) {
+                    void useBootstrapStore.getState().refresh();
+                }
             }
         }).catch((loadError: unknown) => {
             if (!controller.signal.aborted && request === requestId.current) {
@@ -70,6 +75,7 @@ export function CapabilityModelPicker({
     const selectedIndex = data ? findChoiceIndex(data.choices, data.selection) : -1;
     const dangling = Boolean(data && hasDefaultModel(data.selection) && selectedIndex < 0);
     const selectedChoice = data?.choices[selectedIndex];
+    const selectedImageUnavailable = image && Boolean(selectedChoice) && !canGenerateImage(selectedChoice?.capability);
     const busy = loading || saving || testing;
     const enabled = data?.enabled ?? featureEnabled;
     const migrationFailed = data?.migration?.status === 'error' || data?.migration?.status === 'failed';
@@ -80,6 +86,9 @@ export function CapabilityModelPicker({
         }
         const choice = raw === '' ? null : data.choices[Number(raw)];
         if (raw !== '' && !choice) {
+            return;
+        }
+        if (image && choice && !canGenerateImage(choice.capability)) {
             return;
         }
         const previous = data;
@@ -93,6 +102,9 @@ export function CapabilityModelPicker({
             const response = await saveCapabilityModel(capability, next);
             if (request === requestId.current) {
                 setData(response);
+                if (image) {
+                    void useBootstrapStore.getState().refresh();
+                }
                 toast.success(choice ? `${label} set to ${choice.modelLabel}.` : `${label} cleared.`);
             }
         } catch (saveError) {
@@ -106,7 +118,7 @@ export function CapabilityModelPicker({
     };
 
     const runOperationTest = async () => {
-        if (!data || !selectedChoice || busy || capability === 'chat') {
+        if (!data || !selectedChoice || busy || !enabled || capability === 'chat' || selectedImageUnavailable) {
             return;
         }
         setTesting(true);
@@ -148,7 +160,11 @@ export function CapabilityModelPicker({
                 {groups.map((group) => (
                     <optgroup key={group.endpointId} label={group.connectionName}>
                         {group.items.map(({ choice, index }) => (
-                            <option key={JSON.stringify([choice.endpointId, choice.modelId])} value={String(index)}>
+                            <option
+                                key={JSON.stringify([choice.endpointId, choice.modelId])}
+                                value={String(index)}
+                                disabled={image && !canGenerateImage(choice.capability)}
+                            >
                                 {choice.modelLabel}
                                 {choice.deploymentName && choice.deploymentName !== choice.modelLabel
                                     ? ` (${choice.deploymentName})` : ''}
@@ -192,6 +208,39 @@ export function CapabilityModelPicker({
                     {data.compatibility.message}
                 </p>
             ) : null}
+            {image && selectedChoice ? (
+                <div className="mt-2 space-y-1 break-words text-xs text-text-3" data-testid="image-model-capability">
+                    <p>
+                        {selectedChoice.capability.model_name || selectedChoice.modelLabel}
+                        {' · '}{selectedChoice.capability.provider_label || 'Provider not specified'}
+                        {' · '}{selectedChoice.capability.cloud_label || 'Endpoint cloud unknown'}
+                    </p>
+                    {selectedChoice.capability.publisher ? <p>Publisher: {selectedChoice.capability.publisher}</p> : null}
+                    {selectedChoice.capability.lifecycle ? <p>Lifecycle: {selectedChoice.capability.lifecycle}</p> : null}
+                    <p>
+                        {selectedImageUnavailable
+                            ? 'Image operations are unavailable. Choose a compatible model or refresh its capability metadata.'
+                            : selectedChoice.capability.mode === 'masked'
+                              ? 'Source-image editing with optional region masks, and whole-image regeneration.'
+                              : selectedChoice.capability.mode === 'edit'
+                                ? 'Source-image editing without region masks, and whole-image regeneration.'
+                                : 'Prompt-only generation and whole-image regeneration; no source-image editing.'}
+                    </p>
+                    {selectedChoice.capability.reason ? <p>{selectedChoice.capability.reason}</p> : null}
+                    {selectedChoice.capability.sizes?.length ? <p>Sizes: {selectedChoice.capability.sizes.join(', ')}</p> : null}
+                    {selectedChoice.capability.qualities?.length ? <p>Quality: {selectedChoice.capability.qualities.join(', ')}</p> : null}
+                    {selectedChoice.capability.backgrounds?.length ? <p>Background: {selectedChoice.capability.backgrounds.join(', ')}</p> : null}
+                    {selectedChoice.capability.availability === 'unknown' ? (
+                        <p role="status" className="text-warn">
+                            Availability for this configured endpoint is not documented or is unknown.
+                            This is not a confirmation of provider support.
+                            {selectedChoice.capability.availability_reason ? ` ${selectedChoice.capability.availability_reason}` : ''}
+                        </p>
+                    ) : selectedChoice.capability.availability_reason ? (
+                        <p role="status">{selectedChoice.capability.availability_reason}</p>
+                    ) : null}
+                </div>
+            ) : null}
             {data?.reason || dangling ? (
                 <p role="status" className="mt-1.5 text-xs text-warn">
                     {data?.reason || 'The saved default is no longer available. Choose a replacement or clear it; another model will not be selected automatically.'}
@@ -218,7 +267,7 @@ export function CapabilityModelPicker({
                     <RefreshCw size={13} /> Refresh choices
                 </GlassButton>
                 {capability !== 'chat' ? (
-                    <GlassButton type="button" variant="subtle" size="sm" disabled={busy || !selectedChoice || !enabled} onClick={() => void runOperationTest()}>
+                    <GlassButton type="button" variant="subtle" size="sm" disabled={busy || !selectedChoice || !enabled || selectedImageUnavailable} onClick={() => void runOperationTest()}>
                         {testing ? <Loader2 size={13} className="animate-spin" /> : null}
                         {embedding ? 'Test embeddings' : 'Test image generation'}
                     </GlassButton>

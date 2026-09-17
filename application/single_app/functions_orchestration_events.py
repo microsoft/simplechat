@@ -311,7 +311,7 @@ def build_elicitation_event(elicitation):
     })
 
 
-def build_step_event(step_id, status, summary='', step_index=None, capability_id=None):
+def build_step_event(step_id, status, summary='', step_index=None, capability_id=None, **execution):
     """A named step changed state, so the plan card can tick exactly that row."""
     payload = {
         'type': EVENT_TYPE_STEP,
@@ -323,6 +323,11 @@ def build_step_event(step_id, status, summary='', step_index=None, capability_id
         payload['step_index'] = step_index
     if capability_id:
         payload['capability_id'] = capability_id
+    payload.update({
+        key: execution[key] for key in (
+            'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
+        ) if key in execution
+    })
     return serialize_sse(payload)
 
 
@@ -357,6 +362,15 @@ def build_run_done_event(
     requested_reasoning_effort=None,
     reasoning_mode=None,
     reasoning_adjustments=None,
+    outcome=None,
+    turn_id=None,
+    attempt_index=1,
+    retry_of_run_id=None,
+    failure=None,
+    failures=None,
+    recovery=None,
+    message_saved=True,
+    finalization_status=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -381,6 +395,15 @@ def build_run_done_event(
         'generated_artifacts': list(artifacts or ()),
         'orchestration': plan_summary or {},
         'status': status,
+        'outcome': outcome or status,
+        'turn_id': turn_id,
+        'attempt_index': attempt_index,
+        'retry_of_run_id': retry_of_run_id,
+        'failure': failure,
+        'failures': list(failures or []),
+        'recovery': recovery,
+        'message_saved': message_saved,
+        **({'finalization_status': finalization_status} if finalization_status else {}),
         'reasoning_adjustments': list(reasoning_adjustments or ()),
         **{
             key: value for key, value in {

@@ -11,9 +11,27 @@ import {
     type ImplementedCapability,
     type ModelCapabilityStatus,
 } from './modelConnections';
+import type { ImageEditCapability } from './types';
+
+/** Image-only metadata is projected by the server, not inferred from a connection's provider. */
+export interface ImageModelCapabilityStatus extends ModelCapabilityStatus {
+    provider_label?: string;
+    cloud_label?: string;
+    availability?: ImageEditCapability['availability'];
+    availability_reason?: string;
+    editing?: boolean;
+    masking?: boolean;
+    mode?: ImageEditCapability['mode'];
+    sizes?: string[];
+    qualities?: string[];
+    backgrounds?: string[];
+    lifecycle?: string;
+    model_name?: string;
+    publisher?: string;
+}
 
 export interface CapabilityModelChoice extends DefaultModelChoice {
-    capability: ModelCapabilityStatus;
+    capability: ImageModelCapabilityStatus;
     embedding_policy?: EmbeddingPolicy;
 }
 
@@ -97,10 +115,53 @@ export function embeddingPolicyDescription(policy: EmbeddingPolicy | undefined):
         dimensions ? `${dimensions.toLocaleString()} dimensions` : 'Dimensions not configured',
         policy.max_input_tokens ? `${policy.max_input_tokens.toLocaleString()} input tokens per text` : 'Input token limit not configured',
     ];
-    if (policy.api === 'unsupported' || policy.requires_input_type) {
+    if (policy.api === 'unsupported' || policy.requires_input_type && policy.api !== 'openai') {
         parts.push('This model requires an operation contract not supported by the current embedding API.');
     }
     return parts.join(' · ');
+}
+
+function options(value: unknown): string[] {
+    return Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
+}
+
+/** Unknown availability is a warning; unknown operations are not permission for inference. */
+export function canGenerateImage(status: ImageModelCapabilityStatus | undefined): boolean {
+    if (!status?.supported || status.available === false || status.availability === 'unavailable'
+        || !['images', 'responses', 'mai', 'flux'].includes(status.api ?? '')) {
+        return false;
+    }
+    return status.mode === 'masked' && status.editing === true && status.masking === true
+        || status.mode === 'edit' && status.editing === true && status.masking === false
+        || status.mode === 'regenerate' && status.editing === false && status.masking === false;
+}
+
+function imageStatusFields(source: Record<string, unknown>): ImageModelCapabilityStatus {
+    return {
+        supported: source.supported === true,
+        available: source.available !== false,
+        source: text(source.source) || 'unknown',
+        reason: text(source.reason),
+        api: text(source.api),
+        provider_label: text(source.provider_label),
+        cloud_label: text(source.cloud_label),
+        availability: source.availability === 'documented' || source.availability === 'unavailable'
+            ? source.availability
+            : 'unknown',
+        availability_reason: text(source.availability_reason),
+        editing: source.editing === true,
+        masking: source.masking === true,
+        mode: typeof source.editing === 'boolean' && typeof source.masking === 'boolean'
+            && (source.mode === 'masked' || source.mode === 'edit' || source.mode === 'regenerate')
+            ? source.mode
+            : 'unavailable',
+        sizes: options(source.sizes),
+        qualities: options(source.qualities),
+        backgrounds: options(source.backgrounds),
+        lifecycle: text(source.lifecycle),
+        model_name: text(source.model_name),
+        publisher: text(source.publisher),
+    };
 }
 
 export function toMigrationNotice(value: unknown): ConnectionMigrationNotice | null {
@@ -138,7 +199,7 @@ export function toCapabilityModelsResponse(
             connectionName: text(choice.connection_name) || 'Connection',
             modelLabel: text(choice.label) || text(choice.deployment_name) || text(choice.model_id),
             deploymentName: text(choice.deployment_name),
-            capability: {
+            capability: capability === 'image_generation' ? imageStatusFields(support) : {
                 supported: true,
                 available: support.available !== false,
                 source: text(support.source) || 'unknown',
@@ -180,7 +241,13 @@ export function capabilityDescription(status: ModelCapabilityStatus | undefined,
         ? 'Image output through the Responses image tool'
         : status.api === 'images'
           ? 'Direct image output'
-          : 'Text output';
+          : status.api === 'mai'
+            ? 'MAI image output'
+            : status.api === 'flux'
+              ? 'FLUX image output'
+              : status.api === 'chat' || (!status.api && !('mode' in status))
+                ? 'Text output'
+                : 'Unrecognized output operation';
     const source = status.source === 'legacy'
         ? 'legacy compatibility, not verified'
         : status.source === 'declared'

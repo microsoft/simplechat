@@ -1,7 +1,7 @@
 # test_orchestration_citation_persistence.py
 """
 Functional test for orchestration citation persistence.
-Version: 0.261.098
+Version: 0.261.105
 Implemented in: 0.261.087
 
 Action tool-citation channel coverage added in: 0.261.098
@@ -157,7 +157,7 @@ def test_cited_documents_reach_the_conversation():
             'the conversation used-document list is what the drawer reads, and '
             'merge_cited_documents_into_conversation is what extends it'
         )
-        assert 'upsert_item' in body, 'the merged conversation has to be written back'
+        assert 'replace_item' in body and 'IfNotModified' in body, 'cited sources must be saved without overwriting a concurrent deletion fence'
         assert 'user_id' in body, (
             'ownership must be checked before writing to a conversation'
         )

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from functions_model_capabilities import resolve_model_reasoning_effort
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
     ModelEndpointBehavior,
@@ -247,12 +248,12 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         model = next((
             item for item in models if isinstance(item, dict) and (
                 _text(item.get('id')) == selection['model_id'] if selection['model_id']
-                else _text(item.get('deploymentName') or item.get('deployment')) == selection['model_deployment']
+                else resolve_model_endpoint_request_model(endpoint, item) == selection['model_deployment']
             )
         ), None)
         if not model or not model.get('enabled', True):
             raise OrchestrationModelError()
-        deployment = _text(model.get('deploymentName') or model.get('deployment'))
+        deployment = resolve_model_endpoint_request_model(endpoint, model)
         provider = _text(endpoint.get('provider')).lower()
         if (
             not deployment or provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST
@@ -264,7 +265,7 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         connection = endpoint.get('connection') or {}
         address = _text(connection.get('endpoint'))
         api_version = _text(connection.get('openai_api_version') or connection.get('api_version'))
-        protocol = infer_model_endpoint_protocol(provider, address, deployment)
+        protocol = infer_model_endpoint_protocol(provider, address, deployment, get_model_endpoint_api_type(endpoint))
         if not address or (protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version):
             raise OrchestrationModelError()
         answer_selection = {

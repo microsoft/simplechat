@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_runtime.py
 """
 Functional coverage for embedding profiles and provider-independent inference.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Exercise the actual profile resolver, SDK wire format, response validation, and
@@ -176,10 +176,9 @@ class EmbeddingRuntimeTests(unittest.TestCase):
         settings["model_endpoints"][0]["models"][0]["modelName"] = "different-encoder"
         self.assertNotEqual(resolve_embedding_profile(settings).profile_id, self.profile.profile_id)
 
-    def test_project_and_unsecured_remote_custom_urls_are_rejected(self):
+    def test_project_and_credential_bearing_custom_urls_are_rejected(self):
         for endpoint in (
             "https://resource.services.ai.azure.com/api/projects/project",
-            "http://remote.example.test/v1",
             "https://user:password@example.test/v1",
             "https://example.test/v1?api-key=secret",
         ):

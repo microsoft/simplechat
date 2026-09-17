@@ -1,7 +1,7 @@
 # test_admin_shared_ai_connections.py
 """
 Browser coverage for independent chat/image/embedding defaults and connection availability.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.105; embeddings added in 0.261.106
 
 Exercise the real built SPA, production schema and protected API shapes without live services.
@@ -39,20 +39,20 @@ def test_shared_list_and_grouped_defaults_preserve_connection_identity(ai_ui, wi
     ai_ui.open(width=width)
     page = ai_ui.page
     manager = page.get_by_role("region", name="AI Connections", exact=True)
-    for name in ("Team Azure", "Imported Studio", "Image Resource", "Vector Resource"):
+    for name in ("Team OpenAI", "Imported Studio", "Image Resource", "Vector Resource"):
         expect(manager.get_by_text(name, exact=True)).to_be_visible()
     chat = page.get_by_label("Default chat model", exact=True)
-    expect(chat.locator("option")).to_have_text(["No default chat model", "Dual model (same-deployment)"])
+    expect(chat.locator("option")).to_have_text(["No default chat model", "Dual model (gpt-5.6-sol)"])
     image = page.get_by_label("Default image model", exact=True)
     expect(image.locator("optgroup")).to_have_count(3)
     expect(image).to_have_value("1")
     image.select_option("0")
     expect(image).to_be_enabled()
-    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "aoai")
+    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "custom")
     image.select_option("1")
     expect(image).to_be_enabled()
-    assert ai_ui.selections["image_generation"] == reference("studio", "same:model", "aoai")
-    assert ai_ui.selections["chat"] == reference("team", "same:model", "aoai")
+    assert ai_ui.selections["image_generation"] == reference("studio", "same:model", "custom")
+    assert ai_ui.selections["chat"] == reference("team", "same:model", "custom")
     for legacy in ("Azure OpenAI Image Generation Endpoint", "Azure APIM Subscription Key", "Use APIM instead of direct to Azure OpenAI endpoint"):
         expect(page.get_by_label(legacy, exact=True)).to_have_count(0)
     expect(manager.get_by_text(re.compile(r"1 embeddings"))).to_be_visible()
@@ -88,14 +88,14 @@ def test_default_failure_rolls_back_and_clear_never_restores_legacy(ai_ui):
 
 def test_connection_failure_preserves_draft_and_saved_model(ai_ui):
     ai_ui.open()
-    ai_ui.page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    ai_ui.page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = ai_ui.page.get_by_role("dialog")
     dialog.get_by_label("Name", exact=True).fill("Renamed")
     ai_ui.reject_connection = True
     dialog.get_by_role("button", name="Save changes", exact=True).click()
     expect(dialog.get_by_role("alert")).to_have_text("The connection could not be saved.")
     expect(dialog.get_by_label("Name", exact=True)).to_have_value("Renamed")
-    assert ai_ui.endpoints[0]["name"] == "Team Azure"
+    assert ai_ui.endpoints[0]["name"] == "Team OpenAI"
     dialog.get_by_role("button", name="Cancel", exact=True).click()
     expect(ai_ui.page.get_by_label("Default image model", exact=True)).to_have_value("1")
 
@@ -123,7 +123,7 @@ def test_usage_policy_and_connection_notifications_refresh_choices(ai_ui):
 def test_image_tests_require_saved_bindings_and_actual_image_success(ai_ui):
     ai_ui.open()
     page = ai_ui.page
-    page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Display name", exact=True).fill("Pending name")
     dialog.get_by_role("button", name="Test image generation", exact=True).click()
@@ -133,7 +133,7 @@ def test_image_tests_require_saved_bindings_and_actual_image_success(ai_ui):
     ai_ui.reject_image_test = True
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="The saved model did not return an image.")).to_be_visible()
-    assert ai_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "aoai")}]
+    assert ai_ui.image_tests == [{"test_type": "image", "selection": reference("studio", "same:model", "custom")}]
     ai_ui.reject_image_test = False
     page.get_by_role("button", name="Test image generation", exact=True).click()
     expect(page.get_by_text("The saved image model generated an image successfully.", exact=True)).to_be_visible()
@@ -197,7 +197,7 @@ def test_manual_image_model_metadata_is_saved_before_default_selection(ai_ui, de
 def test_connection_check_does_not_claim_to_test_image_inference(ai_ui):
     ai_ui.open()
     page = ai_ui.page
-    page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    page.get_by_role("button", name="Edit Image Resource", exact=True).click()
     page.get_by_role("dialog").get_by_role("button", name="Test connection", exact=True).click()
     expect(page.get_by_text("Connected. 2 deployments visible. Image inference was not tested.", exact=True)).to_be_visible()
     assert ai_ui.image_tests == [] and len(ai_ui.connection_tests) == 1
@@ -331,7 +331,7 @@ def test_foundry_mixed_connection_preserves_operation_overrides_and_blank_secret
     endpoint["models"].append(embedding_model())
     operations = copy.deepcopy(endpoint["connection"]["operation_settings"])
     ai_ui.open()
-    ai_ui.page.get_by_role("button", name="Edit Team Azure", exact=True).click()
+    ai_ui.page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = ai_ui.page.get_by_role("dialog")
     expect(dialog.get_by_label("Embedding inference base URL", exact=True)).to_have_value("https://foundry.example.test/openai/v1/")
     expect(dialog).to_contain_text("Foundry project endpoints do not route embeddings")
@@ -456,3 +456,180 @@ def test_foundry_cohere_gateway_declaration_uses_catalog_limits_without_policy_o
     picker.select_option("1")
     expect(picker).to_be_enabled()
     expect(page.get_by_test_id("capability-picker-embeddings")).to_contain_text("512 input tokens per text")
+
+
+def test_custom_model_can_declare_distinct_image_operations(ai_ui):
+    ai_ui.open()
+    page = ai_ui.page
+    page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Model name", exact=True).fill("private-image-orchestrator")
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_label("Image generation support", exact=True).select_option("true")
+    dialog.get_by_label("Source-image editing support", exact=True).select_option("true")
+    dialog.get_by_label("Uploaded-mask support", exact=True).select_option("true")
+    dialog.get_by_label("Image API for explicit metadata", exact=True).select_option("responses")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    model = ai_ui.connection_writes[-1]["models"][0]
+    assert model["image_generation_api"] == "responses"
+    assert model["supportsImageGeneration"] is True
+    assert model["supportsImageEditing"] is True
+    assert model["supportsImageMasking"] is True
+    image = page.get_by_label("Default image model", exact=True)
+    image.select_option("0")
+    expect(image).to_be_enabled()
+    assert ai_ui.selections["image_generation"] == reference("team", "same:model", "custom")
+    expect(page.get_by_test_id("capability-picker-image_generation")).to_contain_text("administrator-declared")
+    assert ai_ui.image_tests == []
+
+
+@pytest.mark.parametrize("api_type", ["openai", "azure_openai"])
+@pytest.mark.parametrize("auth_type", ["api_key", "bearer"])
+def test_custom_embeddings_keep_request_identity_image_metadata_and_independent_defaults(ai_ui, api_type, auth_type):
+    endpoint = ai_ui.add_custom_embedding_connection(api_type, auth_type)
+    original = copy.deepcopy(endpoint)
+    previous = copy.deepcopy(ai_ui.selections)
+    wire_name = "embedding-wire-alias" if api_type == "azure_openai" else "text-embedding-3-small"
+    ai_ui.open()
+    page = ai_ui.page
+    page.get_by_role("button", name="Edit Custom Mixed Gateway", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    embedding_row = dialog.locator("li").filter(has=page.get_by_label(f"Enable {wire_name}", exact=True))
+    expect(embedding_row.get_by_label("Use for embeddings", exact=True)).to_be_checked()
+    expect(embedding_row.get_by_label("Use for chat", exact=True)).to_be_disabled()
+    expect(embedding_row.get_by_label("Use for images", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("button", name="Test chat", exact=True)).to_have_count(1)
+    expect(dialog.get_by_role("button", name="Discover models", exact=True)).to_have_count(0)
+    expect(dialog.get_by_label("Custom API type", exact=True)).to_have_value(api_type)
+    expect(dialog.get_by_label("Method", exact=True)).to_have_value(auth_type)
+    embedding_row.get_by_role("button", name="Test embeddings", exact=True).click()
+    expect(page.get_by_text(f"{wire_name} returned 1,536 dimensions. No vectors were stored and the default was not changed.", exact=True)).to_be_visible()
+    assert ai_ui.embedding_tests == [{"test_type": "embedding", "selection": reference("custom-vectors", "custom-embedding", "custom")}]
+    assert ai_ui.selections == previous and ai_ui.selection_writes == []
+    dialog.get_by_label("Embedding inference base URL", exact=True).fill("https://gateway.example.test/other/embedding-base")
+    dialog.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
+    dialog.get_by_label("Name", exact=True).fill("Reviewed Custom Mixed Gateway")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    saved = ai_ui.connection_writes[-1]
+    assert saved["provider"] == "custom" and saved["api_type"] == api_type
+    expected_connection = copy.deepcopy(original["connection"])
+    expected_connection["operation_settings"]["embeddings"] = {
+        "endpoint": "https://gateway.example.test/other/embedding-base", "auth_header": "authorization",
+    }
+    assert saved["connection"] == expected_connection
+    assert saved["models"][1]["id"] == "custom-embedding"
+    assert saved["models"][1]["deploymentName"] == "embedding-wire-alias"
+    assert saved["models"][1]["modelName"] == "text-embedding-3-small"
+    assert saved["models"][1]["embedding_config"] == original["models"][1]["embedding_config"]
+    assert saved["models"][1]["vendorOptions"] == original["models"][1]["vendorOptions"]
+    for key in ("supportsImageEditing", "supportsImageMasking", "image_generation_api"):
+        assert saved["models"][0][key] == original["models"][0][key]
+    assert not {"api_key", "bearer_token", "client_secret"} & saved["auth"].keys()
+    offer = next(choice for choice in ai_ui.capability_response("embeddings")["choices"] if choice["endpoint_id"] == "custom-vectors")
+    assert offer["deployment_name"] == wire_name
+    assert not {"model_revision", "document_prefix", "query_prefix", "endpoint"} & offer["embedding_policy"].keys()
+    assert offer["embedding_policy"]["max_batch_size"] == 2
+    picker = page.get_by_label("Default embedding model", exact=True)
+    picker.select_option("1")
+    expect(picker).to_be_enabled()
+    assert ai_ui.selections["embeddings"] == reference("custom-vectors", "custom-embedding", "custom")
+    assert ai_ui.selections["chat"] == previous["chat"]
+    assert ai_ui.selections["image_generation"] == previous["image_generation"]
+
+
+@pytest.mark.parametrize("api_type,auth_type", [
+    ("anthropic", "api_key"), ("gemini", "api_key"),
+    ("openai", "oauth2_client_credentials"), ("azure_openai", "oauth2_client_credentials"),
+])
+def test_custom_unsupported_embeddings_do_not_disable_existing_chat_features(ai_ui, api_type, auth_type):
+    ai_ui.add_custom_embedding_connection(api_type, auth_type)
+    ai_ui.open()
+    page = ai_ui.page
+    expect(page.get_by_label("Default embedding model", exact=True).locator("optgroup")).to_have_count(1)
+    page.get_by_role("button", name="Edit Custom Mixed Gateway", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_label("Embedding API", exact=True)).to_have_count(0)
+    expect(dialog.get_by_label("Use for embeddings", exact=True).nth(1)).to_be_disabled()
+    expect(dialog.get_by_role("button", name="Test embeddings", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Test chat", exact=True)).to_have_count(1)
+    expect(dialog.get_by_label("Use for chat", exact=True).first).to_be_checked()
+    expect(dialog).to_contain_text("Other Custom API types and OAuth2 embeddings are not supported.")
+    dialog.get_by_text("Capability metadata", exact=True).nth(1).click()
+    expect(dialog.get_by_label("Text embedding support", exact=True).nth(1)).to_be_disabled()
+    assert ai_ui.embedding_tests == [] and ai_ui.selection_writes == []
+
+
+def test_saved_embedding_alias_is_not_relabelled_or_retargeted_on_edit(ai_ui):
+    endpoint = ai_ui.add_embedding_alias()
+    original = copy.deepcopy(endpoint)
+    ai_ui.open()
+    page = ai_ui.page
+    page.get_by_role("button", name="Edit Saved Embedding Alias", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_label("Provider", exact=True)).to_have_value("openai_compatible")
+    expect(dialog.get_by_label("Deployment name", exact=True)).to_have_value("saved-wire-alias")
+    expect(dialog.get_by_label("Underlying model name (optional)", exact=True)).to_have_value("text-embedding-3-small")
+    expect(dialog.get_by_label("Custom API type", exact=True)).to_have_count(0)
+    dialog.get_by_role("button", name="Test embeddings", exact=True).click()
+    expect(page.get_by_text("saved-wire-alias returned 1,536 dimensions.", exact=False)).to_be_visible()
+    dialog.get_by_label("Name", exact=True).fill("Reviewed Embedding Alias")
+    dialog.get_by_role("button", name="Save changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    saved = ai_ui.connection_writes[-1]
+    assert saved["provider"] == "openai_compatible" and "api_type" not in saved
+    assert saved["connection"] == original["connection"]
+    assert saved["models"][0]["id"] == "alias-embedding"
+    assert saved["models"][0]["deploymentName"] == "saved-wire-alias"
+    assert saved["models"][0]["modelName"] == "text-embedding-3-small"
+    assert saved["auth"] == {"type": "api_key"}
+    assert ai_ui.embedding_tests == [{"test_type": "embedding", "selection": reference("alias-vectors", "alias-embedding", "openai_compatible")}]
+
+
+@pytest.mark.parametrize("model_name,api,description", [
+    ("MAI-Image-2.6", "mai", "MAI image output"),
+    ("FLUX.2-pro", "flux", "FLUX image output"),
+])
+def test_provider_image_only_controls_keep_edit_profiles_without_gpt_options(ai_ui, model_name, api, description):
+    endpoint = ai_ui.add_provider_image_connection(model_name)
+    ai_ui.open()
+    page = ai_ui.page
+    before = copy.deepcopy(ai_ui.selections)
+    picker = page.get_by_label("Default image model", exact=True)
+    picker.select_option("3")
+    expect(picker).to_be_enabled()
+    pane = page.get_by_test_id("capability-picker-image_generation")
+    expect(pane).to_contain_text(description)
+    expect(pane).to_contain_text("Source-image editing without region masks")
+    expect(pane.get_by_text("Quality:", exact=False)).to_have_count(0)
+    expect(pane.get_by_text("Background:", exact=False)).to_have_count(0)
+    status = endpoint["models"][0]["capability_status"]["image_generation"]
+    assert status["api"] == api and status["editing"] is True and status["masking"] is False
+    for size in status["sizes"]:
+        expect(pane).to_contain_text(size)
+    page.get_by_role("button", name="Edit Provider Images", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_label("Use for chat", exact=True)).to_be_disabled()
+    expect(dialog.get_by_label("Use for images", exact=True)).to_be_checked()
+    expect(dialog.get_by_label("Use for embeddings", exact=True)).to_be_disabled()
+    expect(dialog).to_contain_text("Reference-image edits; no uploaded masks")
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    assert dialog.get_by_label("Image API for explicit metadata", exact=True).locator("option").evaluate_all("(options) => options.map(option => option.value)") == ["", "images", "responses", "mai", "flux"]
+    assert ai_ui.selections["embeddings"] == before["embeddings"]
+    assert ai_ui.selections["chat"] == before["chat"]
+
+
+@pytest.mark.parametrize("operation", ["disable", "delete"])
+def test_connection_availability_failures_restore_registry_and_all_defaults(ai_ui, operation):
+    ai_ui.open()
+    before = copy.deepcopy(ai_ui.selections)
+    ai_ui.reject_connection = True
+    page = ai_ui.page
+    page.get_by_role("button", name=f"{operation.title()} Vector Resource", exact=True).click()
+    if operation == "delete":
+        page.get_by_role("dialog").get_by_role("button", name="Delete", exact=True).click()
+    expect(page.get_by_role("region", name="AI Connections", exact=True).get_by_role("alert")).to_contain_text("The connection could not")
+    expect(page.get_by_role("button", name="Disable Vector Resource", exact=True)).to_be_enabled()
+    expect(page.get_by_label("Default embedding model", exact=True)).to_have_value("0")
+    assert ai_ui.selections == before and ai_ui.selection_writes == []

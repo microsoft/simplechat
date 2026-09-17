@@ -13,6 +13,10 @@ from functions_appinsights import log_event
 from functions_image_api_route import is_image_capable_model_name
 from functions_ai_connections import AIConnectionError, describe_model_capabilities, supports_model_capability
 from functions_model_capabilities import get_model_catalog_capabilities, resolve_model_vision_support
+from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -283,7 +287,13 @@ def register_route_backend_models(bp):
             "client_secret": MICROSOFT_PROVIDER_AUTHENTICATION_SECRET,
         }
 
-    def build_inference_client(endpoint, api_version, auth_settings, provider="aoai", deployment_name=""):
+    def build_inference_client(endpoint, api_version, auth_settings, provider="aoai", deployment_name="", endpoint_config=None):
+        if provider == "custom":
+            client, _ = build_model_endpoint_sync_chat_client(
+                auth_settings, provider, endpoint, api_version, deployment_name,
+                settings=get_settings(), endpoint_config=endpoint_config,
+            )
+            return client
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
         if auth_type == "api_key":
@@ -387,6 +397,14 @@ def register_route_backend_models(bp):
             auth_settings = data.get("auth") or {}
             management = data.get("management") or {}
             auth_type = (auth_settings.get("type") or "managed_identity").lower()
+            if provider == "custom":
+                if not get_model_endpoint_api_type(data):
+                    return jsonify({"error": "Custom endpoint API type is not supported."}), 400
+                return jsonify({
+                    "models": [],
+                    "manual_models_required": True,
+                    "message": "Custom connections use manually configured model names or deployments; management discovery is not available.",
+                })
             log_models_debug(
                 "Fetch model list request"
                 f" provider={provider} auth_type={auth_type}"
@@ -420,7 +438,7 @@ def register_route_backend_models(bp):
                         mapped_model["modelVersion"] = str(model_version)
                     mapped.append(mapped_model)
                 for model in mapped:
-                    model["capability_status"] = describe_model_capabilities(model, provider)
+                    model["capability_status"] = describe_model_capabilities(model, provider, endpoint=data)
                 return jsonify({"models": mapped})
 
             if provider == "aoai":
@@ -466,7 +484,7 @@ def register_route_backend_models(bp):
                             mapped_model["modelVersion"] = str(model_version)
                         mapped.append(mapped_model)
                 for model in mapped:
-                    model["capability_status"] = describe_model_capabilities(model, provider)
+                    model["capability_status"] = describe_model_capabilities(model, provider, endpoint=data)
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
@@ -531,7 +549,9 @@ def register_route_backend_models(bp):
 
             endpoint = connection.get("endpoint") or ""
             api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
-            deployment_name = model.get("deploymentName") or ""
+            deployment_name = resolve_model_endpoint_request_model(data, model)
+            if provider == "custom":
+                validate_custom_model_endpoint({**data, "models": [model]}, get_settings())
 
             auth_type = (auth_settings.get("type") or "managed_identity").lower()
             log_models_debug(
@@ -541,19 +561,21 @@ def register_route_backend_models(bp):
             )
 
             if not endpoint or not deployment_name:
-                raise AIConnectionError("Endpoint and deployment name are required.", "invalid_model_selection")
+                raise AIConnectionError("Endpoint and request model name or deployment are required.", "invalid_model_selection")
 
-            if not supports_model_capability(model, "chat", provider):
+            if not supports_model_capability(model, "chat", provider, endpoint=data):
                 return jsonify({
                     "error": "This model is not available for chat. Use the test for its published capability; embedding models use Test embeddings.",
                     "code": "model_capability_unavailable",
                 }), 400
 
-            runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
+            runtime_protocol = infer_model_endpoint_protocol(
+                provider, endpoint, deployment_name, get_model_endpoint_api_type(data),
+            )
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version:
                 return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
 
-            if provider not in ("aoai", "aifoundry", "new_foundry", "anthropic", "claude"):
+            if provider not in ("aoai", "aifoundry", "new_foundry", "anthropic", "claude", "custom"):
                 return jsonify({"error": "Model provider not found."}), 400
 
             gpt_client = build_inference_client(
@@ -562,19 +584,29 @@ def register_route_backend_models(bp):
                 auth_settings,
                 provider=provider,
                 deployment_name=deployment_name,
+                endpoint_config={**data, "models": [model]},
             )
-            response = gpt_client.chat.completions.create(
-                model=deployment_name,
-                messages=[{"role": "user", "content": "Testing access."}]
-            )
+            try:
+                response = gpt_client.chat.completions.create(
+                    model=deployment_name,
+                    messages=[{"role": "user", "content": "Testing access."}]
+                )
+            finally:
+                close = getattr(gpt_client, "close", None)
+                if callable(close):
+                    close()
 
-            if response:
+            if getattr(response, "choices", None):
                 return jsonify({"success": True}), 200
 
             return jsonify({"error": "No response returned from model."}), 400
 
         except AIConnectionError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message}), 400
+        except SanitizedModelEndpointError as exc:
+            return jsonify({"error": exc.public_message}), 400
         except LookupError as exc:
             log_event(
                 "[MODELS] Test model request blocked because the model endpoint was not found",
@@ -758,11 +790,9 @@ def register_route_backend_models(bp):
         """
         Fetch available image-capable Azure OpenAI deployments using Azure Management API.
 
-        Two kinds qualify. A gpt-image or DALL-E deployment serves /images/generations
-        directly. A chat model serves no image endpoint at all, but can still produce an
-        image through the Responses API's image_generation tool, and where gpt-image is
-        unavailable it is the only deployment that can. Both are listed; which route a
-        selection takes is decided from its model name at call time.
+        This legacy Azure discovery path offers compatible dedicated image deployments.
+        GPT chat deployments are excluded by the standalone-only Azure image policy.
+        Direct OpenAI image tools and other Foundry image APIs use shared connections.
         """
         settings = get_settings()
 
@@ -833,6 +863,13 @@ def register_route_backend_models(bp):
                 f" resource_group_present={bool(management.get('resource_group'))}"
             )
 
+            if provider == "custom":
+                validate_custom_model_endpoint(data, get_settings())
+                return jsonify({
+                    "success": True,
+                    "validation_only": True,
+                    "message": "Custom configuration is valid. Use Test Model to verify authentication and inference.",
+                })
             if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
@@ -879,6 +916,8 @@ def register_route_backend_models(bp):
                 return jsonify({"success": True, "count": count})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message}), 400
         except LookupError as e:
             log_event(
                 "[MODELS] Test connection blocked because the model endpoint was not found",
@@ -887,7 +926,7 @@ def register_route_backend_models(bp):
             return build_safe_error_response("The selected model endpoint could not be found.", 404)
         except PermissionError as e:
             log_models_exception("Test connection blocked by governance policy", e, level=logging.WARNING)
-            return build_safe_error_response("You do not have access to this model connection.", 403)
+            return build_safe_error_response("The selected model endpoint is not permitted by governance policy.", 403)
         except ValueError as e:
             log_models_exception("Test connection validation failed", e, level=logging.WARNING)
             return build_safe_error_response(

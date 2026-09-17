@@ -129,13 +129,14 @@ def _legacy_image_connection(settings, apim):
         if deployment == active_name:
             support = resolve_model_capability(model, IMAGE_GENERATION_CAPABILITY, "aoai")
             model_name = str(model.get("modelName") or "").lower()
-            legacy_route = (
-                "responses"
-                if not apim and model_name and not any(marker in model_name for marker in ("image", "dall-e", "dalle"))
-                else "images"
-            )
-            model["supportsImageGeneration"] = True
-            model["image_generation_api"] = support["api"] or legacy_route
+            if model.get("supportsImageGeneration") is not False:
+                if support["supported"]:
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = support["api"]
+                elif not model_name:
+                    # An unrecorded legacy Images deployment remains recoverable, not a GPT tool guess.
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = "images"
         models.append(model)
 
     auth_type = "api_key" if apim else str(settings.get("azure_openai_image_gen_authentication_type") or "key")
@@ -216,7 +217,9 @@ def _compatible_connection(existing, imported, capability=IMAGE_GENERATION_CAPAB
             (model for model in models if model.get("deploymentName") == incoming["deploymentName"]),
             None,
         )
-        if match and incoming["enabled"] and not supports_model_capability(match, capability, existing.get("provider")):
+        if match and incoming["enabled"] and not supports_model_capability(
+            match, capability, existing.get("provider"), endpoint=existing
+        ):
             return False
     return bool(existing.get("id"))
 
@@ -235,6 +238,7 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
     endpoints = copy.deepcopy(current)
     selected = dict(EMPTY_MODEL_SELECTION)
     imported_count = 0
+    default_warning = ""
     active_apim = bool(settings.get("enable_image_gen_apim"))
     for apim in (False, True):
         imported, active_name = _legacy_image_connection(settings, apim)
@@ -267,7 +271,12 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
                 "model_id": str(model["id"]),
                 "provider": str(existing["provider"]).lower(),
             }
-    return {
+            if not supports_model_capability(model, IMAGE_GENERATION_CAPABILITY, existing["provider"], endpoint=existing):
+                default_warning = (
+                    "The imported image default is not supported on its provider. "
+                    "Select a dedicated image model in AI Connections; the original settings have been retained."
+                )
+    patch = {
         "model_endpoints": endpoints,
         IMAGE_SELECTION_KEY: selected,
         IMAGE_MIGRATION_VERSION_KEY: IMAGE_MIGRATION_VERSION,
@@ -277,6 +286,12 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
             "message": "Existing image configuration is now managed through AI Connections.",
         },
     }
+    if default_warning:
+        patch["ai_connection_default_notices"] = {
+            **(settings.get("ai_connection_default_notices") or {}),
+            IMAGE_GENERATION_CAPABILITY: default_warning,
+        }
+    return patch
 
 
 def _legacy_embedding_connection(settings, apim):

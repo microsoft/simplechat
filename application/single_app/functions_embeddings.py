@@ -22,6 +22,9 @@ from functions_ai_connections import (
 from functions_appinsights import log_event
 from functions_embedding_profile import resolve_embedding_profile
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_auth import resolve_client_certificate, resolve_custom_endpoint_credentials
+from functions_model_endpoint_types import custom_endpoint_validation_view, get_model_endpoint_api_type
+from functions_model_endpoint_validation import custom_endpoint_setting_enabled, validate_custom_model_endpoint
 
 
 class EmbeddingVector(list):
@@ -72,6 +75,42 @@ def _build_embedding_connection_client(binding, settings):
     auth_header = operation.get("auth_header") or (
         "authorization" if profile.api == "openai" else "api-key"
     )
+    if provider in ("custom", "openai_compatible"):
+        # Use the same pinned transport and global network policy as Custom chat/images.
+        from model_endpoint_clients import build_custom_openai_sync_http_client
+
+        custom = custom_endpoint_validation_view(endpoint)
+        connection = custom.get("connection") or {}
+        if operation.get("endpoint"):
+            connection["endpoint"] = operation["endpoint"]
+        custom["connection"] = connection
+        validate_custom_model_endpoint(custom, settings)
+        transport_options = {
+            "allow_private": custom_endpoint_setting_enabled(settings, "allow_private_custom_model_endpoints"),
+            "allow_insecure": custom_endpoint_setting_enabled(settings, "allow_insecure_custom_model_endpoints"),
+            "ca_bundle_path": str(settings.get("custom_model_endpoint_ca_bundle_path") or ""),
+            "client_cert": resolve_client_certificate(connection),
+        }
+        custom_auth = dict(custom.get("auth") or {})
+        default_header = "api-key" if get_model_endpoint_api_type(custom) == "azure_openai" else "Authorization"
+        default_prefix = "" if default_header == "api-key" else "Bearer"
+        if operation.get("auth_header"):
+            default_header = "Authorization" if auth_header == "authorization" else auth_header
+            default_prefix = "Bearer" if auth_header == "authorization" else ""
+        sdk_key, auth_headers = resolve_custom_endpoint_credentials(
+            custom_auth, default_api_key_header=default_header,
+            default_api_key_prefix=default_prefix, **transport_options,
+        )
+        return OpenAI(
+            api_key=sdk_key, base_url=profile.base_url,
+            default_headers={
+                **build_model_endpoint_identity_headers(settings, endpoint_config=endpoint),
+                **auth_headers,
+            },
+            default_query={"api-version": profile.api_version} if profile.api == "azure_openai" else {},
+            max_retries=0, timeout=httpx.Timeout(60.0, connect=10.0),
+            http_client=build_custom_openai_sync_http_client(**transport_options),
+        )
     token_provider = None
     api_key = ""
     if auth_type in ("key", "api_key"):

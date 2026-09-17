@@ -2,11 +2,9 @@
 
 """Pure image route, shared-binding, and response validation helpers.
 
-Dedicated image models use Images; compatible GPT deployments use the v1 Responses
-image tool. Technical support comes from the shared capability catalog or explicit
-model metadata, not from generic tool or vision support. Neither proves live service
-availability. Unmigrated legacy image settings retain their existing Images route
-when the underlying model was never recorded.
+Azure image selections use dedicated image APIs. Compatible direct OpenAI Custom
+models may also use the Responses image tool. Provider-qualified catalog metadata
+decides the operation; neither vision nor a GPT name proves image support.
 """
 
 import base64
@@ -25,20 +23,19 @@ from functions_ai_connections import (
     resolve_model_capability,
     supports_model_capability,
 )
+from functions_image_capabilities import (
+    IMAGE_APIS,
+    resolve_image_endpoint_context,
+    resolve_image_model_capability,
+)
 
 
 # The two ways an image is produced. Named rather than expressed as a boolean because
 # "not the images endpoint" is not a description of anything.
 IMAGE_API_ROUTE_IMAGES = 'images'
 IMAGE_API_ROUTE_RESPONSES = 'responses'
-
-# Models that serve /images/generations. Matched as substrings because a deployment
-# reports a model name like ``gpt-image-1.5`` or ``dall-e-3`` and the family is what
-# decides the route, not the version. ``image`` is deliberately the broad form rather than
-# ``gpt-image``: it is what the discovery filter has always matched on, so narrowing it
-# here would drop a deployment that was previously selectable and send it to a route it
-# cannot serve.
-IMAGES_ENDPOINT_MODEL_MARKERS = ('image', 'dall-e', 'dalle')
+IMAGE_API_ROUTE_MAI = 'mai'
+IMAGE_API_ROUTE_FLUX = 'flux'
 
 RESPONSES_IMAGE_API_VERSION = 'v1'
 # New shared connections support both Images generations and edits without inheriting
@@ -69,13 +66,19 @@ class ImageGenerationError(RuntimeError):
 
 
 def resolve_image_binding_deployment(binding):
-    """Use the deployment, never a stable registry ID, as the provider's model value."""
-    deployment = str(
-        binding.model.get('deploymentName') or binding.model.get('deployment') or ''
-    ).strip()
+    """Use the provider's wire model identity, never a stable registry ID."""
+    if binding.endpoint.get('provider') == 'custom':
+        # Keep the optional Custom registry out of the legacy bootstrap import path.
+        from functions_model_endpoint_types import resolve_model_endpoint_request_model
+
+        deployment = resolve_model_endpoint_request_model(binding.endpoint, binding.model)
+    else:
+        deployment = str(
+            binding.model.get('deploymentName') or binding.model.get('deployment') or ''
+        ).strip()
     if not deployment:
         raise AIConnectionError(
-            'The selected image model has no deployment configured.',
+            'The selected image model has no model or deployment identifier configured.',
             'model_configuration_unavailable',
         )
     return deployment
@@ -95,23 +98,25 @@ def resolve_shared_image_binding(settings):
 def resolve_image_binding_api(binding):
     """Resolve only an established, enabled image capability on the selected connection."""
     provider = binding.endpoint.get('provider') or 'aoai'
-    support = resolve_model_capability(binding.model, IMAGE_GENERATION_CAPABILITY, provider)
+    support = resolve_model_capability(
+        binding.model, IMAGE_GENERATION_CAPABILITY, provider, endpoint=binding.endpoint
+    )
     if (
         binding.capability != IMAGE_GENERATION_CAPABILITY
         or binding.endpoint.get('enabled') is False
-        or not supports_model_capability(binding.model, IMAGE_GENERATION_CAPABILITY, provider)
+        or not supports_model_capability(binding.model, IMAGE_GENERATION_CAPABILITY, provider, endpoint=binding.endpoint)
     ):
         raise AIConnectionError(
             support.get('reason') or 'The selected model is not available for image generation.',
             'model_capability_unavailable',
         )
     profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
-    if profile.get('api') not in (None, '', IMAGE_API_ROUTE_IMAGES, IMAGE_API_ROUTE_RESPONSES):
+    if profile.get('api') not in (None, '', *IMAGE_APIS):
         raise AIConnectionError('The image connection has an unsupported API route.')
     # A connection can host both kinds of model. A migrated operation profile must
     # not force a newly selected GPT deployment onto its previous Images route.
     route = support.get('api') or profile.get('api')
-    if route not in (IMAGE_API_ROUTE_IMAGES, IMAGE_API_ROUTE_RESPONSES):
+    if route not in IMAGE_APIS:
         raise AIConnectionError('The selected model has no compatible image API.', 'unsupported_capability')
     return route
 
@@ -167,18 +172,14 @@ def resolve_selected_image_deployment_name(settings):
 def resolve_image_api_route(settings):
     """Return which API the selected image deployment is reached through.
 
-    Defaults to the images endpoint. Every deployment selectable before the Responses
-    route existed answers to it, so an unrecognised or unrecorded model name leaves an
-    existing configuration exactly where it was.
+    Only an unrecorded legacy model retains its existing Images route. Named models
+    must qualify for the configured provider; an unknown name is not an image-tool guess.
     """
     if image_settings_use_connections(settings):
         return resolve_image_binding_api(resolve_shared_image_binding(settings))
 
     model_name = resolve_selected_image_model_name(settings).lower()
     if not model_name:
-        return IMAGE_API_ROUTE_IMAGES
-
-    if any(marker in model_name for marker in IMAGES_ENDPOINT_MODEL_MARKERS):
         return IMAGE_API_ROUTE_IMAGES
 
     support = resolve_model_capability(
@@ -192,10 +193,10 @@ def resolve_image_api_route(settings):
     return support['api']
 
 
-def is_image_capable_model_name(model_name):
+def is_image_capable_model_name(model_name, provider='aoai', endpoint=None):
     """Compatibility entry point for discovery, using the shared technical catalog."""
     return resolve_model_capability(
-        {'modelName': str(model_name or '').strip()}, IMAGE_GENERATION_CAPABILITY, 'aoai'
+        {'modelName': str(model_name or '').strip()}, IMAGE_GENERATION_CAPABILITY, provider, endpoint=endpoint
     )['supported']
 
 
@@ -204,20 +205,60 @@ def resolve_responses_image_api_version(settings):
     return RESPONSES_IMAGE_API_VERSION
 
 
+def resolve_image_binding_api_version(binding):
+    route = resolve_image_binding_api(binding)
+    if route in (IMAGE_API_ROUTE_RESPONSES, IMAGE_API_ROUTE_MAI):
+        return 'v1'
+    if route == IMAGE_API_ROUTE_FLUX:
+        return 'preview'
+    context = resolve_image_endpoint_context(binding.endpoint)
+    if context['provider'] in ('openai', 'custom'):
+        return 'v1'
+    profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
+    return str(profile.get('api_version') or DEFAULT_IMAGES_API_VERSION).strip()
+
+
 def resolve_image_generation_api_version(settings):
     """Read image-specific transport options without changing the connection's chat version."""
-    if resolve_image_api_route(settings) == IMAGE_API_ROUTE_RESPONSES:
+    route = resolve_image_api_route(settings)
+    if route in (IMAGE_API_ROUTE_RESPONSES, IMAGE_API_ROUTE_MAI):
         return RESPONSES_IMAGE_API_VERSION
+    if route == IMAGE_API_ROUTE_FLUX:
+        return 'preview'
     if image_settings_use_connections(settings):
-        binding = resolve_shared_image_binding(settings)
-        profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
-        return str(profile.get('api_version') or DEFAULT_IMAGES_API_VERSION).strip()
+        return resolve_image_binding_api_version(resolve_shared_image_binding(settings))
     key = (
         'azure_apim_image_gen_api_version'
         if settings.get('enable_image_gen_apim')
         else 'azure_openai_image_gen_api_version'
     )
     return str(settings.get(key) or LEGACY_DEFAULT_IMAGES_API_VERSION).strip()
+
+
+def resolve_selected_image_capability(settings):
+    """Project the selected operation without resolving credentials or creating clients."""
+    if image_settings_use_connections(settings):
+        binding = resolve_shared_image_binding(settings)
+        result = resolve_image_model_capability(binding.model, binding.endpoint)
+    else:
+        apim = bool(settings.get('enable_image_gen_apim'))
+        prefix = 'azure_apim_image_gen' if apim else 'azure_openai_image_gen'
+        selected = (settings.get('image_gen_model') or {}).get('selected') or []
+        model = dict(selected[0]) if selected and isinstance(selected[0], dict) and not apim else {}
+        model['deploymentName'] = resolve_selected_image_deployment_name(settings)
+        if not model['deploymentName']:
+            raise AIConnectionError('No image generation deployment is selected.', 'model_configuration_unavailable')
+        model.setdefault('supportsImageGeneration', True)
+        model.setdefault('image_generation_api', 'images')
+        endpoint = {
+            'provider': 'aoai',
+            'migration_source': 'legacy_image_apim' if apim else 'legacy_image_direct',
+            'connection': {'endpoint': settings.get(f'{prefix}_endpoint')},
+        }
+        result = resolve_image_model_capability(model, endpoint)
+    if not result['supported']:
+        raise AIConnectionError(result['reason'], 'model_capability_unavailable')
+    return result
 
 
 def build_image_api_base_url(endpoint, route, deployment='', api_version=''):
@@ -232,7 +273,16 @@ def build_image_api_base_url(endpoint, route, deployment='', api_version=''):
     except ValueError as exc:
         raise AIConnectionError('The image connection endpoint is invalid.') from exc
 
+    if route not in IMAGE_APIS:
+        raise AIConnectionError('The image operation is unsupported.')
     path = parsed.path.rstrip('/')
+    hostname = parsed.hostname.lower()
+    foundry_resource = any(
+        hostname.endswith(f'.{suffix}') for suffix in ('services.ai.azure.com', 'services.ai.azure.us')
+    )
+    if foundry_resource and re.fullmatch(r'/api/projects/[^/]+', path, flags=re.IGNORECASE):
+        # Resource image APIs are siblings of the documented project API, on the same origin.
+        path = ''
     # Only strip a recognizable API suffix. A gateway prefix such as /models/team
     # is part of the configured route, not a reason to redirect to the resource root.
     suffix = re.search(
@@ -243,6 +293,14 @@ def build_image_api_base_url(endpoint, route, deployment='', api_version=''):
     )
     if suffix:
         path = path[:suffix.start()]
+    if route == IMAGE_API_ROUTE_MAI:
+        path = re.sub(r'/mai/v1(?:/images/(?:generations|edits))?$', '', path, flags=re.IGNORECASE)
+        return urlunsplit((parsed.scheme, parsed.netloc, f'{path}/mai/v1/', '', ''))
+    if route == IMAGE_API_ROUTE_FLUX:
+        path = re.sub(
+            r'/providers/blackforestlabs/v1(?:/[-a-z0-9.]+)?$', '', path, flags=re.IGNORECASE
+        )
+        return urlunsplit((parsed.scheme, parsed.netloc, f'{path}/providers/blackforestlabs/v1/', '', ''))
     if route == IMAGE_API_ROUTE_RESPONSES or api_version == 'v1':
         path = f'{path}/openai/v1/'
     else:
@@ -250,32 +308,6 @@ def build_image_api_base_url(endpoint, route, deployment='', api_version=''):
             raise AIConnectionError('The image connection has no deployment configured.')
         path = f'{path}/openai/deployments/{quote(deployment, safe="")}/'
     return urlunsplit((parsed.scheme, parsed.netloc, path, '', ''))
-
-
-def resolve_responses_image_backend(binding):
-    """Use only an explicitly stored backend binding; otherwise leave routing to the provider."""
-    profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
-    backend = profile.get('image_deployment')
-    if backend in (None, ''):
-        return ''
-    if not isinstance(backend, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', backend):
-        raise AIConnectionError('The stored image backend binding is invalid.')
-    if backend == resolve_image_binding_deployment(binding):
-        raise AIConnectionError('A GPT deployment cannot be used as its own image backend.')
-    for model in binding.endpoint.get('models') or []:
-        if not isinstance(model, dict):
-            continue
-        if (model.get('deploymentName') or model.get('deployment')) != backend:
-            continue
-        support = resolve_model_capability(
-            model, IMAGE_GENERATION_CAPABILITY, binding.endpoint.get('provider')
-        )
-        if (
-            not supports_model_capability(model, IMAGE_GENERATION_CAPABILITY, binding.endpoint.get('provider'))
-            or support.get('api') != IMAGE_API_ROUTE_IMAGES
-        ):
-            raise AIConnectionError('The stored image backend is unavailable or incompatible.')
-    return backend
 
 
 def build_image_generation_tool(size='', quality='', background=''):

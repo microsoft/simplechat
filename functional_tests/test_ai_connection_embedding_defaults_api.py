@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_defaults_api.py
 """
 Functional tests for embedding defaults and administrator save boundaries.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Mount the actual Flask handlers and pure profile/preflight collaborators with
@@ -32,6 +32,9 @@ from functions_ai_connection_migration import (
     preserve_legacy_embedding_form_settings,
 )
 from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint, validate_custom_model_endpoints
+from admin_settings_secret_utils import is_admin_settings_redacted_secret
 
 
 CAPABILITY_URL = "/api/v2/admin/capability-models/embeddings"
@@ -196,6 +199,11 @@ class AdminApiHarness:
             "update_settings": update_settings,
             "log_event": lambda *_args, **_kwargs: None,
             "resolve_embedding_profile": resolve_embedding_profile,
+            "ModelEndpointValidationError": ModelEndpointValidationError,
+            "validate_custom_model_endpoints": validate_custom_model_endpoints,
+            "validate_custom_model_endpoint": validate_custom_model_endpoint,
+            "get_model_endpoint_provider_ui_options": get_model_endpoint_provider_ui_options,
+            "is_admin_settings_redacted_secret": is_admin_settings_redacted_secret,
             "EMBEDDING_VECTOR_PROFILE_KEY": EMBEDDING_VECTOR_PROFILE_KEY,
             "EMBEDDING_MIGRATION_NOTICE_KEY": EMBEDDING_MIGRATION_NOTICE_KEY,
             "MIGRATION_NOTICE_KEY": MIGRATION_NOTICE_KEY,
