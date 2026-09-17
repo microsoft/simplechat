@@ -29,6 +29,7 @@ import {
     MessagesSquare,
     Moon,
     Settings,
+    ShieldCheck,
     SlidersHorizontal,
     Sparkles,
     Sun,
@@ -71,6 +72,7 @@ const NAV_ITEMS: NavItem[] = [
     },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
     { to: '/public', label: 'Public Workspaces', icon: Globe2 },
+    { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
 ];
 
 function BrandMark({ collapsed }: { collapsed: boolean }) {

@@ -35,6 +35,7 @@ from config import (
     cosmos_public_file_sync_sources_container,
 )
 from functions_appinsights import log_event
+from content_screening.service import prepare_document_upload
 from functions_authentication import get_graph_authority, get_graph_base_url, get_graph_endpoint
 from functions_azure_endpoint_validation import (
     AZURE_STORAGE_ENDPOINT_SUFFIXES,
@@ -3551,6 +3552,9 @@ def _queue_document_processing(
         task_kwargs["group_id"] = group_id
     if public_workspace_id:
         task_kwargs["public_workspace_id"] = public_workspace_id
+
+    if get_settings().get("enable_content_screening") is True:
+        prepare_document_upload(**task_kwargs)
 
     if has_app_context():
         executor = current_app.extensions.get("executor")

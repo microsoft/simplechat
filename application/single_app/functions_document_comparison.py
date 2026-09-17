@@ -3,6 +3,8 @@
 
 import logging
 
+from content_screening.access import assert_evidence_available, guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_mixed_source_orchestration import (
@@ -236,6 +238,7 @@ def run_evidence_document_comparison(
     activity_callback=None,
     cancel_requested=None,
     request_correlation_id=None,
+    user_id=None,
 ):
     """Run the established one-left-to-many comparison over native evidence envelopes."""
     normalized_prompt = str(comparison_prompt or '').strip()
@@ -244,6 +247,7 @@ def run_evidence_document_comparison(
 
     left_source = left_source if isinstance(left_source, dict) else {}
     right_sources = [source for source in list(right_sources or []) if isinstance(source, dict)]
+    invoke_prompt = guard_model_callable(invoke_prompt, [left_source, *right_sources], user_id)
     left_name = str(left_source.get('document_name') or 'Source').strip() or 'Source'
     left_summary = str(left_source.get('summary') or '').strip()
     left_status = str(left_source.get('status') or '').strip().lower()
@@ -305,7 +309,7 @@ def run_evidence_document_comparison(
                     'comparison',
                     request_correlation_id=request_correlation_id,
                 )
-        except MixedSourceCancellationError:
+        except (MixedSourceCancellationError, ScreeningError):
             raise
         except Exception:
             failed_targets.append(right_name)
@@ -366,6 +370,7 @@ def run_evidence_document_comparison(
         f'- Evidence engines: {", ".join(evidence_engines)}\n'
         f'- Conclusion level: {conclusion_level}'
     )
+    assert_evidence_available([left_source, *right_sources], user_id)
     return {
         'reply': f'{final_reply}{coverage_note}',
         'analysis_reply': f'{final_reply}{coverage_note}',
@@ -450,6 +455,9 @@ def run_document_comparison(
     _refresh_comparison_coverage(coverage, document_order, document_states)
 
     document_summaries = {}
+    invoke_prompt = guard_model_callable(
+        invoke_prompt, lambda: list(document_summaries.values()), user_id,
+    )
     for document_index, document_id in enumerate(document_order, start=1):
         raise_if_mixed_source_cancelled(
             cancel_requested,
@@ -759,6 +767,7 @@ def run_document_comparison(
         f"failed={coverage.get('failed_windows', 0)}"
     )
 
+    assert_evidence_available(list(document_summaries.values()), user_id)
     return {
         'reply': final_reply,
         'analysis_reply': analysis_reply,

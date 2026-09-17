@@ -2,8 +2,8 @@
 # test_v2_admin_security_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Security group.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.122
+Implemented in: 0.261.063
 
 The V2 React admin surface renders from ``admin_settings_fields.py`` rather than
 from the server-rendered panes, so the two descriptions of the same settings can
@@ -41,8 +41,10 @@ PANES_DIR = REPO_ROOT / "application" / "single_app" / "templates" / "admin" / "
 
 SECURITY_GROUP_ID = "security"
 
-# The six tabs that make up the Security group, and the sections each contributes.
-# Sourced from ADMIN_NAV, verified against it below.
+# The tabs that make up the Security group, and the sections each contributes.
+# Sourced from ADMIN_NAV, verified against it below. Workspace Identities arrived
+# with the Workspaces work and is declared by that schema entry, so it is listed
+# here to keep this test's view of the group complete.
 SECURITY_PANES = {
     "access-roles": (
         "permissions-section",
@@ -50,6 +52,8 @@ SECURITY_PANES = {
         "access-denied-message-section",
     ),
     "secrets": ("keyvault-section",),
+    "workspace-identities": ("workspace-identities-section",),
+    "content-screening": ("content-screening-section",),
     "content-safety": ("content-safety-section",),
     "session": ("idle-timeout-section",),
     "network": ("front-door-section",),

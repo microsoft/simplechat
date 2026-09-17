@@ -5007,6 +5007,35 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
+    "content-screening-section": [
+        {
+            "key": "enable_content_screening",
+            "type": "switch",
+            "role": "capability",
+            "label": "Screen workspace content before publication",
+            "help": (
+                "Hold extracted workspace knowledge until required checks complete. "
+                "Findings require an authorized workspace review. Configure an active "
+                "screening policy before enabling; disabling future scans never releases "
+                "existing holds."
+            ),
+            "default": False,
+            "requires": {
+                "key": "enable_enhanced_citations",
+                "label": "Enhanced Citations",
+                "description": (
+                    "Configure Chat > Citations > Enhanced and its storage before enabling new scans. "
+                    "You can prepare and save the screening policy below first."
+                ),
+            },
+        },
+        {
+            "type": "component",
+            "component": "content-screening-policy",
+            "label": "Screening policies and scans",
+            "help": "Edit required PII, regex, value, and model checks; policies are saved separately from Admin Settings.",
+        },
+    ],
     "content-safety-section": [
         {
             "key": "enable_content_safety",
@@ -6957,6 +6986,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
+    _check_content_screening_dependency(normalized, current, errors)
 
     # Applied last so the checks above still see flat keys, which is the shape
     # they and the schema are written against.
@@ -6974,6 +7004,24 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         _apply_inbound_mcp_derivations(normalized, current)
 
     return normalized, errors, warnings
+
+
+def _check_content_screening_dependency(normalized, current_settings, errors):
+    """Keep the storage prerequisite authoritative for partial settings saves."""
+    screening = normalized.get(
+        "enable_content_screening", current_settings.get("enable_content_screening", False),
+    )
+    citations = normalized.get(
+        "enable_enhanced_citations", current_settings.get("enable_enhanced_citations", False),
+    )
+    if screening is True and citations is not True:
+        message = "Content Screening requires Enhanced Citations. Existing content holds are preserved."
+        errors["enable_content_screening"] = message
+        if "enable_enhanced_citations" in normalized:
+            errors["enable_enhanced_citations"] = message
+    for key in normalized:
+        if key.startswith("content_screening"):
+            errors[key] = "Manage screening policies through the dedicated Content Screening API."
 
 
 def _apply_cross_field_rules(normalized, current_settings, warnings):

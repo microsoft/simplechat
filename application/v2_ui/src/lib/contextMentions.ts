@@ -22,7 +22,8 @@ import {
     fetchPublicWorkspaceDocumentTags,
     fetchPublicWorkspaceDocuments,
 } from './endpoints';
-import { documentId } from './documentExplorer';
+import { documentDisplayName, documentId } from './documentExplorer';
+import { isScreeningAvailable } from './contentScreening';
 import {
     PERSONAL_SCOPE,
     contextKey,
@@ -66,6 +67,8 @@ export interface ContextSearchOptions {
     groupsEnabled?: boolean;
     publicEnabled?: boolean;
     signal?: AbortSignal;
+    /** The document picker can explain held rows; mention menus omit them. */
+    includeUnavailable?: boolean;
 }
 
 /** Build the item a chosen candidate becomes. */
@@ -76,6 +79,9 @@ export function candidateToContextItem(
     attachment: ContextAttachment = 'selection',
 ): ContextItem {
     if (candidate.kind === 'document' && candidate.document) {
+        if (!isScreeningAvailable(candidate.document)) {
+            throw new Error('This source is held for content review and cannot be selected.');
+        }
         return documentContextItem(candidate.document, candidate.scope, existing, origin, attachment);
     }
     if (candidate.kind === 'tag') {
@@ -87,13 +93,14 @@ export function candidateToContextItem(
 function documentCandidate(
     document: WorkspaceDocument,
     scope: ContextScopeRef,
+    includeUnavailable = false,
 ): ContextCandidate | null {
     const id = documentId(document);
-    if (!id) {
+    if (!id || (!includeUnavailable && !isScreeningAvailable(document))) {
         return null;
     }
 
-    const title = String(document.title ?? '').trim();
+    const title = documentDisplayName(document).primary;
     const fileName = String(document.file_name ?? '').trim();
 
     return {
@@ -269,7 +276,7 @@ export async function searchContextCandidates(
     };
 
     for (const document of personal.documents ?? []) {
-        push(documentCandidate(document, PERSONAL_SCOPE));
+        push(documentCandidate(document, PERSONAL_SCOPE, options.includeUnavailable));
     }
 
     // A response can mix workspaces, so each document names its own; these only cover the
@@ -284,6 +291,7 @@ export async function searchContextCandidates(
             documentCandidate(
                 document,
                 scopeForDocument(document, groupFallback, byGroupId, byWorkspaceId),
+                options.includeUnavailable,
             ),
         );
     }
@@ -292,6 +300,7 @@ export async function searchContextCandidates(
             documentCandidate(
                 document,
                 scopeForDocument(document, publicFallback, byGroupId, byWorkspaceId),
+                options.includeUnavailable,
             ),
         );
     }

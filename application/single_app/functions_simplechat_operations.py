@@ -40,6 +40,7 @@ from functions_activity_logging import (
     log_workflow_creation,
 )
 from functions_appinsights import log_event
+from content_screening.service import prepare_document_upload
 from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_authentication import (
     get_current_user_info,
@@ -2492,6 +2493,9 @@ def _queue_document_upload_background_task(
 
     if not has_app_context():
         raise RuntimeError("SimpleChat document uploads require an active app context")
+
+    if get_settings().get("enable_content_screening") is True:
+        prepare_document_upload(**task_kwargs)
 
     executor = current_app.extensions.get("executor")
     if executor and hasattr(executor, "submit_stored"):

@@ -1,8 +1,9 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.122
+Implemented in: 0.261.105
+Canonical endpoint protocol and strict credential regressions: 0.261.106
 
 Execute the real consumer function bodies with the real import-safe capability
 module. SDK, credential, settings-store, and authorization seams stay in memory;
@@ -22,13 +23,27 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import Mock, patch, sentinel
+from urllib.parse import urlparse
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 # Only the pure capability modules are imported after establishing the app path.
 import functions_ai_connections as connections
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import (
+    REASONING_IDENTIFIER_FIELDS,
+    is_vision_capable_model,
+    project_model_budget_metadata,
+    resolve_model_reasoning_policy,
+)
+from functions_model_endpoint_providers import normalize_custom_endpoint_url_mode
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
+from functions_workflow_context import wrap_workflow_model_client
 
 
 def model(name="gpt-4o", **overrides):
@@ -81,10 +96,19 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "require_model_capability": connections.require_model_capability,
         "supports_model_capability": connections.supports_model_capability,
         "filter_model_endpoints_by_capability": connections.filter_model_endpoints_by_capability,
+        "REASONING_IDENTIFIER_FIELDS": REASONING_IDENTIFIER_FIELDS,
+        "resolve_model_reasoning_policy": resolve_model_reasoning_policy,
+        "project_model_budget_metadata": project_model_budget_metadata,
+        "normalize_custom_endpoint_url_mode": normalize_custom_endpoint_url_mode,
+        "DEFAULT_ANTHROPIC_VERSION": DEFAULT_ANTHROPIC_VERSION,
+        "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
+        "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
         "normalize_model_endpoints": lambda values: (deepcopy(values), False),
-        "sanitize_model_endpoints_for_frontend": deepcopy,
+        "sanitize_model_endpoints_for_frontend": lambda endpoints, **_kwargs: deepcopy(endpoints),
+        "wrap_workflow_model_client": wrap_workflow_model_client,
         "keyvault_model_endpoint_get_helper": Mock(side_effect=lambda value, *args, **kwargs: deepcopy(value)),
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_model_endpoint_identity_headers": Mock(return_value={}),
@@ -127,7 +151,9 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         shared = endpoint(records)
         original = deepcopy(shared)
         governance_checks = []
-        helpers = load_boundaries("route_frontend_chats.py", {"_build_chat_model_catalog"}, {
+        helpers = load_boundaries("route_frontend_chats.py", {
+            "_build_chat_model_catalog", "_chat_model_reasoning_metadata",
+        }, {
             "_filter_chat_model_endpoints_by_governance": lambda user, values, feature: (
                 governance_checks.append((user, feature)) or values
             ),
@@ -273,8 +299,112 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         builder.assert_called_once_with(
             hydrated["auth"], "aoai", selected["connection"]["endpoint"],
             selected["connection"]["openai_api_version"], deployment_name="custom-deployment",
-            settings=settings, endpoint_config=hydrated,
+            api_type="", url_mode="", anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+            allow_private_custom_endpoints=False, allow_insecure_custom_endpoints=False,
+            custom_endpoint_ca_bundle_path="",
+            settings=settings, endpoint_config=hydrated, model_id="selected-model",
         )
+
+    def test_sync_factory_uses_canonical_identity_and_keeps_legacy_name_only_calls(self):
+        protocols = load_boundaries("model_endpoint_clients.py", {
+            "normalize_endpoint_text", "get_endpoint_path", "is_anthropic_model",
+            "endpoint_uses_openai_style_protocol", "infer_model_endpoint_protocol",
+        }, {"urlparse": urlparse}, constants=("ANTHROPIC_MODEL_MARKERS",))
+        for record, deployment, expected in (
+            (model("claude-sonnet-4"), "custom-deployment", "anthropic"),
+            (model("", behavior_name="claude-sonnet-4"), "custom-deployment", "anthropic"),
+            (model("gpt-4o", deploymentName="claude-team-assistant"), "claude-team-assistant", "openai_style"),
+            (None, "claude-sonnet-4", "anthropic"),
+            (None, "gpt-4o", "openai_style"),
+        ):
+            with self.subTest(record=record, deployment=deployment):
+                selected = endpoint([record], provider="new_foundry") if record is not None else None
+                helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+                    "_require_chat_model_for_endpoint", "build_model_endpoint_sync_chat_client",
+                }, {
+                    "infer_model_endpoint_protocol": protocols["infer_model_endpoint_protocol"],
+                    "build_anthropic_chat_client": Mock(return_value=sentinel.client),
+                    "build_openai_style_chat_client": Mock(return_value=sentinel.client),
+                })
+                client, protocol = helpers["build_model_endpoint_sync_chat_client"](
+                    {"type": "api_key", "api_key": "test-only-key"}, "new_foundry",
+                    "https://selected.services.ai.azure.com/api/projects/test", "v1", deployment,
+                    endpoint_config=selected,
+                )
+                self.assertIs(client, sentinel.client)
+                self.assertEqual(protocol, expected)
+                helpers["AzureOpenAI"].assert_not_called()
+                if expected == "anthropic":
+                    helpers["build_anthropic_chat_client"].assert_called_once_with(
+                        endpoint="https://selected.services.ai.azure.com/api/projects/test",
+                        api_key="test-only-key", extra_headers={},
+                    )
+                    helpers["build_openai_style_chat_client"].assert_not_called()
+                else:
+                    helpers["build_openai_style_chat_client"].assert_called_once_with(
+                        "test-only-key", "https://selected.services.ai.azure.com/api/projects/test", "v1",
+                        default_headers={},
+                    )
+                    helpers["build_anthropic_chat_client"].assert_not_called()
+
+    def test_sync_factory_exact_model_id_prevents_alias_based_protocol_retargeting(self):
+        selected = endpoint([
+            model("gpt-4o", id="other-model"),
+            model("claude-sonnet-4"),
+        ], provider="new_foundry")
+        infer = Mock(return_value="anthropic")
+        helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+            "_require_chat_model_for_endpoint", "build_model_endpoint_sync_chat_client",
+        }, {
+            "infer_model_endpoint_protocol": infer,
+            "build_anthropic_chat_client": Mock(return_value=sentinel.client),
+        })
+        client, protocol = helpers["build_model_endpoint_sync_chat_client"](
+            selected["auth"], "new_foundry", selected["connection"]["endpoint"], "v1",
+            "custom-deployment", endpoint_config=selected, model_id="selected-model",
+        )
+        self.assertIs(client, sentinel.client)
+        self.assertEqual(protocol, "anthropic")
+        infer.assert_called_once_with("new_foundry", selected["connection"]["endpoint"], "claude-sonnet-4", "")
+        with self.assertRaises(connections.AIConnectionError):
+            helpers["build_model_endpoint_sync_chat_client"](
+                selected["auth"], "new_foundry", selected["connection"]["endpoint"], "v1",
+                "custom-deployment", endpoint_config=selected, model_id="missing-model",
+            )
+        self.assertEqual(helpers["build_anthropic_chat_client"].call_count, 1)
+        helpers["AzureOpenAI"].assert_not_called()
+        selected = endpoint([model("claude-sonnet-4", id="")], provider="new_foundry")
+        client, protocol = helpers["build_model_endpoint_sync_chat_client"](
+            selected["auth"], "new_foundry", selected["connection"]["endpoint"], "v1",
+            "custom-deployment", endpoint_config=selected, model_id="custom-deployment",
+        )
+        self.assertIs(client, sentinel.client)
+        self.assertEqual(protocol, "anthropic")
+        self.assertEqual(infer.call_args.args[2], "claude-sonnet-4")
+
+    def test_chat_binding_strict_credentials_fail_safely_before_client_creation(self):
+        selected = endpoint()
+        binding = connections.ModelBinding("chat", {
+            "endpoint_id": selected["id"], "model_id": "selected-model", "provider": "aoai",
+        }, selected, selected["models"][0])
+        builder = Mock(return_value=(sentinel.client, "azure_openai"))
+        hydrate = Mock(side_effect=RuntimeError("PRIVATE credential reference and provider response"))
+        vault = SimpleNamespace(
+            SecretReturnType=SimpleNamespace(VALUE="value"), keyvault_model_endpoint_get_helper=hydrate,
+        )
+        helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+            "_require_chat_model_for_endpoint", "build_chat_connection_client",
+        }, {"build_model_endpoint_sync_chat_client": builder})
+        with patch.dict(sys.modules, {"functions_keyvault": vault}):
+            with self.assertRaises(connections.AIConnectionError) as error:
+                helpers["build_chat_connection_client"](binding, {}, strict_credentials=True)
+        self.assertEqual(error.exception.code, "model_configuration_unavailable")
+        self.assertNotIn("PRIVATE", str(error.exception))
+        self.assertTrue(error.exception.__suppress_context__)
+        hydrate.assert_called_once_with(
+            selected, selected["id"], scope="global", return_type="value", strict=True,
+        )
+        builder.assert_not_called()
 
     def test_agent_catalog_keeps_foundry_projects_without_forcing_chat_mode(self):
         image = endpoint([model("gpt-image-1")], provider="new_foundry")

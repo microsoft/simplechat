@@ -297,9 +297,13 @@ def test_creation_and_creation_race_preserve_winner(world):
 
 def load_update_settings(store):
     tree = ast.parse((APP / "functions_settings.py").read_text(encoding="utf-8-sig"))
-    names = {"update_settings", "coerce_multi_model_endpoint_enablement"}
+    names = {
+        "update_settings", "coerce_multi_model_endpoint_enablement",
+        "validate_content_screening_settings",
+    }
     namespace = {
         "copy": copy, "logging": logging,
+        "ScreeningError": type("ScreeningError", (Exception,), {}),
         "COSMOS_METADATA_FIELDS": store_module.COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": store_module.SETTINGS_REVISION_FIELD,
         "_get_app_settings_store": lambda: store,

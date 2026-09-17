@@ -1,6 +1,12 @@
 # route_frontend_chats.py
 
 import logging
+from content_screening.access import (
+    assert_current_request_sources_available,
+    assert_document_available,
+    build_available_document_response,
+)
+from content_screening.contracts import ScreeningError
 from config import *
 from functions_authentication import *
 from functions_content import *
@@ -804,6 +810,22 @@ def _ensure_public_chat_workspace_visible(user_id, request_args, user_settings_d
 
 
 def register_route_frontend_chats(bp):
+    @bp.after_request
+    def protect_legacy_document_preview(response):
+        if str(request.endpoint or "").rsplit(".", 1)[-1] not in {"view_pdf", "view_document"}:
+            return response
+        try:
+            assert_current_request_sources_available()
+        except ScreeningError as error:
+            response = jsonify({"error": error.public_message, "error_code": error.code})
+            response.status_code = error.status_code
+        except (PermissionError, LookupError):
+            response = jsonify({"error": "Document not found or access denied."})
+            response.status_code = 404
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers.pop("ETag", None)
+        return response
+
     @bp.route('/chats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1836,6 +1858,10 @@ def register_route_frontend_chats(bp):
             return doc_response, status_code
 
         raw_doc = doc_response.get_json()
+        try:
+            raw_doc = assert_document_available(doc_id, user_id=user_id, purpose="preview")
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         
         # Determine workspace type and appropriate container
         settings = get_settings()
@@ -1854,6 +1880,9 @@ def register_route_frontend_chats(bp):
                 return jsonify({"error": "User workspaces are not enabled"}), 403
             container_name = storage_account_user_documents_container_name
             blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+
+        if "content_screening" in raw_doc:
+            return build_available_document_response(raw_doc, user_id=user_id, purpose="preview")
 
         # 3) Generate the SAS URL (short-lived, read-only)
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
@@ -1968,7 +1997,6 @@ def register_route_frontend_chats(bp):
     @user_required
     def view_document():
         settings = get_settings()
-        download_location = tempfile.gettempdir()
 
 
         doc_id = request.args.get("doc_id")
@@ -1988,6 +2016,10 @@ def register_route_frontend_chats(bp):
             return doc_response, status_code
 
         raw_doc = doc_response.get_json() # Assuming get_user_document returns jsonify response
+        try:
+            raw_doc = assert_document_available(doc_id, user_id=user_id, purpose="preview")
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         file_name = raw_doc.get('file_name')
         owner_user_id = raw_doc.get('user_id') # Get owner user_id from doc metadata
 
@@ -2012,6 +2044,10 @@ def register_route_frontend_chats(bp):
             blob_name = f"{owner_user_id}/{file_name}"
         file_ext = os.path.splitext(file_name)[-1].lower()
 
+        if "content_screening" in raw_doc:
+            return build_available_document_response(raw_doc, user_id=user_id, purpose="preview")
+
+        download_location = tempfile.gettempdir()
         # Ensure download location exists (good practice, especially if using mount)
         try:
             os.makedirs(download_location, exist_ok=True)

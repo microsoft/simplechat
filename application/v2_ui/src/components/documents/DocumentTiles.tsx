@@ -7,6 +7,7 @@
 // to reach the same place.
 
 import { clsx } from 'clsx';
+import { isScreeningAvailable } from '../../lib/contentScreening';
 import type { WorkspaceDocument } from '../../lib/types';
 import {
     documentDate,
@@ -48,6 +49,7 @@ export function DocumentTiles({
         <ul className="grid grid-cols-1 gap-2 p-1 sm:grid-cols-2 xl:grid-cols-3">
             {documents.map((document) => {
                 const id = documentId(document);
+                const available = isScreeningAvailable(document);
                 const selected = selectedIds.has(id);
                 const { primary, secondary } = documentDisplayName(document);
                 const tags = normalizeTags(document.tags);
@@ -56,17 +58,17 @@ export function DocumentTiles({
                 return (
                     <li key={id}>
                         <div
-                            draggable
+                            draggable={available}
                             onDragStart={(event) => onDragStart(event, id)}
                             onClick={(event) =>
-                                onSelect(
+                                available ? onSelect(
                                     id,
                                     event.shiftKey
                                         ? 'range'
                                         : event.ctrlKey || event.metaKey
                                           ? 'toggle'
                                           : 'replace',
-                                )
+                                ) : onOpen(document)
                             }
                             onDoubleClick={() => onOpen(document)}
                             aria-selected={selected}
@@ -81,6 +83,8 @@ export function DocumentTiles({
                                 <input
                                     type="checkbox"
                                     checked={selected}
+                                    disabled={!available}
+                                    title={available ? undefined : 'Held sources cannot be selected for ordinary use.'}
                                     onClick={(event) => event.stopPropagation()}
                                     onChange={(event) =>
                                         onSelect(
@@ -99,7 +103,17 @@ export function DocumentTiles({
                                 />
                                 <DocumentIcon document={document} size={20} />
                                 <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm text-text-1">{primary}</p>
+                                    <button
+                                        type="button"
+                                        className="max-w-full truncate text-left text-sm text-text-1 hover:underline"
+                                        aria-label={`Details for ${primary}`}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onOpen(document);
+                                        }}
+                                    >
+                                        {primary}
+                                    </button>
                                     {secondary ? (
                                         <p className="truncate text-xs text-text-3">{secondary}</p>
                                     ) : null}

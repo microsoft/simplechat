@@ -505,6 +505,7 @@ storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
 storage_account_personal_chat_container_name = "personal-chat"
 storage_account_group_chat_container_name = "group-chat"
+storage_account_content_screening_container_name = "content-screening"
 
 
 def get_enhanced_citations_storage_container_names():
@@ -827,6 +828,12 @@ cosmos_document_access_index_container_name = "document_access_index"
 cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_document_access_index_container_name,
     partition_key=PartitionKey(path="/scope_key")
+)
+
+cosmos_content_screening_container_name = "content_screening"
+cosmos_content_screening_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_content_screening_container_name,
+    partition_key=PartitionKey(path="/partition_key")
 )
 
 cosmos_key_vault_secret_reminders_container_name = "key_vault_secret_reminders"

@@ -19,6 +19,7 @@ import {
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
 import { PERSONAL_SCOPE } from '../../lib/chatContext';
+import { isScreeningAvailable, isScreeningBusy } from '../../lib/contentScreening';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -181,6 +182,7 @@ export function DocumentExplorer() {
     const [facets, setFacets] = useState<Parameters<typeof ExplorerRail>[0]['facets']>(null);
 
     const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+    const [inspectedId, setInspectedId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [task, setTask] = useState<ExplorerTask | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -236,11 +238,21 @@ export function DocumentExplorer() {
         [downloadsEnabled, features],
     );
 
-    const orderedIds = useMemo(() => documents.map(documentId), [documents]);
+    const orderedIds = useMemo(
+        () => documents.filter(isScreeningAvailable).map(documentId),
+        [documents],
+    );
     const selectedDocuments = useMemo(
-        () => documents.filter((item) => selection.ids.includes(documentId(item))),
+        () => documents.filter((item) => isScreeningAvailable(item) && selection.ids.includes(documentId(item))),
         [documents, selection.ids],
     );
+    const detailDocuments = inspectedId
+        ? documents.filter((item) => documentId(item) === inspectedId)
+        : selectedDocuments;
+
+    useEffect(() => {
+        setSelection((current) => pruneSelection(current, orderedIds));
+    }, [orderedIds]);
 
     /* ---------------------------------------------------------------------- */
     /* Loading                                                                 */
@@ -256,7 +268,7 @@ export function DocumentExplorer() {
                 setDocuments(items);
                 setTotalCount(Number(response.total_count ?? items.length));
                 setDownloadsEnabled(Boolean(response.file_downloads_enabled));
-                setSelection((current) => pruneSelection(current, items.map(documentId)));
+                setSelection((current) => pruneSelection(current, items.filter(isScreeningAvailable).map(documentId)));
             } catch (loadError) {
                 if ((loadError as Error)?.name === 'AbortError') {
                     return;
@@ -306,7 +318,7 @@ export function DocumentExplorer() {
     const processingIds = useMemo(
         () =>
             documents
-                .filter((item) => documentStatus(item).state === 'processing')
+                .filter((item) => documentStatus(item).state === 'processing' || isScreeningBusy(item))
                 .map(documentId)
                 .filter(Boolean),
         [documents],
@@ -408,9 +420,24 @@ export function DocumentExplorer() {
 
     const onSelect = useCallback(
         (id: string, intent: SelectionIntent) => {
+            if (!orderedIds.includes(id)) {
+                return;
+            }
+            setInspectedId(null);
             setSelection((current) => applySelection(current, id, intent, orderedIds));
         },
         [orderedIds],
+    );
+
+    const onOpen = useCallback(
+        (document: WorkspaceDocument) => {
+            setInspectedId(documentId(document));
+            if (!isScreeningAvailable(document)) {
+                setSelection(EMPTY_SELECTION);
+            }
+            updatePrefs({ detailsPaneOpen: true });
+        },
+        [updatePrefs],
     );
 
     useEffect(() => {
@@ -431,15 +458,18 @@ export function DocumentExplorer() {
 
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
                 event.preventDefault();
+                setInspectedId(null);
                 setSelection({ ids: [...orderedIds], anchorId: orderedIds[0] ?? null });
                 return;
             }
             if (event.key === 'Escape') {
                 setSelection(EMPTY_SELECTION);
+                setInspectedId(null);
                 return;
             }
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
+                setInspectedId(null);
                 setSelection((current) =>
                     moveSelection(
                         current,
@@ -457,6 +487,10 @@ export function DocumentExplorer() {
 
     const onDragStart = useCallback(
         (event: React.DragEvent, id: string) => {
+            if (!orderedIds.includes(id)) {
+                event.preventDefault();
+                return;
+            }
             // Dragging an unselected row drags that row alone, which is what every file
             // manager does and what stops a stale selection being filed by accident.
             const ids = selection.ids.includes(id) ? selection.ids : [id];
@@ -469,7 +503,7 @@ export function DocumentExplorer() {
             );
             event.dataTransfer.effectAllowed = 'copy';
         },
-        [selection.ids],
+        [selection.ids, orderedIds],
     );
 
     /* ---------------------------------------------------------------------- */
@@ -618,6 +652,10 @@ export function DocumentExplorer() {
     );
 
     const onDownload = useCallback(async (targets: WorkspaceDocument[]) => {
+        if (targets.some((target) => !isScreeningAvailable(target))) {
+            toast.error('Held content cannot be downloaded. Open Content review.');
+            return;
+        }
         const ids = targets.map(documentId).filter(Boolean);
         if (ids.length === 0) {
             return;
@@ -648,6 +686,10 @@ export function DocumentExplorer() {
      */
     const onChat = useCallback(
         (targets: WorkspaceDocument[]) => {
+            if (targets.some((target) => !isScreeningAvailable(target))) {
+                toast.error('Held content cannot be used in chat. Open Content review.');
+                return;
+            }
             const documents = targets.filter((target) => documentId(target));
             if (documents.length === 0) {
                 return;
@@ -671,6 +713,10 @@ export function DocumentExplorer() {
 
     const onExtractMetadata = useCallback(
         async (targets: WorkspaceDocument[]) => {
+            if (targets.some((target) => !isScreeningAvailable(target))) {
+                toast.error('Held content cannot be analyzed. Open Content review.');
+                return;
+            }
             const ids = targets.map(documentId).filter(Boolean);
             if (ids.length === 0) {
                 return;
@@ -690,6 +736,10 @@ export function DocumentExplorer() {
 
     const onReextract = useCallback(
         async (targets: WorkspaceDocument[], mode: 'read' | 'layout') => {
+            if (targets.some((target) => !isScreeningAvailable(target))) {
+                toast.error('Use Content review to retry screening of held content.');
+                return;
+            }
             const ids = targets.map(documentId).filter(Boolean);
             if (ids.length === 0) {
                 return;
@@ -896,7 +946,7 @@ export function DocumentExplorer() {
                 tagColors={tagColors}
                 classificationColors={classificationColors}
                 onSelect={onSelect}
-                onOpen={() => updatePrefs({ detailsPaneOpen: true })}
+                onOpen={onOpen}
                 onDragStart={onDragStart}
             />
         ) : (
@@ -908,11 +958,12 @@ export function DocumentExplorer() {
                 tagColors={tagColors}
                 classificationColors={classificationColors}
                 onSelect={onSelect}
-                onToggleSelectAll={() =>
-                    setSelection((current) => toggleSelectAll(current, orderedIds))
-                }
+                onToggleSelectAll={() => {
+                    setInspectedId(null);
+                    setSelection((current) => toggleSelectAll(current, orderedIds));
+                }}
                 onSort={onSort}
-                onOpen={() => updatePrefs({ detailsPaneOpen: true })}
+                onOpen={onOpen}
                 onDragStart={onDragStart}
             />
         );
@@ -1029,7 +1080,7 @@ export function DocumentExplorer() {
 
                 {prefs.detailsPaneOpen ? (
                     <DocumentDetailsPane
-                        documents={selectedDocuments}
+                        documents={detailDocuments}
                         availability={availability}
                         actions={{
                             onChat,
