@@ -1,15 +1,17 @@
 # Analyze planning, Retry, downloads, and responsive stabilization
 
-Fixed in version: **0.261.114**, recorded in
+Fixed in version: **0.261.115**, recorded in
 `application/single_app/config.py`.
 
 ## Scope and reproduction baseline
 
 Initial reproduction used `paullizer-react-v2-ui` at
 `c728f62b9a4cd05f4c18fde850082ed76db14168`, application **0.261.112**, after
-#1483 and #1484. Final integration incorporates screening #1485 at
-`c1a417096381a30d351fe4ef1792f10b317af60c`, application **0.261.113**, before
-the stabilization patch bump. It does not reintroduce old feature commits or add workflow
+#1483 and #1484. Integration incorporates screening #1485 at
+`c1a417096381a30d351fe4ef1792f10b317af60c`, application **0.261.113**, and the
+subsequent #1494 baseline at `5af5fc8a`, application **0.261.114**. The final
+stabilization patch uses **0.261.115** to avoid reusing that upstream version.
+It does not reintroduce old feature commits or add workflow
 conditions, loops, aggregation semantics, or another execution/storage engine.
 
 On 2026-09-17, the named Azure test application was still configured for image
@@ -152,7 +154,7 @@ not live model judgment or a complete deployed acceptance run.
 
 ### Validation results and remaining workflow work
 
-The screened integrated build passed **200 affected browser cases**, plus **2**
+The `c1a41709`-based stabilization passed **200 affected browser cases**, plus **2**
 fresh three-document cross-UI cases. The focused backend run passed **99 tests
 and 61 subtests** for downloads, screening integration, planner diagnostics,
 the three-source producer, CORS, and native results. The existing standalone
@@ -177,8 +179,12 @@ a claim that its unmerged fixes are included in this stabilization branch.
 relative to `c1a41709`. Production result contracts, consumption receipts, and
 checkpoint/publication behavior are not redesigned by this fix.
 
-The final local V2 production assets are `index-BO6D1Ehi.js` and
-`index-CtsizXvK.css`. The build passed with the existing large-bundle warning.
+The validated `c1a41709`-based V2 production assets were `index-BO6D1Ehi.js` and
+`index-CtsizXvK.css`. That build passed with the existing large-bundle warning.
+The pre-PR rebuild after incorporating `5af5fc8a` also passed and produced
+`index-Ds8H12Gw.js` and `index-CtsizXvK.css`.
+On that updated baseline, **56 focused functional/browser cases** and **27
+documentation/route-policy cases** passed before publication.
 Backend validation used the repository-pinned Flask **3.1.3**, OpenAI
 **1.109.1**, and Semantic Kernel **1.39.4**, not the machine-global versions.
 The configured historical image tag resolved to registry digest

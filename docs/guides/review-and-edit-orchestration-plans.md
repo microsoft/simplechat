@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.114"
+version: "0.261.115"
 ---
 
 ## Decide what should run
@@ -44,7 +44,7 @@ Research is not compulsory. The planner can answer directly when the available
 context is enough. Capability lookup or model failures produce errors rather
 than a replacement answer-only plan.
 
-Pinned documents specify the inputs, not the operation. Since **0.261.114**, the
+Pinned documents specify the inputs, not the operation. Since **0.261.115**, the
 planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
@@ -124,7 +124,7 @@ document or integration you can no longer use may not be restorable.
 
 ## Recover before a plan exists
 
-Since **0.261.114**, **Retry** on a failed planning question retries planning with
+Since **0.261.115**, **Retry** on a failed planning question retries planning with
 the original prompt, model or agent selection, documents, scope, and approval
 mode retained in that browser tab. It does not use the temporary chat bubble as
 a saved message ID or append a duplicate question. Stop interrupts the local

@@ -1,7 +1,7 @@
 # test_v2_orchestration_elicitation.py
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.114
+Version: 0.261.115
 Implemented in: 0.261.085
 Rich answers implemented in: 0.261.096
 

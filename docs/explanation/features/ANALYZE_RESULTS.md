@@ -4,7 +4,7 @@ Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
 
 Planning, download, and responsive stabilization updated in version:
-**0.261.114**. See [Analyze stabilization](../fixes/ANALYZE_STABILIZATION_FIX.md).
+**0.261.115**. See [Analyze stabilization](../fixes/ANALYZE_STABILIZATION_FIX.md).
 
 ## Overview
 

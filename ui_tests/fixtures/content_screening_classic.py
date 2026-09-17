@@ -1,8 +1,9 @@
 # content_screening_classic.py
 """
 Closed, synthetic API boundary for classic Content Screening browser tests.
-Version: 0.261.108
+Version: 0.261.114
 Implemented in: 0.261.106
+Empty-policy activation coverage: 0.261.114
 
 The real Jinja partials and local browser assets run without application startup,
 real documents, authentication tokens, storage, or inference requests.
@@ -111,6 +112,7 @@ class ClassicScreeningFixture:
         self.unexpected = []
         self.dialogs = []
         self.policy_writes = []
+        self.policy_samples = []
         self.decisions = []
         self.previews = []
         self.remediations = []
@@ -119,6 +121,7 @@ class ClassicScreeningFixture:
         self.configuration_writes = []
         self.generic_approval_writes = []
         self.fail_policy = 0
+        self.fail_configuration = 0
         self.fail_review = 0
         self.fail_decision = 0
         self.fail_evidence = 0
@@ -294,9 +297,15 @@ class ClassicScreeningFixture:
         elif path == "/api/content-screening/configuration":
             if request.method == "PUT":
                 self.configuration_writes.append(request.post_data_json)
+                if self.fail_configuration:
+                    self._fail(route, self.fail_configuration)
+                    return
                 if not self.config["enhanced_citations_enabled"] and request.post_data_json["enabled"]:
                     self._fail(route, 503)
                     return
+                if request.post_data_json["enabled"] and self.policy_etag is None:
+                    self.global_policy = normalize_policy({**self.global_policy, "enabled": True})
+                    self.policy_etag = '"policy-initialized"'
                 self.config["enabled"] = request.post_data_json["enabled"]
             route.fulfill(json=self.config)
             return
@@ -312,6 +321,7 @@ class ClassicScreeningFixture:
         elif path.startswith("/api/content-screening/policies/"):
             global_policy = "/global/global" in path
             if path.endswith("/test"):
+                self.policy_samples.append(request.post_data_json)
                 route.fulfill(json={"status": "findings", "complete": True, "finding_count": 1, "findings": self.findings})
                 return
             if request.method == "PUT":
@@ -327,6 +337,7 @@ class ClassicScreeningFixture:
                     self.global_policy = policy
                 else:
                     self.workspace_policy = policy
+                self.policy_etag = f'"policy-etag-{len(self.policy_writes) + 1}"'
             route.fulfill(json={
                 "scope_type": "global" if global_policy else "personal",
                 "scope_id": "global" if global_policy else USER_ID,

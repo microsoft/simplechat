@@ -1,7 +1,7 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.114
+Version: 0.261.115
 Implemented in: 0.261.109
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.

@@ -1,8 +1,8 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.114
-Implemented in: 0.261.114
+Version: 0.261.115
+Implemented in: 0.261.115
 
 The production controller, stores, SSE reader, message actions, and composer run
 with production CSS. Only HTTP responses are deterministic. No live model,

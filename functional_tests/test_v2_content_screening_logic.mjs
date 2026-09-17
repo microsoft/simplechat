@@ -1,6 +1,7 @@
 // test_v2_content_screening_logic.mjs
-// Version: 0.261.108
+// Version: 0.261.114
 // Implemented in: 0.261.106
+// Empty-policy activation implemented in: 0.261.114
 // Exercises real V2 screening availability and Unicode edit boundaries without a browser.
 
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ const {
 } = await import('../application/v2_ui/src/lib/contentScreeningReview.ts');
 const {
     addScreeningStarterPack, approvedScreeningChoices, editableScreeningPolicy,
-    newCustomScreeningRule, screeningCatalogChoices, screeningModelCatalog,
+    isScreeningPolicyInitialization, newCustomScreeningRule, screeningCatalogChoices, screeningModelCatalog,
     screeningModelIndex, screeningPolicySummary, screeningPolicyTemplates, validateScreeningPolicy,
 } = await import('../application/v2_ui/src/lib/contentScreeningPolicy.ts');
 const screeningApi = await import('../application/v2_ui/src/lib/contentScreeningApi.ts');
@@ -274,6 +275,40 @@ check('workspace summaries never hide inherited AI when local additions are disa
     assert.equal(summary.label, '2 deterministic checks | 1 AI check');
     assert.equal(screeningPolicySummary(draft, false, { ...inherited, enabled: false }).label, 'Administrator baseline disabled');
     assert.equal(screeningPolicySummary(draft, false, null).label, 'Required baseline unavailable');
+});
+
+check('enabled empty and disabled-check policies can be saved without claiming screening coverage', () => {
+    const empty = { ...policy(), rules: [], ai: { ...policy().ai, enabled: false } };
+    assert.deepEqual(validateScreeningPolicy(empty, []), []);
+    const summary = screeningPolicySummary(empty, true);
+    assert.equal(summary.label, 'No active checks configured');
+    assert.match(summary.detail, /normal processing.*workspace adds checks/);
+    assert.match(summary.detail, /Existing holds are unchanged/);
+    const disabledChecks = { ...empty, rules: [{ ...policy().rules[0], enabled: false }] };
+    assert.deepEqual(validateScreeningPolicy(disabledChecks, []), []);
+    assert.equal(screeningPolicySummary(disabledChecks, true).label, summary.label);
+    const workspace = screeningPolicySummary(policy(), false, { enabled: true, rule_count: 0, ai_check_count: 0 });
+    assert.equal(workspace.label, '1 deterministic check | 1 AI check');
+});
+
+check('activation refresh only rebases the same blank baseline, not concurrent configuration edits', () => {
+    const before = {
+        ...policy(), enabled: false, rules: [], fingerprint: 'before',
+        ai: { ...policy().ai, enabled: false, model_selection: { endpoint_id: '', model_id: '' } },
+        allowed_models: [],
+    };
+    const initialized = { ...structuredClone(before), enabled: true, fingerprint: 'initialized' };
+    assert.equal(isScreeningPolicyInitialization(before, initialized), true);
+    assert.equal(isScreeningPolicyInitialization(before, { ...initialized, rules: policy().rules }), false);
+    assert.equal(isScreeningPolicyInitialization(before, {
+        ...initialized, ai: { ...initialized.ai, instructions: 'Another administrator changed the criteria.' },
+    }), false);
+    assert.equal(isScreeningPolicyInitialization(before, {
+        ...initialized, allowed_models: [{ endpoint_id: 'approved', model_id: 'scanner' }],
+    }), false);
+    assert.equal(isScreeningPolicyInitialization(before, {
+        ...initialized, limits: { ...initialized.limits, max_units: 42 },
+    }), false);
 });
 
 check('configured scanner identity includes endpoint and excludes raw endpoint display', () => {

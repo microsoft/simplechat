@@ -1,8 +1,9 @@
 # test_content_screening_policy_parity.py
 """
 Classic and V2 screening policy editor parity, using their real browser assets.
-Version: 0.261.108
+Version: 0.261.114
 Implemented in: 0.261.108
+Empty-policy activation coverage: 0.261.114
 
 Validate custom rules, shared packs, disabled AI settings, independent model
 permissions, and mandatory baseline summaries for #1476. The existing closed
@@ -21,6 +22,7 @@ from ui_tests.test_content_screening_classic import classic_screening  # noqa: F
 from ui_tests.test_v2_content_screening import (
     STARTER_PACKS,
     STARTER_RULE_TEMPLATES,
+    default_policy,
     open_screening_admin,
     screening_ui,  # noqa: F401
 )
@@ -102,6 +104,28 @@ class PolicyUi:
         self.editor.get_by_role("button", name="Save screening policy", exact=True).click()
         expect(self.editor.get_by_text("Screening policy saved.", exact=False)).to_be_visible()
 
+    @property
+    def screening_enabled(self):
+        return self.app.config["enabled"] if self.classic else self.app.scan_enabled
+
+    def configure_screening(self, enabled):
+        if self.classic:
+            self.app.page.locator("#enable_content_screening").set_checked(enabled)
+        else:
+            set_toggle(self.app.page, "Screen workspace content before publication", enabled)
+            self.app.page.get_by_role("button", name="Save changes", exact=True).click()
+            expect(self.app.page.get_by_text("Saved 1 setting.", exact=True)).to_be_visible()
+        expect(self.editor.get_by_role("button", name="Reload saved policy", exact=True)).to_be_enabled()
+
+    def prepare_first_activation(self):
+        self.policy.clear()
+        self.policy.update(default_policy())
+        self.app.policy_etag = None
+        if self.classic:
+            self.app.config["enabled"] = False
+        else:
+            self.app.scan_enabled = False
+
 
 @pytest.fixture(params=["classic", "v2"])
 def policy_ui(request):
@@ -116,6 +140,153 @@ def set_toggle(editor, label, checked):
         toggle.press("Space")
     expect(toggle).to_be_checked(checked=checked)
     return toggle
+
+
+def test_first_activation_saves_an_enabled_empty_policy_and_allows_later_rules(policy_ui):
+    ui = policy_ui
+    ui.prepare_first_activation()
+    ui.open()
+    ui.configure_screening(True)
+    expect(ui.editor.get_by_label("Baseline policy enabled", exact=False)).to_be_checked()
+    expect(ui.summary).to_contain_text("No active checks configured")
+    expect(ui.summary).to_contain_text("New uploads use normal processing")
+    assert ui.screening_enabled is True
+    assert ui.policy["enabled"] is True
+    assert ui.policy["rules"] == [] and ui.policy["ai"]["enabled"] is False
+    initialized_etag = ui.app.policy_etag
+    assert initialized_etag is not None
+    assert not ui.app.policy_writes
+    ui.save()
+    assert ui.app.policy_writes[-1]["etag"] == initialized_etag
+    ui.open()
+    expect(ui.summary).to_contain_text("No active checks configured")
+    assert ui.screening_enabled is True
+    ui.editor.get_by_label("Starter rule pack", exact=True).select_option(label="prompt manipulation v1")
+    ui.editor.get_by_role("button", name="Add starter pack", exact=True).click()
+    ui.save()
+    assert {rule["id"] for rule in ui.policy["rules"]} == {"instruction-override", "source-ranking"}
+    assert ui.policy["ai"]["enabled"] is False and ui.screening_enabled is True
+
+
+def test_first_activation_preserves_policy_draft_and_updates_its_creation_revision(policy_ui):
+    ui = policy_ui
+    ui.prepare_first_activation()
+    ui.open()
+    ui.editor.get_by_role("button", name="Add literal rule", exact=True).click()
+    ui.rules.get_by_label("Rule name", exact=True).fill("Unsaved restriction")
+    ui.rules.get_by_label("Literal values or phrases", exact=True).fill("PRIVATE_DRAFT_VALUE")
+    ui.configure_screening(True)
+    expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("Unsaved restriction")
+    expect(ui.editor.get_by_label("Baseline policy enabled", exact=False)).to_be_checked()
+    assert ui.policy["rules"] == [] and not ui.app.policy_writes
+    initialized_etag = ui.app.policy_etag
+    ui.save()
+    assert ui.app.policy_writes[-1]["etag"] == initialized_etag
+    assert ui.policy["rules"][0]["values"] == ["PRIVATE_DRAFT_VALUE"]
+    assert ui.policy["enabled"] is True and ui.screening_enabled is True
+
+
+def test_activation_keeps_a_new_unfilled_rule_in_the_policy_draft(policy_ui):
+    ui = policy_ui
+    ui.prepare_first_activation()
+    ui.open()
+    ui.editor.get_by_role("button", name="Add regex rule", exact=True).click()
+    ui.configure_screening(True)
+    expect(ui.rules).to_have_count(1)
+    expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("")
+    expect(ui.rules.get_by_label("Regular expression", exact=True)).to_have_value("")
+    assert ui.policy["rules"] == [] and not ui.app.policy_writes
+
+
+def test_policy_draft_survives_an_activation_storage_failure(policy_ui):
+    ui = policy_ui
+    ui.prepare_first_activation()
+    if ui.classic:
+        ui.app.fail_configuration = 503
+    else:
+        ui.app.reject_settings_save = True
+    ui.open()
+    ui.editor.get_by_role("button", name="Add literal rule", exact=True).click()
+    ui.rules.get_by_label("Rule name", exact=True).fill("Keep my draft")
+    ui.rules.get_by_label("Literal values or phrases", exact=True).fill("DRAFT_VALUE")
+    if ui.classic:
+        ui.app.page.locator("#enable_content_screening").check()
+        expect(ui.editor.get_by_text("Content Screening could not be changed.", exact=False)).to_be_visible()
+    else:
+        set_toggle(ui.app.page, "Screen workspace content before publication", True)
+        ui.app.page.get_by_role("button", name="Save changes", exact=True).click()
+        expect(ui.app.page.get_by_text("Settings were not saved.", exact=False)).to_be_visible()
+    expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("Keep my draft")
+    expect(ui.editor.get_by_role("button", name="Save screening policy", exact=True)).to_be_enabled()
+    assert ui.screening_enabled is False and ui.app.policy_etag is None
+    assert not ui.app.policy_writes
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_disabling_or_removing_last_check_can_be_saved_while_feature_stays_enabled(policy_ui, remove):
+    ui = policy_ui
+    if ui.classic:
+        ui.app.config["enabled"] = True
+    else:
+        ui.app.scan_enabled = True
+    ui.open()
+    if remove:
+        ui.rules.get_by_role("button", name=re.compile("^Remove rule")).click()
+    else:
+        set_toggle(ui.rules, "Rule enabled", False)
+    expect(ui.summary).to_contain_text("No active checks configured")
+    ui.save()
+    assert ui.screening_enabled is True and ui.policy["enabled"] is True
+    assert not any(rule["enabled"] for rule in ui.policy["rules"])
+    ui.open()
+    expect(ui.summary).to_contain_text("No active checks configured")
+    assert ui.screening_enabled is True
+
+
+def test_enabling_preserves_existing_disabled_policy_without_activating_its_checks(policy_ui):
+    ui = policy_ui
+    ui.policy["enabled"] = False
+    original = copy.deepcopy(ui.policy)
+    if ui.classic:
+        ui.app.config["enabled"] = False
+    ui.open()
+    ui.configure_screening(True)
+    expect(ui.editor.get_by_label("Baseline policy enabled", exact=False)).not_to_be_checked()
+    expect(ui.summary).to_contain_text("Policy disabled")
+    assert ui.policy == original and not ui.app.policy_writes
+    assert ui.screening_enabled is True
+
+
+def test_settings_refresh_does_not_overwrite_a_concurrent_policy_change(policy_ui):
+    ui = policy_ui
+    if ui.classic:
+        ui.app.config["enabled"] = False
+    ui.open()
+    ui.rules.get_by_label("Rule name", exact=True).fill("My unsaved name")
+    ui.policy["rules"][0]["name"] = "Another administrator's saved name"
+    ui.app.policy_etag = '"concurrent-policy"'
+    if ui.classic:
+        ui.app.page.locator("#enable_content_screening").check()
+    else:
+        set_toggle(ui.app.page, "Screen workspace content before publication", True)
+        ui.app.page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(ui.editor.get_by_text("policy draft", exact=False).filter(has_text="retained")).to_be_visible()
+    expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("My unsaved name")
+    expect(ui.editor.get_by_role("button", name="Save screening policy", exact=True)).to_be_disabled()
+    assert ui.policy["rules"][0]["name"] == "Another administrator's saved name"
+    assert not ui.app.policy_writes
+
+
+def test_empty_policy_can_save_but_sample_test_explains_no_checks(policy_ui):
+    ui = policy_ui
+    ui.policy.update({**default_policy(), "enabled": True})
+    ui.open()
+    ui.editor.get_by_label("Synthetic sample text" if ui.classic else "Sample content", exact=True).fill("Ordinary example")
+    ui.editor.get_by_role("button", name="Test policy draft" if ui.classic else "Test screening policy", exact=True).click()
+    expect(ui.editor.get_by_text("Add an enabled rule or AI check before testing.", exact=False)).to_be_visible()
+    assert not ui.app.policy_samples
+    ui.save()
+    assert ui.policy["enabled"] is True and ui.policy["rules"] == []
 
 
 @pytest.mark.parametrize("rule_type", ["literal", "regex", "pii"])

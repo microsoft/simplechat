@@ -1,8 +1,8 @@
 # test_chat_three_document_smoke.py
 """
 Fresh three-source Analyze, saved evidence, downloads, and cross-UI reuse.
-Version: 0.261.114
-Implemented in: 0.261.114
+Version: 0.261.115
+Implemented in: 0.261.115
 
 Real producer, export builders, saved readers, download route, and both browser
 renderers run offline. Source/storage I/O and provider responses are deterministic;

@@ -1,8 +1,8 @@
 # test_chat_artifact_download_bytes.py
 """
 Functional regressions for authorized generated artifact download bytes.
-Version: 0.261.114
-Implemented in: 0.261.114
+Version: 0.261.115
+Implemented in: 0.261.115
 
 Production route, message/lifecycle authorization, internal blob reader, saved
 analysis/source reader, and response functions execute against isolated storage.

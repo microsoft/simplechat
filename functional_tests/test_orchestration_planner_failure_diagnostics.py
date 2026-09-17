@@ -1,8 +1,8 @@
 # test_orchestration_planner_failure_diagnostics.py
 """
 Functional regressions for planner selection constraints and safe diagnostics.
-Version: 0.261.114
-Implemented in: 0.261.114
+Version: 0.261.115
+Implemented in: 0.261.115
 
 The real planner, registry, request context, and validator use controlled provider
 responses. Tests distinguish missing selected work from malformed/provider output,
