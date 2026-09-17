@@ -13,6 +13,7 @@ import ast
 import json
 import logging
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,6 +135,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         raise AssertionError("Result consumption must not upload or re-index a workspace document.")
 
     analysis = _load_production_functions(ANALYSIS, {
+        "time": time,
         "log_event": lambda *args, **kwargs: None,
         "debug_print": lambda *args, **kwargs: None,
         "normalize_search_id_list": lambda values: list(values or []),
@@ -189,6 +191,9 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
     })
     runner.update({
         "_result_reads": loaded_refs,
+        # These fixtures deliberately exercise the legacy producer contract; modern
+        # work-unit guards are covered by test_analyze_live_write_fences.py.
+        "_prepare_workflow_analysis_checkpoints": lambda *args, **kwargs: None,
         "_raise_if_workflow_run_cancelled": lambda *args, **kwargs: None,
         "_resolve_model_workflow_client": lambda *args, **kwargs: (
             runner["WorkflowModelClient"](client, {
@@ -200,10 +205,10 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         ),
         "save_personal_workflow_run_item": store_namespace["save_personal_workflow_run_item"],
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
-            envelope, save_result=save_section, **kwargs,
+            envelope, **{"save_result": save_section, **kwargs},
         ),
-        "load_workflow_task_input": lambda workflow, run_id, task_id, reference: load_workflow_task_input(
-            workflow, run_id, task_id, reference, load_result=load_section,
+        "load_workflow_task_input": lambda workflow, run_id, task_id, reference, **kwargs: load_workflow_task_input(
+            workflow, run_id, task_id, reference, load_result=load_section, **kwargs,
         ),
         "_initialize_document_run_items": lambda *args, **kwargs: None,
         "_build_run_item_activity_callback": lambda *args, **kwargs: None,

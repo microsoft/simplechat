@@ -1,7 +1,7 @@
 # test_analysis_result_store.py
 """
 Functional tests for chat/orchestration reuse of the shared immutable result store.
-Version: 0.261.107
+Version: 0.261.109
 Implemented in: 0.261.107
 
 The existing SDK doubles exercise real owner/conversation/assistant-message or
@@ -731,10 +731,6 @@ class ChatAnalysisResultStoreTests(unittest.TestCase):
         }
         for name, parameters in signatures.items():
             self.assertEqual(list(inspect.signature(getattr(store_module, name)).parameters), parameters)
-        guard_parameters = inspect.signature(store_module.save_chat_analysis_result).parameters
-        self.assertIsNone(guard_parameters["guard_token"].default)
-        self.assertIs(guard_parameters["require_analysis_guard"].default, False)
-        self.assertEqual(guard_parameters["guard_token"].kind, inspect.Parameter.KEYWORD_ONLY)
         for method in (store_module.read_chat_analysis_result_page, store_module.WorkflowResultStore.read_chat_page):
             signature = inspect.signature(method)
             self.assertEqual(signature.parameters["offset"].default, 0)
@@ -744,6 +740,12 @@ class ChatAnalysisResultStoreTests(unittest.TestCase):
             inspect.signature(store_module.save_chat_analysis_result).parameters["settings"].kind,
             inspect.Parameter.KEYWORD_ONLY,
         )
+        for method in (store_module.save_chat_analysis_result, store_module.WorkflowResultStore.save_chat):
+            signature = inspect.signature(method)
+            self.assertIsNone(signature.parameters["guard_token"].default)
+            self.assertIs(signature.parameters["require_analysis_guard"].default, False)
+            self.assertEqual(signature.parameters["guard_token"].kind, inspect.Parameter.KEYWORD_ONLY)
+            self.assertEqual(signature.parameters["require_analysis_guard"].kind, inspect.Parameter.KEYWORD_ONLY)
         for method in (store_module.delete_chat_analysis_results, store_module.WorkflowResultStore.delete_chat_results):
             self.assertIsNone(inspect.signature(method).parameters["message_id"].default)
 
@@ -1293,10 +1295,11 @@ class OrchestrationAnalysisResultStoreTests(unittest.TestCase):
             for name, parameters in signatures.items():
                 self.assertEqual(list(inspect.signature(getattr(owner, name)).parameters), parameters)
         for method in (store_module.save_orchestration_analysis_result, store_module.WorkflowResultStore.save_orchestration):
-            guard_parameters = inspect.signature(method).parameters
-            self.assertIsNone(guard_parameters["guard_token"].default)
-            self.assertIs(guard_parameters["require_analysis_guard"].default, False)
-            self.assertEqual(guard_parameters["guard_token"].kind, inspect.Parameter.KEYWORD_ONLY)
+            signature = inspect.signature(method)
+            self.assertIsNone(signature.parameters["guard_token"].default)
+            self.assertIs(signature.parameters["require_analysis_guard"].default, False)
+            self.assertEqual(signature.parameters["guard_token"].kind, inspect.Parameter.KEYWORD_ONLY)
+            self.assertEqual(signature.parameters["require_analysis_guard"].kind, inspect.Parameter.KEYWORD_ONLY)
         for method in (
             store_module.read_orchestration_analysis_result_page, store_module.WorkflowResultStore.read_orchestration_page,
         ):

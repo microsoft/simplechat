@@ -75,6 +75,13 @@ import {
     type ReasoningResolution,
 } from '../lib/reasoning';
 import { promptSelectionMetadata } from '../lib/promptRequest';
+import {
+    analysisResultContext,
+    applySavedAnalysisContext,
+    latestSavedAnalysis,
+    readSavedAnalysis,
+    sameAnalysis,
+} from '../lib/savedAnalysis';
 import type { RunStreamEvent } from '../lib/orchestration';
 import {
     applySelection,
@@ -112,6 +119,7 @@ import type { MaskAction, MaskSelection } from '../lib/masking';
 import type { VisualStyle } from '../lib/visualPalettes';
 import type {
     AgentOption,
+    AnalysisResultContext,
     ChatMessage,
     ChatStreamEvent,
     ChatStreamRequest,
@@ -120,6 +128,7 @@ import type {
     Conversation,
     ConversationMetadata,
     Json,
+    SavedAnalysisDescriptor,
     ThoughtEntry,
 } from '../lib/types';
 import { isCollaborative } from '../lib/types';
@@ -253,6 +262,12 @@ interface ChatState {
     messages: ChatMessage[];
     messagesLoading: boolean;
     messagesError: string | null;
+    analysisResultContext: AnalysisResultContext | null;
+    analysisContextRevision: number;
+    analysisContextChosen: boolean;
+    analysisTurnRevision: number | null;
+    selectAnalysisResult: (descriptor: SavedAnalysisDescriptor, expectedRevision?: number) => void;
+    clearAnalysisResultContext: () => void;
 
     streaming: boolean;
     streamingContent: string;
@@ -821,6 +836,7 @@ function buildStreamHandlers(
      */
     pendingUserMessageId?: string | null,
 ): ChatStreamHandlers {
+    const analysisRevision = getState().analysisContextRevision;
     const completionMetadata = (event: ChatStreamEvent) =>
         reasoningMetadataForEvent(event, getState().streamingReasoningAdjustments);
     return {
@@ -923,6 +939,10 @@ function buildStreamHandlers(
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
             }));
+            const descriptor = latestSavedAnalysis([finalMessage]);
+            if (descriptor) {
+                getState().selectAnalysisResult(descriptor, analysisRevision);
+            }
         },
         onCancelled: (_event, accumulated) => {
             if (!isCurrent()) {
@@ -1529,6 +1549,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     messages: [],
     messagesLoading: false,
     messagesError: null,
+    analysisResultContext: null,
+    analysisContextRevision: 0,
+    analysisContextChosen: false,
+    analysisTurnRevision: null,
+
+    selectAnalysisResult: (value, expectedRevision) => {
+        const descriptor = readSavedAnalysis({ saved_analysis: value });
+        if (!descriptor || descriptor.available === false ||
+            descriptor.conversation_id !== get().activeConversationId ||
+            (expectedRevision !== undefined && expectedRevision !== get().analysisContextRevision)) {
+            return;
+        }
+        set((state) => ({
+            analysisResultContext: analysisResultContext(descriptor),
+            analysisContextChosen: true,
+            analysisContextRevision: state.analysisContextRevision + 1,
+        }));
+    },
+
+    clearAnalysisResultContext: () => set((state) => ({
+        analysisResultContext: null,
+        analysisContextChosen: true,
+        analysisContextRevision: state.analysisContextRevision + 1,
+    })),
 
     streaming: false,
     streamingContent: '',
@@ -1623,10 +1667,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const listed = get().conversations.find((item) => item.id === conversationId);
         const knownKind: ConversationKind | null =
             options.kind ?? (listed ? (isCollaborative(listed) ? 'collaborative' : 'personal') : null);
+        const analysisConversationChanged = get().activeConversationId !== conversationId;
 
         set({
             activeConversationId: conversationId,
             activeConversationKind: knownKind,
+            analysisResultContext: analysisConversationChanged ? null : get().analysisResultContext,
+            analysisContextChosen: analysisConversationChanged ? false : get().analysisContextChosen,
+            analysisContextRevision: get().analysisContextRevision + (analysisConversationChanged ? 1 : 0),
+            analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
             messages: [],
             messagesError: null,
             streamingContent: '',
@@ -1651,6 +1700,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         set({ messagesLoading: true });
+        const analysisRevision = get().analysisContextRevision;
         try {
             let prefetched = options.prefetched;
             let kind = knownKind;
@@ -1675,6 +1725,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 return;
             }
             set({ messages: messages ?? [], messagesLoading: false });
+            const descriptor = latestSavedAnalysis(messages ?? []);
+            if (descriptor && !get().analysisContextChosen) {
+                get().selectAnalysisResult(descriptor, analysisRevision);
+            }
 
             // The header badges describe what this conversation is bound to, so its
             // metadata is needed as soon as it opens rather than only when a drawer is
@@ -1803,6 +1857,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // when someone clicks New Chat and navigates away.
         set({
             activeConversationId: null,
+            analysisResultContext: null,
+            analysisContextChosen: false,
+            analysisContextRevision: get().analysisContextRevision + 1,
+            analysisTurnRevision: null,
             // A new chat is always personal. Sharing is something done to a conversation
             // that already exists, so there is no way to start one shared.
             activeConversationKind: null,
@@ -2185,6 +2243,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         let conversationId = get().activeConversationId;
+        const selectedAnalysis = get().analysisResultContext;
+        const savedContext = selectedAnalysis?.conversation_id === conversationId ? selectedAnalysis : null;
         const isNewConversation = !conversationId;
         const collaborative = Boolean(
             conversationId && isCollaborativeConversation(get(), conversationId),
@@ -2244,18 +2304,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   {
                       agentSelection: options.agentSelection,
                       promptId: options.promptId,
-                      documentSearch: options.documentSearch,
-                      webSearch: options.webSearch,
-                      imageGeneration: options.imageGeneration,
-                      deepResearch: options.deepResearch,
-                      urlAccess: options.urlAccess,
+                      documentSearch: !savedContext && options.documentSearch,
+                      webSearch: !savedContext && options.webSearch,
+                      imageGeneration: !savedContext && options.imageGeneration,
+                      deepResearch: !savedContext && options.deepResearch,
+                      urlAccess: !savedContext && options.urlAccess,
                       modelDeployment: options.modelDeployment,
                   },
                   {
                       agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
                       models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
                   },
-              )
+              ) ?? (savedContext ? {
+                  target_type: 'model' as const,
+                  display_name: 'Model',
+                  mention_text: '@Model',
+                  source_mode: 'saved_analysis',
+                  selection_key: options.modelDeployment,
+              } : null)
             : null;
 
         /**
@@ -2371,7 +2437,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             contextPublicWorkspaceIds: contextWorkspaces.publicWorkspaceIds,
         });
 
-        const requestBody: ChatStreamRequest = {
+        let requestBody: ChatStreamRequest = {
             message: trimmed,
             conversation_id: conversationId,
             // Deliberately always 'user'. The server derives scope_id/scope_type from this
@@ -2434,6 +2500,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reasoningEffort: options.reasoningEffort,
             }),
         );
+
+        requestBody = applySavedAnalysisContext(requestBody, savedContext);
 
         if (collaborative) {
             // The collaboration stream reads the text as `content` and records who was
@@ -2531,6 +2599,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ]
                     : state.messages,
                 streaming: true,
+                analysisTurnRevision: state.analysisContextRevision,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -2707,6 +2776,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             };
         });
 
+        const descriptor = outcome.status === 'completed' ? latestSavedAnalysis([finalMessage]) : null;
+        const analysisRevision = get().analysisTurnRevision;
+        if (descriptor && analysisRevision !== null) {
+            get().selectAnalysisResult(descriptor, analysisRevision);
+        }
+
         // The Documents drawer reads the conversation's used-document list rather than the
         // message's citations, and the server only extends that list once the run finishes.
         // Without this refetch the drawer keeps reporting the state it was fetched in --
@@ -2817,6 +2892,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     reloadMessages: async () => {
         const conversationId = get().activeConversationId;
+        const analysisRevision = get().analysisContextRevision;
         if (!conversationId) {
             return;
         }
@@ -2829,6 +2905,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 return;
             }
             set({ messages: messages ?? [] });
+            const selected = get().analysisResultContext;
+            if (selected && get().analysisContextRevision === analysisRevision && !(messages ?? []).some((message) =>
+                sameAnalysis(selected, latestSavedAnalysis([message])),
+            )) {
+                get().clearAnalysisResultContext();
+            }
+            if (!get().analysisContextChosen) {
+                const descriptor = latestSavedAnalysis(messages ?? []);
+                if (descriptor) {
+                    get().selectAnalysisResult(descriptor, analysisRevision);
+                }
+            }
             // Attempt switches and deletions change which documents the conversation
             // cites, so cached metadata is no longer trustworthy.
             set({ metadata: null });

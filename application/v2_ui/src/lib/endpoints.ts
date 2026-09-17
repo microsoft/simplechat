@@ -8,6 +8,7 @@
 import { api, apiUrl, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
 import { buildDocumentListParams } from './documentExplorer';
 import { artifactDownloadPath } from './generatedArtifacts';
+import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type { ExportVisualAsset } from './exportVisuals';
 import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
@@ -27,9 +28,46 @@ import type {
     DocumentQuery,
     Json,
     PersistedThought,
+    SavedAnalysisDescriptor,
+    SavedAnalysisEvidence,
     WorkspaceDocument,
     WorkspaceTag,
 } from './types';
+
+export async function fetchAnalysisRecords(
+    descriptor: SavedAnalysisDescriptor,
+    offset = 0,
+    signal?: AbortSignal,
+) {
+    const query = new URLSearchParams({
+        ...analysisResultContext(descriptor),
+        offset: String(offset),
+        limit: String(ANALYSIS_PAGE_SIZE),
+    });
+    const page = await api.get<unknown>(`/api/analysis_results?${query}`, signal);
+    return validateAnalysisPage(page, descriptor, offset);
+}
+
+export async function fetchAnalysisEvidence(
+    descriptor: SavedAnalysisDescriptor,
+    recordId: string,
+    signal?: AbortSignal,
+): Promise<SavedAnalysisEvidence[]> {
+    const query = new URLSearchParams({
+        ...analysisResultContext(descriptor),
+        representation: 'evidence',
+        record_id: recordId,
+    });
+    const result = await api.get<{ evidence: SavedAnalysisEvidence[]; result_sha256: string }>(
+        `/api/analysis_results?${query}`, signal,
+    );
+    if (result?.result_sha256 !== descriptor.result_sha256 || !Array.isArray(result.evidence) ||
+        result.evidence.some((item) => !item || typeof item.evidence_id !== 'string' ||
+            typeof item.document_id !== 'string')) {
+        throw new ApiError('Evidence does not match this saved analysis.', 409, null);
+    }
+    return result.evidence;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Bootstrap                                                                   */

@@ -11,6 +11,7 @@ from functions_collaboration import (
 )
 from functions_settings import get_settings
 from functions_thoughts import get_thoughts_for_message, get_pending_thoughts
+from functions_saved_analysis import authorize_saved_analysis_message_read
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_appinsights import log_event
 
@@ -32,6 +33,7 @@ def register_route_backend_thoughts(bp):
             return jsonify({'thoughts': [], 'enabled': False}), 200
 
         try:
+            authorize_saved_analysis_message_read(user_id, conversation_id, message_id, allow_pending=True)
             thoughts = get_thoughts_for_message(conversation_id, message_id, user_id)
             if not thoughts:
                 try:
@@ -66,8 +68,10 @@ def register_route_backend_thoughts(bp):
                     'timestamp': t.get('timestamp')
                 })
             return jsonify({'thoughts': sanitized, 'enabled': True}), 200
-        except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+        except PermissionError:
+            return jsonify({'error': 'Access to this message is not allowed.'}), 403
+        except (CosmosResourceNotFoundError, LookupError):
+            return jsonify({'error': 'Message not found.'}), 404
         except Exception as e:
             log_event(f"api_get_message_thoughts error: {e}", level="WARNING")
             return jsonify({'error': 'Failed to retrieve thoughts'}), 500
@@ -104,6 +108,10 @@ def register_route_backend_thoughts(bp):
 
             message_id = request.args.get('message_id')
             thoughts = get_pending_thoughts(conversation_id, user_id, message_id=message_id)
+            for thought_message_id in {thought.get('message_id') for thought in thoughts}:
+                authorize_saved_analysis_message_read(
+                    user_id, conversation_id, thought_message_id, allow_pending=True,
+                )
             sanitized = []
             for t in thoughts:
                 sanitized.append({
@@ -119,8 +127,10 @@ def register_route_backend_thoughts(bp):
                     'timestamp': t.get('timestamp')
                 })
             return jsonify({'thoughts': sanitized, 'enabled': True}), 200
-        except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+        except PermissionError:
+            return jsonify({'error': 'Access to this message is not allowed.'}), 403
+        except (CosmosResourceNotFoundError, LookupError):
+            return jsonify({'error': 'Message not found.'}), 404
         except Exception as e:
             log_event(f"api_get_pending_thoughts error: {e}", level="WARNING")
             return jsonify({'error': 'Failed to retrieve pending thoughts'}), 500

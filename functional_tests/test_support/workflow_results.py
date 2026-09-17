@@ -35,6 +35,7 @@ from functions_workflow_results import (
     persist_workflow_task_result,
     workflow_result_summary,
 )
+from functions_saved_analysis import SavedAnalysisInput, explain_saved_analysis
 
 
 def workflow_result_helpers():
@@ -63,6 +64,8 @@ def workflow_result_helpers():
         "WorkflowContextBudgetError": WorkflowContextBudgetError,
         "WorkflowResultNotReadyError": WorkflowResultNotReadyError,
         "WorkflowModelClient": WorkflowModelClient,
+        "SavedAnalysisInput": SavedAnalysisInput,
+        "explain_saved_analysis": explain_saved_analysis,
         "invoke_workflow_agent": invoke_workflow_agent,
         "raise_if_workflow_context_blocked": raise_if_workflow_context_blocked,
         "workflow_context_budget_scope": workflow_context_budget_scope,
@@ -70,8 +73,8 @@ def workflow_result_helpers():
         "wrap_workflow_model_client": wrap_workflow_model_client,
         "build_workflow_task_result": build_workflow_task_result,
         "get_workflow_result_text": get_workflow_result_text,
-        "load_workflow_task_input": lambda workflow, run_id, task_id, reference: load_workflow_task_input(
-            workflow, run_id, task_id, reference, load_result=load_result,
+        "load_workflow_task_input": lambda workflow, run_id, task_id, reference, **kwargs: load_workflow_task_input(
+            workflow, run_id, task_id, reference, load_result=load_result, **kwargs,
         ),
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
             envelope, save_result=save_result, **kwargs,

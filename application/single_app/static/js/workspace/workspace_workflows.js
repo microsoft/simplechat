@@ -105,6 +105,12 @@ const workflowTaskModelSelect = document.getElementById("workflow-task-model");
 const workflowTaskAgentFields = document.getElementById("workflow-task-agent-fields");
 const workflowTaskAgentSelect = document.getElementById("workflow-task-agent");
 const workflowTaskAgentHelp = document.getElementById("workflow-task-agent-help");
+const workflowPublicationEnabled = document.getElementById("workflow-task-publication-enabled");
+const workflowPublicationFields = document.getElementById("workflow-task-publication-fields");
+const workflowPublicationFormat = document.getElementById("workflow-task-publication-format");
+const workflowPublicationScope = document.getElementById("workflow-task-publication-scope");
+const workflowPublicationWorkspaceGroup = document.getElementById("workflow-task-publication-workspace-group");
+const workflowPublicationWorkspaceId = document.getElementById("workflow-task-publication-workspace-id");
 const workflowUrlAccessEnabledToggle = document.getElementById("workflow-url-access-enabled");
 const workflowRunnerTypeSelect = document.getElementById("workflow-runner-type");
 const workflowAgentFields = document.getElementById("workflow-agent-fields");
@@ -656,6 +662,9 @@ function getWorkflowDefaultRunnerSummary() {
 }
 
 function getWorkflowTaskRunnerSummary(task) {
+    if (task?.publication) {
+        return "Publish existing artifact (no model call)";
+    }
     const runner = normalizeWorkflowTaskRunner(task?.runner);
     if (runner.type === "inherit") {
         return `Workflow default: ${getWorkflowDefaultRunnerSummary()}`;
@@ -842,6 +851,104 @@ function updateWorkflowTaskRunnerFields(runner = null) {
     }
 }
 
+function normalizeWorkflowPublication(publication) {
+    if (!publication || typeof publication !== "object" || Array.isArray(publication)) {
+        return null;
+    }
+    const format = normalizeText(publication.artifact_format).toLowerCase();
+    const scope = normalizeText(publication.workspace_scope).toLowerCase();
+    const normalized = { artifact_format: format === "markdown" ? "md" : format, workspace_scope: scope };
+    if (scope === "group") {
+        normalized.group_id = normalizeText(publication.group_id);
+    } else if (scope === "public") {
+        normalized.public_workspace_id = normalizeText(publication.public_workspace_id);
+    }
+    return normalized;
+}
+
+function readWorkflowPublication() {
+    if (!workflowPublicationEnabled) {
+        return normalizeWorkflowPublication(getActiveWorkflowTask()?.publication);
+    }
+    if (!workflowPublicationEnabled.checked) {
+        return null;
+    }
+    const scope = normalizeText(workflowPublicationScope?.value);
+    return normalizeWorkflowPublication({
+        artifact_format: workflowPublicationFormat?.value,
+        workspace_scope: scope,
+        group_id: scope === "group" ? workflowPublicationWorkspaceId?.value : "",
+        public_workspace_id: scope === "public" ? workflowPublicationWorkspaceId?.value : "",
+    });
+}
+
+function updateWorkflowPublicationFields() {
+    const enabled = Boolean(workflowPublicationEnabled?.checked);
+    const shared = ["group", "public"].includes(workflowPublicationScope?.value);
+    setElementVisibility(workflowPublicationFields, enabled);
+    setElementVisibility(workflowPublicationWorkspaceGroup, enabled && shared);
+    [workflowPublicationFormat, workflowPublicationScope, workflowPublicationWorkspaceId].forEach((control) => {
+        if (control) {
+            control.disabled = !enabled;
+        }
+    });
+    [
+        workflowTaskRunnerTypeSelect, workflowTaskPromptInput, workflowTaskBriefInput,
+        workflowDraftInstructionsBtn, workflowDocumentActionTypeSelect,
+    ].forEach((control) => {
+        if (control) {
+            control.disabled = enabled;
+        }
+    });
+    if (enabled) {
+        if (workflowTaskRunnerTypeSelect) {
+            workflowTaskRunnerTypeSelect.value = "inherit";
+        }
+        if (workflowDocumentActionTypeSelect) {
+            workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
+        }
+        setElementVisibility(workflowTaskModelFields, false);
+        setElementVisibility(workflowTaskAgentFields, false);
+    }
+}
+
+function applyWorkflowPublicationToForm(publication) {
+    const value = normalizeWorkflowPublication(publication);
+    if (workflowPublicationEnabled) {
+        workflowPublicationEnabled.checked = Boolean(value);
+    }
+    if (workflowPublicationFormat) {
+        workflowPublicationFormat.value = value?.artifact_format || "md";
+    }
+    if (workflowPublicationScope) {
+        workflowPublicationScope.value = value?.workspace_scope || "";
+    }
+    if (workflowPublicationWorkspaceId) {
+        workflowPublicationWorkspaceId.value = value?.group_id || value?.public_workspace_id || "";
+    }
+    updateWorkflowPublicationFields();
+}
+
+function validateWorkflowPublication(publication, index) {
+    if (!publication) {
+        return;
+    }
+    if (index === 0) {
+        throw new Error("Add an analysis task before its publication task.");
+    }
+    if (!["md", "csv", "json", "xml", "docx", "pdf"].includes(publication.artifact_format)) {
+        throw new Error(`Choose an existing artifact format for task ${index + 1}.`);
+    }
+    const scope = publication.workspace_scope;
+    if (!["personal", "group", "public"].includes(scope)) {
+        throw new Error(`Choose an explicit publication destination for task ${index + 1}.`);
+    }
+    const workspaceId = scope === "group" ? publication.group_id : publication.public_workspace_id;
+    if (scope !== "personal" && (!normalizeText(workspaceId) || workspaceId.length > 256)) {
+        throw new Error(`Enter the fixed destination workspace ID for task ${index + 1}.`);
+    }
+}
+
 function syncActiveWorkflowTaskFromEditor() {
     const activeTask = getActiveWorkflowTask();
     if (!activeTask) {
@@ -874,6 +981,15 @@ function syncActiveWorkflowTaskFromEditor() {
         activeTask.runner = { type: "inherit" };
     }
     activeTask.document_action = readWorkflowDocumentActionFromForm();
+    const publication = readWorkflowPublication();
+    if (publication) {
+        activeTask.publication = publication;
+        activeTask.runner = { type: "inherit" };
+        activeTask.document_action = createDefaultWorkflowTaskDocumentAction();
+        activeTask.instructions = activeTask.instructions || "Publish the existing analysis artifact.";
+    } else {
+        delete activeTask.publication;
+    }
 }
 
 function populateWorkflowTaskEditor() {
@@ -890,6 +1006,7 @@ function populateWorkflowTaskEditor() {
     }
     updateWorkflowTaskRunnerFields(runner);
     applyWorkflowDocumentActionToForm(activeTask?.document_action);
+    applyWorkflowPublicationToForm(activeTask?.publication);
     ensureWorkflowDocumentPickerLoaded().catch((error) => {
         setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
     });
@@ -1043,6 +1160,7 @@ function initializeWorkflowTasks(workflow = null) {
             order: index + 1,
             runner: normalizeWorkflowTaskRunner(task.runner),
             document_action: resolveTaskDocumentAction(task, index),
+            ...(task.publication ? { publication: normalizeWorkflowPublication(task.publication) } : {}),
         }))
         : [{
             id: createWorkflowTaskId(),
@@ -1134,6 +1252,13 @@ function renderWorkflowReview() {
             `Task ${index + 1}`,
             `${normalizeText(task.name) || `Task ${index + 1}`} - ${getWorkflowTaskRunnerSummary(task)} - ${getWorkflowDocumentActionSummary({ document_action: task.document_action })}`,
         );
+        if (task.publication) {
+            const destination = task.publication.group_id || task.publication.public_workspace_id || "your personal workspace";
+            addWorkflowReviewItem(
+                `Task ${index + 1} publication`,
+                `${task.publication.artifact_format.toUpperCase()} to ${task.publication.workspace_scope}: ${destination}`,
+            );
+        }
     });
 }
 
@@ -1175,6 +1300,7 @@ function validateWorkflowTasks() {
             return false;
         }
         try {
+            validateWorkflowPublication(task.publication, index);
             validateWorkflowTaskDocumentAction(
                 serializeWorkflowDocumentAction(task.document_action),
                 getWorkflowTaskLabel(task, index),
@@ -4172,6 +4298,7 @@ function buildWorkflowPayload() {
         order: index + 1,
         runner: serializeWorkflowTaskRunner(task.runner),
         document_action: serializeWorkflowDocumentAction(task.document_action),
+        ...(task.publication ? { publication: normalizeWorkflowPublication(task.publication) } : {}),
     }));
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
@@ -4240,6 +4367,7 @@ function buildWorkflowPayload() {
     }
     const usesDynamicFileSyncTargets = payload.file_sync.enabled && payload.file_sync.use_changed_documents;
     payload.tasks.forEach((task, index) => {
+        validateWorkflowPublication(task.publication, index);
         validateWorkflowTaskDocumentAction(
             task.document_action,
             getWorkflowTaskLabel(task, index),
@@ -4853,6 +4981,25 @@ function initializeWorkflowEvents() {
     workflowTaskPromptInput?.addEventListener("input", () => {
         syncActiveWorkflowTaskFromEditor();
         renderWorkflowTasks();
+    });
+    workflowPublicationEnabled?.addEventListener("change", () => {
+        updateWorkflowPublicationFields();
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowPublicationScope?.addEventListener("change", () => {
+        if (workflowPublicationWorkspaceId) {
+            workflowPublicationWorkspaceId.value = "";
+        }
+        updateWorkflowPublicationFields();
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    [workflowPublicationFormat, workflowPublicationWorkspaceId].forEach((control) => {
+        control?.addEventListener("input", () => {
+            syncActiveWorkflowTaskFromEditor();
+            renderWorkflowTasks();
+        });
     });
     workflowStepBackBtn?.addEventListener("click", () => navigateWorkflowStep(currentWorkflowStepIndex - 1));
     workflowStepNextBtn?.addEventListener("click", () => navigateWorkflowStep(currentWorkflowStepIndex + 1));

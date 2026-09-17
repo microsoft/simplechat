@@ -61,6 +61,7 @@ from functions_mixed_source_orchestration import (
     EVIDENCE_STATUS_COMPLETED,
     EVIDENCE_STATUS_FAILED,
     EVIDENCE_STATUS_PARTIAL,
+    EVIDENCE_STATUS_PENDING,
     MixedSourceCancellationError,
     SELECTION_MODE_SELECTED,
     SOURCE_KIND_NARRATIVE,
@@ -88,6 +89,7 @@ from functions_orchestration_schema import (
     STEP_STATUS_CANCELLED,
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
+    STEP_STATUS_PENDING,
     build_step_result,
     build_failure,
     failure_from_exception,
@@ -345,9 +347,9 @@ def resolve_context_source_manifest(
     if callable(resolver):
         return list(resolver(ids) or [])
 
-    from functions_mixed_source_orchestration import resolve_authorized_source_manifest
+    from functions_analysis_access import resolve_analysis_source_manifest
 
-    return list(resolve_authorized_source_manifest(
+    return list(resolve_analysis_source_manifest(
         ids,
         user_id or _ctx(context, 'user_id', None),
         selection_mode=selection,
@@ -555,7 +557,9 @@ def _analysis_envelopes(result, requested_document_ids):
         processed_windows = _coerce_int(coverage.get('processed_windows'), 0)
         failed_windows = _coerce_int(coverage.get('failed_windows'), 0)
 
-        if total_windows and processed_windows >= total_windows and not failed_windows:
+        if result.get('execution_status') == 'pending':
+            status = EVIDENCE_STATUS_PENDING
+        elif total_windows and processed_windows >= total_windows and not failed_windows:
             status = EVIDENCE_STATUS_COMPLETED
         elif processed_windows:
             status = EVIDENCE_STATUS_PARTIAL
@@ -563,14 +567,26 @@ def _analysis_envelopes(result, requested_document_ids):
             status = EVIDENCE_STATUS_FAILED
 
         summary = _text(item.get('text'))
+        if result.get('analysis_result_version') == 'analyze-final-v1':
+            records = (result.get('authoritative_result') or {}).get('value') or []
+            summary = json.dumps([
+                record['values'] for record in records
+                if isinstance(record, dict) and record.get('document_id') == document_id
+                and isinstance(record.get('values'), dict)
+            ], ensure_ascii=False)
+        source = next((
+            source for source in result.get('analysis_sources') or []
+            if source.get('document_id') == document_id
+        ), {})
+        tabular = source.get('source_kind') == SOURCE_KIND_TABULAR
         envelopes.append(build_evidence_envelope(
             document_id=document_id,
-            source_kind=SOURCE_KIND_NARRATIVE,
-            engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
+            source_kind=SOURCE_KIND_TABULAR if tabular else SOURCE_KIND_NARRATIVE,
+            engine=EVIDENCE_ENGINE_TABULAR_TOOLS if tabular else EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
             status=status,
             summary=summary or 'Document analysis produced no extractable summary for this source.',
             coverage={
-                'terminal': True,
+                'terminal': status != EVIDENCE_STATUS_PENDING,
                 'processed_windows': processed_windows,
                 'total_windows': total_windows,
                 'failed_windows': failed_windows,
@@ -615,7 +631,11 @@ def _resolve_step_document_ids(step, context, *, settings=None, capability_id=No
 
         limit = get_capability_document_limit(get_capability(capability_id), settings=settings)
         if limit and len(merged) > limit:
+            if capability_id == CAPABILITY_DOCUMENT_ANALYZE:
+                raise ValueError(f'Analyze supports up to {limit} documents at a time.')
             merged = merged[:limit]
+    except ValueError:
+        raise
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} Could not resolve the document ceiling: {exc}',
@@ -623,6 +643,17 @@ def _resolve_step_document_ids(step, context, *, settings=None, capability_id=No
         )
 
     return merged
+
+
+def _prepare_step_analysis_checkpoints(step, context):
+    factory = _ctx(context, 'analysis_checkpoint_factory', None)
+    if callable(factory):
+        checkpoints = factory((step or {}).get('step_id'))
+        checkpoints.prepare()
+        return checkpoints
+    if _ctx(context, 'durable_checkpoints', False):
+        raise ValueError('The Analyze step has no conditional work-unit guard.')
+    return None
 
 
 def run_document_analyze(step, context, *, settings, user_id, emit, cancel_requested):
@@ -634,9 +665,12 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             'document_analyze requires a callable invoke_prompt on the context.',
         )
 
-    document_ids = _resolve_step_document_ids(
-        step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_ANALYZE,
-    )
+    try:
+        document_ids = _resolve_step_document_ids(
+            step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_ANALYZE,
+        )
+    except ValueError:
+        return _failed_result('The Analyze selection exceeds its configured document limit.', 'step_failed')
     analysis_prompt = (
         _text(arguments.get('analysis_prompt'))
         or _text(arguments.get('prompt'))
@@ -664,40 +698,119 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
         return _cancelled_result('Cancelled before document analysis.')
 
     _emit(emit, _progress(step, CAPABILITY_DOCUMENT_ANALYZE, 'Analyzing documents'))
+    saving_result = False
+    analysis_checkpoints = None
     try:
         from functions_document_analysis import run_document_analysis
+        from functions_saved_analysis import save_orchestration_analysis
 
-        result = run_document_analysis(
-            user_id,
-            analysis_prompt,
-            document_ids,
-            invoke_prompt,
-            doc_scope=_document_scope(context, arguments),
-            active_group_ids=_ctx(context, 'active_group_ids', None),
-            active_public_workspace_id=_public_workspace_ids(context),
-            conversation_id=_ctx(context, 'conversation_id', None),
+        analysis_checkpoints = _prepare_step_analysis_checkpoints(step, context)
+        manifest = resolve_context_source_manifest(
+            context, document_ids, settings=settings, user_id=user_id,
             cancel_requested=cancel_requested,
-            request_correlation_id=_ctx(context, 'request_correlation_id', None),
         )
+
+        partitions = partition_source_manifest(manifest)
+        if partitions['tabular_sources'] or partitions['unsupported_sources'] or partitions['unresolved_sources']:
+            # Shared native adapters accept a runner selection, not a fabricated persisted workflow.
+            from functions_workflow_runner import _execute_mixed_source_analyze_workflow
+
+            model_context = _ctx(context, 'model_context', {}) or {}
+            native_runner = {
+                'user_id': user_id, 'task_prompt': analysis_prompt, 'runner_type': 'model',
+                'legacy_model_deployment': _ctx(context, 'gpt_model', None),
+                'model_endpoint_id': model_context.get('endpoint_id'),
+                'model_id': model_context.get('model_id'), 'model_provider': model_context.get('provider'),
+                '_analysis_result_version': 'analyze-final-v1',
+                '_analysis_checkpoints': analysis_checkpoints,
+                '_analysis_producer': {
+                    'kind': 'orchestration', 'run_id': _ctx(context, 'run_id', None),
+                    'step_id': (step or {}).get('step_id'),
+                },
+            }
+            result = _execute_mixed_source_analyze_workflow(
+                native_runner, {
+                    'type': 'analyze', 'document_ids': document_ids,
+                    'doc_scope': _document_scope(context, arguments),
+                    'active_group_ids': _ctx(context, 'active_group_ids', None),
+                    'active_public_workspace_id': _public_workspace_ids(context),
+                    'analysis_options': arguments.get('analysis_options'),
+                    'transformation_spec': arguments.get('transformation_spec'),
+                }, settings, invoke_prompt,
+                conversation_id=_ctx(context, 'conversation_id', None), max_documents=len(document_ids),
+                cancel_requested=cancel_requested,
+                request_correlation_id=_ctx(context, 'request_correlation_id', None),
+            )
+        else:
+            result = run_document_analysis(
+                user_id,
+                analysis_prompt,
+                document_ids,
+                invoke_prompt,
+                doc_scope=_document_scope(context, arguments),
+                active_group_ids=_ctx(context, 'active_group_ids', None),
+                active_public_workspace_id=_public_workspace_ids(context),
+                conversation_id=_ctx(context, 'conversation_id', None),
+                cancel_requested=cancel_requested,
+                request_correlation_id=_ctx(context, 'request_correlation_id', None),
+                result_version='analyze-final-v1',
+                source_manifest=manifest,
+                analysis_options=arguments.get('analysis_options'),
+                transformation_spec=arguments.get('transformation_spec'),
+                max_documents=len(document_ids),
+                **({'work_unit_checkpoints': analysis_checkpoints} if analysis_checkpoints is not None else {}),
+            )
+        if _is_cancelled(cancel_requested):
+            return _cancelled_result('Document analysis was cancelled before saving.')
+        saving_result = True
+        descriptor = save_orchestration_analysis(
+            {
+                'reply': result.get('analysis_reply') or result.get('reply') or '',
+                'analysis_result': result,
+                'analysis_coverage': result.get('coverage') or {},
+                'generated_tabular_outputs': result.get('generated_tabular_outputs') or [],
+            },
+            user_id=user_id,
+            conversation_id=_ctx(context, 'conversation_id', None),
+            run_id=_ctx(context, 'run_id', None), step_id=(step or {}).get('step_id'),
+            settings=settings,
+            guard_token=analysis_checkpoints.token if analysis_checkpoints is not None else None,
+        )
+        if _is_cancelled(cancel_requested):
+            return _cancelled_result('Document analysis was cancelled before finalization.')
     except MixedSourceCancellationError:
+        if analysis_checkpoints is not None:
+            analysis_checkpoints.cancel(reason='cancelled')
         return _cancelled_result('Document analysis was cancelled.')
     except Exception as exc:
+        if analysis_checkpoints is not None:
+            analysis_checkpoints.cancel(reason='failed')
         log_event(
             f'{_LOG_PREFIX} document_analyze failed: {exc}',
             extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        if saving_result:
+            failure = build_failure(
+                'analysis_result_unavailable' if isinstance(exc, PermissionError) else 'analysis_result_not_saved',
+            )
+            return build_step_result(
+                status=STEP_STATUS_FAILED, summary=failure['message'],
+                error=failure['message'], failure=failure,
+            )
         return _failed_result('Document analysis failed.', exc)
 
     envelopes = _analysis_envelopes(result, document_ids)
-    if any((envelope.get('coverage') or {}).get('failed_windows') for envelope in envelopes):
-        return _failed_result('Document analysis could not complete.', 'step_failed')
     reply = _text((result or {}).get('reply') or (result or {}).get('analysis_reply'))
     return build_step_result(
-        status=STEP_STATUS_COMPLETED,
+        status=STEP_STATUS_PENDING if result.get('execution_status') == 'pending' else (
+            STEP_STATUS_FAILED if result.get('execution_status') in {'failed', 'unsupported'} else STEP_STATUS_COMPLETED
+        ),
         summary=_first_line(reply) or 'Document analysis complete.',
         evidence=envelopes,
+        saved_analyses=[descriptor],
+        artifacts=result.get('generated_tabular_outputs') or [],
     )
 
 
@@ -816,6 +929,17 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
 def _tabular_evidence_status(execution_state, reply, artifacts):
     if execution_state in ('declined', 'failed', 'error'):
         return EVIDENCE_STATUS_FAILED
+    if execution_state in ('planned', 'pending', 'queued', 'running') or any(
+        str(artifact.get('status') or artifact.get('run_status') or '').lower() in ('pending', 'queued', 'running')
+        or (
+            artifact.get('background_export')
+            and not (artifact.get('status') or artifact.get('run_status'))
+        )
+        for artifact in artifacts or [] if isinstance(artifact, dict)
+    ):
+        return EVIDENCE_STATUS_PENDING
+    if execution_state == 'partial':
+        return EVIDENCE_STATUS_PARTIAL
     if reply or artifacts:
         return EVIDENCE_STATUS_COMPLETED
     return EVIDENCE_STATUS_PARTIAL
@@ -841,7 +965,9 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
         return _cancelled_result('Cancelled before tabular analysis.')
 
     _emit(emit, _progress(step, CAPABILITY_TABULAR_ANALYZE, 'Analyzing tabular data'))
+    analysis_checkpoints = None
     try:
+        analysis_checkpoints = _prepare_step_analysis_checkpoints(step, context)
         manifest = resolve_context_source_manifest(
             context,
             document_ids,
@@ -878,8 +1004,12 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
             request_correlation_id=_ctx(context, 'request_correlation_id', None),
         )
     except MixedSourceCancellationError:
+        if analysis_checkpoints is not None:
+            analysis_checkpoints.cancel(reason='cancelled')
         return _cancelled_result('Tabular analysis was cancelled.')
     except Exception as exc:
+        if analysis_checkpoints is not None:
+            analysis_checkpoints.cancel(reason='failed')
         log_event(
             f'{_LOG_PREFIX} tabular_analyze failed: {exc}',
             extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
@@ -889,13 +1019,54 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
         return _failed_result('Tabular analysis failed.', exc)
 
     result = result if isinstance(result, dict) else {}
-    reply = _text(result.get('analysis_reply') or result.get('reply'))
     generated = result.get('generated_output_metadata')
     artifacts = [generated] if isinstance(generated, dict) else []
-    execution_state = _text(result.get('execution_state')).lower()
-    envelope_status = _tabular_evidence_status(execution_state, reply, artifacts)
-    if envelope_status == EVIDENCE_STATUS_FAILED:
-        return _failed_result('Tabular analysis could not complete.', 'step_failed')
+    if len(tabular_sources) != 1:
+        return _failed_result(
+            'This native output does not expose a complete multi-source result for saved reuse. '
+            'Use a document Analyze step for mixed or multiple source analysis.',
+            'analysis_result_unavailable',
+        )
+    try:
+        from functions_native_analysis_results import adapt_native_analysis_result
+        from functions_saved_analysis import save_orchestration_analysis
+
+        final = adapt_native_analysis_result(
+            user_id=user_id, conversation_id=_ctx(context, 'conversation_id', None),
+            source=tabular_sources[0], generated_outputs=artifacts,
+            source_resolver=_ctx(context, 'resolve_source_manifest', None),
+            analysis_options=arguments.get('analysis_options'),
+            transformation_spec=arguments.get('transformation_spec'),
+            analysis_producer={
+                'kind': 'orchestration', 'run_id': _ctx(context, 'run_id', None),
+                'step_id': (step or {}).get('step_id'),
+            },
+        )
+        artifacts = final.get('generated_tabular_outputs') or []
+        if _is_cancelled(cancel_requested):
+            return _cancelled_result('Native analysis was cancelled before saving.')
+        descriptor = save_orchestration_analysis(
+            {'reply': final['reply'], 'analysis_result': final, 'generated_tabular_outputs': artifacts},
+            user_id=user_id, conversation_id=_ctx(context, 'conversation_id', None),
+            run_id=_ctx(context, 'run_id', None), step_id=(step or {}).get('step_id'), settings=settings,
+            guard_token=analysis_checkpoints.token if analysis_checkpoints is not None else None,
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Native Analyze output could not be saved.',
+            extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')},
+            level=logging.WARNING,
+        )
+        failure = build_failure('analysis_result_unavailable')
+        return build_step_result(
+            status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
+        )
+    reply = final['reply']
+    execution_state = final['execution_status']
+    envelope_status = (
+        EVIDENCE_STATUS_PENDING if execution_state == 'pending' else
+        EVIDENCE_STATUS_COMPLETED if execution_state == 'succeeded' else EVIDENCE_STATUS_FAILED
+    )
 
     envelopes = []
     for index, source in enumerate(tabular_sources):
@@ -909,16 +1080,23 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
             status=envelope_status,
             summary=(reply if index == 0 else 'See the combined tabular result for this source.'),
             generated_artifacts=artifacts if index == 0 else None,
-            coverage={'terminal': True, 'tool_call_count': 1, 'execution_state': execution_state},
+            coverage={
+                'terminal': envelope_status != EVIDENCE_STATUS_PENDING,
+                'tool_call_count': 1, 'execution_state': execution_state,
+            },
         ))
 
-    step_status = STEP_STATUS_COMPLETED if (reply or artifacts) else STEP_STATUS_FAILED
+    step_status = (
+        STEP_STATUS_PENDING if envelope_status == EVIDENCE_STATUS_PENDING
+        else STEP_STATUS_COMPLETED if execution_state == 'succeeded' else STEP_STATUS_FAILED
+    )
     return build_step_result(
         status=step_status,
         summary=_first_line(reply) or 'Tabular analysis produced no result.',
         evidence=envelopes,
         artifacts=artifacts,
-        error=None if step_status == STEP_STATUS_COMPLETED else 'Tabular analysis returned no answer or artifact.',
+        saved_analyses=[descriptor],
+        error=None if step_status != STEP_STATUS_FAILED else 'Tabular analysis returned no answer or artifact.',
     )
 
 
@@ -1867,6 +2045,15 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
         )
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before writing the answer.')
+    if any(
+        item.get('status') == EVIDENCE_STATUS_PENDING
+        for item in _ctx(context, 'evidence', []) or [] if isinstance(item, dict)
+    ):
+        message = (
+            'The native analysis is still processing. Its final data is not ready for an explanation; '
+            'check the background output before continuing.'
+        )
+        return build_step_result(status=STEP_STATUS_COMPLETED, summary=message, message=message)
 
     reload_memory = _ctx(context, 'reload_memory_context', None)
     try:
@@ -1884,6 +2071,34 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
     instruction = _text(arguments.get('instruction') or arguments.get('prompt'))
     evidence = [envelope for envelope in (_ctx(context, 'evidence', []) or []) if isinstance(envelope, dict)]
     notes = list(_ctx(context, 'notes', []) or [])
+    saved_analyses = list(_ctx(context, 'saved_analyses', []) or [])
+    saved_inputs = []
+    if saved_analyses:
+        try:
+            from functions_saved_analysis import (
+                explain_saved_analysis, format_saved_analysis, load_orchestration_analysis_input,
+                saved_analysis_format_request,
+            )
+
+            for descriptor in saved_analyses:
+                saved_input, _ = load_orchestration_analysis_input(user_id, descriptor, bounded=True)
+                saved_inputs.append(saved_input)
+            saved_documents = {
+                source['document_id'] for saved_input in saved_inputs
+                for source in (saved_input.manifest.get('analysis_access') or {}).get('sources') or []
+            }
+            evidence = [item for item in evidence if item.get('document_id') not in saved_documents]
+        except Exception as exc:
+            log_event(
+                f'{_LOG_PREFIX} Saved Analyze data could not be loaded for the answer.',
+                extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')},
+                level=logging.WARNING,
+            )
+            failure = build_failure('analysis_result_unavailable')
+            return build_step_result(
+                status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'],
+                failure=failure,
+            )
     failures = [safe_failure(value) for value in (_ctx(context, 'failures', []) or [])]
     if failures:
         notes.append(
@@ -1932,15 +2147,30 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
         for message in _conversation_reference(context)
     )
     messages.append({'role': 'user', 'content': prompt})
+    report = {}
     try:
-        reply = _text(invoke_prompt(
-            messages,
-            stage='orchestration_respond',
-            metadata={
-                'run_id': _ctx(context, 'run_id', None),
-                'step_id': (step or {}).get('step_id'),
-            },
-        ))
+        if saved_inputs:
+            output_format = saved_analysis_format_request(user_message)
+            if output_format:
+                report = format_saved_analysis(
+                    saved_inputs, output_format, conversation_id=_ctx(context, 'conversation_id', None),
+                    producer=saved_analyses[0]['binding'], cancel_requested=cancel_requested,
+                )
+            else:
+                report = explain_saved_analysis(
+                    saved_inputs, messages, invoke_prompt, cancel_requested=cancel_requested,
+                )
+            reply = _text(report['reply'])
+        else:
+            reply = _text(invoke_prompt(
+                messages,
+                stage='orchestration_respond',
+                metadata={
+                    'run_id': _ctx(context, 'run_id', None),
+                    'step_id': (step or {}).get('step_id'),
+                    'complete_saved_analysis_input': False,
+                },
+            ))
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} respond synthesis failed: {exc}',
@@ -1948,6 +2178,14 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        from functions_workflow_context import WorkflowContextBudgetError
+
+        if isinstance(exc, WorkflowContextBudgetError):
+            failure = build_failure('analysis_input_too_large')
+            return build_step_result(
+                status=STEP_STATUS_FAILED, summary=failure['message'], message=failure['message'],
+                error=failure['message'], failure=failure,
+            )
         failure = build_failure('context_unavailable') if isinstance(exc, OrchestrationMemoryError) else failure_from_exception(exc, answering=True)
         return build_step_result(
             status=STEP_STATUS_FAILED, failure=failure,
@@ -1955,11 +2193,18 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
         )
 
     reply = reply or _EMPTY_ANSWER
+    if saved_analyses:
+        reply += (
+            '\n\n_This explanation uses the saved Analyze results. '
+            'The original documents were not independently rechecked for this explanation._'
+        )
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
         summary=_first_line(reply),
         message=reply,
         citations=citations,
+        analysis_consumption=report.get('analysis_consumption'),
+        artifacts=report.get('generated_analysis_artifacts') or [],
     )
 
 

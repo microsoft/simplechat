@@ -80,6 +80,29 @@ The former 12,000-character task-handoff cap no longer clips the middle of a res
 
 This preserves the producer's final data; it does not guarantee that an extraction is semantically complete. Prefer a clear final output format, such as a JSON record array, when another task must consume structured findings. See [Workflow data flow](../explanation/features/WORKFLOW_DATA_FLOW.md) for result references and limitations.
 
+For Analyze results produced in **0.261.109**, a later explanation uses accepted
+findings and their saved provenance. Ordinary narrative analysis does not require
+you to configure columns or scoring. Read
+[Saved Analyze results](analyze-results.md) for the difference between source
+coverage, accepted findings, and validation.
+
+## Publish an existing analysis artifact
+
+In a later task, select **Publish an existing analysis artifact**, choose an
+**Existing artifact format**, and select a **Publication destination**. A group
+or public destination also requires its **Destination workspace ID**. That
+destination is saved with the task; changing your active workspace later does
+not redirect the publication.
+
+This task copies an existing artifact rather than calling a model to recreate
+it. Ensure the analysis produced the selected format. Passing validation alone
+does not publish anything: this explicit task or a manual workspace-save action
+is required. Partial or invalid results cannot be published as final outputs.
+
+Group and public copies retain their approval process. An uncertain publication
+shows the existing destination/receipt instead of blindly creating another copy.
+Once explicitly published, the copy follows the destination's access rules.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

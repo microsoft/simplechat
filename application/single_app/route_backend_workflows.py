@@ -93,6 +93,8 @@ from functions_source_review import (
 )
 from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, read_workflow_task_result_page
+from functions_workflow_results import authorize_workflow_task_result_read
+from functions_saved_analysis import sanitize_workflow_analysis_history
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -137,13 +139,6 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
     if not isinstance(result_ref, dict):
         return jsonify({'error': 'This task has no durable result. Older runs contain previews only.'}), 409
     output_name = _normalize_identifier(request.args.get('output') or 'manifest')
-    if output_name == 'authoritative':
-        output_name = summary.get('authoritative_output')
-    if output_name != 'manifest':
-        output = (summary.get('outputs') or {}).get(output_name)
-        if not isinstance(output, dict) or not isinstance(output.get('result_ref'), dict):
-            return jsonify({'error': 'The requested task output is not available.'}), 404
-        result_ref = output['result_ref']
     try:
         offset = int(request.args.get('offset', '0'))
         limit = int(request.args.get('limit', '65536'))
@@ -152,6 +147,16 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
     if offset < 0 or not 1 <= limit <= 65536:
         return jsonify({'error': 'Invalid result page range.'}), 400
     try:
+        manifest, _ = authorize_workflow_task_result_read(
+            workflow, run_id, task_id, result_ref, reader_user_id=get_current_user_id(),
+        )
+        if output_name == 'authoritative':
+            output_name = manifest.get('authoritative_output')
+        if output_name != 'manifest':
+            output = (manifest.get('outputs') or {}).get(output_name)
+            if not isinstance(output, dict) or not isinstance(output.get('result_ref'), dict):
+                return jsonify({'error': 'The requested task output is not available.'}), 404
+            result_ref = output['result_ref']
         page = read_workflow_task_result_page(
             workflow, run_id, task_id, result_ref, offset=offset, limit=limit,
         )
@@ -648,6 +653,10 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
             for action in raw_pending_actions
         ]
 
+    run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
+    if not analysis_access_available:
+        thoughts = []
+        pending_actions = []
     return build_workflow_activity_snapshot(
         run_record=run_record,
         workflow=workflow,
@@ -733,6 +742,10 @@ def _resolve_group_workflow_activity_context(user_id, group_id, conversation_id=
             for action in raw_pending_actions
         ]
 
+    run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
+    if not analysis_access_available:
+        thoughts = []
+        pending_actions = []
     return build_workflow_activity_snapshot(
         run_record=run_record,
         workflow=workflow,
@@ -1038,7 +1051,10 @@ def register_route_backend_workflows(bp):
 
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': list_personal_workflow_runs(user_id, workflow_id, limit=50),
+            'runs': [
+                sanitize_workflow_analysis_history(workflow, run, user_id)[0]
+                for run in list_personal_workflow_runs(user_id, workflow_id, limit=50)
+            ],
         })
 
 
@@ -1133,7 +1149,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': list_personal_workflow_run_items(run_id, limit=1000),
+            'items': sanitize_workflow_analysis_history(
+                workflow, run_record, user_id, items=list_personal_workflow_run_items(run_id, limit=1000),
+            )[1],
         })
 
 
@@ -1424,7 +1442,10 @@ def register_route_backend_workflows(bp):
 
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': list_group_workflow_runs(group_id, workflow_id, limit=50),
+            'runs': [
+                sanitize_workflow_analysis_history(workflow, run, user_id)[0]
+                for run in list_group_workflow_runs(group_id, workflow_id, limit=50)
+            ],
         })
 
 
@@ -1553,7 +1574,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': list_group_workflow_run_items(run_id, limit=1000),
+            'items': sanitize_workflow_analysis_history(
+                workflow, run_record, user_id, items=list_group_workflow_run_items(run_id, limit=1000),
+            )[1],
         })
 
 
