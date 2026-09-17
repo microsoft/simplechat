@@ -3,6 +3,7 @@
 
 from functions_ai_connections import supports_model_capability
 from functions_workflow_definitions import WORKFLOW_DEFINITION_VERSION
+from functions_workflow_flow import FLOW_LIMITS
 
 
 def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks,
@@ -43,6 +44,9 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
     default_model = default_model or {}
     return {
         "definition_version": WORKFLOW_DEFINITION_VERSION,
+        "supported_definition_versions": [1, 2, 3],
+        "supported_node_kinds": ["task", "if", "route"],
+        "flow_limits": dict(FLOW_LIMITS),
         "scope": {"type": scope_type, "id": str(scope_id)},
         "can_manage": bool(can_manage),
         "max_tasks": max_tasks,

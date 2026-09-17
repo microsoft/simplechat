@@ -183,6 +183,40 @@ def test_background_runner_completes_and_clears_the_active_pointer(integration):
     assert len(requests) == 2
 
 
+def test_structured_submission_and_real_runner_use_genuine_runtime_and_task_identities(integration, monkeypatch):
+    workflow, runner, services, make_store, clock, requests = integration
+    workflow.update(definition_version=3, flow={
+        "id": "root", "nodes": [
+            {"id": "extract-node", "kind": "task", "task_id": "extract"},
+            {"id": "consume-node", "kind": "task", "task_id": "consume"},
+        ], "outputs": [{"name": "answer", "source": {"kind": "node_output", "node_id": "consume-node"}}],
+    })
+    workflow["tasks"][0].update(inputs=[], output_contract={"kind": "records"})
+    workflow["tasks"][1]["inputs"] = [{
+        "name": "inventory", "source": {"kind": "node_output", "node_id": "extract-node", "output": "records"},
+    }]
+    container = make_store(workflow, "unused").container
+    services["definitions"].upsert_item(workflow)
+    monkeypatch.setattr("functions_workflow_result_store._configured_store", lambda *args, **kwargs: WorkflowResultStore(container))
+    runner.update({
+        "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(envelope, **kwargs),
+        "authorize_workflow_task_result_read": authorize_workflow_task_result_read,
+    })
+    queued = runtime.queue_durable_workflow_run(workflow, actor_user_id="owner")
+    run_id = queued["run"]["id"]
+    assert queued["runtime"]["schema_version"] == 2
+    runtime.continue_durable_workflow_run(workflow, run_id)
+    record = services["runs"].read_item(item=run_id, partition_key="owner")
+    assert record["status"] == "completed" and len(requests) == 2
+    assert record["workflow_outputs"][0]["producer"]["node_id"] == "consume-node"
+    control = make_store(workflow, run_id).read()
+    assert control["units"] == {} and control["memory"] == {}
+    private_results = [item for item in container.items.values() if item.get("item_type") == "workflow_result_chunk"]
+    assert all(item.get("execution_id") and item.get("node_id") for item in private_results)
+    assert all(not str(item.get("task_id") or "").startswith("runtime:") for item in private_results)
+    assert services["load_workflow"]()["active_run_id"] == ""
+
+
 def test_submission_replay_after_completion_retains_the_original_snapshot(integration):
     workflow, runner, services, make_store, clock, requests = integration
     request_id = "442f2e0b-63ad-4347-8e73-1be93b4e6b61"

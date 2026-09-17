@@ -1,7 +1,7 @@
 # test_workflow_definition_store_integration.py
 """
 Functional tests for real workflow store normalization and conditional saves.
-Version: 0.261.108
+Version: 0.261.122
 Implemented in: 0.261.108
 
 Production store functions run against a JSON-copying Cosmos double. External
@@ -22,6 +22,8 @@ from azure.cosmos import exceptions
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
 # Worktree modules are imported after module-path setup.
+from functions_m365_workflow_binding import normalize_workflow_run_as
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
 from functions_workflow_definitions import (
     WorkflowDefinitionConflict,
@@ -97,6 +99,8 @@ def load_group_store():
         "WORKFLOW_TASK_RUNNER_TYPES": {"inherit", "agent", "model"},
         "WORKFLOW_ERROR_STRATEGIES": {"halt", "continue"},
         "normalize_workflow_definition": normalize_workflow_definition,
+        "normalize_workflow_run_as": normalize_workflow_run_as,
+        "sanitize_workflow_alert_record": sanitize_workflow_alert_record,
         "workflow_definition_for_editor": workflow_definition_for_editor,
         "save_workflow_definition_record": save_workflow_definition_record,
         "update_workflow_runtime_record": update_workflow_runtime_record,

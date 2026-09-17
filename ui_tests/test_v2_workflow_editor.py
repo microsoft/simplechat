@@ -1,7 +1,7 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.108
+Version: 0.261.116
 Implemented in: 0.261.108
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
@@ -205,7 +205,7 @@ def test_unsupported_version_is_read_only_and_409_retains_draft(workflow_ui):
     ui.open("/workspace/workflows")
 
     page.get_by_role("button", name=re.compile(r"Edit Future workflow")).click()
-    expect(page.get_by_role("alert").filter(has_text="definition version 3")).to_be_visible()
+    expect(page.get_by_role("alert").filter(has_text="definition version 4")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
         "button", name="Close", exact=True

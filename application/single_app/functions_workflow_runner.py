@@ -10260,7 +10260,9 @@ def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
     return execution_workflow, runner_audit
 
 
-def _workflow_task_run_item_id(run_id, task_id):
+def _workflow_task_run_item_id(run_id, task_id, execution_id=None):
+    if execution_id is not None:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-execution:{run_id}:{execution_id}'))
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-task:{run_id}:{task_id}'))
 
 
@@ -10308,8 +10310,14 @@ def _save_workflow_task_run_item(
         for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count')
         if isinstance(token_usage.get(field), (int, float))
     }
+    execution_identity = {}
+    if workflow.get('definition_version') == 3:
+        execution = current_workflow_execution()
+        if execution is None or execution.node is None or execution.node.get('task_id') != task_id:
+            raise ValueError('A structured task projection requires its exact current execution.')
+        execution_identity = {**execution.selectors(), 'attempt': int(attempt_count or 0)}
     item = {
-        'id': _workflow_task_run_item_id(run_id, task_id),
+        'id': _workflow_task_run_item_id(run_id, task_id, execution_identity.get('execution_id')),
         'type': 'workflow_run_item',
         'item_type': 'task',
         'run_id': run_id,
@@ -10318,6 +10326,7 @@ def _save_workflow_task_run_item(
         'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
         'task_id': task_id,
+        **execution_identity,
         'task_type': str(task.get('type') or 'instructions').strip(),
         'task_order': int(task.get('order') or 0),
         'label': str(task.get('name') or f"Task {task.get('order') or ''}").strip(),
@@ -10463,6 +10472,12 @@ def _merge_workflow_task_execution_results(task_results):
 
     final_source = (successful_results[-1].get('result') or {}) if successful_results else {}
     merged_result = dict(final_source)
+    publications = [
+        item["result"]["publication"] for item in task_results
+        if isinstance(item.get("result"), dict) and isinstance(item["result"].get("publication"), dict)
+    ]
+    if publications:
+        merged_result["publication"] = publications[-1]
     merged_result['reply'] = '\n'.join(reply_sections).strip()
     merged_result['task_results'] = [
         {
@@ -10541,9 +10556,12 @@ def _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_user
     durable = current_workflow_execution()
     options = {}
     if durable is not None:
-        token_record = durable.cache(f'analysis-token:{task_id}', {'token': uuid.uuid4().hex})
+        selectors = durable.selectors() if workflow.get('definition_version') == 3 else {}
+        token_key = f"analysis-token:{task_id}:{selectors['attempt']}" if selectors else f'analysis-token:{task_id}'
+        token_record = durable.cache(token_key, {'token': uuid.uuid4().hex})
         options['attempt_token'] = token_record['token']
         options['recover_running_unit'] = lambda: durable.may_recover_analysis_unit(task_id)
+        options.update(selectors)
     checkpoints = analysis_checkpoints_for_workflow(
         workflow, run_id, task_id, user_id=actor_user_id, authorize=authorize, settings=settings, **options,
     )
@@ -10562,7 +10580,7 @@ def _execute_workflow_task_sequence(
     actor_user_id=None,
 ):
     definition_version = workflow.get('definition_version', 1)
-    if type(definition_version) is not int or definition_version not in {1, 2}:
+    if type(definition_version) is not int or definition_version not in {1, 2, 3}:
         raise ValueError('This workflow definition requires a newer execution engine.')
     tasks = list(workflow.get('tasks') or [])
     error_handling = workflow.get('error_handling') if isinstance(workflow.get('error_handling'), dict) else {}
@@ -10574,8 +10592,18 @@ def _execute_workflow_task_sequence(
     completed_results = {}
     reference_cache = {}
     actor_id = str(actor_user_id or workflow.get('user_id') or '')
-    advanced_definition = workflow.get('definition_version') == 2
+    advanced_definition = workflow.get('definition_version') in {2, 3}
+    structured_definition = definition_version == 3
     durable = current_workflow_execution()
+    flow_runner = None
+    if structured_definition:
+        from functions_workflow_flow_runner import WorkflowFlowRunner
+
+        if durable is None or not hasattr(durable, 'selectors'):
+            raise ValueError('Structured workflows require the durable schema-2 execution engine.')
+        flow_runner = WorkflowFlowRunner(
+            workflow, run_id, durable, task_results, actor_user_id=actor_id, settings=settings,
+        )
     if durable is not None:
         reference_cache = durable.snapshot('shared_references') or {}
         control = durable.check()
@@ -10591,11 +10619,21 @@ def _execute_workflow_task_sequence(
             used_reference_ids.update(all_reference_ids if selected is None else selected)
         for reference in workflow.get('reference_inputs') or []:
             if reference['id'] in used_reference_ids:
-                reference_cache[reference['id']] = load_workflow_reference(
-                    workflow, reference, actor_user_id=actor_id,
-                    snapshot=reference_cache.get(reference['id']),
-                )
-        if durable is not None:
+                if structured_definition:
+                    try:
+                        reference_cache[reference['id']] = durable.freeze_reference(
+                            reference, lambda **snapshot: load_workflow_reference(
+                                workflow, reference, actor_user_id=actor_id, **snapshot,
+                            ),
+                        )
+                    except (AnalysisResultUnavailable, WorkflowInputError):
+                        durable._pause('shared_references', workflow.get('definition_revision') or '')
+                else:
+                    reference_cache[reference['id']] = load_workflow_reference(
+                        workflow, reference, actor_user_id=actor_id,
+                        snapshot=reference_cache.get(reference['id']),
+                    )
+        if durable is not None and not structured_definition:
             durable.cache('shared_references', reference_cache)
 
     def raise_if_cancelled():
@@ -10603,7 +10641,7 @@ def _execute_workflow_task_sequence(
         if callable(cancel_check):
             cancel_check(workflow, run_id)
 
-    for task_index, raw_task in enumerate(tasks):
+    for task_index, raw_task in enumerate(flow_runner.tasks() if flow_runner else tasks):
         raise_if_cancelled()
         task = dict(raw_task or {})
         task['order'] = task_index + 1
@@ -10622,9 +10660,17 @@ def _execute_workflow_task_sequence(
             summary = saved_result.get('workflow_result') or {}
             checkpoint_ref = summary.get('result_ref')
             if checkpoint_ref:
-                authorize_workflow_task_result_read(
-                    workflow, run_id, task_id, checkpoint_ref, reader_user_id=actor_id,
-                )
+                try:
+                    _, source_access = authorize_workflow_task_result_read(
+                        workflow, run_id, task_id, checkpoint_ref, reader_user_id=actor_id,
+                        **(durable.selectors(attempt=summary['producer']['attempt']) if structured_definition else {}),
+                    )
+                except AnalysisResultUnavailable:
+                    if not structured_definition:
+                        raise
+                    durable._pause(task_unit_key, checkpoint_ref['sha256'])
+                if structured_definition and source_access.get('source_snapshot_changed'):
+                    durable._pause(task_unit_key, checkpoint_ref['sha256'])
                 task_results.append(completed_task)
                 validation = saved_result.get('workflow_validation') or {
                     'eligible': completed_task.get('status') == 'succeeded',
@@ -10683,17 +10729,23 @@ def _execute_workflow_task_sequence(
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
+                    publication_inputs = flow_runner.resolve(task['inputs']) if flow_runner else None
                     task_result, consumed_inputs = workflow_unit(
                         task_unit_key,
                         lambda: _execute_workflow_analysis_publication(
                             workflow, run_id, task, previous_task_id, previous_result_ref,
                             actor_user_id=actor_user_id,
+                            explicit_inputs=publication_inputs['bound_inputs'] if publication_inputs else None,
                         ),
-                        inputs={'task': task, 'producer_task_id': previous_task_id, 'result_ref': previous_result_ref},
+                        inputs=({'task': task, 'consumed_inputs': publication_inputs['consumed_inputs']}
+                                if publication_inputs is not None else
+                                {'task': task, 'producer_task_id': previous_task_id, 'result_ref': previous_result_ref}),
                         approval=task.get('approval'),
                     )
                     if durable is not None:
-                        attempt_count = durable.check()['units'][task_unit_key]['attempt']
+                        attempt_count = durable.unit(task_unit_key)['attempt']
+                    if flow_runner:
+                        consumed_inputs = flow_runner._receipts([*consumed_inputs, *flow_runner.control_receipts])
                     attempt_workflow = {**workflow, 'consumed_inputs': consumed_inputs}
                     runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
                     task_error = ''
@@ -10713,15 +10765,22 @@ def _execute_workflow_task_sequence(
                 reference_sources = []
                 if advanced_definition:
                     inputs = resolve_workflow_task_inputs(
-                        workflow, task, completed_results, previous_task_id=previous_task_id,
+                        workflow, {**task, 'inputs': []} if structured_definition else task,
+                        completed_results, previous_task_id=previous_task_id,
                         load_output=lambda *args, **kwargs: load_workflow_task_input(
                             *args, reader_user_id=actor_id, **kwargs,
                         ),
                         load_reference=lambda reference, **kwargs: load_workflow_reference(
                             workflow, reference, actor_user_id=actor_id, **kwargs,
+                        ) if not structured_definition else durable.freeze_reference(
+                            reference, lambda **snapshot: load_workflow_reference(
+                                workflow, reference, actor_user_id=actor_id, **snapshot,
+                            ),
                         ),
                         reference_cache=reference_cache,
                     )
+                    if flow_runner:
+                        inputs.update(flow_runner.resolve(task['inputs']))
                     previous_input = inputs['task_context']
                     consumed_inputs = inputs['consumed_inputs']
                     reference_context = inputs['reference_context']
@@ -10739,8 +10798,8 @@ def _execute_workflow_task_sequence(
                     resolved_workflow,
                     task,
                     previous_reply='' if isinstance(previous_input, SavedAnalysisInput) else previous_input,
-                    include_document_action=task_index == 0,
-                    include_file_sync_context=task_index == 0,
+                    include_document_action=task_index == 0 and not structured_definition,
+                    include_file_sync_context=task_index == 0 and not structured_definition,
                 )
                 attempt_workflow['consumed_inputs'] = consumed_inputs
                 attempt_workflow['workflow_reference_sources'] = reference_sources
@@ -10770,7 +10829,7 @@ def _execute_workflow_task_sequence(
                     'kind': 'workflow', 'workflow_id': workflow['id'],
                     'run_id': run_id, 'task_id': task_id,
                 }
-                if _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
+                if not structured_definition and _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
                     if analysis_checkpoints is None:
                         analysis_checkpoints = _prepare_workflow_analysis_checkpoints(
                             workflow, run_id, task_id, actor_user_id or workflow.get('user_id'), settings,
@@ -10797,20 +10856,33 @@ def _execute_workflow_task_sequence(
                     and not attempt_workflow.get('chat_capabilities_enabled')
                     and (attempt_workflow.get('document_action') or {}).get('type') in {None, 'none'}
                 )
+                def dispatch_task():
+                    nonlocal analysis_checkpoints
+                    if structured_definition:
+                        attempt_workflow['_analysis_producer'].update(durable.selectors())
+                        if _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
+                            analysis_checkpoints = _prepare_workflow_analysis_checkpoints(
+                                workflow, run_id, task_id, actor_id, settings,
+                            )
+                            attempt_workflow['_analysis_checkpoints'] = analysis_checkpoints
+                    return _execute_workflow_dispatch(
+                        attempt_workflow, settings, conversation_id, run_id, thought_tracker,
+                        {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
+                        file_sync_result=file_sync_result,
+                    )
+
                 with m365_workflow_task_context(task_id), workflow_context_budget_scope(attempt_workflow):
                     task_result = workflow_unit(
                         task_unit_key,
-                        lambda: _execute_workflow_dispatch(
-                            attempt_workflow, settings, conversation_id, run_id,
-                            thought_tracker, {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
-                            file_sync_result=file_sync_result,
-                        ),
+                        dispatch_task,
                         inputs=operation_inputs, replay_safe=replay_safe,
                         approval=task.get('approval'),
                     )
                 if durable is not None:
-                    saved_unit = (durable.check().get('units') or {}).get(task_unit_key) or {}
+                    saved_unit = durable.unit(task_unit_key)
                     attempt_count = int(saved_unit.get('attempt') or attempt_count)
+                    if structured_definition:
+                        attempt_workflow['_analysis_producer'].update(durable.selectors(attempt=attempt_count))
                 raise_if_workflow_context_blocked(attempt_workflow)
                 task_error = ''
                 runner_audit = dict(runner_audit)
@@ -10828,6 +10900,8 @@ def _execute_workflow_task_sequence(
                 task_result = None
                 blocked_audit = ((attempt_workflow or {}).get('context_budget') or {}).get('blocked_request')
                 safe_error = WorkflowContextBudgetError(blocked_audit) if blocked_audit else exc
+                if structured_definition and task_stage == 'input' and isinstance(safe_error, AnalysisResultUnavailable):
+                    durable._pause(task_unit_key, durable.unit(task_unit_key).get('input_digest', ''))
                 log_event(
                     '[WORKFLOW_RUNNER] Task execution failed',
                     extra={'run_id': run_id, 'task_id': task_id, 'attempt': attempt_count,
@@ -10884,6 +10958,9 @@ def _execute_workflow_task_sequence(
                     task_result, workflow=workflow, run_id=run_id, task=task,
                     attempt_count=attempt_count,
                 )
+                if structured_definition and _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
+                    if analysis_checkpoints is None:
+                        analysis_checkpoints = _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_id, settings)
                 if durable is not None and envelope['execution']['status'] == 'pending':
                     try:
                         refreshed = reconcile_workflow_pending_output(
@@ -10909,6 +10986,12 @@ def _execute_workflow_task_sequence(
                             result_summary=workflow_result_summary(pending_manifest, pending_ref),
                             consumed_inputs=consumed_inputs, context_budget=context_budget,
                         )
+                        if structured_definition:
+                            pending_summary = workflow_result_summary(pending_manifest, pending_ref)
+                            durable.record_execution(state='waiting_output', attempt=attempt_count,
+                                                     workflow_result=pending_summary, consumed_inputs=consumed_inputs)
+                            durable._attempt(attempt_count, state='waiting_output', workflow_result=pending_summary,
+                                             consumed_inputs=consumed_inputs)
                         durable.wait_for_output(task_unit_key, pending_workflow_output_references(task_result))
                     task_result = refreshed
                     durable.replace_unit_result(task_unit_key, task_result)
@@ -10950,6 +11033,7 @@ def _execute_workflow_task_sequence(
                 result_summary = workflow_result_summary(manifest, result_ref)
                 authorize_workflow_task_result_read(
                     workflow, run_id, task_id, result_ref, manifest=manifest, reader_user_id=actor_id,
+                    **(durable.selectors(attempt=attempt_count) if structured_definition else {}),
                 )
                 task_result['workflow_result'] = result_summary
                 task_result['context_budget'] = context_budget
@@ -11009,6 +11093,11 @@ def _execute_workflow_task_sequence(
             }
             save_m365_task_checkpoint(task_id, completed_task)
             task_results.append(completed_task)
+            if structured_definition:
+                durable.finish_node(
+                    state=task_status, attempt=attempt_count, workflow_result=result_summary,
+                    workflow_validation=validation, consumed_inputs=consumed_inputs,
+                )
             if durable is not None and validation['eligible']:
                 durable.cache(f'task-result:{task_id}', completed_task)
             if thought_tracker and run_id:
@@ -11082,16 +11171,32 @@ def _execute_workflow_task_sequence(
                 status='failed',
             )
         if error_strategy != 'continue':
+            if structured_definition:
+                durable.finish_node(state='failed', attempt=max(1, attempt_count), reason_code='task_failed',
+                                    consumed_inputs=(attempt_workflow or {}).get('consumed_inputs') or [])
             raise RuntimeError(
                 f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
             )
 
-    return _merge_workflow_task_execution_results(task_results)
+    merged = _merge_workflow_task_execution_results(task_results)
+    if flow_runner is not None:
+        for task_result in merged.get('task_results') or []:
+            producer = (task_result.get('workflow_result') or {}).get('producer') or {}
+            task_result.update({key: producer[key] for key in ('execution_id', 'node_id', 'iteration_path', 'attempt') if key in producer})
+        merged['workflow_outputs'] = flow_runner.final_outputs
+        if flow_runner.finished and not flow_runner.failed:
+            merged['workflow_outcome'] = {
+                **merged.get('workflow_outcome', {}),
+                'status': 'completed_partial' if flow_runner.partial else 'completed',
+                'success': True,
+            }
+        durable.set_node(None, workflow['flow']['id'])
+    return merged
 
 
 def _execute_workflow_analysis_publication(
     workflow, run_id, task, previous_task_id, previous_result_ref, *, actor_user_id=None,
-    result_reader=None, publish=None,
+    result_reader=None, publish=None, explicit_inputs=None,
 ):
     """Select only a committed ancestor artifact, before resolving a model or its context."""
     publication = task.get('publication')
@@ -11102,10 +11207,31 @@ def _execute_workflow_analysis_publication(
     from functions_personal_workflows import normalize_workflow_publication
 
     publication = normalize_workflow_publication(publication)
-    if not previous_task_id or not previous_result_ref:
-        raise WorkflowResultNotReadyError('Publication needs an existing saved upstream analysis artifact.')
     reader = result_reader or authorize_workflow_task_result_read
     actor = actor_user_id or workflow.get('user_id')
+    if workflow.get('definition_version') == 3:
+        if not isinstance(explicit_inputs, list) or len(explicit_inputs) != 1:
+            raise WorkflowResultNotReadyError('Publication requires exactly one explicit saved analysis input.')
+        selected = explicit_inputs[0]
+        for _ in range(256):
+            if selected['producer'].get('task_id'):
+                break
+            manifest, _ = reader(
+                workflow, run_id, None, selected['result_ref'], reader_user_id=actor,
+                **{key: selected['producer'][key] for key in ('node_id', 'execution_id', 'iteration_path', 'attempt')},
+            )
+            descriptor = (manifest.get('outputs') or {}).get(selected['output_name']) or {}
+            selected = descriptor.get('selected_producer')
+            if not isinstance(selected, dict):
+                raise WorkflowResultNotReadyError('Select a single native saved analysis output for publication.')
+        else:
+            raise WorkflowResultNotReadyError('The selected join provenance is invalid.')
+        previous_task_id = selected['producer'].get('task_id')
+        previous_result_ref = selected['result_ref']
+        if not previous_task_id:
+            raise WorkflowResultNotReadyError('Select the native saved analysis task explicitly for publication.')
+    if not previous_task_id or not previous_result_ref:
+        raise WorkflowResultNotReadyError('Publication needs an existing saved upstream analysis artifact.')
     pending = [(previous_task_id, previous_result_ref)]
     seen = set()
     while pending:
@@ -11118,6 +11244,8 @@ def _execute_workflow_analysis_publication(
             raise WorkflowResultNotReadyError('The artifact lineage is unavailable.')
         manifest, _ = reader(
             workflow, run_id, producer_task, reference, reader_user_id=actor,
+            **({key: selected['producer'][key] for key in ('node_id', 'execution_id', 'iteration_path', 'attempt')}
+               if workflow.get('definition_version') == 3 else {}),
         )
         matching = [
             artifact for artifact in manifest.get('artifacts') or []
@@ -11140,13 +11268,23 @@ def _execute_workflow_analysis_publication(
             producer = {'kind': 'workflow', **{
                 name: manifest['identity'][name] for name in ('workflow_id', 'run_id', 'task_id')
             }}
+            publication_request_id = f"workflow-publication:{workflow['id']}:{run_id}:{task['id']}"
+            if workflow.get('definition_version') == 3:
+                if manifest.get('analysis_origin') is not True:
+                    raise WorkflowResultNotReadyError('Publication requires a native saved analysis producer.')
+                producer.update({key: manifest['identity'][key] for key in ('node_id', 'execution_id', 'iteration_path', 'attempt')})
+                execution = current_workflow_execution()
+                publication_request_id = (
+                    f"workflow-publication:v3:{execution.execution_id()}:"
+                    f"{producer['execution_id']}:{producer['attempt']}"
+                )
             result = (publish or publish_workflow_analysis_artifact)(
                 actor, publication=publication,
                 artifact_reference={
                     'conversation_id': artifact.get('conversation_id'),
                     'artifact_message_id': artifact.get('artifact_message_id'), 'producer': producer,
                 },
-                request_id=f"workflow-publication:{workflow['id']}:{run_id}:{task['id']}",
+                request_id=publication_request_id,
             )
             state = (result.get('publication') or {}).get('state')
             if state == 'pending_approval':
@@ -11154,11 +11292,17 @@ def _execute_workflow_analysis_publication(
             elif state in {'uncertain', 'approval_failed'}:
                 result['execution_status'] = 'blocked'
             output_name = manifest['authoritative_output']
-            return result, [{
+            native_receipt = {
                 'producer': manifest['identity'], 'output_name': output_name,
                 'result_ref': dict(reference), 'output_ref': manifest['outputs'][output_name]['result_ref'],
                 'analysis_result': True,
-            }]
+            }
+            return result, (
+                [*explicit_inputs, native_receipt] if workflow.get('definition_version') == 3
+                and explicit_inputs[0]['producer'] != native_receipt['producer'] else [native_receipt]
+            )
+        if workflow.get('definition_version') == 3:
+            break
         for consumed in manifest.get('consumed_inputs') or []:
             producer = consumed.get('producer') or {}
             if producer.get('workflow_id') != workflow.get('id') or producer.get('run_id') != run_id:
@@ -11431,11 +11575,17 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
     }
     if durable is not None:
         control = durable.check()
-        existing_progress = (
-            durable.load_result(
-                workflow, run_id, 'runtime:run-record', control['run_record_ref'],
-            )['run_record'] if control.get('run_record_ref') else control.get('run_record') or {}
-        )
+        existing_progress = control.get('run_record') or {}
+        if control.get('run_record_ref'):
+            reference = control['run_record_ref']
+            if control.get('schema_version') == 2:
+                existing_progress = durable.load_result(
+                    workflow, run_id, None, reference['result_ref'], **reference['selectors'],
+                )['run_record']
+            else:
+                existing_progress = durable.load_result(
+                    workflow, run_id, 'runtime:run-record', reference,
+                )['run_record']
         if not existing_progress:
             existing_progress = _get_workflow_run_record(workflow, run_id) or {}
         run_record.update(existing_progress)
@@ -11659,6 +11809,8 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
             'agent_display_name': execution_result.get('agent_display_name'),
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
             'task_results': execution_result.get('task_results') or [],
+            **({'workflow_outputs': execution_result.get('workflow_outputs') or []}
+               if workflow.get('definition_version') == 3 else {}),
             'task_error_count': int(execution_result.get('task_error_count') or 0),
             'url_access': execution_result.get('url_access') or {},
             'source_review': execution_result.get('source_review') or {},

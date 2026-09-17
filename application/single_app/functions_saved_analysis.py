@@ -18,6 +18,7 @@ from functions_appinsights import log_event
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, _quota_bytes
+from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
     ANALYSIS_SOURCE_ACCESS_VERSION,
     WorkflowResultNotReadyError,
@@ -172,18 +173,22 @@ def _load_authorized_workflow(user_id, binding):
     from functions_workflow_runner import _workflow_task_run_item_id
 
     group_id = binding.get("group_id")
+    item_id = (
+        _workflow_task_run_item_id(binding["run_id"], binding["task_id"], binding["execution_id"])
+        if binding.get("execution_id") else _workflow_task_run_item_id(binding["run_id"], binding["task_id"])
+    )
     if group_id:
         assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"))
         workflow = get_group_workflow(group_id, binding["workflow_id"])
         run = get_group_workflow_run(group_id, binding["run_id"])
         item = get_group_workflow_run_item(
-            binding["run_id"], _workflow_task_run_item_id(binding["run_id"], binding["task_id"]),
+            binding["run_id"], item_id,
         )
     else:
         workflow = get_personal_workflow(user_id, binding["workflow_id"])
         run = get_personal_workflow_run(user_id, binding["run_id"])
         item = get_personal_workflow_run_item(
-            binding["run_id"], _workflow_task_run_item_id(binding["run_id"], binding["task_id"]),
+            binding["run_id"], item_id,
         )
     if (
         not workflow or workflow.get("id") != binding["workflow_id"]
@@ -367,6 +372,8 @@ def workflow_saved_analysis_descriptor(summary, workflow, *, conversation_id, me
             "kind": "workflow", "workflow_id": workflow["id"],
             "run_id": producer["run_id"], "task_id": producer["task_id"],
             "group_id": workflow.get("group_id"),
+            **({key: producer[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
+               if producer.get("execution_id") else {}),
         },
         "record_count": summary.get("record_count"),
         "source_count": summary.get("source_count"),
@@ -467,6 +474,15 @@ def analysis_artifact_metadata(producer):
         if not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > 1024:
             raise ValueError("The analysis artifact producer is incomplete.")
         normalized[field] = value.strip()
+    if producer["kind"] == "workflow" and producer.get("execution_id"):
+        for field in ("node_id", "execution_id"):
+            value = producer.get(field)
+            if not isinstance(value, str) or not value or len(value) > 128:
+                raise ValueError("The exact analysis execution identity is incomplete.")
+            normalized[field] = value
+        if type(producer.get("attempt")) is not int or producer["attempt"] < 1 or producer.get("iteration_path") != []:
+            raise ValueError("The exact analysis attempt identity is incomplete.")
+        normalized.update(attempt=producer["attempt"], iteration_path=[])
     return {"analysis_result_required": True, "analysis_producer": normalized}
 
 
@@ -501,7 +517,10 @@ def _workflow_analysis_artifact_manifest(user_id, artifact, producer):
     from functions_personal_workflows import get_personal_workflow_run_item
     from functions_workflow_runner import _workflow_task_run_item_id
 
-    item_id = _workflow_task_run_item_id(producer["run_id"], producer["task_id"])
+    item_id = (
+        _workflow_task_run_item_id(producer["run_id"], producer["task_id"], producer["execution_id"])
+        if producer.get("execution_id") else _workflow_task_run_item_id(producer["run_id"], producer["task_id"])
+    )
     items = [
         item for item in (
             get_personal_workflow_run_item(producer["run_id"], item_id),
@@ -516,11 +535,25 @@ def _workflow_analysis_artifact_manifest(user_id, artifact, producer):
     binding = {**producer, "group_id": item.get("group_id")}
     workflow = _load_authorized_workflow(user_id, binding)
     summary = item.get("workflow_result") or {}
+    selectors = {}
+    if producer.get("execution_id"):
+        from functions_workflow_runtime_store import workflow_runtime_store
+
+        journal = workflow_runtime_store(workflow, producer["run_id"])
+        workflow = journal.run_definition()
+        row = journal.journal_read(
+            "attempt", [producer["execution_id"], producer["attempt"]],
+        )
+        if row is None or row["payload"].get("task_id") != producer["task_id"] or row["payload"].get("node_id") != producer["node_id"]:
+            raise AnalysisResultUnavailable("analysis_artifact_unbound")
+        summary = row["payload"].get("workflow_result") or {}
+        selectors = {key: producer[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
     reference = summary.get("result_ref")
     if not isinstance(reference, Mapping):
         raise AnalysisResultUnavailable("analysis_artifact_unbound")
     manifest, _ = authorize_workflow_task_result_read(
         workflow, producer["run_id"], producer["task_id"], reference, reader_user_id=user_id,
+        **selectors,
     )
     if not any(
         value.get("artifact_message_id") == artifact.get("id")
@@ -711,11 +744,21 @@ def load_saved_analysis(
             if not isinstance(binding.get(field), str) or not binding[field]:
                 raise AnalysisResultUnavailable("analysis_lineage_invalid")
         workflow = (workflow_getter or _load_authorized_workflow)(user_id, binding)
-        loader = workflow_loader or _workflow_load
-        load = lambda ref: loader(workflow, binding["run_id"], binding["task_id"], ref)
+        selectors = {}
+        if binding.get("execution_id"):
+            from functions_workflow_result_store import load_workflow_node_result
+            from functions_workflow_runtime_store import workflow_runtime_store
+
+            workflow = workflow_runtime_store(workflow, binding["run_id"]).run_definition()
+            selectors = {key: binding[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
+            loader = workflow_loader or load_workflow_node_result
+        else:
+            loader = workflow_loader or _workflow_load
+        load = lambda ref: loader(workflow, binding["run_id"], binding["task_id"], ref, **selectors)
         manifest, checked = authorize_workflow_task_result_read(
             workflow, binding["run_id"], binding["task_id"], reference,
             reader_user_id=user_id, load_result=loader, source_resolver=source_resolver,
+            **selectors,
         )
     elif binding.get("kind") == "orchestration":
         for field in ("user_id", "conversation_id", "run_id", "step_id"):
@@ -1647,33 +1690,44 @@ def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=N
     tasks = list(run_record.get("task_results") or []) + list(items or [])
     denied = set()
     checked = {}
+    bound_workflow = None
     for task in tasks:
         if not isinstance(task, Mapping):
             continue
         task_id = task.get("task_id")
         summary = task.get("workflow_result") or {}
-        candidates = [summary] if isinstance(summary, Mapping) and summary.get("analysis_result") else []
+        candidates = [summary] if isinstance(summary, Mapping) and (
+            summary.get("analysis_result") or summary.get("contract_version") == "workflow-result-v2"
+        ) else []
         candidates.extend(
             consumed for consumed in task.get("consumed_inputs") or []
-            if isinstance(consumed, Mapping) and consumed.get("analysis_result")
+            if isinstance(consumed, Mapping) and (consumed.get("analysis_result") or (consumed.get("producer") or {}).get("execution_id"))
         )
         for candidate in candidates:
             producer = candidate.get("producer") or {}
             reference = candidate.get("result_ref") or {}
-            key = (producer.get("run_id"), producer.get("task_id"), reference.get("sha256"))
+            key = (producer.get("run_id"), producer.get("task_id"), producer.get("execution_id"),
+                   producer.get("attempt"), reference.get("sha256"))
             if key not in checked:
                 try:
                     if (
                         producer.get("workflow_id") != workflow.get("id")
                         or producer.get("run_id") != run_record.get("id")
-                        or not producer.get("task_id")
+                        or not producer.get("task_id") and not producer.get("execution_id")
                     ):
                         raise AnalysisResultUnavailable("analysis_lineage_invalid")
+                    selectors = {}
+                    if producer.get("execution_id"):
+                        selectors = {name: producer.get(name) for name in ("node_id", "execution_id", "iteration_path", "attempt")}
+                        if result_reader is None and bound_workflow is None:
+                            from functions_workflow_runtime_store import workflow_runtime_store
+
+                            bound_workflow = workflow_runtime_store(workflow, producer["run_id"]).run_definition()
                     read(
-                        workflow, producer["run_id"], producer["task_id"], reference,
-                        reader_user_id=user_id,
+                        bound_workflow or workflow, producer["run_id"], producer.get("task_id"), reference,
+                        reader_user_id=user_id, **selectors,
                     )
-                except (PermissionError, LookupError, ValueError, AzureError, WorkflowResultStorageUnavailableError) as exc:
+                except (PermissionError, LookupError, ValueError, AzureError, WorkflowResultStorageUnavailableError, WorkflowRuntimeConflict) as exc:
                     log_event(
                         "[DOCUMENT_ANALYSIS] Workflow analysis preview withheld.",
                         extra={"run_id": run_record.get("id"), "task_id": task_id, "error_type": type(exc).__name__},

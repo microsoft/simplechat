@@ -8,6 +8,13 @@ import {
 } from './documentExplorer';
 import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './types';
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
+import {
+    analyzeWorkflowFlow,
+    FLOW_ALIAS_PATTERN,
+    isFlowBinding,
+    isLegacyWorkflowBinding,
+    type WorkflowFlowBinding,
+} from './workflowFlow';
 
 export type WorkflowScope = { type: 'personal' } | { type: 'group'; groupId: string };
 export type WorkflowRunnerType = 'model' | 'agent';
@@ -44,6 +51,16 @@ export interface WorkflowModelOption {
 
 export interface WorkflowEditorOptions {
     definition_version: 2;
+    supported_definition_versions?: number[];
+    supported_node_kinds?: string[];
+    flow_limits?: {
+        max_nodes: number;
+        max_depth: number;
+        max_predicate_nodes: number;
+        max_predicate_depth: number;
+        max_executions: number;
+        deadline_seconds: number;
+    };
     can_manage: boolean;
     max_tasks: number;
     agents: WorkflowAgentOption[];
@@ -89,6 +106,13 @@ export interface WorkflowTaskApproval {
     message?: string;
 }
 
+export interface WorkflowPublication {
+    artifact_format: 'md' | 'csv' | 'json';
+    workspace_scope: 'personal' | 'group' | 'public';
+    group_id?: string;
+    public_workspace_id?: string;
+}
+
 export interface WorkflowTask {
     id: string;
     type: 'instructions';
@@ -97,10 +121,11 @@ export interface WorkflowTask {
     order: number;
     runner: WorkflowTaskRunner;
     document_action?: WorkflowDocumentAction;
-    inputs?: WorkflowInputBinding[];
+    inputs?: (WorkflowInputBinding | WorkflowFlowBinding)[];
     reference_ids?: string[];
     output_contract?: WorkflowOutputContract;
     approval?: WorkflowTaskApproval;
+    publication?: WorkflowPublication;
     [key: string]: unknown;
 }
 
@@ -146,6 +171,7 @@ export interface WorkflowDefinition {
     tasks: WorkflowTask[];
     reference_inputs: WorkflowReferenceInput[];
     durable_execution?: boolean;
+    editor_readonly_reason?: string;
     [key: string]: unknown;
 }
 
@@ -156,6 +182,17 @@ export interface WorkflowRuntimeGate {
     input_digest?: string;
     reason?: string;
     choices: string[];
+    execution_id?: string;
+    node_id?: string;
+    attempt?: number;
+    iteration_path?: WorkflowIterationFrame[];
+}
+
+export interface WorkflowIterationFrame {
+    loop_id: string;
+    item_id?: string;
+    index?: number;
+    iteration?: number;
 }
 
 export interface WorkflowRuntimeDecision {
@@ -165,6 +202,9 @@ export interface WorkflowRuntimeDecision {
     decided_at?: string;
     input_digest?: string;
     attempt?: number;
+    execution_id?: string;
+    node_id?: string;
+    iteration_path?: WorkflowIterationFrame[];
 }
 
 export interface WorkflowRuntimeUnitMemory {
@@ -182,6 +222,7 @@ export interface WorkflowRuntimeMemory {
 }
 
 export interface WorkflowRuntimeProjection {
+    schema_version?: number;
     version: number;
     state: WorkflowRuntimeState;
     phase?: string;
@@ -192,6 +233,13 @@ export interface WorkflowRuntimeProjection {
     gate?: WorkflowRuntimeGate;
     memory?: WorkflowRuntimeMemory;
     can_resume?: boolean;
+    limits?: {
+        max_executions: number;
+        admitted_count: number;
+        deadline_at: string;
+        deadline_seconds: number;
+        waits_count: boolean;
+    };
 }
 
 export interface WorkflowRuntimeResponse {
@@ -215,6 +263,7 @@ export interface WorkflowRunSummary {
     id?: string;
     run_id?: string;
     workflow_id?: string;
+    definition_version?: number;
     status?: string;
     durable_execution?: boolean;
     started_at?: string;
@@ -265,13 +314,17 @@ export interface WorkflowResultReference {
 
 export interface WorkflowConsumedInput {
     producer?: {
+        workflow_id?: string;
+        node_id?: string;
+        execution_id?: string;
+        iteration_path?: WorkflowIterationFrame[];
         task_id?: string;
         run_id?: string;
         attempt?: number;
     };
     output_name?: string;
     result_ref?: WorkflowResultReference;
-    output_ref?: string;
+    output_ref?: WorkflowResultReference | string;
     input_name?: string;
 }
 
@@ -301,7 +354,7 @@ export interface WorkflowRunResultPage {
 
 export const WORKFLOW_TASK_INSTRUCTIONS_LIMIT = 12000;
 export const WORKFLOW_SCHEMA_LIMIT = 32768;
-export const WORKFLOW_ALIAS_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+export const WORKFLOW_ALIAS_PATTERN = FLOW_ALIAS_PATTERN;
 export const WORKFLOW_SCHEMA_ALLOWED_KEYS = new Set([
     'type',
     'properties',
@@ -372,9 +425,9 @@ function withScopeQuery(path: string, scope: WorkflowScope, extra?: URLSearchPar
     return query ? `${path}?${query}` : path;
 }
 
-function workflowUrl(scope: WorkflowScope, workflowId?: string, suffix = ''): string {
+export function workflowUrl(scope: WorkflowScope, workflowId?: string, suffix = '', extra?: URLSearchParams): string {
     const path = `${workflowRoot(scope)}${workflowId ? `/${encodeURIComponent(workflowId)}` : ''}${suffix}`;
-    return withScopeQuery(path, scope);
+    return withScopeQuery(path, scope, extra);
 }
 
 function asArray<T>(value: unknown, key?: string): T[] {
@@ -504,7 +557,7 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
     };
 }
 
-function normalizeRunner(value: unknown): WorkflowTaskRunner {
+function normalizeRunner(value: unknown, structured = false): WorkflowTaskRunner {
     if (!isRecord(value)) {
         return { type: 'inherit' };
     }
@@ -512,6 +565,7 @@ function normalizeRunner(value: unknown): WorkflowTaskRunner {
         ? value.type as WorkflowTaskRunnerType
         : 'inherit';
     return {
+        ...(structured ? value : {}),
         type,
         selected_agent: agentReference(value.selected_agent),
         model_endpoint_id: text(value.model_endpoint_id),
@@ -538,7 +592,14 @@ function normalizeOutputContract(value: unknown): WorkflowOutputContract | undef
     };
 }
 
-function normalizeInputs(value: unknown): WorkflowInputBinding[] | undefined {
+function normalizeInputs(value: unknown, structured = false): (WorkflowInputBinding | WorkflowFlowBinding)[] | undefined {
+    if (structured) {
+        if (value === undefined) return [];
+        if (!Array.isArray(value) || !value.every(isFlowBinding)) {
+            throw new Error('This structured workflow contains unsupported input bindings. Its saved definition was not changed.');
+        }
+        return structuredClone(value);
+    }
     if (value === null || value === undefined) {
         return undefined;
     }
@@ -567,10 +628,12 @@ function normalizeApproval(value: unknown): WorkflowTaskApproval | undefined {
     };
 }
 
-function normalizeTask(value: unknown, index: number): WorkflowTask {
+function normalizeTask(value: unknown, index: number, structured = false): WorkflowTask {
     const record = isRecord(value) ? value : {};
-    const inputs = Object.hasOwn(record, 'inputs') && record.inputs !== null
-        ? normalizeInputs(record.inputs) ?? []
+    const unsupportedInputs = structured && record.inputs !== undefined &&
+        (!Array.isArray(record.inputs) || !record.inputs.every(isFlowBinding));
+    const inputs = structured || (Object.hasOwn(record, 'inputs') && record.inputs !== null)
+        ? unsupportedInputs ? [] : normalizeInputs(record.inputs, structured) ?? []
         : undefined;
     const referenceIds = Array.isArray(record.reference_ids)
         ? record.reference_ids.filter((item): item is string => typeof item === 'string')
@@ -584,7 +647,8 @@ function normalizeTask(value: unknown, index: number): WorkflowTask {
         name: text(record.name) || `Task ${index + 1}`,
         instructions: text(record.instructions),
         order: index + 1,
-        runner: normalizeRunner(record.runner),
+        runner: normalizeRunner(record.runner, structured),
+        ...(unsupportedInputs ? { unrecognized_inputs: structuredClone(record.inputs) } : {}),
         document_action: isRecord(record.document_action) ? record.document_action as WorkflowDocumentAction : undefined,
         ...(inputs !== undefined ? { inputs } : {}),
         ...(referenceIds !== undefined ? { reference_ids: referenceIds } : {}),
@@ -684,7 +748,7 @@ export function normalizeWorkflowDefinition(
         : 'manual';
     const normalizedTasks = Array.isArray(record.tasks) ? record.tasks : [];
     const tasks = normalizedTasks
-        .map(normalizeTask)
+        .map((task, index) => normalizeTask(task, index, record.definition_version === 3))
         .sort((left, right) => left.order - right.order)
         .map((task, index) => ({ ...task, order: index + 1 }));
     const references = (Array.isArray(record.reference_inputs) ? record.reference_inputs : [])
@@ -725,6 +789,9 @@ export function normalizeWorkflowDefinition(
         },
         tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
         reference_inputs: references,
+        ...(record.definition_version === 3 && tasks.some((task) => Object.hasOwn(task, 'unrecognized_inputs')) ? {
+            editor_readonly_reason: 'This workflow contains input bindings from an unsupported schema. Its original inputs have been retained and editing is disabled.',
+        } : {}),
         ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };
@@ -735,13 +802,19 @@ export function workflowForSave(
     original: WorkflowDefinition | null,
     scope: WorkflowScope,
 ): WorkflowDefinition {
+    if (draft.editor_readonly_reason) {
+        throw new Error('This workflow contains unsupported executable fields and cannot be saved by this editor.');
+    }
+    if (original && original.definition_version >= 3 && draft.definition_version < original.definition_version) {
+        throw new Error('This workflow cannot be downgraded without losing executable fields.');
+    }
     const base = original ? structuredClone(original) : newWorkflowDefinition(scope);
     const originalHasDurable = original ? Object.hasOwn(original, 'durable_execution') : false;
     const includeDurable = !original || originalHasDurable || draft.durable_execution === true;
     const next = {
         ...base,
         id: original?.id ?? draft.id,
-        definition_version: 2,
+        definition_version: draft.definition_version === 3 ? 3 : 2,
         definition_revision: original?.definition_revision,
         name: draft.name.trim(),
         description: draft.description.trim(),
@@ -757,6 +830,7 @@ export function workflowForSave(
         tasks: draft.tasks.map((task, index) => ({ ...task, order: index + 1 })),
         task_prompt: draft.tasks[0]?.instructions.trim() || '',
         reference_inputs: draft.reference_inputs,
+        ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
         ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };
@@ -789,6 +863,8 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'task_prompt',
         'reference_inputs',
         'durable_execution',
+        'flow',
+        'limits',
         'group_id',
     ]);
     const labels: Record<string, string> = {
@@ -817,8 +893,11 @@ export function workflowValidationErrors(
     if (!options.can_manage) {
         errors.push('You do not have permission to save workflows in this scope.');
     }
-    if (draft.definition_version > 2) {
+    if (!(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version)) {
         errors.push('This workflow was created by a newer editor and is read-only here.');
+    }
+    if (draft.definition_version === 3) {
+        errors.push(...analyzeWorkflowFlow(draft).errors);
     }
     if (draft.trigger_type === 'interval' && draft.schedule.value < 1) {
         errors.push('Interval workflows need a positive schedule value.');
@@ -906,6 +985,11 @@ export function workflowValidationErrors(
             errors.push(`${task.name || `Task ${index + 1}`} must choose an explicit model because the app default model is not valid for this workflow scope.`);
         }
         for (const input of task.inputs ?? []) {
+            if (draft.definition_version === 3) continue;
+            if (!isLegacyWorkflowBinding(input)) {
+                errors.push('Structured input bindings require definition version 3.');
+                continue;
+            }
             if (!WORKFLOW_ALIAS_PATTERN.test(input.name)) {
                 errors.push(`${task.name || `Task ${index + 1}`} has an input alias that must start with a letter and use only letters, numbers, underscores, or dashes, up to 64 characters.`);
             }

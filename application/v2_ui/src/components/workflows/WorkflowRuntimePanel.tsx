@@ -13,6 +13,7 @@ import {
     workflowScopeKey,
     WORKFLOW_RUNTIME_TERMINAL_STATES,
     type WorkflowRuntimeDecisionChoice,
+    type WorkflowRuntimeGate,
     type WorkflowRuntimeMemory,
     type WorkflowRuntimeProjection,
     type WorkflowScope,
@@ -70,10 +71,77 @@ function safeJson(value: unknown): string {
     return JSON.stringify(value, null, 2) ?? 'null';
 }
 
-function RuntimeMemoryDetails({ memory }: { memory?: WorkflowRuntimeMemory }) {
+function formatIterationPath(path: WorkflowRuntimeGate['iteration_path']): string {
+    if (!Array.isArray(path) || !path.length) {
+        return '';
+    }
+    return path.map((frame, index) => {
+        const loop = String(frame.loop_id || `region ${index + 1}`);
+        const labels = [
+            frame.item_id ? `item ${frame.item_id}` : '',
+            frame.index !== undefined ? `index ${frame.index}` : '',
+            frame.iteration !== undefined ? `iteration ${frame.iteration}` : '',
+        ].filter(Boolean);
+        return labels.length ? `${loop} (${labels.join(', ')})` : loop;
+    }).join(' / ');
+}
+
+function gateReference(gate: WorkflowRuntimeGate | undefined): string {
+    if (!gate) {
+        return '';
+    }
+    const path = formatIterationPath(gate.iteration_path);
+    const parts = [
+        gate.execution_id ? `Execution ${gate.execution_id}` : '',
+        gate.node_id ? `Node ${gate.node_id}` : '',
+        gate.attempt !== undefined ? `Attempt ${gate.attempt}` : '',
+        path ? `Path ${path}` : '',
+    ].filter(Boolean);
+    return parts.join(' · ');
+}
+
+function RuntimeMemoryDetails({
+    memory,
+    schemaVersion,
+    structuredRun = false,
+}: {
+    memory?: WorkflowRuntimeMemory;
+    schemaVersion?: number;
+    structuredRun?: boolean;
+}) {
+    if (schemaVersion !== undefined && ![1, 2].includes(schemaVersion)) {
+        return (
+            <p role="alert" className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
+                This runtime memory schema is not supported by this inspector yet.
+            </p>
+        );
+    }
+    if (structuredRun) {
+        const counters = [
+            ['unit_count', 'Checkpoint units'],
+            ['completed_unit_count', 'Completed checkpoint units'],
+            ['execution_count', 'Execution admissions'],
+            ['decision_count', 'Saved decisions'],
+        ].flatMap(([key, label]) => {
+            const value = memory?.[key];
+            return typeof value === 'number' && Number.isFinite(value) ? [{ label, value }] : [];
+        });
+        return (
+            <details className="rounded-xl border border-edge p-3">
+                <summary className="cursor-pointer text-sm font-medium text-text-1">Runtime memory summary</summary>
+                <div className="mt-3 space-y-2 text-xs text-text-3">
+                    <p>Exact execution, attempt, and decision histories use the paged views below. Run memory is not approval authority.</p>
+                    {counters.map((item) => <p key={item.label}>{item.label}: {item.value}</p>)}
+                </div>
+            </details>
+        );
+    }
     const decisions = memory?.decisions ?? [];
     const units = memory?.units ?? [];
-    const otherKeys = Object.keys(memory ?? {}).filter((key) => !['decisions', 'units'].includes(key));
+    const includeOtherKeys = !structuredRun && (schemaVersion === undefined || schemaVersion === 1);
+    const otherKeys = includeOtherKeys
+        ? Object.keys(memory ?? {}).filter((key) => !['decisions', 'units'].includes(key))
+        : [];
 
     if (!memory || (!decisions.length && !units.length && !otherKeys.length)) {
         return <p className="text-xs text-text-3">No run memory has been recorded yet.</p>;
@@ -81,8 +149,15 @@ function RuntimeMemoryDetails({ memory }: { memory?: WorkflowRuntimeMemory }) {
 
     return (
         <details className="rounded-xl border border-edge p-3">
-            <summary className="cursor-pointer text-sm font-medium text-text-1">Run memory</summary>
+            <summary className="cursor-pointer text-sm font-medium text-text-1">
+                {structuredRun ? 'Runtime memory summary' : 'Run memory'}
+            </summary>
             <div className="mt-3 space-y-3">
+                {structuredRun ? (
+                    <p className="text-xs text-text-3">
+                        Detailed V3 execution, attempt, and decision histories load from the paged run-inspection APIs below.
+                    </p>
+                ) : null}
                 <div>
                     <p className="text-xs font-medium text-text-2">Checkpoint units and attempts</p>
                     {units.length ? (
@@ -136,12 +211,14 @@ export function WorkflowRuntimePanel({
     workflowId,
     runId,
     durable,
+    structuredRun = false,
     onRuntimeChanged,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
     durable: boolean;
+    structuredRun?: boolean;
     onRuntimeChanged?: () => void;
 }) {
     const scopeKey = workflowScopeKey(scope);
@@ -152,6 +229,7 @@ export function WorkflowRuntimePanel({
     const [error, setError] = useState('');
     const [action, setAction] = useState<string | null>(null);
     const [confirmRetry, setConfirmRetry] = useState(false);
+    const [retryTarget, setRetryTarget] = useState<{ key: string; gate: WorkflowRuntimeGate } | null>(null);
     const [pollReadToken, setPollReadToken] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
     const requestToken = useRef(0);
@@ -162,6 +240,9 @@ export function WorkflowRuntimePanel({
         setRuntime(null);
         setError('');
         setCanDecide(false);
+        setConfirmRetry(false);
+        setRetryTarget(null);
+        retryRequest.current = null;
     }, [durable, runId, scopeKey, workflowId]);
 
     const loadRuntime = useCallback(async (showSpinner = false) => {
@@ -229,6 +310,12 @@ export function WorkflowRuntimePanel({
         return requestId;
     };
 
+    const recoveryKey = (record: WorkflowRuntimeProjection) => JSON.stringify([
+        scopeKey, workflowId, runId, record.version, record.gate?.id,
+        record.gate?.execution_id, record.gate?.node_id, record.gate?.attempt,
+        record.gate?.input_digest,
+    ]);
+
     const applyRuntimeResponse = (nextRuntime: WorkflowRuntimeProjection, nextCanDecide: boolean) => {
         setRuntime(nextRuntime);
         setCanDecide(nextCanDecide);
@@ -240,16 +327,35 @@ export function WorkflowRuntimePanel({
         retryRequest.current = null;
         setRuntime(null);
         setCanDecide(false);
+        setConfirmRetry(false);
+        setRetryTarget(null);
         setError('You no longer have access to this workflow runtime. Reload or ask an owner to restore access.');
     };
 
     const decide = async (choice: WorkflowRuntimeDecisionChoice) => {
-        if (!runtime?.gate || action) {
+        if (action) return;
+        if (choice === 'retry' && (!runtime?.gate || !retryTarget || retryTarget.key !== recoveryKey(runtime) || runtime.gate.kind !== 'recovery' || !canDecide)) {
+            setConfirmRetry(false);
+            setRetryTarget(null);
+            setError('The recovery gate changed while you were reviewing it. Review the current execution and attempt before retrying.');
+            return;
+        }
+        if (!runtime?.gate) {
+            setError('The gate is no longer available. Reload this run before making another decision.');
             return;
         }
         abortRef.current?.abort();
         const gate = runtime.gate;
-        const requestKey = `decision:${runId}:${runtime.version}:${gate.id}:${choice}`;
+        const requestKey = [
+            'decision',
+            runId,
+            runtime.version,
+            gate.id,
+            gate.execution_id ?? '',
+            gate.node_id ?? '',
+            gate.attempt ?? '',
+            choice,
+        ].join(':');
         const requestId = requestIdFor(requestKey);
         setAction(choice);
         setError('');
@@ -277,6 +383,7 @@ export function WorkflowRuntimePanel({
         } finally {
             setAction(null);
             setConfirmRetry(false);
+            setRetryTarget(null);
         }
     };
 
@@ -332,6 +439,7 @@ export function WorkflowRuntimePanel({
     };
 
     const gate = runtime?.gate;
+    const unsupportedRuntimeSchema = Boolean(runtime && runtime.schema_version !== undefined && ![1, 2].includes(runtime.schema_version));
     const gateAllows = (choice: WorkflowRuntimeDecisionChoice) =>
         Boolean(gate?.choices.includes(choice));
     const progressLabel = useMemo(() => {
@@ -340,7 +448,7 @@ export function WorkflowRuntimePanel({
         }
         return `${runtime.progress.completed} of ${runtime.progress.total} units complete`;
     }, [runtime?.progress]);
-    const canMutate = canDecide && Boolean(runtime) && !loading;
+    const canMutate = canDecide && Boolean(runtime) && !loading && !unsupportedRuntimeSchema;
     const canResume = canMutate && runtime?.can_resume === true &&
         ['failed', 'incomplete', 'invalid'].includes(runtime.state);
     const canCancel = canMutate && runtime && !gateAllows('cancel') ? !runtimeIsTerminal(runtime) : false;
@@ -365,18 +473,30 @@ export function WorkflowRuntimePanel({
                     {loading ? <Loader2 size={14} className="animate-spin text-text-3" /> : null}
                 </div>
                 {progressLabel ? <p className="text-xs text-text-3">{progressLabel}</p> : null}
+                {structuredRun && runtime?.limits ? (
+                    <p className="text-xs text-text-3">
+                        {runtime.limits.admitted_count} of {runtime.limits.max_executions} execution admissions used.
+                        {' '}Deadline: {formatTimestamp(runtime.limits.deadline_at)} (including waits).
+                    </p>
+                ) : null}
                 {error ? <p role="alert" className="rounded-xl bg-danger-soft p-3 text-xs text-danger">{error}</p> : null}
                 {runtime && !canDecide ? (
                     <p className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
                         You can view this runtime, but you do not have permission to approve, reject, retry, resume or cancel it.
                     </p>
                 ) : null}
-                {gate ? (
+                {unsupportedRuntimeSchema ? (
+                    <p role="alert" className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
+                        This runtime schema is not supported by this inspector yet.
+                    </p>
+                ) : null}
+                {gate && !unsupportedRuntimeSchema ? (
                     <div className="space-y-2 rounded-xl border border-edge p-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Pill tone={gate.kind === 'output' ? 'warn' : 'accent'}>{gate.kind}</Pill>
                             <span className="text-sm font-medium text-text-1">Blocked on {gate.unit_id || 'runtime gate'}</span>
                         </div>
+                        {gateReference(gate) ? <p className="break-words text-xs text-text-3">{gateReference(gate)}</p> : null}
                         {gate.reason ? <p className="text-xs text-text-2">{gate.reason}</p> : null}
                         {gate.input_digest ? <p className="text-xs text-text-3">Input digest: {gate.input_digest}</p> : null}
                         {gate.kind === 'output' ? (
@@ -401,7 +521,12 @@ export function WorkflowRuntimePanel({
                         {canMutate && gate.kind === 'recovery' ? (
                             <div className="flex flex-wrap gap-2">
                                 {gateAllows('retry') ? (
-                                    <GlassButton size="sm" variant="primary" disabled={Boolean(action)} onClick={() => setConfirmRetry(true)}>
+                                    <GlassButton size="sm" variant="primary" disabled={Boolean(action)} onClick={() => {
+                                        if (runtime) {
+                                            setRetryTarget({ key: recoveryKey(runtime), gate: structuredClone(gate) });
+                                            setConfirmRetry(true);
+                                        }
+                                    }}>
                                         {action === 'retry' ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
                                         Retry task
                                     </GlassButton>
@@ -446,7 +571,11 @@ export function WorkflowRuntimePanel({
                         </GlassButton>
                     ) : null}
                 </div>
-                <RuntimeMemoryDetails memory={runtime?.memory} />
+                <RuntimeMemoryDetails
+                    memory={runtime?.memory}
+                    schemaVersion={runtime?.schema_version}
+                    structuredRun={structuredRun}
+                />
             </GlassPanel>
             {confirmRetry ? (
                 <ConfirmDialog
@@ -457,12 +586,18 @@ export function WorkflowRuntimePanel({
                     cancelLabel="Keep waiting"
                     busy={action === 'retry'}
                     tone="primary"
-                    onClose={() => setConfirmRetry(false)}
+                    onClose={() => {
+                        setConfirmRetry(false);
+                        setRetryTarget(null);
+                    }}
                     onConfirm={() => void decide('retry')}
                 >
                     <p className="text-xs text-text-2">
-                        The runtime will keep the same run id and record this decision against the current recovery gate.
+                        The runtime will keep the same run id and bind this decision to the recovery gate you opened.
                     </p>
+                    {retryTarget && gateReference(retryTarget.gate) ? (
+                        <p className="break-words text-xs text-text-2">{gateReference(retryTarget.gate)}</p>
+                    ) : null}
                 </ConfirmDialog>
             ) : null}
         </div>

@@ -44,6 +44,7 @@ from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNot
 from azure.storage.blob import ContentSettings
 
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
+from functions_workflow_identity import workflow_execution_id, workflow_node_identity
 
 STORAGE_SCHEMA_VERSION = 1
 RESULT_RECORD_TYPE = "workflow_result_chunk"
@@ -109,8 +110,22 @@ def _scope(workflow, run_id):
     return {**_workflow_scope(workflow), "run_id": _identifier(run_id)}
 
 
-def _identity(workflow, run_id, task_id):
+def _identity(workflow, run_id, task_id, *, execution_id=None, attempt=None, node_id=None, iteration_path=None):
+    if any(value is not None for value in (execution_id, attempt, node_id, iteration_path)):
+        identity = workflow_node_identity(
+            workflow, run_id, node_id, execution_id, attempt, task_id=task_id, iteration_path=iteration_path,
+        )
+        # Compact transport bindings remain hashable; the manifest retains the verified path.
+        return {**_scope(workflow, run_id), **{key: value for key, value in identity.items() if key != "iteration_path"}}
     return {**_scope(workflow, run_id), "task_id": _identifier(task_id)}
+
+
+def read_workflow_node_result_page(workflow, run_id, task_id, reference, *, node_id, execution_id, attempt,
+                                   iteration_path=None, offset=0, limit=2000):
+    return _configured_store(workflow).read_page(
+        workflow, run_id, task_id, reference, node_id=node_id, execution_id=execution_id,
+        attempt=attempt, iteration_path=[] if iteration_path is None else iteration_path, offset=offset, limit=limit,
+    )
 
 
 def _chat_scope(user_id, conversation_id, message_id=None):
@@ -211,7 +226,8 @@ def _blob_name(identity, reference):
         return f"{_chat_blob_prefix(identity)}{reference['sha256']}.json"
     if identity["scope_type"] == "orchestration":
         return f"{_orchestration_blob_prefix(identity)}{_hash_identifier(identity['step_id'])}/{reference['sha256']}.json"
-    return f"{_run_blob_prefix(identity)}{_hash_identifier(identity['task_id'])}/{reference['sha256']}.json"
+    key = f"{identity['execution_id']}:{identity['attempt']}" if identity.get("execution_id") else identity["task_id"]
+    return f"{_run_blob_prefix(identity)}{_hash_identifier(key)}/{reference['sha256']}.json"
 
 
 def _conversation_blob_scope_metadata(scope):
@@ -248,7 +264,10 @@ def _blob_metadata(identity, reference):
         "scope_hash": _hash_identifier(identity["scope_id"]),
         "workflow_hash": _hash_identifier(identity["workflow_id"]),
         "run_hash": _hash_identifier(identity["run_id"]),
-        "task_hash": _hash_identifier(identity["task_id"]),
+        **({"execution_hash": identity["execution_id"], "attempt": str(identity["attempt"]),
+            "execution_storage_hash": _hash_identifier(f"{identity['execution_id']}:{identity['attempt']}"),
+            "node_hash": _hash_identifier(identity["node_id"])} if identity.get("execution_id")
+           else {"task_hash": _hash_identifier(identity["task_id"])}),
         "sha256": reference["sha256"],
         "size_bytes": str(reference["size_bytes"]),
         "media_type": RESULT_MEDIA_TYPE,
@@ -306,7 +325,10 @@ def _workflow_execution_guard(identity, execution=None):
     execution = execution or _active_workflow_execution()
     if execution is None or "workflow_id" not in identity:
         return None
-    if execution.workflow["id"] != identity["workflow_id"] or execution.run_id != identity["run_id"]:
+    if (
+        execution.workflow["id"] != identity["workflow_id"] or execution.run_id != identity["run_id"]
+        or any(identity.get(key) != value for key, value in _workflow_scope(execution.workflow).items())
+    ):
         raise WorkflowResultIntegrityError("Workflow result write does not match the active execution.")
     execution.check()
     return execution
@@ -406,9 +428,9 @@ class WorkflowResultStore:
             etag=properties.etag, match_condition=MatchConditions.IfNotModified, validate_content=True,
         ).chunks()
 
-    def save(self, workflow, run_id, task_id, result):
+    def save(self, workflow, run_id, task_id, result, **selectors):
         """Persist an envelope without overwriting another immutable result."""
-        return self._save(_identity(workflow, run_id, task_id), result)
+        return self._save(_identity(workflow, run_id, task_id, **selectors), result)
 
     def save_chat(
         self, user_id, conversation_id, message_id, result, *, guard_token=None, require_analysis_guard=False,
@@ -871,7 +893,7 @@ class WorkflowResultStore:
         identity_fields = (
             "c.user_id, c.conversation_id, c.message_id" if scope["scope_type"] == "chat"
             else "c.user_id, c.conversation_id, c.step_id" if scope["scope_type"] == "orchestration"
-            else "c.workflow_id, c.task_id"
+            else "c.workflow_id, c.task_id, c.execution_id, c.node_id, c.attempt"
         )
         return self.container.query_items(
             query=(
@@ -900,6 +922,8 @@ class WorkflowResultStore:
             )
         else:
             identity = {**scope, "task_id": _identifier(row.get("task_id"))}
+            if row.get("execution_id"):
+                identity.update(execution_id=row["execution_id"], node_id=row["node_id"], attempt=row["attempt"])
         _require_fields(row, identity)
         return identity
 
@@ -947,9 +971,9 @@ class WorkflowResultStore:
             raise WorkflowResultIntegrityError("Stored workflow result chunk size or digest does not match.")
         return payload
 
-    def load(self, workflow, run_id, task_id, reference):
+    def load(self, workflow, run_id, task_id, reference, **selectors):
         """Read the full envelope, verifying metadata, reconstructed size, and SHA-256."""
-        return self._load(_identity(workflow, run_id, task_id), reference)
+        return self._load(_identity(workflow, run_id, task_id, **selectors), reference)
 
     def load_chat(self, user_id, conversation_id, message_id, reference):
         """Load and verify the complete result for an authorized chat binding."""
@@ -982,9 +1006,9 @@ class WorkflowResultStore:
             raise WorkflowResultIntegrityError("Stored workflow result is not a JSON object.")
         return result
 
-    def read_page(self, workflow, run_id, task_id, reference, *, offset=0, limit=DEFAULT_PAGE_BYTES):
+    def read_page(self, workflow, run_id, task_id, reference, *, offset=0, limit=DEFAULT_PAGE_BYTES, **selectors):
         """Read bounded ASCII JSON bytes; complete means EOF, not a complete envelope."""
-        return self._read_page(_identity(workflow, run_id, task_id), reference, offset=offset, limit=limit)
+        return self._read_page(_identity(workflow, run_id, task_id, **selectors), reference, offset=offset, limit=limit)
 
     def read_chat_page(self, user_id, conversation_id, message_id, reference, *, offset=0, limit=DEFAULT_PAGE_BYTES):
         """Read bounded serialized bytes, not semantic records or model-ready content."""
@@ -1096,10 +1120,21 @@ class WorkflowResultStore:
                     "scope_hash": _hash_identifier(scope["scope_id"]),
                     "workflow_hash": _hash_identifier(scope["workflow_id"]),
                     "run_hash": _hash_identifier(scope["run_id"]),
-                    "task_hash": object_hash,
                     "sha256": digest_filename[:-5],
                     "media_type": RESULT_MEDIA_TYPE,
                 }
+                metadata = properties.metadata or {}
+                if metadata.get("execution_hash"):
+                    execution_hash, attempt = metadata.get("execution_hash"), metadata.get("attempt")
+                    if (
+                        not isinstance(execution_hash, str) or not _DIGEST_PATTERN.fullmatch(execution_hash)
+                        or not isinstance(attempt, str) or not re.fullmatch(r"[1-9][0-9]{0,11}", attempt)
+                        or _hash_identifier(f"{execution_hash}:{attempt}") != object_hash
+                    ):
+                        raise WorkflowResultIntegrityError("The execution Blob identity is invalid.")
+                    expected["execution_storage_hash"] = object_hash
+                else:
+                    expected["task_hash"] = object_hash
             _require_fields(properties.metadata, expected)
             blob = self.blob_client.get_blob_client(container=self.blob_container_name, blob=name)
             try:
@@ -1123,7 +1158,7 @@ class WorkflowResultStore:
             self._delete_scoped_blobs(scope)
         records = self.container.query_items(
             query=(
-                "SELECT c.id, c.run_id, c.workflow_id, c.scope_type, c.scope_id, c.task_id, "
+                "SELECT c.id, c.run_id, c.workflow_id, c.scope_type, c.scope_id, c.task_id, c.node_id, c.execution_id, c.attempt, "
                 "c.type, c.item_type, c.storage, c.schema_version, c.sha256, c.size_bytes, "
                 "c.chunk_count, c.record_kind, c.chunk_index FROM c "
                 "WHERE c.run_id = @run_id AND c.workflow_id = @workflow_id "
@@ -1139,6 +1174,22 @@ class WorkflowResultStore:
         )
         self._delete_records(scope, records)
         self._delete_analysis_controls(scope)
+        journal_rows = self.container.query_items(
+            query=(
+                "SELECT c.id, c.workflow_id, c.run_id, c.scope_type, c.scope_id FROM c "
+                "WHERE c.run_id = @run_id AND c.workflow_id = @workflow_id AND c.scope_type = @scope_type "
+                "AND c.scope_id = @scope_id AND c.type = @record_type AND c.item_type = @record_type"
+            ),
+            parameters=[*({"name": f"@{key}", "value": value} for key, value in scope.items()),
+                        {"name": "@record_type", "value": "workflow_runtime_journal"}],
+            partition_key=run_id, max_item_count=100,
+        )
+        for row in journal_rows:
+            _require_fields(row, scope)
+            try:
+                self.container.delete_item(item=row["id"], partition_key=run_id)
+            except CosmosResourceNotFoundError:
+                pass
 
     def delete_chat_results(self, user_id, conversation_id, message_id=None):
         """Delete every private section/revision for a real message or conversation.
@@ -1197,7 +1248,14 @@ class WorkflowResultStore:
                 )
                 _require_fields(record, identity)
             else:
-                identity = {**scope, "task_id": _identifier(record.get("task_id"))}
+                if record.get("execution_id"):
+                    identity = {
+                        **scope, "execution_id": _identifier(record.get("execution_id")),
+                        "node_id": _identifier(record.get("node_id")), "attempt": _positive_integer(record.get("attempt"), "Attempt"),
+                        **({"task_id": _identifier(record["task_id"])} if record.get("task_id") else {}),
+                    }
+                else:
+                    identity = {**scope, "task_id": _identifier(record.get("task_id"))}
             reference = _validate_reference({key: record.get(key) for key in REFERENCE_FIELDS})
             kind = record.get("record_kind")
             if kind == "manifest":
@@ -1257,6 +1315,41 @@ def save_workflow_task_result(workflow, run_id, task_id, result, *, settings=Non
 def load_workflow_task_result(workflow, run_id, task_id, reference):
     """Load and verify an authorized workflow task's full result envelope."""
     return _configured_store(workflow).load(workflow, run_id, task_id, reference)
+
+
+def save_workflow_node_result(workflow, run_id, task_id, result, *, node_id, execution_id, attempt,
+                              iteration_path=None, settings=None):
+    return _configured_store(workflow, settings=settings, for_write=True).save(
+        workflow, run_id, task_id, result, node_id=node_id, execution_id=execution_id,
+        attempt=attempt, iteration_path=[] if iteration_path is None else iteration_path,
+    )
+
+
+def load_workflow_node_result(workflow, run_id, task_id, reference, *, node_id, execution_id, attempt,
+                              iteration_path=None):
+    return _configured_store(workflow).load(
+        workflow, run_id, task_id, reference, node_id=node_id, execution_id=execution_id,
+        attempt=attempt, iteration_path=[] if iteration_path is None else iteration_path,
+    )
+
+
+def save_workflow_runtime_result(workflow, run_id, result, *, settings=None):
+    node_id = workflow["flow"]["id"]
+    return save_workflow_node_result(
+        workflow, run_id, None, result, settings=settings, node_id=node_id,
+        execution_id=workflow_execution_id(workflow, run_id, node_id), attempt=1, iteration_path=[],
+    )
+
+
+def load_workflow_runtime_result(workflow, run_id, control, reference):
+    """Load using a verified control's frozen identity, before its definition can be read."""
+    if any(control.get(key) != value for key, value in _scope(workflow, run_id).items()):
+        raise WorkflowResultIntegrityError("The runtime snapshot scope is invalid.")
+    selectors = control.get("snapshot_identity") or {}
+    if set(selectors) != {"node_id", "execution_id", "attempt", "iteration_path"} or selectors["iteration_path"] != []:
+        raise WorkflowResultIntegrityError("The runtime snapshot identity is invalid.")
+    identity = {**_scope(workflow, run_id), **{key: value for key, value in selectors.items() if key != "iteration_path"}}
+    return _configured_store(workflow)._load(identity, reference)
 
 
 def read_workflow_task_result_page(workflow, run_id, task_id, reference, *, offset=0, limit=65536):
