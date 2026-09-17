@@ -94,6 +94,7 @@ import { suggestPromptName } from '../../lib/promptSlash';
 import { readPromptParam } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
 import { messageToPlainText } from '../../lib/messageText';
+import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
 import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
 import { rememberPromptValues } from '../../lib/promptVariableMemory';
 import {
@@ -141,7 +142,12 @@ function ToolToggle({
 }
 
 export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
-    const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
+    const {
+        streaming, sendMessage, stopStreaming, activeConversationId,
+        analysisResultContext, clearAnalysisResultContext,
+    } = useChatStore();
+    const savedAnalysis = analysisResultContext?.conversation_id === activeConversationId
+        ? analysisResultContext : null;
     // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
     // suggested when saving what is written as a prompt.
     const messages = useChatStore((state) => state.messages);
@@ -247,6 +253,30 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         urlAccess: false,
         agentSelection: initialAgentSelection,
     });
+    useEffect(() => {
+        if (savedAnalysis) {
+            setOptions((current) => ({
+                ...current, documentSearch: false, webSearch: false, imageGeneration: false,
+                deepResearch: false, urlAccess: false,
+            }));
+            setDraft((current) => ({ ...current, contextItems: [] }));
+            setPickerOpen(false);
+        }
+    }, [savedAnalysis]);
+
+    // A new picked/mentioned/uploaded source wins over a response that completes later.
+    const sourceSelectionKey = JSON.stringify([
+        contextItems.map((item) => item.key),
+        draft.uploads.map((upload) => upload.id),
+    ]);
+    const previousSourceSelection = useRef(sourceSelectionKey);
+    useEffect(() => {
+        if (sourceSelectionKey !== previousSourceSelection.current &&
+            (contextItems.length > 0 || draft.uploads.length > 0)) {
+            clearAnalysisResultContext();
+        }
+        previousSourceSelection.current = sourceSelectionKey;
+    }, [sourceSelectionKey, contextItems.length, draft.uploads.length, clearAnalysisResultContext]);
 
     /**
      * Orchestration mode.
@@ -281,10 +311,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
     }, [orchestrationAvailable]);
     const toggleOrchestration = () => {
+        clearAnalysisResultContext();
         orchestrationChosen.current = true;
-        setOrchestrationOn((on) => !on);
+        setOrchestrationOn((on) => savedAnalysis ? true : !on);
     };
-    const orchestrating = orchestrationOn && orchestrationAvailable;
+    const orchestrating = orchestrationOn && orchestrationAvailable && !savedAnalysis;
     const [excludeImageForThisMessage, setExcludeImageForThisMessage] = useState(false);
     const imageSelectionNoticeId = useId();
     const imageSelectionNoticeRef = useRef<HTMLDivElement>(null);
@@ -778,7 +809,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // Estimated against the whole message: a prompt that asks for every row is a long run
         // whether the request came from the card or from the box.
         const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
-        if (estimate.shouldConfirm) {
+        if (!savedAnalysis && estimate.shouldConfirm) {
             setLargeRun({ estimate, outgoing, draftKey: outgoingDraftKey() });
             return;
         }
@@ -1246,6 +1277,22 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 )}
 
                 <div className="glass glass-edge relative rounded-2xl p-2">
+                    {savedAnalysis && (
+                        <div role="status" aria-live="polite" className="mb-2 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
+                            <span className="min-w-0 flex-1 text-xs text-text-2">
+                                <strong>Saved analysis selected. </strong>{ANALYSIS_CONTEXT_NOTICE}
+                            </span>
+                            <button
+                                type="button"
+                                aria-label="Remove saved analysis context"
+                                className="shrink-0 rounded-md p-1 text-text-3 hover:bg-surface-3"
+                                onClick={() => {
+                                    clearAnalysisResultContext();
+                                    textareaRef.current?.focus();
+                                }}
+                            ><X size={14} /></button>
+                        </div>
+                    )}
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
@@ -1291,12 +1338,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         showTools={false}
                         uploadsDisabled={gating.disabledByImageGeneration}
                         pickerOpen={pickerOpen}
-                        onPickerOpenChange={setPickerOpen}
+                        onPickerOpenChange={(open) => {
+                            if (open) {
+                                clearAnalysisResultContext();
+                            }
+                            setPickerOpen(open);
+                        }}
                         searchAll={options.documentSearch}
-                        onToggleSearchAll={() => setOptions((current) => ({
-                            ...current,
-                            documentSearch: !current.documentSearch,
-                        }))}
+                        onToggleSearchAll={() => {
+                            clearAnalysisResultContext();
+                            setOptions((current) => ({ ...current, documentSearch: !current.documentSearch }));
+                        }}
                         mentionsEnabled={shared && canPost}
                         onMentionSelected={applySuggestion}
                         onTyping={noteTyping}
@@ -1326,7 +1378,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                   ? 'Join this conversation to reply'
                                   : !canPost
                                     ? 'You do not have permission to write in this conversation'
-                                    : shared
+                                    : savedAnalysis
+                                      ? 'Ask about the saved analysis…'
+                                      : shared
                                       ? 'Message the group, or @mention a model or agent to ask the assistant…'
                                       : 'Send a message, or type # to add a document…'
                         }
@@ -1462,7 +1516,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <ToolToggle
                                     active={options.documentSearch || contextItems.length > 0}
                                     disabled={gating.disabledByImageGeneration}
-                                    onClick={() => setPickerOpen((open) => !open)}
+                                    onClick={() => {
+                                        clearAnalysisResultContext();
+                                        setPickerOpen((open) => !open);
+                                    }}
                                     icon={<Search size={15} />}
                                     label={
                                         contextItems.length > 0
@@ -1475,12 +1532,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     <ToolToggle
                                         active={options.webSearch}
                                         disabled={gating.disabledByImageGeneration}
-                                        onClick={() =>
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
                                             setOptions((current) => ({
                                                 ...current,
                                                 webSearch: !current.webSearch,
-                                            }))
-                                        }
+                                            }));
+                                        }}
                                         icon={<Globe size={15} />}
                                         label="Web"
                                     />
@@ -1490,12 +1548,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     <ToolToggle
                                         active={options.imageGeneration && !orchestrating}
                                         disabled={orchestrating}
-                                        onClick={() =>
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
                                             setOptions((current) => ({
                                                 ...current,
                                                 imageGeneration: !current.imageGeneration,
-                                            }))
-                                        }
+                                            }));
+                                        }}
                                         icon={<ImageIcon size={15} />}
                                         label={orchestrating ? 'Image unavailable in Orchestrate' : 'Image'}
                                     />
@@ -1506,12 +1565,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     <ToolToggle
                                         active={options.deepResearch}
                                         disabled={gating.disabledByImageGeneration}
-                                        onClick={() =>
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
                                             setOptions((current) => ({
                                                 ...current,
                                                 deepResearch: !current.deepResearch,
-                                            }))
-                                        }
+                                            }));
+                                        }}
                                         icon={<Telescope size={15} />}
                                         label="Deep research"
                                     />
@@ -1522,12 +1582,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     <ToolToggle
                                         active={options.urlAccess}
                                         disabled={gating.disabledByImageGeneration}
-                                        onClick={() =>
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
                                             setOptions((current) => ({
                                                 ...current,
                                                 urlAccess: !current.urlAccess,
-                                            }))
-                                        }
+                                            }));
+                                        }}
                                         icon={<Link2 size={15} />}
                                         label="Read URLs"
                                     />

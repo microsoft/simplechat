@@ -2,7 +2,7 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.261.106
+Version: 0.261.109
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
@@ -56,10 +56,15 @@ from functions_assistant_table_exports import (  # noqa: E402
     neutralize_csv_spreadsheet_formula,
 )
 from functions_generated_file_exports import (  # noqa: E402
+    get_analysis_export_rows,
+    get_assistant_presentation_content,
     get_requested_structured_artifact_format,
     normalize_xml_artifact_payload,
     serialize_generated_json,
 )
+from functions_saved_analysis import analysis_artifact_metadata  # noqa: E402
+from functions_mixed_source_orchestration import MixedSourceCancellationError  # noqa: E402
+from test_support.app_stubs import import_app_module  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -74,6 +79,7 @@ def assert_contains(haystack, needle, label):
 
 
 def load_module_functions(file_path, extra_globals=None):
+    saved_analysis_helpers = import_app_module('functions_saved_analysis')
     with open(file_path, 'r', encoding='utf-8') as handle:
         source = handle.read()
 
@@ -100,6 +106,11 @@ def load_module_functions(file_path, extra_globals=None):
         'logging': logging,
         'neutralize_csv_spreadsheet_formula': neutralize_csv_spreadsheet_formula,
         'get_requested_structured_artifact_format': get_requested_structured_artifact_format,
+        'get_analysis_export_rows': get_analysis_export_rows,
+        'get_assistant_presentation_content': get_assistant_presentation_content,
+        'analysis_artifact_metadata': analysis_artifact_metadata,
+        'analysis_artifact_metadata': saved_analysis_helpers.analysis_artifact_metadata,
+        'MixedSourceCancellationError': MixedSourceCancellationError,
         'normalize_xml_artifact_payload': normalize_xml_artifact_payload,
         'serialize_generated_json': serialize_generated_json,
         'os': os,

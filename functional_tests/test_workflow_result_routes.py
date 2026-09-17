@@ -1,7 +1,7 @@
 # test_workflow_result_routes.py
 """
 Functional tests for scoped workflow task-result page endpoints.
-Version: 0.261.106
+Version: 0.261.109
 Implemented in: 0.261.106
 
 Production route bodies and the response helper run in a Flask test client.
@@ -26,12 +26,17 @@ sys.path.insert(0, str(RUNNER.parent))
 
 # Import the domain error after establishing the worktree module path.
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError
+from functions_workflow_results import (
+    ANALYSIS_SOURCE_ACCESS_VERSION,
+    WORKFLOW_RESULT_CONTRACT_VERSION,
+    authorize_workflow_task_result_read,
+)
 
 
 @pytest.fixture
 def result_client():
     reads = []
-    state = {"actor": "owner", "group_allowed": True}
+    state = {"actor": "owner", "group_allowed": True, "source_allowed": True, "source_readers": []}
     workflow = {"id": "workflow-1", "user_id": "owner"}
     run = {"id": "run-1", "workflow_id": "workflow-1"}
     reference = {"sha256": "stored-reference", "size_bytes": 20000}
@@ -73,6 +78,34 @@ def result_client():
             "sha256": result_ref["sha256"],
         }
 
+    def authorize_result(bound_workflow, run_id, task_id, result_ref, *, reader_user_id):
+        manifest = {
+            "contract_version": WORKFLOW_RESULT_CONTRACT_VERSION,
+            "identity": {"workflow_id": bound_workflow["id"], "run_id": run_id, "task_id": task_id},
+            "authoritative_output": item["workflow_result"].get("authoritative_output"),
+            "outputs": item["workflow_result"].get("outputs") or {},
+        }
+        source = {
+            "document_id": "source-1", "scope": "group", "scope_id": "source-group",
+            "source_version": "1", "source_revision": "etag-1",
+        }
+        if state.get("analysis_result"):
+            manifest["analysis_access"] = {
+                "version": ANALYSIS_SOURCE_ACCESS_VERSION, "sources": [source],
+            }
+
+        def resolve_sources(document_ids, **context):
+            state["source_readers"].append(context["user_id"])
+            return [{
+                **source,
+                "authorization_status": "authorized" if state["source_allowed"] else "unresolved",
+            }]
+
+        return authorize_workflow_task_result_read(
+            bound_workflow, run_id, task_id, result_ref, reader_user_id=reader_user_id,
+            load_result=lambda *args: manifest, source_resolver=resolve_sources,
+        )
+
     namespace = {
         "uuid": uuid,
         "logging": logging,
@@ -90,6 +123,7 @@ def result_client():
         "get_group_workflow_run_item": lambda run_id, item_id: item,
         "_resolve_group_workflow_request_group": authorize_group,
         "read_workflow_task_result_page": read_page,
+        "authorize_workflow_task_result_read": authorize_result,
     }
     names = {
         "_normalize_identifier", "_workflow_task_result_page_response",
@@ -203,3 +237,22 @@ def test_legacy_preview_is_not_substituted_for_a_saved_result(result_client):
     assert response.status_code == 409
     assert "content" not in response.json
     assert reads == []
+
+
+@pytest.mark.parametrize("output", ["manifest", "authoritative", "diagnostics"])
+def test_source_revocation_blocks_every_saved_representation(result_client, output):
+    client, state, workflow, run, item, reads = result_client
+    state["analysis_result"] = True
+    state["source_allowed"] = False
+    response = client.get(f"/user/workflow-1/run-1/extract?output={output}")
+    assert response.status_code == 403
+    assert "content" not in response.json
+    assert reads == []
+
+
+def test_group_result_source_access_uses_current_reader(result_client):
+    client, state, workflow, run, item, reads = result_client
+    state["analysis_result"] = True
+    state["actor"] = "viewing-member"
+    assert client.get("/group/workflow-1/run-1/extract").status_code == 200
+    assert state["source_readers"] == ["viewing-member"]

@@ -27,6 +27,7 @@ import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives'
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
+import { AnalysisResult } from './AnalysisResult';
 import { MessageActions } from './MessageActions';
 import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
@@ -62,6 +63,7 @@ import {
     resolveReplyContext,
 } from '../../lib/sharedMessage';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
+import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
@@ -392,6 +394,7 @@ function MessageBubbleInner({
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const chatWidth = useUiStore((state) => state.chatWidth);
     const messages = useChatStore((state) => state.messages);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
 
     // Memoised because it walks the message's mask metadata and is read on every render of
     // the thread, which is often: the list re-renders on each streaming token.
@@ -429,7 +432,28 @@ function MessageBubbleInner({
      * have made untrue.
      */
     const artifacts = useMemo(() => readGeneratedArtifacts(message.metadata), [message.metadata]);
-    const artifactsReplaceText = suppressesAssistantText(artifacts);
+    const hasSavedAnalysis = message.metadata?.saved_analysis != null;
+    const savedAnalysis = useMemo(() => readSavedAnalysis(message.metadata), [message.metadata]);
+    const analysisKey = savedAnalysis ? `${savedAnalysis.conversation_id}:${savedAnalysis.message_id}:${savedAnalysis.result_sha256}` : '';
+    const [unavailableAnalysisKey, setUnavailableAnalysisKey] = useState<string | null>(null);
+    const markAnalysisUnavailable = useCallback(() => setUnavailableAnalysisKey(analysisKey), [analysisKey]);
+    const analysisUnavailable = hasSavedAnalysis && (!savedAnalysis || savedAnalysis.available === false ||
+        savedAnalysis.conversation_id !== activeConversationId || unavailableAnalysisKey === analysisKey);
+    const artifactsReplaceText = !hasSavedAnalysis && suppressesAssistantText(artifacts);
+    useEffect(() => {
+        const store = useChatStore.getState();
+        if ((analysisUnavailable || masks.fullyMasked || masks.ranges.length > 0) &&
+            sameAnalysis(store.analysisResultContext, savedAnalysis)) {
+            store.clearAnalysisResultContext();
+        }
+    }, [analysisUnavailable, masks.fullyMasked, masks.ranges.length, savedAnalysis]);
+    const artifactCards = artifacts.map((artifact, index) => (
+        <GeneratedArtifactCard
+            key={artifact.artifact_message_id || artifact.document_id || artifact.export_run_id || `artifact-${index}`}
+            artifact={artifact}
+            conversationId={message.conversation_id}
+        />
+    ));
 
     // A user message is plain text, so its masked spans can be cut straight out of the
     // content rather than going through the markdown placeholder path.
@@ -523,7 +547,7 @@ function MessageBubbleInner({
             )}
             <div className={clsx('flex w-full', alignRight ? 'justify-end' : 'justify-start')}>
             <div
-                ref={bodyRef}
+                ref={hasSavedAnalysis ? undefined : bodyRef}
                 className={clsx(
                     bubbleWidthClass(chatWidth),
                     'rounded-2xl px-4 py-3',
@@ -582,16 +606,18 @@ function MessageBubbleInner({
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
                         {!artifactsReplaceText && (
-                            <ImageProposalScope
-                                assistantMessageId={message.id}
-                                results={proposalImages}
-                            >
-                                <AssistantMarkdown
-                                    content={message.content}
-                                    masks={masks.ranges}
-                                    messageId={message.id}
-                                />
-                            </ImageProposalScope>
+                            <div ref={hasSavedAnalysis ? bodyRef : undefined}>
+                                <ImageProposalScope
+                                    assistantMessageId={message.id}
+                                    results={proposalImages}
+                                >
+                                    <AssistantMarkdown
+                                        content={message.content}
+                                        masks={masks.ranges}
+                                        messageId={message.id}
+                                    />
+                                </ImageProposalScope>
+                            </div>
                         )}
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
@@ -612,18 +638,25 @@ function MessageBubbleInner({
                         />
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
-                        {artifacts.map((artifact, index) => (
-                            <GeneratedArtifactCard
-                                key={
-                                    artifact.artifact_message_id ||
-                                    artifact.document_id ||
-                                    artifact.export_run_id ||
-                                    `artifact-${index}`
-                                }
-                                artifact={artifact}
-                                conversationId={message.conversation_id}
+                        {hasSavedAnalysis && (masks.ranges.length > 0 ? (
+                            <p className="mt-2 text-xs text-text-3">Saved findings are hidden while this message is masked.</p>
+                        ) : savedAnalysis ? (
+                            <AnalysisResult
+                                key={analysisKey}
+                                descriptor={savedAnalysis}
+                                onUnavailable={markAnalysisUnavailable}
                             />
+                        ) : (
+                            <p role="status" className="mt-2 text-sm text-text-2">{analysisUnavailableMessage()}</p>
                         ))}
+                        {!analysisUnavailable && (!hasSavedAnalysis || masks.ranges.length === 0) && (
+                            hasSavedAnalysis ? artifactCards.length > 0 && (
+                                <details className="mt-2">
+                                    <summary className="cursor-pointer text-xs font-medium text-text-3">Downloads</summary>
+                                    {artifactCards}
+                                </details>
+                            ) : artifactCards
+                        )}
                     </>
                 )}
             </div>
@@ -645,13 +678,13 @@ function MessageBubbleInner({
                     inspector ? 'opacity-100' : 'opacity-0',
                 )}
             >
-                <MessageActions
+                {!analysisUnavailable && <MessageActions
                     message={message}
                     onEdit={isUser ? () => setEditing(true) : undefined}
                     inspector={inspector}
                     onInspect={setInspector}
                     alignRight={alignRight}
-                />
+                />}
             </div>
 
             {inspector && (

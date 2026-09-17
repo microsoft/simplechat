@@ -2,7 +2,7 @@
 # test_mixed_source_analyze_workflow.py
 """
 Functional test for Phase 3 mixed-source combined Analyze.
-Version: 0.250.107
+Version: 0.261.109
 Implemented in: 0.250.072; updated in 0.250.107
 
 This test ensures #1058 composes native narrative and tabular analysis behind
@@ -14,6 +14,9 @@ Prerequisites: #1056 and #1057.
 import ast
 from pathlib import Path
 
+import pytest
+
+from test_support.app_stubs import import_app_module
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_RUNNER = ROOT / 'application' / 'single_app' / 'functions_workflow_runner.py'
@@ -31,14 +34,14 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     )
     helper_source = ast.get_source_segment(source, helper) or ''
 
-    assert 'resolve_authorized_source_manifest(' in helper_source
+    assert 'resolve_analysis_source_manifest(' in helper_source
     assert 'partition_source_manifest(manifest)' in helper_source
     assert "partitions['narrative_sources']" in helper_source
     assert "partitions['tabular_sources']" in helper_source
     assert 'run_document_analysis(' in helper_source
     assert "document_ids=[source.get('document_id') for source in narrative_sources]" in helper_source
     assert 'narrative_items_by_id' in helper_source
-    assert "summary=str(narrative_item.get('text') or '')" in helper_source
+    assert "summary=narrative_summary_source_text" in helper_source
     assert '_maybe_execute_tabular_document_action(' in helper_source
     assert 'build_evidence_envelope(' in helper_source
     assert 'build_mixed_source_evidence_handoff(' in helper_source
@@ -57,6 +60,32 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     assert 'Automatic deferred composition is unavailable' not in source
     assert "'generated_tabular_outputs': generated_tabular_outputs" in helper_source
     assert "'agent_citations': tabular_agent_citations" in helper_source
+
+
+def test_analyze_resolver_batches_the_complete_authorized_selection():
+    access = import_app_module('functions_analysis_access')
+    limit = access.SOURCE_MANIFEST_MAX_SOURCES
+    document_ids = [f'source-{index}' for index in range(limit + 2)]
+    batches = []
+
+    def resolve(ids, **kwargs):
+        batches.append((list(ids), kwargs))
+        return [{
+            'document_id': document_id, 'scope': 'personal', 'scope_id': 'reader',
+            'source_version': 1, 'source_revision': f'etag-{document_id}',
+            'authorization_status': 'authorized',
+        } for document_id in ids]
+
+    manifest = access.resolve_analysis_source_manifest(
+        [*document_ids, document_ids[0]], 'reader', resolver=resolve, selection_mode='selected',
+    )
+    assert [source['document_id'] for source in manifest] == document_ids
+    assert [len(ids) for ids, _ in batches] == [limit, 2]
+    assert all(context['user_id'] == 'reader' and context['selection_mode'] == 'selected' for _, context in batches)
+    with pytest.raises(access.AnalysisResultUnavailable):
+        access.resolve_analysis_source_manifest(
+            document_ids, 'reader', resolver=lambda ids, **kwargs: resolve(ids, **kwargs)[:-1],
+        )
 
 
 def test_phase_3_mixed_analyze_is_automatic_and_preserves_per_document_mode():

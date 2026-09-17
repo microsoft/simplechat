@@ -6,6 +6,12 @@ Version tracking: `application/single_app/config.py`.
 
 ## Overview
 
+Analyze-specific finalization, saved-result source access, and chat reuse are
+described in [Saved Analyze Results](ANALYZE_RESULTS.md), implemented in
+**0.261.109**. The phase-one contract below remains the shared storage and
+handoff foundation; its original milestone limitations are not an instruction
+to bypass the newer Analyze readers.
+
 Workflow tasks exchange durable results instead of using chat presentation as their data interface. A result identifies its producer, its authoritative final output, its other named representations, and the input references consumed by the next task.
 
 This is useful for extraction followed by synthesis: a task can produce inventory findings, and a later task can explain those findings without uploading the generated file into a workspace or waiting for a search index.
