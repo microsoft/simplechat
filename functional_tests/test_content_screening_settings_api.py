@@ -134,7 +134,8 @@ class ScreeningSettingsTests(unittest.TestCase):
         admin_settings_fields = import_app_module("admin_settings_fields")
         field = admin_settings_fields.get_field_definition("enable_content_screening")
         self.assertIs(field["default"], False)
-        self.assertEqual(field["depends_on"], {"key": "enable_enhanced_citations", "equals": True})
+        self.assertNotIn("depends_on", field)
+        self.assertEqual(field["requires"]["key"], "enable_enhanced_citations")
         tree = ast.parse((APP_DIR / "functions_settings.py").read_text(encoding="utf-8"))
         default_values = [
             value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)

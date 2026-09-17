@@ -688,7 +688,7 @@
         });
         document.querySelectorAll("[data-screening-open-settings]").forEach(link => {
             link.addEventListener("click", event => {
-                const trigger = document.querySelector('[data-bs-target="#content-safety"], a[href="#content-safety"][role="tab"]');
+                const trigger = document.querySelector('[data-bs-target="#content-screening"], a[href="#content-screening"][role="tab"]');
                 if (trigger && window.bootstrap?.Tab) {
                     event.preventDefault();
                     bootstrap.Tab.getOrCreateInstance(trigger).show();

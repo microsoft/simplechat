@@ -1,7 +1,7 @@
 # test_v2_content_screening.py
 """
 Production V2 browser regressions for screening-controlled documents and review.
-Version: 0.261.106
+Version: 0.261.107
 Implemented in: 0.261.106
 
 Runs the real SPA with the existing closed workspace fixture and its Azure
@@ -10,9 +10,11 @@ All API data is synthetic. No credentials, scanner calls, or service writes are
 needed, and unexpected requests or browser errors fail the test.
 """
 
+import ast
 import copy
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -27,12 +29,31 @@ from ui_tests.fixtures.workspace_authoring import (
     connect_options,  # noqa: F401
 )
 
+APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+from content_screening.policies import AI_STARTER_CRITERIA, STARTER_PACKS, STARTER_RULE_TEMPLATES, default_policy, normalize_policy
+
 
 pytestmark = pytest.mark.ui
 SOURCE_SCAN = "scan-held"
 CANDIDATE_SCAN = "scan-candidate"
 UNTRUSTED_TEXT = '😀SECRET <script>window.screeningEvidenceExecuted=true</script><img src=x onerror=alert(1)>'
 EARLIER_TEXT = ("Earlier canonical text. " * 5)[:100]
+
+
+@lru_cache
+def screening_admin_schema():
+    """Use the shipped declaration, including visibility and component wiring."""
+    tree = ast.parse((APP_ROOT / "admin_settings_fields.py").read_text(encoding="utf-8"))
+    declaration = next(
+        node.value for node in tree.body if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "ADMIN_SETTINGS_FIELDS" for target in node.targets)
+    )
+    screening = next(
+        ast.literal_eval(value) for key, value in zip(declaration.keys, declaration.values)
+        if isinstance(key, ast.Constant) and key.value == "content-screening-section"
+    )
+    return {"content-screening-section": screening}
 
 
 def evidence_unit(identifier, text, locator, content_hash):
@@ -124,20 +145,29 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
         self.attachment_requests = []
         self.screening_writes = []
         self.scan_enabled = False
+        self.enhanced_citations_enabled = True
+        self.content_safety_enabled = True
         self.can_scan_all = False
         self.can_manage_scope = True
         self.scan_jobs = {}
         self.scan_writes = []
-        self.policy = {
-            "enabled": True,
-            "rules": [{"id": "local-check", "name": "Local check", "type": "literal",
-                       "enabled": True, "severity": "high", "category": "custom",
-                       "values": ["fixture-value"], "case_sensitive": False, "whole_word": False}],
-            "ai": {"enabled": False, "model_selection": None, "instructions": "",
-                   "severity": "high", "category": "instruction_manipulation", "window_unit": "pages",
-                   "window_size": 1, "max_characters": 3000, "overlap_characters": 100},
-            "limits": {"max_units": 1000},
-        }
+        self.policy = default_policy()
+        self.policy.update({"enabled": True, "rules": [{
+            "id": "local-check", "name": "Local check", "type": "literal",
+            "enabled": True, "severity": "high", "category": "custom",
+            "values": ["fixture-value"], "case_sensitive": False, "whole_word": False,
+        }]})
+        self.policy_etag = '"policy-etag"'
+        self.policy_writes = []
+        self.policy_samples = []
+        self.settings_writes = []
+        self.reject_policy_save = None
+        self.reject_settings_save = False
+        self.model_catalog = []
+        self.allowed_models = []
+        self.templates = copy.deepcopy({
+            "rules": STARTER_RULE_TEMPLATES, "packs": STARTER_PACKS, "ai": AI_STARTER_CRITERIA,
+        })
         self.baseline_summary = {
             "schema_version": 1, "enabled": True, "rule_count": 2, "ai_check_count": 1,
             "rule_types": ["pii", "regex"], "pii_types": ["email"], "severities": ["high"],
@@ -151,6 +181,7 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
             "enable_file_sharing": True,
             "enable_extract_meta_data": True,
         })
+        payload["catalogs"]["models"] = copy.deepcopy(self.model_catalog)
         payload["user"]["is_admin"] = self.admin
         if self.admin:
             payload["user"]["roles"] = ["Admin"]
@@ -161,23 +192,39 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
             route.fulfill(path=str(SPA_INDEX), content_type="text/html")
         elif entry.path == "/api/v2/admin/settings" and entry.method == "GET":
             self._json(route, {
-                "settings": {"enable_content_screening": self.scan_enabled},
+                "settings": {
+                    "enable_content_screening": self.scan_enabled,
+                    "enable_enhanced_citations": self.enhanced_citations_enabled,
+                    "enable_content_safety": self.content_safety_enabled,
+                },
                 "admin_nav": [{"id": "security", "label": "Security", "tabs": [{
-                    "id": "content-safety", "label": "Content safety", "sections": [{
-                        "id": "content-screening", "label": "Content screening",
+                    "id": "content-screening", "label": "Content Screening", "sections": [{
+                        "id": "content-screening-section", "label": "Content Screening",
                     }],
                 }]}],
-                "field_schema": {"content-screening": [{
-                    "key": "enable_content_screening", "type": "switch",
-                    "label": "Enable content screening", "default": False,
-                }]},
+                "field_schema": copy.deepcopy(screening_admin_schema()),
                 "section_status": {}, "runtime_flags": {}, "suppressed_capabilities": [],
             })
+        elif entry.path == "/api/v2/admin/settings" and entry.method == "PATCH":
+            self.settings_writes.append(copy.deepcopy(entry.body))
+            updates = entry.body["settings"]
+            if self.reject_settings_save:
+                self._json(route, {"error": "Settings were not saved. Reload the current settings and try again.", "success": False}, 503)
+            elif updates.get("enable_content_screening") is True and not self.policy["enabled"]:
+                self._json(route, {
+                    "error": "Save an enabled screening policy first.",
+                    "field_errors": {"enable_content_screening": "Save an enabled screening policy first."},
+                }, 400)
+            else:
+                self.scan_enabled = updates.get("enable_content_screening", self.scan_enabled)
+                self._json(route, {
+                    "success": True, "updated_keys": list(updates), "settings": updates, "warnings": {},
+                })
         elif entry.path == "/api/content-screening/configuration" and entry.method == "GET":
             self._json(route, {
-                "enabled": self.scan_enabled, "enhanced_citations_enabled": True,
+                "enabled": self.scan_enabled, "enhanced_citations_enabled": self.enhanced_citations_enabled,
                 "can_manage_global": self.admin, "can_scan_all": self.can_scan_all,
-                "templates": {"rules": {}, "packs": {}, "ai": {}},
+                "templates": self.templates,
             })
         elif entry.path.startswith("/api/content-screening/policies/") and entry.method == "GET":
             scope_type, scope_id = entry.path.rsplit("/", 2)[-2:]
@@ -186,10 +233,33 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
             else:
                 self._json(route, {
                     "scope_type": scope_type, "scope_id": scope_id, "policy": copy.deepcopy(self.policy),
-                    "etag": '"policy-etag"', "templates": {"rules": {}, "packs": {}, "ai": {}},
-                    "allowed_models": [],
+                    "etag": self.policy_etag, "templates": self.templates,
+                    "allowed_models": self.allowed_models,
                     "inherited_summary": copy.deepcopy(self.baseline_summary) if scope_type != "global" else None,
                 })
+        elif entry.path.startswith("/api/content-screening/policies/") and entry.method == "PUT":
+            self.policy_writes.append(copy.deepcopy(entry.body))
+            if self.reject_policy_save:
+                self._json(route, {"error": "The saved policy changed or access was revoked."}, self.reject_policy_save)
+            elif entry.body["etag"] != self.policy_etag:
+                self._json(route, {"error": "The policy changed."}, 409)
+            else:
+                scope_type, scope_id = entry.path.rsplit("/", 2)[-2:]
+                self.policy = normalize_policy(entry.body["policy"], scope_type=scope_type)
+                self.policy_etag = f'"policy-{len(self.policy_writes) + 1}"'
+                self._json(route, {
+                    "scope_type": scope_type, "scope_id": scope_id, "policy": copy.deepcopy(self.policy),
+                    "etag": self.policy_etag, "templates": self.templates,
+                    "allowed_models": self.allowed_models,
+                    "inherited_summary": copy.deepcopy(self.baseline_summary) if scope_type != "global" else None,
+                })
+        elif entry.path.startswith("/api/content-screening/policies/") and entry.path.endswith("/test") and entry.method == "POST":
+            self.policy_samples.append(copy.deepcopy(entry.body))
+            self._json(route, {
+                "status": "findings", "complete": True, "finding_count": 1,
+                "findings": [{"evidence": entry.body["sample_text"], "reason": "Matched sample"}],
+                "findings_truncated": False, "error_code": None,
+            })
         elif entry.path == "/api/content-screening/scans" and entry.method == "GET":
             self._json(route, {"items": list(self.scan_jobs.values()), "continuation": None})
         elif entry.path == "/api/content-screening/scans" and entry.method == "POST":
@@ -797,7 +867,7 @@ def test_schema_backed_admin_section_requires_explicit_all_workspace_confirmatio
     ui.scan_enabled = True
     ui.open("/admin")
     page = ui.page
-    expect(page.get_by_role("checkbox", name="Enable content screening", exact=True)).to_be_checked()
+    expect(page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))).to_be_checked()
     page.get_by_role("button", name="Screening scans", exact=True).click()
     controls = page.get_by_role("dialog", name="Content screening controls", exact=True)
     controls.get_by_role("button", name="Start scan", exact=True).click()
@@ -825,3 +895,132 @@ def test_bootstrap_admin_role_does_not_infer_scan_or_scope_permissions(screening
     expect(dialog.get_by_role("alert")).to_contain_text("not authorized")
     expect(dialog.get_by_role("button", name="Start scan", exact=True)).to_have_count(0)
     assert not ui.scan_writes
+
+
+def open_screening_admin(ui):
+    ui.admin = True
+    ui.open("/admin")
+    editor = ui.page.get_by_role("region", name="Global screening policy", exact=True)
+    expect(editor.get_by_role("button", name="Save screening policy", exact=True)).to_be_visible()
+    return editor
+
+
+def test_admin_policy_is_discoverable_and_editable_before_citations_are_enabled(screening_ui):
+    ui = screening_ui
+    ui.enhanced_citations_enabled = False
+    ui.content_safety_enabled = False
+    ui.policy = default_policy()
+    editor = open_screening_admin(ui)
+    page = ui.page
+    expect(page.get_by_role("heading", name="Content Screening", exact=True)).to_be_visible()
+    toggle = page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
+    expect(toggle).to_be_visible()
+    expect(toggle).to_be_disabled()
+    expect(page.get_by_text("must be enabled before these settings take effect.", exact=False)).to_be_visible()
+    editor.get_by_label("Starter rule", exact=True).select_option(label="Confidentiality markings · literal")
+    editor.get_by_role("button", name="Add rule", exact=True).click()
+    editor.get_by_label("Rule name", exact=True).fill("Restricted project values")
+    editor.get_by_label("Literal values or phrases", exact=True).fill("DO_NOT_SHARE")
+    editor.get_by_text("Baseline policy enabled", exact=True).click()
+    editor.get_by_role("button", name="Save screening policy", exact=True).click()
+    expect(editor.get_by_text("Screening policy saved.", exact=True)).to_be_visible()
+    assert ui.policy_writes[0]["etag"] == '"policy-etag"'
+    assert ui.policy["enabled"] is True
+    assert ui.policy["rules"][0]["values"] == ["DO_NOT_SHARE"]
+    assert not ui.scan_enabled and not ui.settings_writes
+    editor.get_by_role("button", name="Reload saved policy", exact=True).click()
+    expect(editor.get_by_label("Rule name", exact=True)).to_have_value("Restricted project values")
+
+
+def test_admin_screening_saves_and_survives_reload_without_content_safety(screening_ui):
+    ui = screening_ui
+    ui.content_safety_enabled = False
+    open_screening_admin(ui)
+    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
+    ui.page.get_by_text("Screen workspace content before publication", exact=True).click()
+    ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(ui.page.get_by_text("Saved 1 setting.", exact=True)).to_be_visible()
+    assert ui.scan_enabled is True
+    assert ui.content_safety_enabled is False
+    assert ui.settings_writes == [{"settings": {"enable_content_screening": True}}]
+    ui.page.reload()
+    expect(toggle).to_be_checked()
+
+
+def test_admin_failed_screening_write_is_not_reported_as_saved(screening_ui):
+    ui = screening_ui
+    ui.reject_settings_save = True
+    open_screening_admin(ui)
+    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
+    ui.page.get_by_text("Screen workspace content before publication", exact=True).click()
+    ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(ui.page.get_by_text("Settings were not saved. Reload the current settings and try again.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Saved 1 setting.", exact=True)).to_have_count(0)
+    assert ui.scan_enabled is False
+
+
+def test_admin_policy_sample_uses_draft_without_saving_or_executing_html(screening_ui):
+    ui = screening_ui
+    editor = open_screening_admin(ui)
+    editor.get_by_label("Literal values or phrases", exact=True).fill("DRAFT_VALUE")
+    sample = '<img src=x onerror="window.screeningSampleExecuted=true">DRAFT_VALUE'
+    editor.get_by_label("Sample content", exact=True).fill(sample)
+    editor.get_by_role("button", name="Test screening policy", exact=True).click()
+    expect(editor.get_by_text("Sample inspection complete: 1 finding(s).", exact=True)).to_be_visible()
+    assert ui.policy_samples[0]["policy"]["rules"][0]["values"] == ["DRAFT_VALUE"]
+    assert ui.policy_samples[0]["sample_text"] == sample
+    assert not ui.policy_writes and not ui.settings_writes
+    assert ui.page.evaluate("Boolean(window.screeningSampleExecuted)") is False
+    expect(editor.locator("pre img")).to_have_count(0)
+
+
+def test_admin_policy_conflict_requires_reload_before_another_save(screening_ui):
+    ui = screening_ui
+    ui.reject_policy_save = 409
+    editor = open_screening_admin(ui)
+    editor.get_by_label("Rule name", exact=True).fill("Unsaved local name")
+    editor.get_by_role("button", name="Save screening policy", exact=True).click()
+    expect(editor.get_by_text("The saved policy changed.", exact=False)).to_be_visible()
+    expect(editor.get_by_role("button", name="Save screening policy", exact=True)).to_be_disabled()
+    assert len(ui.policy_writes) == 1
+    ui.reject_policy_save = None
+    ui.policy["rules"][0]["name"] = "Someone else's current name"
+    ui.policy_etag = '"policy-other-admin"'
+    editor.get_by_role("button", name="Reload current policy", exact=True).click()
+    expect(editor.get_by_label("Rule name", exact=True)).to_have_value("Someone else's current name")
+    editor.get_by_label("Rule name", exact=True).fill("Fresh reviewed name")
+    editor.get_by_role("button", name="Save screening policy", exact=True).click()
+    expect(editor.get_by_text("Screening policy saved.", exact=True)).to_be_visible()
+    assert ui.policy_writes[1]["etag"] == '"policy-other-admin"'
+
+
+def test_workspace_policy_editor_does_not_send_global_model_permissions(screening_ui):
+    ui = screening_ui
+    ui.policy["allowed_models"] = [{"endpoint_id": "global-only", "model_id": "model"}]
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("button", name="Screening scans", exact=True).click()
+    editor = ui.page.get_by_role("region", name="Workspace screening policy", exact=True)
+    expect(editor.get_by_role("region", name="Required administrative baseline")).to_be_visible()
+    editor.get_by_label("Rule name", exact=True).fill("Workspace restriction")
+    editor.get_by_role("button", name="Save screening policy", exact=True).click()
+    expect(editor.get_by_text("Screening policy saved.", exact=True)).to_be_visible()
+    assert "allowed_models" not in ui.policy_writes[0]["policy"]
+
+
+def test_policy_editor_uses_configured_model_ids_and_backend_default_instructions(screening_ui):
+    ui = screening_ui
+    ui.model_catalog = [{
+        "selection_key": "global:global:scanner-endpoint:scanner-model",
+        "endpoint_id": "scanner-endpoint", "model_id": "scanner-model",
+        "model_name": "gpt-4o", "deployment_name": "scanner-deployment",
+        "display_name": "Screening model", "provider": "aoai",
+    }]
+    editor = open_screening_admin(ui)
+    editor.get_by_text("Model screening enabled", exact=True).click()
+    editor.get_by_label("Scanner model", exact=True).select_option("0")
+    editor.get_by_label("AI starter criteria", exact=True).select_option("1")
+    editor.get_by_role("button", name="Use criteria", exact=True).click()
+    editor.get_by_role("button", name="Save screening policy", exact=True).click()
+    expect(editor.get_by_text("Screening policy saved.", exact=True)).to_be_visible()
+    assert ui.policy["ai"]["model_selection"] == {"endpoint_id": "scanner-endpoint", "model_id": "scanner-model"}
+    assert ui.policy["ai"]["instructions"] == list(AI_STARTER_CRITERIA.values())[1]

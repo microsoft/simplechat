@@ -3,7 +3,9 @@
 
 import { ApiError, api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import type { ScreeningState } from './contentScreening';
-import type { ScreeningBaselineSummary, ScreeningModelSelection, ScreeningPolicy } from './contentScreeningPolicy';
+import type {
+    ScreeningBaselineSummary, ScreeningModelSelection, ScreeningPolicy, ScreeningTemplateCatalog,
+} from './contentScreeningPolicy';
 import type { ScreeningEdit, ScreeningUnit, ScreeningUnitView } from './contentScreeningReview';
 
 export type ScreeningScopeType = 'global' | 'personal' | 'group' | 'public';
@@ -13,11 +15,7 @@ export interface ScreeningScope {
     scope_id: string;
 }
 
-export interface ScreeningTemplatesResponse {
-    rules: Record<string, unknown>;
-    packs: Record<string, unknown>;
-    ai: Record<string, unknown>;
-}
+export type ScreeningTemplatesResponse = ScreeningTemplateCatalog;
 
 export interface ScreeningConfiguration {
     enabled: boolean;

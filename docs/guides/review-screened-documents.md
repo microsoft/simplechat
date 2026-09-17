@@ -4,7 +4,7 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.106"
+version: "0.261.107"
 ---
 
 ## What this does
@@ -18,6 +18,10 @@ Use it when a document might contain sensitive data or instructions aimed at an 
 ## Configure an appropriate baseline
 
 An administrator must configure Enhanced Citations and its storage account before enabling screening. The capability is off by default.
+
+Open **Admin Settings > Security > Content Screening**. This is a separate tab from Content Safety in both the classic and V2 interfaces. You can prepare the policy before configuring Enhanced Citations; an unmet storage prerequisite does not hide the editor.
+
+Add or edit the rules, enable **Baseline policy enabled**, then select **Save screening policy**. That save is separate from the application's enrollment switch. After Enhanced Citations is configured, enable new scans; V2 calls this **Screen workspace content before publication** and persists it with **Save changes**. You do not need to enable Azure AI Content Safety.
 
 Choose baseline checks that reflect the information your organization actually needs to control. A policy that treats every email address as unacceptable can create a large review queue for otherwise ordinary public documents. Use representative allowed examples and known matches when testing the rules.
 
@@ -68,6 +72,8 @@ Review original files as potentially untrusted content. Do not follow links or i
 | Symptom | Meaning and response |
 | --- | --- |
 | The model did not return a valid result | The scan is incomplete or failed. Retry after correcting the model/configuration; do not treat it as a clean scan. |
+| Enabling screening is rejected | Save an enabled baseline containing a rule or model check, and configure Enhanced Citations storage. The error beside the screening switch identifies a missing prerequisite. |
+| Admin Settings reports that the write failed | The change was not saved. Keep the draft or reload the current settings before retrying; do not assume the displayed draft is persisted. |
 | A retry looks clean but the document is still held | A previous finding still needs a human decision. |
 | The document has a warning after approval | It was approved with flags; the warning is intentional. |
 | An original is missing | Source-backed inspection or re-extraction may be unavailable. A table schema summary does not cover the underlying cell data. |

@@ -85,6 +85,8 @@ Automatic metadata generation uses admitted source content. New metadata changes
 
 `enable_content_screening` is disabled by default. Enhanced Citations and its working storage configuration are required before activation. Review the selected model's data routing and the expected workload before adding model checks to a broad workspace scan.
 
+Since **0.261.107**, both interfaces expose **Admin Settings > Security > Content Screening** independently of Content Safety. The V2 policy editor loads and saves the protected policy through its dedicated API, supports sample inspection and configured-model selection, and remains visible before Enhanced Citations is enabled. Main settings saves no longer report success when persistence fails.
+
 Use the [content-review guide]({{ '/guides/review-screened-documents/' | relative_url }}) for baseline selection, existing-workspace scans, and remediation. The capability is distinct from the existing Azure AI Content Safety chat-category feature.
 
 The shared API family is `/api/content-screening/...`; its policy, job, and review operations use authenticated Blueprints and object-level scope authorization. Detailed evidence is separate from ordinary document-list responses.

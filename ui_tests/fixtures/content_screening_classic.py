@@ -1,7 +1,7 @@
 # content_screening_classic.py
 """
 Closed, synthetic API boundary for classic Content Screening browser tests.
-Version: 0.261.106
+Version: 0.261.107
 Implemented in: 0.261.106
 
 The real Jinja partials and local browser assets run without application startup,
@@ -51,7 +51,7 @@ ADMIN_TEMPLATE = """
 <form id="admin-settings-form">
 <input type="checkbox" id="enable_enhanced_citations" aria-label="Enhanced Citations"
     {% if settings.enable_enhanced_citations %}checked{% endif %} />
-{% include "admin/_panes/content-safety.html" %}
+{% include "admin/_panes/content-screening.html" %}
 </form></main>
 {% endblock %}
 """
@@ -220,7 +220,7 @@ class ClassicScreeningFixture:
             },
             session={"user": {"oid": USER_ID, "roles": ["User", "Admin"]}},
             config={"VERSION": "0.261.106"},
-            admin_landing_tab="content-safety",
+            admin_landing_tab="content-screening",
         )
 
     def _fail(self, route, status):

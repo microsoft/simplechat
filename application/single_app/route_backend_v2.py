@@ -44,6 +44,7 @@ from admin_settings_fields import (
     write_nested_setting,
 )
 from admin_settings_nav import ADMIN_NAV
+from content_screening.contracts import ScreeningError
 from functions_mcp_server_config import is_mcp_ui_enabled
 from config import (
     ensure_custom_favicon_file_exists,
@@ -134,6 +135,7 @@ from functions_settings import (
     sanitize_settings_for_user,
     sanitize_model_endpoints_for_frontend,
     update_settings,
+    validate_content_screening_settings,
 )
 from functions_keyvault import (
     keyvault_model_endpoint_cleanup_helper,
@@ -1281,6 +1283,8 @@ def register_route_backend_v2_admin(bp):
 
         try:
             current_settings = get_settings()
+            if "enable_content_screening" in updates or current_settings.get("enable_content_screening") is True:
+                current_settings = get_settings(use_cosmos=True)
             normalized, errors, warnings = normalize_admin_settings_updates(
                 updates, current_settings
             )
@@ -1327,7 +1331,17 @@ def register_route_backend_v2_admin(bp):
             # secrets are already stored through Key Vault -- are not run through it.
             _seed_connections_on_first_enable(normalized, current_settings)
 
-            update_settings(normalized)
+            validate_content_screening_settings(normalized, current_settings)
+            if not update_settings(normalized):
+                log_event(
+                    "[V2_ADMIN_SETTINGS] Settings persistence did not succeed.",
+                    extra={"updated_keys": sorted(normalized.keys())},
+                    level=logging.WARNING,
+                )
+                return jsonify({
+                    "error": "Settings were not saved. Reload the current settings and try again.",
+                    "success": False,
+                }), 503
             log_event(
                 f"[V2_ADMIN_SETTINGS] Updated {len(normalized)} setting(s): "
                 f"{', '.join(sorted(normalized.keys()))}",
@@ -1358,11 +1372,23 @@ def register_route_backend_v2_admin(bp):
                 ),
                 200,
             )
+        except ScreeningError as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Content screening settings were rejected.",
+                extra={"error_code": exc.code},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                "error": exc.public_message,
+                "error_code": exc.code,
+                "field_errors": {"enable_content_screening": exc.public_message},
+                "success": False,
+            }), exc.status_code
         except Exception as exc:
             log_event(
-                f"[V2_ADMIN_SETTINGS] Failed to update settings: {exc}",
+                "[V2_ADMIN_SETTINGS] Failed to update settings.",
+                extra={"error_type": type(exc).__name__},
                 level=logging.ERROR,
-                exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to update settings"}), 500
 
