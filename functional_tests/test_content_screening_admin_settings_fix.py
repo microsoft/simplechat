@@ -1,8 +1,9 @@
 # test_content_screening_admin_settings_fix.py
 """
 Functional regressions for discoverable and persistent screening administration.
-Version: 0.261.107
+Version: 0.261.114
 Implemented in: 0.261.107
+Enabled-empty policies implemented in: 0.261.114
 
 Executes the actual V2 settings handler with isolated storage boundaries. Failed
 writes cannot report success, and Content Safety is not a screening prerequisite.
@@ -34,6 +35,9 @@ from content_screening.service import validate_screening_configuration
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 fields = import_app_module("admin_settings_fields")
 nav = import_app_module("admin_settings_nav")
+ai_connections = import_app_module("functions_ai_connections")
+embedding_migration = import_app_module("functions_ai_connection_migration")
+embedding_profile = import_app_module("functions_embedding_profile")
 
 
 def patch_handler(settings, *, write_succeeds=True, validation_error=None):
@@ -43,11 +47,21 @@ def patch_handler(settings, *, write_succeeds=True, validation_error=None):
         if isinstance(node, ast.FunctionDef) and node.name == "v2_admin_patch_settings"
     )
     function.decorator_list = []
+    connection_error_response = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+        and node.name == "_ai_connection_error_response"
+    )
     writes = Mock(return_value=write_succeeds)
     validator = Mock(side_effect=validation_error)
     namespace = {
         "request": request, "jsonify": jsonify, "logging": logging,
         "ScreeningError": ScreeningError,
+        "AIConnectionError": ai_connections.AIConnectionError,
+        "EMBEDDING_SELECTION_KEY": ai_connections.EMBEDDING_SELECTION_KEY,
+        "EMBEDDING_MIGRATION_VERSION_KEY": ai_connections.EMBEDDING_MIGRATION_VERSION_KEY,
+        "EMBEDDING_MIGRATION_NOTICE_KEY": embedding_migration.EMBEDDING_MIGRATION_NOTICE_KEY,
+        "EMBEDDING_VECTOR_PROFILE_KEY": embedding_profile.EMBEDDING_VECTOR_PROFILE_KEY,
+        "preflight_embedding_settings": Mock(),
         "get_settings": Mock(side_effect=lambda **kwargs: deepcopy(settings)),
         "normalize_admin_settings_updates": fields.normalize_admin_settings_updates,
         "get_admin_settings_api_secret_fields": lambda: set(),
@@ -59,7 +73,10 @@ def patch_handler(settings, *, write_succeeds=True, validation_error=None):
         "_redact_admin_settings_for_v2": deepcopy,
         "log_event": Mock(),
     }
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(APP_ROOT / "route_backend_v2.py"), "exec"), namespace)
+    exec(compile(
+        ast.Module(body=[connection_error_response, function], type_ignores=[]),
+        str(APP_ROOT / "route_backend_v2.py"), "exec",
+    ), namespace)
     return namespace
 
 
@@ -119,7 +136,7 @@ def test_policy_rejection_is_visible_at_the_screening_switch():
     payload, status = invoke(namespace, {"enable_content_screening": True})
     assert status == 400
     assert payload["error_code"] == "screening_policy_required"
-    assert "enabled policy" in payload["field_errors"]["enable_content_screening"]
+    assert "saved content screening policy" in payload["field_errors"]["enable_content_screening"]
     namespace["update_settings"].assert_not_called()
 
 
@@ -133,6 +150,28 @@ def test_screening_save_succeeds_when_content_safety_is_disabled():
     assert payload["settings"] == {"enable_content_screening": True}
     namespace["update_settings"].assert_called_once_with({"enable_content_screening": True})
     assert any(call.kwargs.get("use_cosmos") is True for call in namespace["get_settings"].call_args_list)
+
+
+def test_screening_save_preserves_embedding_preflight_rejections():
+    namespace = patch_handler({"enable_content_screening": False, "enable_enhanced_citations": True})
+    namespace["preflight_embedding_settings"].side_effect = ai_connections.AIConnectionError(
+        "The configured embedding profile cannot be changed while indexed content exists.",
+        "embedding_profile_incompatible",
+    )
+    payload, status = invoke(namespace, {"enable_content_screening": True})
+    assert status >= 400
+    assert payload["code"] == "embedding_profile_incompatible"
+    namespace["update_settings"].assert_not_called()
+    namespace["validate_content_screening_settings"].assert_not_called()
+
+
+def test_authoritative_screening_settings_must_be_available_before_normalization():
+    namespace = patch_handler({"enable_content_screening": True})
+    namespace["get_settings"].side_effect = [{"enable_content_screening": True}, None]
+    payload, status = invoke(namespace, {"enable_content_screening": False})
+    assert status == 503
+    assert "unavailable" in payload["error"]
+    namespace["update_settings"].assert_not_called()
 
 
 def test_service_distinguishes_missing_citations_from_missing_policy():

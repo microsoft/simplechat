@@ -1,8 +1,9 @@
 # test_content_screening_engine.py
 """
 Functional tests for fail-closed content-screening orchestration.
-Version: 0.261.108
+Version: 0.261.114
 Implemented in: 0.261.106
+Enabled-empty policy coverage implemented in: 0.261.114
 
 Verify independent mandatory checks, injected model adapters, exact required unit
 coverage, grounded Unicode evidence, and rejection of silent clean verdicts (#1476).
@@ -74,6 +75,16 @@ def model_finding(units, check, **_kwargs):
 
 
 class ContentScreeningEngineTests(unittest.TestCase):
+    def test_empty_enabled_configuration_never_produces_a_clean_inspection(self):
+        raw = {**default_policy(), "enabled": True}
+        for policy in (raw, compose_policy(raw)):
+            with self.subTest(effective="ai_checks" in policy):
+                with patch.dict(sys.modules, {"content_screening.model": None}):
+                    result = inspect_content(SUBJECT, [ContentUnit("one", "Ordinary content")], policy)
+                self.assertEqual(result.status, "error")
+                self.assertEqual(result.error_code, "screening_policy_empty")
+                self.assertEqual(result.detectors, [])
+
     def _model_harness(self):
         harness = model_fixtures.ModelScreeningTests()
         self.addCleanup(harness.doCleanups)
