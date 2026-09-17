@@ -3,16 +3,21 @@
 from functools import wraps
 
 from flask import g, has_request_context, jsonify, request, session
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 
 from config import *
 from functions_appinsights import log_event
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
+    EMBEDDING_SELECTION_KEY,
     describe_model_capabilities,
+    embedding_settings_use_connections,
     normalize_model_capability_fields,
     supports_model_capability,
 )
+from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
@@ -2030,7 +2035,18 @@ def get_settings(use_cosmos=False, include_source=False):
             or model_endpoint_identity_header_settings_updated
             or tabular_parity_durable_preflight_settings_updated
         ):
-            cosmos_settings_container.upsert_item(merged)
+            if not merged.get("_etag"):
+                # Cached defaults without a revision cannot overwrite a newer model selection.
+                latest = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+                _refresh_app_settings_cache_after_write(latest, context="merge_reload")
+                return _format_result(attach_public_workspace_label_context(latest), "cosmos_merge_reload")
+            try:
+                merged = cosmos_settings_container.replace_item(
+                    item="app_settings", body=merged, etag=merged["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            except CosmosAccessConditionFailedError:
+                merged = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
             log_event(
@@ -2046,7 +2062,7 @@ def get_settings(use_cosmos=False, include_source=False):
             return _format_result(attach_public_workspace_label_context(merged), settings_source)
 
     except CosmosResourceNotFoundError:
-        cosmos_settings_container.create_item(body=default_settings)
+        default_settings = cosmos_settings_container.create_item(body=default_settings)
         _refresh_app_settings_cache_after_write(default_settings, context="default_create")
 
         log_event(
@@ -2083,29 +2099,42 @@ def get_rate_limit_message(settings=None):
 
 def update_settings(new_settings):
     try:
-        # always fetch the latest settings doc, which includes your merges
-        settings_item = get_settings()
-        existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
-        settings_item.update(new_settings)
-        normalize_group_workflow_assignment_settings(settings_item)
-        normalize_agents_page_promoted_popular_settings(settings_item)
-        normalize_document_access_index_required_settings(settings_item)
-        normalize_inbound_mcp_settings(settings_item)
-        normalize_public_workspace_display_settings(settings_item)
-        normalize_key_vault_reminder_settings(settings_item)
-        normalize_model_endpoint_identity_header_settings(settings_item)
-        settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
-            existing_multi_endpoint_enabled,
-            settings_item.get('enable_multi_model_endpoints', False),
-        )
-        settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
-        cosmos_settings_container.upsert_item(settings_item)
-        _refresh_app_settings_cache_after_write(settings_item, context="update_settings")
-        log_event(
-            "App settings updated successfully.",
-            level=logging.INFO
-        )
-        return True
+        # The guard imports storage clients only when a settings write is requested.
+        from functions_embedding_compatibility import embedding_settings_write_guard
+
+        for attempt in range(3):
+            original = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+            settings_item = copy.deepcopy(original)
+            existing_multi_endpoint_enabled = original.get('enable_multi_model_endpoints', False)
+            settings_item.update(new_settings)
+            normalize_group_workflow_assignment_settings(settings_item)
+            normalize_agents_page_promoted_popular_settings(settings_item)
+            normalize_document_access_index_required_settings(settings_item)
+            normalize_inbound_mcp_settings(settings_item)
+            normalize_public_workspace_display_settings(settings_item)
+            normalize_key_vault_reminder_settings(settings_item)
+            normalize_model_endpoint_identity_header_settings(settings_item)
+            settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
+                existing_multi_endpoint_enabled,
+                settings_item.get('enable_multi_model_endpoints', False),
+            )
+            settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
+            try:
+                with embedding_settings_write_guard(
+                    original, settings_item, force_check=EMBEDDING_SELECTION_KEY in new_settings,
+                ):
+                    persisted = cosmos_settings_container.replace_item(
+                        item="app_settings", body=settings_item, etag=original["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    )
+                _refresh_app_settings_cache_after_write(persisted, context="update_settings")
+                log_event("[AI_CONNECTIONS] App settings updated", debug_only=True)
+                return True
+            except CosmosAccessConditionFailedError:
+                if attempt == 2:
+                    raise AIConnectionError("Settings changed concurrently. Reload before saving.", "settings_conflict")
+    except AIConnectionError:
+        raise
     except Exception as e:
         log_event(
             "Error updating app settings.",
@@ -2163,8 +2192,17 @@ def get_chunk_size_defaults():
 
 def get_embedding_context_tokens(settings=None):
     """Return the selected embedding model's context window in tokens."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            return resolve_embedding_profile(settings).policy["max_input_tokens"]
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+            log_event("[EMBEDDING] No active model for chunk-budget configuration", debug_only=True)
+            # Keep the settings editor usable while unconfigured; inference still fails closed.
+            return EMBEDDING_CONTEXT_FALLBACK_TOKENS
     try:
-        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
@@ -2194,11 +2232,31 @@ def get_embedding_usable_tokens(settings=None):
 
 def get_embedding_safe_chunk_characters(settings=None):
     """Return the largest chunk length in characters expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 4))
     return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
 
 
 def get_embedding_safe_chunk_words(settings=None):
     """Return the largest chunk length in words expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 12))
     return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
 
 
@@ -2672,6 +2730,9 @@ def normalize_model_endpoints(endpoints):
             for capability, profile in operation_settings.items():
                 if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
                     raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                if capability == "embeddings":
+                    operation_settings[capability] = normalize_embedding_operation(profile)
+                    continue
                 allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
                 if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
                     raise AIConnectionError("The connection operation API is not supported.")
@@ -2699,6 +2760,10 @@ def normalize_model_endpoints(endpoints):
 
         if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
+        if endpoint_copy.get("provider") == "openai_compatible":
+            auth = endpoint_copy.get("auth") or {}
+            if auth.get("type") != "api_key":
+                raise AIConnectionError("OpenAI-compatible custom connections require API key authentication.")
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
@@ -2753,7 +2818,7 @@ def normalize_model_endpoints(endpoints):
 def is_frontend_visible_model_endpoint_provider(provider):
     """Return whether the provider should be exposed in user-facing endpoint UIs."""
     normalized_provider = (provider or "aoai").lower()
-    return normalized_provider in {"aoai", "aifoundry", "new_foundry", "custom"}
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry", "custom", "openai_compatible"}
 
 
 def merge_model_endpoint_auth(existing_auth, incoming_auth):
@@ -3447,9 +3512,11 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k in ('custom_model_endpoint_ca_bundle_path', 'client_cert_path', 'client_key_path', 'bearer_token', 'token_url'):
-            continue
-        if k == 'support_feedback_recipient_email':
+        if k in (
+            'support_feedback_recipient_email', 'embedding_vector_profile',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url',
+        ):
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue

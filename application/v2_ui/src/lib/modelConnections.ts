@@ -1,8 +1,8 @@
 // modelConnections.ts
 // Types, API wrappers and pure form logic for global model connections.
 //
-// A "connection" is one Azure OpenAI or Foundry resource: where it is, how SimpleChat
-// authenticates to it, and which of its deployed models may be used. The classic
+// A "connection" is an Azure OpenAI/Foundry resource or a Custom API: where
+// it is, how SimpleChat authenticates, and which of its models may be used. The classic
 // interface calls these model endpoints, and the stored shape is unchanged -- only the
 // wording and the editing model differ.
 //
@@ -27,7 +27,7 @@ import {
 /* -------------------------------------------------------------------------- */
 
 /** Providers offered in the editor. Matches `is_frontend_visible_model_endpoint_provider`. */
-export type ConnectionProvider = 'aoai' | 'aifoundry' | 'new_foundry' | 'custom';
+export type ConnectionProvider = 'aoai' | 'aifoundry' | 'new_foundry' | 'custom' | 'openai_compatible';
 
 export type ConnectionAuthType = 'managed_identity' | 'service_principal' | 'api_key' | 'bearer' | 'oauth2_client_credentials';
 
@@ -37,7 +37,48 @@ export type ManagementCloud = 'public' | 'usgovernment' | 'custom';
 
 export type IdentityHeaderMode = 'inherit' | 'enabled' | 'disabled';
 
-export type ImplementedCapability = 'chat' | 'image_generation';
+export type ImplementedCapability = 'chat' | 'image_generation' | 'embeddings';
+
+export const CAPABILITY_OPTIONS: Array<{ key: ImplementedCapability; label: string; supportKey: 'supportsChat' | 'supportsImageGeneration' | 'supportsEmbeddings' }> = [
+    { key: 'chat', label: 'chat', supportKey: 'supportsChat' },
+    { key: 'image_generation', label: 'images', supportKey: 'supportsImageGeneration' },
+    { key: 'embeddings', label: 'embeddings', supportKey: 'supportsEmbeddings' },
+];
+
+export interface EmbeddingConfig {
+    dimensions?: number;
+    max_input_tokens?: number;
+    max_batch_size?: number;
+    max_batch_tokens?: number;
+    model_revision?: string;
+    document_prefix?: string;
+    query_prefix?: string;
+    openai_compatible?: boolean;
+}
+
+export interface EmbeddingPolicy {
+    dimensions?: number;
+    default_dimensions?: number;
+    supports_dimensions?: boolean;
+    request_dimensions?: number;
+    min_dimensions?: number;
+    max_dimensions?: number;
+    allowed_dimensions?: number[];
+    max_input_tokens?: number;
+    max_batch_size?: number;
+    max_batch_tokens?: number;
+    tokenizer?: 'cl100k_base' | 'conservative';
+    api?: 'openai' | 'unsupported';
+    requires_input_type?: boolean;
+}
+
+export interface EmbeddingOperationSettings {
+    api?: 'azure_openai' | 'openai';
+    endpoint?: string;
+    api_version?: string;
+    is_apim?: boolean;
+    auth_header?: 'api-key' | 'authorization' | 'Ocp-Apim-Subscription-Key';
+}
 
 export interface ModelCapabilityStatus {
     supported: boolean;
@@ -64,14 +105,18 @@ export interface ConnectionModel {
     responseLength?: number | string;
     supportsChat?: boolean;
     supportsImageGeneration?: boolean;
+    supportsEmbeddings?: boolean;
     supportsImageEditing?: boolean;
     supportsImageMasking?: boolean;
     image_generation_api?: 'images' | 'responses' | 'mai' | 'flux';
     supportsVision?: boolean;
+    embedding_config?: EmbeddingConfig;
+    embedding_policy?: EmbeddingPolicy;
     enabled_capabilities?: ImplementedCapability[];
     capability_status?: {
         chat?: ModelCapabilityStatus;
         image_generation?: ModelCapabilityStatus;
+        embeddings?: ModelCapabilityStatus;
         vision?: { supported: boolean; source: string };
     };
     [key: string]: unknown;
@@ -118,6 +163,10 @@ export interface ModelConnection {
         client_key_path?: string;
         project_api_version?: string;
         project_name?: string;
+        operation_settings?: {
+            embeddings?: EmbeddingOperationSettings;
+            [key: string]: unknown;
+        };
         [key: string]: unknown;
     };
     management?: {
@@ -167,6 +216,11 @@ export const PROVIDER_OPTIONS: Array<{ value: ConnectionProvider; label: string;
         value: 'aifoundry',
         label: 'Azure AI Foundry (classic)',
         hint: 'The earlier Foundry project shape, kept for connections created before the move.',
+    },
+    {
+        value: 'openai_compatible',
+        label: 'OpenAI-compatible (embeddings only)',
+        hint: 'A verified OpenAI-compatible embedding API base URL. API key authentication and manually configured text embedding models only; no Azure discovery.',
     },
 ];
 
@@ -274,9 +328,55 @@ export function projectNameFromEndpoint(endpoint: unknown): string {
 }
 
 export function defaultOpenAiApiVersion(provider: unknown): string {
-    return isFoundryProvider(provider)
+    return isFoundryProvider(provider) || provider === 'openai_compatible'
         ? DEFAULT_FOUNDRY_OPENAI_API_VERSION
         : DEFAULT_AOAI_OPENAI_API_VERSION;
+}
+
+export function defaultEmbeddingApi(connection: ModelConnection): 'azure_openai' | 'openai' {
+    if (connection.provider === 'custom') {
+        return connection.api_type === 'azure_openai' ? 'azure_openai' : 'openai';
+    }
+    return (connection.provider || 'aoai') === 'aoai' &&
+        !/\/openai\/v1(?:\/|$)/i.test(text(connection.connection?.endpoint))
+        ? 'azure_openai' : 'openai';
+}
+
+export function embeddingConnectionUnavailableReason(connection: ModelConnection): string | null {
+    if (connection.provider === 'custom' && (
+        !['openai', 'azure_openai'].includes(connection.api_type || '')
+        || !['api_key', 'bearer'].includes(connection.auth?.type || 'api_key')
+    )) {
+        return 'Embeddings require a Custom OpenAI or Azure OpenAI API with API key or bearer authentication. Other Custom API types and OAuth2 embeddings are not supported.';
+    }
+    return null;
+}
+
+/** Update one operation override without rewriting other operations or their defaults. */
+export function setEmbeddingOperation(
+    connection: ModelConnection,
+    key: keyof EmbeddingOperationSettings,
+    value: string | boolean,
+): ModelConnection {
+    const operations = { ...connection.connection?.operation_settings };
+    const embedding = { ...operations.embeddings };
+    if (value === '') {
+        delete embedding[key];
+    } else {
+        Object.assign(embedding, { [key]: typeof value === 'string' ? value.trim() : value });
+    }
+    if (Object.keys(embedding).length) {
+        operations.embeddings = embedding;
+    } else {
+        delete operations.embeddings;
+    }
+    const nextConnection = { ...connection.connection };
+    if (Object.keys(operations).length) {
+        nextConnection.operation_settings = operations;
+    } else {
+        delete nextConnection.operation_settings;
+    }
+    return { ...connection, connection: nextConnection };
 }
 
 /** A blank connection, shaped so every control is controlled from the first render. */
@@ -324,7 +424,11 @@ export function toEditableConnection(source: ModelConnection): ModelConnection {
         management: { ...blank.management, ...(source.management ?? {}) },
         auth: source.provider === 'custom'
             ? { type: 'api_key', ...(source.auth ?? {}) }
-            : { ...blank.auth, ...(source.auth ?? {}) },
+            : {
+                ...blank.auth,
+                ...(source.auth ?? {}),
+                ...(source.provider === 'openai_compatible' ? { type: 'api_key' as const } : {}),
+            },
         identity_header: { ...blank.identity_header, ...(source.identity_header ?? {}) },
         models: Array.isArray(source.models) ? source.models.map((model) => ({ ...model })) : [],
     };
@@ -347,27 +451,33 @@ export function visibleFields(connection: ModelConnection): {
     customAuthority: boolean;
     foundryScope: boolean;
     userAssignedClientId: boolean;
+    openAiVersion: boolean;
+    discovery: boolean;
 } {
     const provider = text(connection.provider) || 'aoai';
-    const authType = (text(connection.auth?.type) || 'managed_identity') as ConnectionAuthType;
+    const embeddingOnly = provider === 'openai_compatible';
+    const custom = provider === 'custom';
+    const external = custom || embeddingOnly;
+    const authType = embeddingOnly ? 'api_key' : (text(connection.auth?.type) || (custom ? 'api_key' : 'managed_identity')) as ConnectionAuthType;
     const foundry = isFoundryProvider(provider);
     const cloud = text(connection.auth?.management_cloud) || 'public';
-    const custom = provider === 'custom';
 
     return {
         project: foundry,
         // Discovery for Azure OpenAI goes through Azure Resource Manager, which needs the
         // resource coordinates. An API key cannot reach ARM, so they serve no purpose there.
         management: provider === 'aoai' && authType !== 'api_key',
-        managedIdentity: !custom && authType === 'managed_identity',
-        servicePrincipal: !custom && authType === 'service_principal',
+        managedIdentity: !external && authType === 'managed_identity',
+        servicePrincipal: !external && authType === 'service_principal',
         apiKey: authType === 'api_key',
-        managementCloud: !custom && authType !== 'api_key',
-        customAuthority: !custom && authType !== 'api_key' && cloud === 'custom',
+        managementCloud: !external && authType !== 'api_key',
+        customAuthority: !external && authType !== 'api_key' && cloud === 'custom',
         foundryScope: foundry && authType !== 'api_key',
         userAssignedClientId:
-            authType === 'managed_identity' &&
+            !external && authType === 'managed_identity' &&
             text(connection.auth?.managed_identity_type) === 'user_assigned',
+        openAiVersion: !external,
+        discovery: !external && authType !== 'api_key',
     };
 }
 
@@ -381,11 +491,14 @@ export function validateConnection(
     connection: ModelConnection,
     { requireDiscovery = false }: { requireDiscovery?: boolean } = {},
 ): Record<string, string> {
-    if (connection.provider === 'custom') return validateCustomConnection(connection);
+    if (connection.provider === 'custom') {
+        return { ...validateCustomConnection(connection), ...validateEmbeddingConfiguration(connection) };
+    }
     const errors: Record<string, string> = {};
     const provider = text(connection.provider) || 'aoai';
     const authType = (text(connection.auth?.type) || 'managed_identity') as ConnectionAuthType;
     const foundry = isFoundryProvider(provider);
+    const custom = provider === 'openai_compatible';
     const shown = visibleFields(connection);
 
     if (!text(connection.name)) {
@@ -399,8 +512,14 @@ export function validateConnection(
         errors.endpoint = 'Enter the full URL, including https://.';
     }
 
-    if (!text(connection.connection?.openai_api_version)) {
+    if (!custom && !text(connection.connection?.openai_api_version)) {
         errors.openai_api_version = 'An OpenAI API version is required.';
+    }
+    if (custom && authType !== 'api_key') {
+        errors.auth_type = 'OpenAI-compatible connections support API key authentication only.';
+    }
+    if (custom && requireDiscovery) {
+        errors.discovery = 'Custom embedding connections use manually entered models, not Azure discovery.';
     }
 
     if (foundry) {
@@ -450,6 +569,75 @@ export function validateConnection(
         }
     }
 
+    return { ...errors, ...validateEmbeddingConfiguration(connection) };
+}
+
+function validateEmbeddingConfiguration(connection: ModelConnection): Record<string, string> {
+    const errors: Record<string, string> = {};
+    const provider = text(connection.provider) || 'aoai';
+    const embeddingOnly = provider === 'openai_compatible';
+    const custom = provider === 'custom';
+    const foundry = isFoundryProvider(provider);
+    const endpoint = text(connection.connection?.endpoint);
+    const embedding = connection.connection?.operation_settings?.embeddings;
+    const embeddingApi = embedding?.api || defaultEmbeddingApi(connection);
+    if (embedding?.api && (!['azure_openai', 'openai'].includes(embedding.api) || (embeddingOnly && embedding.api !== 'openai'))) {
+        errors.embedding_api = 'Choose a supported embedding API. Embedding-only OpenAI-compatible connections require the OpenAI-compatible API.';
+    } else if (custom && embedding?.api && embedding.api !== connection.api_type) {
+        errors.embedding_api = 'The embedding operation must match the Custom connection API type.';
+    }
+    if (embedding?.auth_header && !['api-key', 'authorization', 'Ocp-Apim-Subscription-Key'].includes(embedding.auth_header)) {
+        errors.embedding_auth_header = 'Choose one of the supported embedding authentication headers.';
+    }
+    const publishedEmbeddings = (connection.models ?? []).filter((model) =>
+        model.enabled !== false &&
+        (!model.enabled_capabilities || model.enabled_capabilities.includes('embeddings')) &&
+        (embeddingOnly || modelSupportsCapability(model, 'embeddings')),
+    );
+    if (embedding?.endpoint || publishedEmbeddings.length) {
+        const inferenceEndpoint = text(embedding?.endpoint) || endpoint;
+        try {
+            const parsed = new URL(inferenceEndpoint);
+            if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+                throw new Error('Invalid base URL');
+            }
+            if (endpointIncludesProject(inferenceEndpoint)) {
+                errors.embedding_endpoint = 'Foundry project endpoints do not route embeddings. Enter the explicit embedding inference base URL ending /openai/v1/.';
+            } else if (foundry && !/\/openai\/v1\/?$/i.test(parsed.pathname)) {
+                errors.embedding_endpoint = 'Enter the explicit Foundry embedding inference base URL ending /openai/v1/. The project URL is not rewritten.';
+            }
+        } catch {
+            errors.embedding_endpoint = 'Enter a full embedding API base URL without credentials, a query, or a fragment.';
+        }
+    }
+    if (embeddingApi === 'openai' && embedding?.api_version) {
+        errors.embedding_api_version = 'The OpenAI-compatible embedding API does not use an Azure api-version query. Clear the embedding API version override.';
+    }
+    (connection.models ?? []).forEach((model, index) => {
+        const config = model.embedding_config;
+        for (const key of ['dimensions', 'max_input_tokens', 'max_batch_size', 'max_batch_tokens'] as const) {
+            if (config?.[key] !== undefined && (!Number.isSafeInteger(config[key]) || Number(config[key]) <= 0)) {
+                errors[`model_${index}_${key}`] = `${key.replaceAll('_', ' ')} must be a positive whole number.`;
+            }
+        }
+        if (!publishedEmbeddings.includes(model)) return;
+        const unavailableReason = embeddingConnectionUnavailableReason(connection);
+        if (unavailableReason) {
+            errors[`model_${index}_supportsEmbeddings`] = unavailableReason;
+        } else if (embeddingOnly && !isKnownEmbeddingModel(model) && !modelSupportsCapability(model, 'embeddings')) {
+            errors[`model_${index}_supportsEmbeddings`] = 'Declare embedding support for this custom model before publishing it.';
+        }
+        if (!isKnownEmbeddingModel(model) && model.capability_status?.embeddings?.source !== 'catalog') {
+            if (model.supportsEmbeddings !== true) {
+                errors[`model_${index}_supportsEmbeddings`] = 'Unknown embedding models require an explicit administrator declaration of embedding support.';
+            }
+            for (const key of ['dimensions', 'max_input_tokens'] as const) {
+                if (!config?.[key]) {
+                    errors[`model_${index}_${key}`] = `Unknown embedding models require explicit ${key.replaceAll('_', ' ')}; no catalog default is assumed.`;
+                }
+            }
+        }
+    });
     return errors;
 }
 
@@ -462,7 +650,8 @@ export function validateConnection(
 export function buildConnectionPayload(connection: ModelConnection): Record<string, unknown> {
     if (connection.provider === 'custom') return buildCustomConnectionPayload(connection);
     const provider = (text(connection.provider) || 'aoai') as ConnectionProvider;
-    const authType = (text(connection.auth?.type) || 'managed_identity') as ConnectionAuthType;
+    const custom = provider === 'openai_compatible';
+    const authType = custom ? 'api_key' : (text(connection.auth?.type) || 'managed_identity') as ConnectionAuthType;
     const foundry = isFoundryProvider(provider);
 
     const endpoint = text(connection.connection?.endpoint);
@@ -484,12 +673,18 @@ export function buildConnectionPayload(connection: ModelConnection): Record<stri
         delete connectionBlock.project_api_version;
         delete connectionBlock.project_name;
     }
+    if (custom) {
+        delete connectionBlock.openai_api_version;
+        delete connectionBlock.api_version;
+    }
 
     const auth: Record<string, unknown> = {
         type: authType,
-        management_cloud: text(connection.auth?.management_cloud) || 'public',
-        custom_authority: text(connection.auth?.custom_authority),
-        foundry_scope: text(connection.auth?.foundry_scope),
+        ...(!custom ? {
+            management_cloud: text(connection.auth?.management_cloud) || 'public',
+            custom_authority: text(connection.auth?.custom_authority),
+            foundry_scope: text(connection.auth?.foundry_scope),
+        } : {}),
     };
 
     if (authType === 'managed_identity') {
@@ -596,14 +791,39 @@ export function enabledModelCount(connection: ModelConnection): number {
 }
 
 /** Server metadata is authoritative; older chat records keep their existing behavior. */
+export function isKnownEmbeddingModel(model: ConnectionModel): boolean {
+    const name = text(model.modelName || model.deploymentName).toLowerCase();
+    return [
+        'text-embedding-ada-002', 'text-embedding-3-small', 'text-embedding-3-large',
+        'embed-v-4-0', 'embed-v4.0', 'embed-english-v3.0', 'embed-multilingual-v3.0',
+        'cohere-embed-v3-english', 'cohere-embed-v3-multilingual',
+    ].includes(name);
+}
+
+export function modelNeedsEmbeddingGateway(model: ConnectionModel): boolean {
+    return isKnownEmbeddingModel(model) &&
+        !/^text-embedding-(ada-002|3-small|3-large)$/i.test(text(model.modelName || model.deploymentName));
+}
+
 export function modelSupportsCapability(model: ConnectionModel, capability: ImplementedCapability): boolean {
+    if (isKnownEmbeddingModel(model) && capability !== 'embeddings') {
+        return false;
+    }
     const resolved = model.capability_status?.[capability];
     if (resolved) {
         return resolved.supported === true;
     }
-    return capability === 'chat'
-        ? model.supportsChat !== false
-        : model.supportsImageGeneration === true;
+    if (capability === 'embeddings') {
+        return model.supportsEmbeddings ?? (
+            isKnownEmbeddingModel(model) && (!modelNeedsEmbeddingGateway(model) || model.embedding_config?.openai_compatible === true)
+        );
+    }
+    if (capability === 'image_generation') {
+        return model.supportsImageGeneration === true;
+    }
+    return model.supportsChat ?? (
+        model.supportsEmbeddings !== true && !model.embedding_policy && !model.embedding_config
+    );
 }
 
 export function modelPublishesCapability(model: ConnectionModel, capability: ImplementedCapability): boolean {
@@ -619,7 +839,7 @@ export function setModelCapabilityEnabled(
     enabled: boolean,
 ): ConnectionModel {
     const published = new Set<ImplementedCapability>(
-        model.enabled_capabilities ?? ['chat', 'image_generation'],
+        model.enabled_capabilities ?? CAPABILITY_OPTIONS.map(({ key }) => key),
     );
     if (enabled) {
         published.add(capability);
@@ -696,7 +916,7 @@ export function buildDefaultModelChoices(connections: ModelConnection[]): Defaul
     const choices: DefaultModelChoice[] = [];
 
     for (const connection of connections ?? []) {
-        if (!connection || connection.enabled === false || !text(connection.id)) {
+        if (!connection || connection.enabled === false || !text(connection.id) || connection.provider === 'openai_compatible') {
             continue;
         }
         const connectionName =
@@ -805,6 +1025,7 @@ export interface ConnectionListResponse {
     endpoints: ModelConnection[];
     multi_endpoint_enabled?: boolean;
     migration?: ConnectionMigrationNotice | null;
+    embedding_migration?: ConnectionMigrationNotice | null;
     default_notices?: Record<string, string | null>;
     custom_api_types?: CustomApiTypeDescriptor[];
     custom_network_policy?: CustomNetworkPolicy;

@@ -17,6 +17,8 @@ from functions_model_endpoint_providers import (
 )
 from functions_model_endpoint_types import (
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    ModelEndpointValidationError,
+    custom_endpoint_validation_view,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -41,14 +43,6 @@ CUSTOM_ENDPOINT_PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
 )
-
-
-class ModelEndpointValidationError(ValueError):
-    """A stable, user-safe configuration or outbound-policy error."""
-
-    def __init__(self, public_message):
-        super().__init__(public_message)
-        self.public_message = public_message
 
 
 class ModelEndpointUnresolvableError(ModelEndpointValidationError):
@@ -184,6 +178,7 @@ def validate_custom_model_endpoint(
     """Validate a normalized record without requiring the deployment to be reachable."""
     if not isinstance(endpoint, dict):
         raise ModelEndpointValidationError("Custom endpoint configuration must be an object.")
+    endpoint = custom_endpoint_validation_view(endpoint)
     if str(endpoint.get("provider") or "").strip().lower() != MODEL_ENDPOINT_PROVIDER_CUSTOM:
         return
     if not str(endpoint.get("name") or "").strip():
@@ -213,6 +208,12 @@ def validate_custom_model_endpoint(
         connection.get("endpoint"), allow_private=allow_private,
         allow_insecure=allow_insecure, require_resolvable=False,
     )
+    embedding_operation = (connection.get("operation_settings") or {}).get("embeddings") or {}
+    if isinstance(embedding_operation, dict) and embedding_operation.get("endpoint"):
+        validate_custom_model_endpoint_url(
+            embedding_operation["endpoint"], allow_private=allow_private,
+            allow_insecure=allow_insecure, require_resolvable=False,
+        )
     endpoint["connection"] = connection
     if connection.get("url_mode", "auto") not in CUSTOM_ENDPOINT_URL_MODES:
         raise ModelEndpointValidationError("Custom endpoint URL mode must be auto or exact.")

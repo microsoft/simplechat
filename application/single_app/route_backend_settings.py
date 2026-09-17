@@ -5,7 +5,16 @@ from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
-from functions_ai_connections import IMAGE_SELECTION_KEY
+from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY, IMAGE_SELECTION_KEY
+from functions_embeddings import generate_embedding_batch
+from functions_embedding_profile import resolve_embedding_profile
+from functions_embedding_compatibility import (
+    build_embedding_index_schema,
+    embedding_index_maintenance,
+    get_embedding_search_index_client,
+    record_embedding_index_schema,
+    validate_embedding_index_schema,
+)
 from functions_image_generation import (
     image_generation_error_log_context,
     image_generation_error_response,
@@ -47,6 +56,7 @@ from functions_redis_monitoring import (
     get_redis_monitoring_status,
 )
 from azure.identity import DefaultAzureCredential
+from azure.core.exceptions import AzureError
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
@@ -73,6 +83,8 @@ def _resolve_admin_settings_test_secrets(payload):
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_gpt_key')
     elif test_type == 'embedding':
+        if 'selection' in payload:
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_embedding_subscription_key')
         else:
@@ -309,14 +321,19 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
             
         with open(json_path, 'r') as f:
             full_def = json.load(f)
+        settings = get_settings()
+        full_def = build_embedding_index_schema(full_def, settings)
 
         client = get_index_client()
         index_obj = client.get_index(full_def['name'])
+        validate_embedding_index_schema(index_obj, full_def)
 
         existing_names = {fld.name for fld in index_obj.fields}
         missing_defs = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
 
         if not missing_defs:
+            with embedding_index_maintenance(settings):
+                record_embedding_index_schema(index_obj, settings)
             return {'status': 'nothingToAdd'}
 
         new_fields = []
@@ -364,7 +381,9 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
         # Update the index
         index_obj.fields.extend(new_fields)
         index_obj.etag = "*"
-        client.create_or_update_index(index_obj)
+        with embedding_index_maintenance(settings):
+            updated_index = client.create_or_update_index(index_obj)
+            record_embedding_index_schema(updated_index, settings)
 
         added = [f.name for f in new_fields]
         
@@ -378,8 +397,11 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
         
         return {'status': 'success', 'added': added}
 
-    except Exception as e:
-        return {'error': str(e)}
+    except AIConnectionError as exc:
+        return {'error': exc.public_message, 'code': exc.code}
+    except (AzureError, ValueError, OSError) as exc:
+        log_event("[EMBEDDING] Index maintenance failed", extra={"error_type": type(exc).__name__})
+        return {'error': 'AI Search index fields could not be updated.'}
 
 
 def register_route_backend_settings(bp):
@@ -530,6 +552,7 @@ def register_route_backend_settings(bp):
 
             # Check if Azure AI Search is configured
             settings = get_settings()
+            expected = build_embedding_index_schema(expected, settings)
             if not settings.get("azure_ai_search_endpoint"):
                 return jsonify({
                     'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
@@ -539,6 +562,7 @@ def register_route_backend_settings(bp):
             try:
                 client = get_index_client()
                 current = client.get_index(expected['name'])
+                validate_embedding_index_schema(current, expected)
                 
                 existing_names = { fld.name for fld in current.fields }
                 expected_names = { fld['name'] for fld in expected['fields'] }
@@ -582,12 +606,16 @@ def register_route_backend_settings(bp):
                             'indexName': expected['name']
                         }), 200
                 else:
+                    with embedding_index_maintenance(settings):
+                        record_embedding_index_schema(current, settings)
                     return jsonify({ 
                         'missingFields': [],
                         'indexExists': True,
                         'indexName': expected['name']
                     }), 200
                 
+            except AIConnectionError as exc:
+                return jsonify({'error': exc.public_message, 'code': exc.code, 'needsRecreation': True}), 409
             except ResourceNotFoundError as not_found_error:
                 # Index doesn't exist - this is the specific exception for "index not found"
                 return jsonify({
@@ -638,14 +666,19 @@ def register_route_backend_settings(bp):
                 raise Exception("Invalid file path")
             with open(json_path, 'r') as f:
                 full_def = json.load(f)
+            settings = get_settings()
+            full_def = build_embedding_index_schema(full_def, settings)
 
             client    = get_index_client()
             index_obj = client.get_index(full_def['name'])
+            validate_embedding_index_schema(index_obj, full_def)
 
             existing_names = {fld.name for fld in index_obj.fields}
             missing_defs   = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
 
             if not missing_defs:
+                with embedding_index_maintenance(settings):
+                    record_embedding_index_schema(index_obj, settings)
                 return jsonify({'status': 'nothingToAdd'}), 200
 
             new_fields = []
@@ -693,13 +726,18 @@ def register_route_backend_settings(bp):
             # append the new fields, bypass ETag checks, and update
             index_obj.fields.extend(new_fields)
             index_obj.etag = "*"
-            client.create_or_update_index(index_obj)
+            with embedding_index_maintenance(settings):
+                updated_index = client.create_or_update_index(index_obj)
+                record_embedding_index_schema(updated_index, settings)
 
             added = [f.name for f in new_fields]
             return jsonify({ 'status': 'success', 'added': added }), 200
 
-        except Exception as e:
-            return jsonify({ 'error': str(e) }), 500
+        except AIConnectionError as exc:
+            return jsonify({'error': exc.public_message, 'code': exc.code, 'needsRecreation': True}), 409
+        except (AzureError, ValueError, OSError) as exc:
+            log_event("[EMBEDDING] Index maintenance failed", extra={"error_type": type(exc).__name__})
+            return jsonify({'error': 'AI Search index fields could not be updated.'}), 500
 
     @bp.route('/api/admin/settings/create_index', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -729,6 +767,7 @@ def register_route_backend_settings(bp):
 
             # Check if Azure AI Search is configured
             settings = get_settings()
+            index_definition = build_embedding_index_schema(index_definition, settings)
             if not settings.get("azure_ai_search_endpoint"):
                 return jsonify({
                     'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
@@ -757,7 +796,9 @@ def register_route_backend_settings(bp):
             index = SearchIndex.deserialize(index_definition)
             
             # Create the index
-            result = client.create_index(index)
+            with embedding_index_maintenance(settings):
+                result = client.create_index(index)
+                record_embedding_index_schema(result, settings)
             
             return jsonify({
                 'status': 'success',
@@ -1565,23 +1606,10 @@ def get_index_client() -> SearchIndexClient:
       - azure_ai_search_authentication_type (managed_identity vs key)
       - and the various endpoint & key settings.
     """
-    settings = get_settings()
-
-    if settings.get("enable_ai_search_apim", False):
-        endpoint = settings["azure_apim_ai_search_endpoint"].rstrip("/")
-        credential = AzureKeyCredential(settings["azure_apim_ai_search_subscription_key"])
-    else:
-        endpoint = settings["azure_ai_search_endpoint"].rstrip("/")
-        if settings.get("azure_ai_search_authentication_type", "key") == "managed_identity":
-            credential = DefaultAzureCredential()
-            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
-                return SearchIndexClient(endpoint=endpoint,
-                                          credential=credential,
-                                          audience=search_resource_manager)
-        else:
-            credential = AzureKeyCredential(settings["azure_ai_search_key"])
-
-    return SearchIndexClient(endpoint=endpoint, credential=credential)
+    client = get_embedding_search_index_client(get_settings())
+    if client is None:
+        raise AIConnectionError("AI Search is not configured.")
+    return client
 
 def _test_gpt_connection(payload):
     """Attempt to connect to GPT using ephemeral settings from the admin UI."""
@@ -1708,56 +1736,40 @@ def _test_redis_connection(payload):
 
 
 def _test_embedding_connection(payload):
-    """Attempt to connect to Embeddings using ephemeral settings from the admin UI."""
-    enable_apim = payload.get('enable_apim', False)
-    selected_model = payload.get('selected_model') or {}
-    text = "Test text for embedding connection."
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        api_version = apim_data.get('api_version')
-        embedding_model = apim_data.get('deployment')
-        subscription_key = apim_data.get('subscription_key')
-
-        embedding_client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        api_version = direct_data.get('api_version')
-        embedding_model = selected_model.get('deploymentName')
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            
-            embedding_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
-            )
-        else:
-            key = direct_data.get('key')
-
-            embedding_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=key
-            )
+    """Probe actual embeddings without selecting a default or persisting vectors."""
     try:
-        response = embedding_client.embeddings.create(
-            model=embedding_model,
-            input=text
+        if 'selection' in payload:
+            settings = dict(get_settings())
+            settings[EMBEDDING_SELECTION_KEY] = payload['selection']
+        else:
+            direct = payload.get('direct') or {}
+            apim = payload.get('apim') or {}
+            settings = {
+                'enable_embedding_apim': bool(payload.get('enable_apim')),
+                'embedding_model': {'selected': [payload.get('selected_model') or {}]},
+                'azure_openai_embedding_endpoint': direct.get('endpoint'),
+                'azure_openai_embedding_api_version': direct.get('api_version'),
+                'azure_openai_embedding_authentication_type': direct.get('auth_type'),
+                'azure_openai_embedding_key': direct.get('key'),
+                'azure_apim_embedding_endpoint': apim.get('endpoint'),
+                'azure_apim_embedding_api_version': apim.get('api_version'),
+                'azure_apim_embedding_deployment': apim.get('deployment'),
+                'azure_apim_embedding_subscription_key': apim.get('subscription_key'),
+            }
+        profile = resolve_embedding_profile(settings)
+        results = generate_embedding_batch(
+            ["Test embedding."], settings=settings, profile=profile, purpose="text", max_retries=0,
         )
-
-        if response:
-            return jsonify({'message': 'Embedding connection successful'}), 200
-    except Exception as e:
-        print(str(e))
-        return jsonify({'error': f'Error generating embedding response: {str(e)}'}), 500
+        return jsonify({
+            'success': True, 'message': 'Embedding inference succeeded.',
+            'dimensions': len(results[0][0]),
+        }), 200
+    except AIConnectionError as exc:
+        log_event("[EMBEDDING] Connection test failed", extra={"code": exc.code})
+        return jsonify({'success': False, 'error': exc.public_message, 'code': exc.code}), 400
+    except (AzureError, RuntimeError) as exc:
+        log_event("[EMBEDDING] Connection initialization failed", extra={"error_type": type(exc).__name__})
+        return jsonify({'success': False, 'error': 'The embedding connection could not be initialized.'}), 503
     
 
 def _image_connection_test_error_response(exc):

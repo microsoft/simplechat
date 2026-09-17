@@ -113,6 +113,8 @@ def load_model_capability_catalog(force_refresh=False):
                 capabilities = dict(capabilities)
                 if isinstance(model.get("reasoningPolicy"), Mapping):
                     capabilities["reasoningPolicy"] = model["reasoningPolicy"]
+                if "embeddingPolicy" in model:
+                    capabilities["embeddingPolicy"] = copy.deepcopy(model["embeddingPolicy"])
                 for field_name in ("imageProfiles", "imageLifecycle"):
                     if isinstance(model.get(field_name), Mapping):
                         capabilities[field_name] = copy.deepcopy(model[field_name])
@@ -248,11 +250,13 @@ def _model_identifiers(model):
     return [getattr(model, field, None) for field in MODEL_IDENTIFIER_FIELDS]
 
 
-def get_model_catalog_capabilities(model):
+def get_model_catalog_capabilities(model, *, strict_identity=False):
     """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
 
     Vision retains its legacy deployment-name heuristic separately. Image tool
     support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    Strict identity uses only a canonical/deployment name and exact catalog
+    aliases, never display labels, configuration ids, or unverified snapshots.
     """
     underlying = ""
     for field_name in ("modelName", "behavior_name"):
@@ -261,11 +265,20 @@ def get_model_catalog_capabilities(model):
             underlying = value
             break
     identifiers = [underlying] if underlying else _model_identifiers(model)
+    if strict_identity and not underlying and not isinstance(model, str):
+        identifiers = []
+        for field_name in ("deploymentName", "deployment", "name"):
+            value = model.get(field_name) if isinstance(model, Mapping) else getattr(model, field_name, None)
+            if isinstance(value, str) and value.strip():
+                identifiers = [value]
+                break
     catalog = load_model_capability_catalog()
     for identifier in identifiers:
         normalized = _normalize_model_identifier(identifier)
         if normalized in catalog:
             return copy.deepcopy(catalog[normalized])
+        if strict_identity:
+            continue
         snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
         if snapshot and snapshot.group(1) in catalog:
             try:
@@ -301,8 +314,13 @@ def resolve_model_vision_support(model):
     ``source`` is one of ``declared``, ``catalog`` or ``inferred``, so a caller
     can tell an administrator whether the answer is known or guessed. That
     matters in the Model Endpoints editor, where a guessed value is exactly the
-    one worth reviewing.
+    one worth reviewing. Embedding-only models cannot produce the text needed
+    for vision analysis, even when the model itself accepts image input.
     """
+    catalog = get_model_catalog_capabilities(model)
+    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
+        return False, VISION_SOURCE_CATALOG
+
     declared = _declared_vision_support(model)
     if declared is not None:
         return declared, VISION_SOURCE_DECLARED

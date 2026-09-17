@@ -1,16 +1,17 @@
-# Custom model connections (v0.261.107)
+# Custom model connections (v0.261.108)
 
 ## Overview
 
 Custom connections let an administrator use a provider's API or an approved gateway
 without disguising it as an Azure resource. The connection owns its endpoint,
-authentication, API contract, and manually configured models. Chat and images can
-reference the same connection while keeping independent defaults.
+authentication, API contract, and manually configured models. Chat, images, and
+compatible embeddings can reference the same connection with independent defaults.
 
 Implemented in version: **0.261.107** for the React v2/shared-image forward-port.
 Application versioning is tracked in `application/single_app/config.py`.
 The implementation reuses the Custom foundation from #1437 without replacing newer
 shared-connection behavior.
+Embedding integration with this foundation was implemented in **0.261.108**.
 
 **Dependencies:** an existing provider or gateway, the configured credentials,
 network access, and an implemented operation. No resource is provisioned or inferred
@@ -131,8 +132,12 @@ contract and output-transport tests cover the image integration, including
 
 Protocol compatibility alone does not implement every provider operation. Anthropic
 and Gemini Custom support does not grant image generation through OpenAI's hosted
-image tool. Embeddings and other service configuration remain separate. Personal
-or group chat connections do not become global image defaults.
+image tool. Embeddings support Custom OpenAI and Azure OpenAI API contracts with
+API key/bearer authentication, using the shared network policy and pinned transport.
+Other Custom API types and OAuth2 remain unavailable for embeddings in this phase.
+Retained `openai_compatible` embedding-only records keep their identifiers and
+exact base paths, but cannot bypass Custom network validation. Personal or group
+chat connections do not become global image or embedding defaults.
 
 ## Related
 

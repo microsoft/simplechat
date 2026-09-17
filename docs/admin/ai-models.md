@@ -5,7 +5,7 @@ description: "Configure shared chat and image connections, independent task defa
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.107"
+version: "0.261.108"
 ---
 
 
@@ -13,7 +13,7 @@ version: "0.261.107"
 
 ## What this group controls
 
-AI Models configures chat, embedding, image generation, APIM, multi-endpoint routing, and model endpoint identity behavior. Chat and images can now use the same AI Connections registry with independent defaults; embedding and other service configuration remain separate.
+AI Models configures chat, embeddings, image generation, APIM, multi-endpoint routing, and model endpoint identity behavior. Chat, images, and embeddings share AI Connections with independent defaults. Embedding support was implemented in **0.261.106**.
 
 ## Why it matters
 
@@ -142,7 +142,7 @@ as a fabricated available deployment or a blanket ban.
 | --- | --- | --- | --- |
 | Use AI Connections for chat | Migrates chat from the classic endpoint to shared connections. Switching this on cannot be undone; it carries over the classic chat configuration when needed without replacing image connections. | Off | `enable_multi_model_endpoints`; chat-only capability toggle, not required for images |
 | AI Connections | Shared resource/authentication/model records, each saved individually. Chat and image defaults reference these records. | Empty before configuration/import | `model_endpoints`; edited through its own API |
-| Model availability | Limits a model to the supported tasks administrators intend to publish. Changing availability does not change the model's technical capabilities. | No task-specific restriction when absent | Model `enabled_capabilities`; `chat` and `image_generation` are the implemented operations |
+| Model availability | Limits a model to the supported tasks administrators intend to publish. Changing availability does not change the model's technical capabilities. | No task-specific restriction when absent | Model `enabled_capabilities`; `chat`, `image_generation`, and `embeddings` are the implemented operations |
 | Allow private Custom endpoint hosts | Permits approved private-network Custom destinations without permitting loopback, link-local, or platform metadata addresses. | Off | `allow_private_custom_model_endpoints`; global Custom network policy |
 | Allow plaintext HTTP | Allows a Custom HTTP connection only when private-host permission is also enabled. Traffic, including credentials and prompts, is then unencrypted. | Off | `allow_insecure_custom_model_endpoints`; prefer HTTPS with a private CA |
 | Custom CA bundle path | Replaces the default public trust roots with an approved deployment-mounted CA bundle for Custom model and OAuth2 requests. | Empty | `custom_model_endpoint_ca_bundle_path`; does not disable certificate verification |
@@ -194,11 +194,29 @@ The classic single endpoint is configured on the server-rendered admin page. Its
 
 Embeddings turn text into vectors so a document can be found by meaning rather than by exact words. Every workspace document is embedded when it is indexed, and every question is embedded when it is asked, which makes this route a dependency of search itself rather than of chat: with it misconfigured, indexing fails and citations stop being found, while chat continues to answer from whatever it is given.
 
-Unlike chat, embeddings have no connections list. There is one Azure OpenAI resource, or API Management in front of one, and it is configured here.
+Choose the embedding default from **AI Connections**. One global selection serves
+personal, group, and public document retrieval, fact memory, and the default
+Embedding Model action. Chat and image defaults do not change it.
+
+Azure OpenAI versioned/APIM routes are preserved on import. Current Foundry
+connections require an explicit compatible inference endpoint; the project URL
+alone cannot serve embeddings. OpenAI-compatible custom connections support API
+key/token authentication and manual model entry, not Azure deployment discovery.
+Vendor-native and deprecated Azure Model Inference routes are not supported.
+
+Known models supply catalog-backed limits. Unknown custom models require declared
+dimensions and a maximum input budget. The runtime validates returned dimensions
+and uses conservative input-size bounds rather than downloading a tokenizer.
+See [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }})
+for the workflow and [Change embedding models safely]({{ '/guides/configure-ai-connections/' | relative_url }}#change-embedding-models-safely)
+for detailed compatibility requirements.
 
 #### Direct or through API Management
 
-The two routes are alternatives, and only the selected one is used. Switching to APIM does not carry the direct settings over — the gateway has its own address, version, deployment name and subscription key — so the fields for the route you are not using stay out of the way rather than sitting there looking configured.
+Legacy direct/APIM settings below remain recovery data during a failed import.
+After import, edit the shared connection's operation settings instead. The importer
+retains both configured routes and selects the previously active one; it does not
+copy credentials from one route to another or bypass a gateway.
 
 #### Authentication and deployment discovery
 
@@ -210,12 +228,26 @@ The stored key is never shown. Its field stays empty whatever is stored, and lea
 
 #### Changing the embedding model
 
-An embedding is only comparable with other embeddings from the same model. Changing the deployment does not re-embed what is already indexed, so existing chunks keep the dimensions and the semantics of the model that wrote them, and search quality across the two sets degrades quietly rather than failing. Treat a model change as a re-index.
+An embedding is comparable only with vectors from the same vector space. A model
+change is blocked while document indexes or fact-memory vectors remain, including
+when the new model uses the same dimensions. Empty/recreate indexes with matching
+dimensions and explicitly clear incompatible fact vectors as part of a controlled
+external rebuild. SimpleChat does not perform that rebuild on save. Clearing a
+default or changing a connection's model metadata cannot bypass the restriction.
+The external procedure also resets the conservative write-intent ledger; an
+apparently empty, eventually consistent store read is not sufficient on its own.
+Follow [Change embedding models safely]({{ '/guides/configure-ai-connections/' | relative_url }}#change-embedding-models-safely).
+
+Existing indexes default to 1,536 dimensions. App-managed index creation uses the
+selected profile; field maintenance detects incompatible existing dimensions but
+cannot resize them. Additive maintenance also supplies the embedding provenance
+field for new shared configurations.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Default embedding model | Selects the global connection/model used to generate document, query, and fact-memory vectors. | Imported active legacy selection, or unset | `embedding_model_selection`; shared capability API; incompatible switches require a rebuild |
 | Use APIM instead of direct to Azure OpenAI endpoint | Sends embedding requests through API Management rather than straight to the Azure OpenAI resource. Only the selected route is used. | Off | `enable_embedding_apim`; capability toggle |
 | Azure OpenAI Embedding Endpoint | The Azure OpenAI resource that produces vectors. Independent of the chat endpoint. | Empty | `azure_openai_embedding_endpoint` |
 | Authentication Type | Managed identity stores no credential and enables deployment discovery; a key authenticates to inference only. | key | `azure_openai_embedding_authentication_type` |
@@ -338,8 +370,9 @@ For API integrations, both `GET` and `PUT /api/v2/admin/model-selection/image`
 return `409` with `code: image_catalog_migrated` after import or an explicit shared
 selection. This is an intentional handoff, not a successful legacy save. Read or
 write the current image reference through
-`/api/v2/admin/capability-models/image_generation` instead. The legacy embedding
-model-selection API is unchanged.
+`/api/v2/admin/capability-models/image_generation` instead. Embedding configuration
+has an independent handoff: after its import, the legacy embedding selector also
+returns `409`; use `/api/v2/admin/capability-models/embeddings`.
 
 | Legacy value | What the import preserves | Original default | Settings key |
 | --- | --- | --- | --- |
@@ -362,10 +395,10 @@ model-selection API is unchanged.
 1. **Publish models from a new resource.** Add a connection, configure its provider/authentication, discover or enter deployments, then enable and publish the intended operations. Save the connection. Outcome to verify: compatible models appear in the corresponding task picker, not every picker.
 2. **Rotate a stored connection key.** Edit the connection, type the replacement into the empty secret field, and save. Outcome to verify: each task using that connection works with the replacement; no copied image key needs updating.
 3. **Choose the model chat starts from.** With connections in force, pick a default under Chat. Outcome to verify: a new conversation opens on that model without anyone selecting it.
-4. **Retire a connection.** Disable it, review affected chat/image defaults, and select replacements before deleting it. Outcome to verify: its models stop being offered and unavailable defaults are reported instead of silently substituted.
-5. **Configure embeddings.** Set the endpoint, authentication and — with managed identity — the subscription id and resource group, then save. Fetch the deployments, choose one, and index a small document. Outcome to verify: indexing completes and the document's citations are found by a question that does not repeat its wording.
+4. **Retire a connection.** Review chat/image/embedding defaults before disabling or deleting it. Unavailable defaults are reported, not silently substituted; an embedding replacement may require the controlled rebuild procedure.
+5. **Configure embeddings.** Save an AI Connection with a compatible model and inference endpoint, publish embeddings, and select its independent global default. Use the embedding-specific test and configure matching search indexes before indexing documents.
 6. **Enable image generation.** Select an image-compatible model from AI Connections, then enable the image feature. Outcome to verify: a real Image request returns and stores a picture from that binding without changing chat mode.
-7. **Rotate an embedding key.** Update the embedding route's own stored key and save. Outcome to verify: indexing still works. Image keys are rotated in their shared connection instead.
+7. **Rotate an embedding key.** Update the selected shared connection's stored credential. No separate copy belongs to the embedding default; review every operation using that connection.
 8. **Move images behind API Management.** Configure an APIM-backed connection with the published path, authentication, and image operation, then select its image model. Outcome to verify: generation succeeds through the gateway and no request bypasses it.
 
 ## Troubleshooting

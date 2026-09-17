@@ -1,4 +1,4 @@
-# Provider-qualified model capability catalog (v0.261.107)
+# Provider-qualified model capability catalog (v0.261.108)
 
 ## Overview
 
@@ -9,6 +9,7 @@ does not automatically establish the same operation on another hosting provider.
 
 Implemented in version: **0.261.107** for provider-qualified image profiles.
 Application versioning is tracked in `application/single_app/config.py`.
+Embedding policies and provider-qualified image profiles are combined in **0.261.108**.
 
 **Dependencies:** the repository-managed JSON catalog and schema, the pure model/image
 capability helpers, and implemented image adapters. The existing vision and reasoning
@@ -27,6 +28,7 @@ picker, and image-editor surfaces display the relevant server-resolved informati
 | Model `imageProfiles` | Maps an image delivery profile (`openai`, `azure_openai`, or `foundry`) to a named operation profile |
 | Model `imageLifecycle` | Provider-specific current, preview, deprecated, or retired status |
 | `imageOperationProfiles` | Reusable API/edit/mask/options/availability facts |
+| `generatesEmbeddings` and model `embeddingPolicy` | Embedding output, verified dimensions, input/batch limits, and operation requirements; independent of image and chat capabilities |
 | `sources` and `sourceIds` | Official documentation supporting the facts |
 
 For example, a GPT chat model's direct OpenAI image-tool profile is distinct from a
@@ -41,6 +43,9 @@ documented `openai_images` transport variant of the Foundry FLUX integration.
 Generation-only and reference-editing models do not acquire uploaded-mask support
 from an inpainting description. A known image-only model does not become a text-chat
 or text-producing vision-analysis choice.
+Known embedding-only models likewise remain excluded from chat, image generation,
+and text-producing vision analysis, including when a Custom declaration requests
+an incompatible operation.
 
 ## Resolution and policy
 

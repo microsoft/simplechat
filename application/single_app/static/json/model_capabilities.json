@@ -1,11 +1,12 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 2,
-  "lastUpdated": "2026-09-16",
-  "description": "SimpleChat model capability catalog. Capability flags inform task-specific eligibility alongside provider adapters and publication policy. Optional reasoningPolicy data defines per-model effort choices and the application fallback for invalid selections, not the provider default; an absent reasoningPolicy is unknown. Reasoning-only entries do not establish vision or image generation support. Optional model token-limit fields are consumed by durable tabular batch planning when present.",
+  "lastUpdated": "2026-09-17",
+  "description": "SimpleChat model capability catalog. Capability flags inform task-specific eligibility alongside provider adapters and publication policy. Optional reasoningPolicy data defines per-model effort choices and the application fallback for invalid selections, not the provider default; an absent reasoningPolicy is unknown. Reasoning-only entries do not establish vision or image generation support. Optional embeddingPolicy data supplies sourced dimensions, input and batch limits, revisions and operation requirements; model knowledge does not establish a compatible inference endpoint. Optional model token-limit fields are consumed by durable tabular batch planning when present.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",
+    "generatesEmbeddings": "Produces embedding vectors. Runtime eligibility additionally requires validated embeddingPolicy metadata and a supported OpenAI-compatible operation; this is not chat or image generation.",
     "processesImages": "Accepts image input for vision or image understanding.",
     "generatesImages": "Produces native/direct image output through an image model/API; distinct from orchestrating an image generation tool.",
     "imageGenerationTool": "Publisher documentation for the hosted image_generation tool, not native image output or vision. Runtime eligibility requires a matching provider-qualified imageProfiles entry or a compatible explicit Custom declaration.",
@@ -149,9 +150,61 @@
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
-    "Microsoft coverage includes public Phi and MAI model cards with clear capability statements."
+    "Microsoft coverage includes public Phi and MAI model cards with clear capability statements.",
+    "Embedding specifications and aliases were checked against primary sources on 2026-09-16. OpenAI embeddings use cl100k_base; text-embedding-ada-002 version 1 accepts 2,046 tokens, while version 2 and text-embedding-3 accept 8,192. Uncataloged Ada version metadata requires explicit administrator-verified limits rather than inheriting a newer version's context.",
+    "Cohere model knowledge does not establish a supported current OpenAI-compatible embeddings route. Its task-sensitive native APIs and the deprecated Azure Model Inference API are not implemented. An explicit compatible-gateway declaration must attest that the gateway handles input_type and any dimensions translation; SimpleChat never sends vendor-native fields to a standard OpenAI operation.",
+    "Azure lists embed-v-4-0 with a 512-token hosting limit; Cohere lists embed-v4.0 with 128k model context. The default policy retains the 512-token Azure limit and records 128,000 separately as model_context_tokens. A larger verified hosting limit must be declared explicitly, never inferred from the model context.",
+    "Cohere batch count is bounded by its documented 96-text limit. The 49,152-token default batch budget is a conservative application bound derived from 96 inputs of 512 tokens, not a claim about a vendor aggregate-token limit."
   ],
   "sources": [
+    {
+      "id": "azure-openai-embeddings",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embeddings: per-input, batch-count and aggregate-token limits (verified 2026-09-16)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/embeddings"
+    },
+    {
+      "id": "azure-openai-embeddings-rest",
+      "provider": "microsoft",
+      "title": "Current Azure OpenAI embeddings REST contract and supported dimensions parameter",
+      "url": "https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/embeddings"
+    },
+    {
+      "id": "azure-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure OpenAI embedding model dimensions and version-specific input limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#embeddings"
+    },
+    {
+      "id": "azure-cohere-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure Cohere Embed v4 identifier, dimensions and 512-token hosting limit",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#cohere-models-sold-by-azure"
+    },
+    {
+      "id": "azure-partner-embedding-models",
+      "provider": "microsoft",
+      "title": "Azure partner catalog: Cohere English and multilingual v3 identifiers and limits",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners#cohere"
+    },
+    {
+      "id": "cohere-embedding-models",
+      "provider": "cohere",
+      "title": "Cohere embedding model identifiers, dimensions and model context lengths",
+      "url": "https://docs.cohere.com/docs/cohere-embed"
+    },
+    {
+      "id": "cohere-embedding-api",
+      "provider": "cohere",
+      "title": "Cohere native Embed API: required input_type, output_dimension and 96-text batch limit",
+      "url": "https://docs.cohere.com/v2/reference/embed"
+    },
+    {
+      "id": "cohere-azure-embeddings",
+      "provider": "cohere",
+      "title": "Cohere Azure hosting and distinct embedding operation schemas",
+      "url": "https://docs.cohere.com/docs/cohere-on-microsoft-azure#embeddings"
+    },
     {
       "id": "image-profiles-openai-tools",
       "provider": "openai",
@@ -538,6 +591,211 @@
     }
   ],
   "models": [
+    {
+      "id": "text-embedding-ada-002",
+      "provider": "openai",
+      "displayName": "Text Embedding Ada 002",
+      "aliases": [],
+      "family": "text-embedding-ada",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": false,
+        "min_dimensions": 1536,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-ada-002:2",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false,
+        "versions": {
+          "1": {"max_input_tokens": 2046, "model_revision": "text-embedding-ada-002:1"},
+          "2": {"max_input_tokens": 8192, "model_revision": "text-embedding-ada-002:2"}
+        }
+      },
+      "notes": ["Fixed 1,536-dimensional output; the dimensions request parameter is unsupported.", "Azure version 1 has a 2,046-token limit; the default policy describes version 2. Model-version metadata is resolved before administrator overrides."],
+      "sourceIds": ["azure-embedding-models", "azure-openai-embeddings", "azure-openai-embeddings-rest"]
+    },
+    {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Small",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 1536,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-small",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": ["Default output is 1,536 dimensions. Send dimensions only when the administrator explicitly selects a supported output size."],
+      "sourceIds": ["azure-embedding-models", "azure-openai-embeddings", "azure-openai-embeddings-rest"]
+    },
+    {
+      "id": "text-embedding-3-large",
+      "provider": "openai",
+      "displayName": "Text Embedding 3 Large",
+      "aliases": [],
+      "family": "text-embedding-3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 3072,
+        "supports_dimensions": true,
+        "min_dimensions": 1,
+        "max_dimensions": 3072,
+        "max_input_tokens": 8192,
+        "max_batch_size": 2048,
+        "max_batch_tokens": 300000,
+        "tokenizer": "cl100k_base",
+        "model_revision": "text-embedding-3-large",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "openai",
+        "requires_input_type": false
+      },
+      "notes": ["Default output is 3,072 dimensions. A 1,536-dimensional selection is an explicit output-size choice, not evidence of compatibility with Ada or another model's vector space."],
+      "sourceIds": ["azure-embedding-models", "azure-openai-embeddings", "azure-openai-embeddings-rest"]
+    },
+    {
+      "id": "embed-v-4-0",
+      "provider": "cohere",
+      "displayName": "Cohere Embed v4",
+      "aliases": ["embed-v4.0"],
+      "family": "cohere-embed-v4",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1536,
+        "supports_dimensions": true,
+        "min_dimensions": 256,
+        "max_dimensions": 1536,
+        "allowed_dimensions": [256, 512, 1024, 1536],
+        "max_input_tokens": 512,
+        "model_context_tokens": 128000,
+        "hosting_limits": {"azure": {"max_input_tokens": 512}},
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-v4.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": ["Cataloged model knowledge only: native task-sensitive Cohere inference is not a supported runtime adapter.", "Azure's 512-token hosting limit is retained separately from Cohere's 128k model context. Use an explicit verified hosting limit for a compatible gateway.", "A compatible gateway must handle input_type semantics and translate the OpenAI dimensions parameter to the provider's supported output_dimension operation. Text embeddings only are integrated."],
+      "sourceIds": ["azure-cohere-embedding-models", "cohere-embedding-models", "cohere-embedding-api", "cohere-azure-embeddings"]
+    },
+    {
+      "id": "Cohere-embed-v3-english",
+      "provider": "cohere",
+      "displayName": "Cohere Embed English v3",
+      "aliases": ["embed-english-v3.0"],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-english-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": ["English embedding model with fixed 1,024-dimensional output and 512-token inputs.", "Azure and Cohere identifiers are documented aliases, not a promise of a compatible OpenAI operation. A gateway must explicitly handle the required task semantics."],
+      "sourceIds": ["azure-partner-embedding-models", "cohere-embedding-models", "cohere-embedding-api", "cohere-azure-embeddings"]
+    },
+    {
+      "id": "Cohere-embed-v3-multilingual",
+      "provider": "cohere",
+      "displayName": "Cohere Embed Multilingual v3",
+      "aliases": ["embed-multilingual-v3.0"],
+      "family": "cohere-embed-v3",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "generatesEmbeddings": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "toolCalling": false
+      },
+      "embeddingPolicy": {
+        "default_dimensions": 1024,
+        "supports_dimensions": false,
+        "min_dimensions": 1024,
+        "max_dimensions": 1024,
+        "max_input_tokens": 512,
+        "max_batch_size": 96,
+        "max_batch_tokens": 49152,
+        "tokenizer": "conservative",
+        "model_revision": "embed-multilingual-v3.0",
+        "document_prefix": "",
+        "query_prefix": "",
+        "api": "unsupported",
+        "requires_input_type": true
+      },
+      "notes": ["Multilingual embedding model with fixed 1,024-dimensional output and 512-token inputs.", "Azure documents text input for this hosted model; Cohere also documents image input at the model level. Neither establishes a supported image-understanding or native embedding adapter in SimpleChat."],
+      "sourceIds": ["azure-partner-embedding-models", "cohere-embedding-models", "cohere-embedding-api", "cohere-azure-embeddings"]
+    },
     {
       "id": "gpt-4",
       "reasoningPolicy": {

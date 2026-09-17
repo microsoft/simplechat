@@ -156,6 +156,9 @@ def resolve_image_model_capability(model, endpoint=None, provider="aoai"):
         result.update(source="declared", reason="Image generation is not supported by this model.")
         return result
     catalog = get_model_catalog_capabilities(model) or {}
+    if catalog.get("generatesEmbeddings") is True and catalog.get("generatesImages") is False:
+        result.update(source="model", reason="This embedding model does not generate images.")
+        return result
     result["publisher"] = _text(catalog.get("publisher"))
     profiles = _mapping(catalog.get("imageProfiles"))
     profile_service = "azure_openai" if service == "foundry" and profiles.get("azure_openai") else service

@@ -1,8 +1,8 @@
 # test_shared_ai_connections_admin_schema.py
 """
-Schema coverage for shared image defaults and retained legacy compatibility fields.
-Version: 0.261.105
-Implemented in: 0.261.105
+Schema coverage for independent shared image/embedding defaults and legacy recovery fields.
+Version: 0.261.106
+Implemented in: 0.261.105; embeddings added in 0.261.106
 """
 
 from test_support.app_stubs import import_app_module
@@ -26,9 +26,23 @@ def test_normal_image_surface_has_one_shared_picker_and_no_duplicate_credentials
 
 
 def test_shared_default_and_legacy_catalog_cannot_use_scalar_settings_patch():
-    for key in ("image_generation_model_selection", "image_gen_model"):
+    for key in ("image_generation_model_selection", "image_gen_model", "embedding_model_selection", "embedding_model"):
         normalized, errors, _warnings = fields_module.normalize_admin_settings_updates({key: {}}, {})
         assert key in errors and key not in normalized
+
+
+def test_global_embedding_picker_has_no_chat_switch_or_credential_dependency():
+    fields = fields_module.get_admin_settings_fields()["embeddings-config"]
+    active = [field for field in fields if not field.get("legacy")]
+    assert [field["key"] for field in active] == ["embedding_model_selection"]
+    assert active[0]["component"] == "embedding-default-model-selection"
+    assert "depends_on" not in active[0] and "default" not in active[0]
+    assert "same dimensions" in active[0]["help"]
+    legacy = {field["key"] for field in fields if field.get("legacy")}
+    assert {"embedding_model", "enable_embedding_apim", "azure_openai_embedding_endpoint",
+            "azure_openai_embedding_key", "azure_apim_embedding_subscription_key"} <= legacy
+    assert {"azure_openai_embedding_key", "azure_apim_embedding_subscription_key"} <= fields_module.get_secret_field_keys()
+    assert "embedding_model_selection" in fields_module.V2_ONLY_FIELDS
 
 
 def test_ai_connections_labels_keep_existing_navigation_ids():
