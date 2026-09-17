@@ -680,7 +680,7 @@ def persist_result_sections(
 def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
     """Read a complete-record range without loading unrelated record pages."""
     output = (manifest.get("outputs") or {}).get(name)
-    if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence"}:
+    if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence", "document_results"}:
         raise ValueError("The requested output is not a record collection.")
     if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or limit < 1)):
         raise ValueError("The record range is invalid.")
@@ -857,7 +857,7 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         )
         output = {
             "contract_version": manifest["contract_version"], "producer": manifest["identity"],
-            "output_name": name, "kind": "records", "value": records,
+            "output_name": name, "kind": output_descriptor["kind"], "value": records,
         }
     else:
         output = load_result(workflow, run_id, task_id, output_ref)
