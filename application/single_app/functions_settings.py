@@ -3,6 +3,8 @@
 from functools import wraps
 
 from flask import g, has_request_context, jsonify, request, session
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 
 from config import *
 from content_screening.contracts import (
@@ -16,10 +18,13 @@ from functions_appinsights import log_event
 from functions_ai_connections import (
     AIConnectionError,
     CAPABILITY_DEFINITIONS,
+    EMBEDDING_SELECTION_KEY,
     describe_model_capabilities,
+    embedding_settings_use_connections,
     normalize_model_capability_fields,
     supports_model_capability,
 )
+from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
@@ -42,6 +47,12 @@ from functions_model_endpoint_identity_header import (
     normalize_model_endpoint_identity_header_name,
     normalize_model_endpoint_identity_header_override,
     normalize_model_endpoint_identity_header_value_type,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_api_type_value,
+    normalize_custom_endpoint_auth_type,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_rate_limit import (
@@ -1435,6 +1446,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -2029,7 +2043,18 @@ def get_settings(use_cosmos=False, include_source=False):
             or model_endpoint_identity_header_settings_updated
             or tabular_parity_durable_preflight_settings_updated
         ):
-            cosmos_settings_container.upsert_item(merged)
+            if not merged.get("_etag"):
+                # Cached defaults without a revision cannot overwrite a newer model selection.
+                latest = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+                _refresh_app_settings_cache_after_write(latest, context="merge_reload")
+                return _format_result(attach_public_workspace_label_context(latest), "cosmos_merge_reload")
+            try:
+                merged = cosmos_settings_container.replace_item(
+                    item="app_settings", body=merged, etag=merged["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            except CosmosAccessConditionFailedError:
+                merged = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
             log_event(
@@ -2045,7 +2070,7 @@ def get_settings(use_cosmos=False, include_source=False):
             return _format_result(attach_public_workspace_label_context(merged), settings_source)
 
     except CosmosResourceNotFoundError:
-        cosmos_settings_container.create_item(body=default_settings)
+        default_settings = cosmos_settings_container.create_item(body=default_settings)
         _refresh_app_settings_cache_after_write(default_settings, context="default_create")
 
         log_event(
@@ -2120,49 +2145,46 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
 def update_settings(new_settings):
     screening_write = isinstance(new_settings, dict) and 'enable_content_screening' in new_settings
     try:
-        # always fetch the latest settings doc, which includes your merges
-        settings_item = get_settings()
-        screening_write = screening_write or settings_item.get('enable_content_screening') is True
-        if screening_write:
-            settings_item = get_settings(use_cosmos=True)
-            if not settings_item.get('_etag'):
-                settings_item = cosmos_settings_container.read_item(
-                    item='app_settings', partition_key='app_settings',
-                )
-            if not settings_item.get('_etag'):
-                raise ScreeningConflictError()
-        settings_item = copy.deepcopy(settings_item)
-        validate_content_screening_settings(new_settings, settings_item)
-        existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
-        settings_item.update(new_settings)
-        normalize_group_workflow_assignment_settings(settings_item)
-        normalize_agents_page_promoted_popular_settings(settings_item)
-        normalize_document_access_index_required_settings(settings_item)
-        normalize_inbound_mcp_settings(settings_item)
-        normalize_public_workspace_display_settings(settings_item)
-        normalize_key_vault_reminder_settings(settings_item)
-        normalize_model_endpoint_identity_header_settings(settings_item)
-        settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
-            existing_multi_endpoint_enabled,
-            settings_item.get('enable_multi_model_endpoints', False),
-        )
-        settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
-        if screening_write:
-            # Activation and dependency changes must not race a stale whole-settings save.
-            from azure.core import MatchConditions
+        # The guard imports storage clients only when a settings write is requested.
+        from functions_embedding_compatibility import embedding_settings_write_guard
 
-            cosmos_settings_container.replace_item(
-                item=settings_item['id'], body=settings_item, etag=settings_item['_etag'],
-                match_condition=MatchConditions.IfNotModified,
+        for attempt in range(3):
+            original = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+            screening_write = screening_write or original.get('enable_content_screening') is True
+            if screening_write and not original.get('_etag'):
+                raise ScreeningConflictError()
+            settings_item = copy.deepcopy(original)
+            validate_content_screening_settings(new_settings, settings_item)
+            existing_multi_endpoint_enabled = original.get('enable_multi_model_endpoints', False)
+            settings_item.update(new_settings)
+            normalize_group_workflow_assignment_settings(settings_item)
+            normalize_agents_page_promoted_popular_settings(settings_item)
+            normalize_document_access_index_required_settings(settings_item)
+            normalize_inbound_mcp_settings(settings_item)
+            normalize_public_workspace_display_settings(settings_item)
+            normalize_key_vault_reminder_settings(settings_item)
+            normalize_model_endpoint_identity_header_settings(settings_item)
+            settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
+                existing_multi_endpoint_enabled,
+                settings_item.get('enable_multi_model_endpoints', False),
             )
-        else:
-            cosmos_settings_container.upsert_item(settings_item)
-        _refresh_app_settings_cache_after_write(settings_item, context="update_settings")
-        log_event(
-            "App settings updated successfully.",
-            level=logging.INFO
-        )
-        return True
+            settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
+            try:
+                with embedding_settings_write_guard(
+                    original, settings_item, force_check=EMBEDDING_SELECTION_KEY in new_settings,
+                ):
+                    persisted = cosmos_settings_container.replace_item(
+                        item="app_settings", body=settings_item, etag=original["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    )
+                _refresh_app_settings_cache_after_write(persisted, context="update_settings")
+                log_event("[AI_CONNECTIONS] App settings updated", debug_only=True)
+                return True
+            except CosmosAccessConditionFailedError:
+                if attempt == 2:
+                    if screening_write:
+                        raise ScreeningConflictError() from None
+                    raise AIConnectionError("Settings changed concurrently. Reload before saving.", "settings_conflict")
     except ScreeningError as error:
         log_event(
             "[CONTENT_SCREENING] settings_validation_failed",
@@ -2170,6 +2192,8 @@ def update_settings(new_settings):
             level=logging.WARNING,
         )
         return False
+    except AIConnectionError:
+        raise
     except Exception as e:
         if screening_write:
             log_event(
@@ -2234,8 +2258,17 @@ def get_chunk_size_defaults():
 
 def get_embedding_context_tokens(settings=None):
     """Return the selected embedding model's context window in tokens."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            return resolve_embedding_profile(settings).policy["max_input_tokens"]
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+            log_event("[EMBEDDING] No active model for chunk-budget configuration", debug_only=True)
+            # Keep the settings editor usable while unconfigured; inference still fails closed.
+            return EMBEDDING_CONTEXT_FALLBACK_TOKENS
     try:
-        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
@@ -2265,11 +2298,31 @@ def get_embedding_usable_tokens(settings=None):
 
 def get_embedding_safe_chunk_characters(settings=None):
     """Return the largest chunk length in characters expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 4))
     return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
 
 
 def get_embedding_safe_chunk_words(settings=None):
     """Return the largest chunk length in words expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 12))
     return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
 
 
@@ -2616,6 +2669,8 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     """Normalize endpoint auth cloud fields that are owned by app environment."""
     if not isinstance(endpoint_copy, dict):
         return False
+    if str(endpoint_copy.get("provider") or "").strip().lower() == "custom":
+        return False
 
     changed = False
     auth = endpoint_copy.get("auth")
@@ -2704,9 +2759,36 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        endpoint_copy.pop("has_bearer_token", None)
+        provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
+        if endpoint_copy.get("provider") != provider:
+            endpoint_copy["provider"] = provider
+            changed = True
         connection = endpoint_copy.get("connection") or {}
         if not isinstance(connection, dict):
             raise AIConnectionError("Connection configuration must be an object.")
+        if provider == "custom":
+            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
+            if endpoint_copy.get("api_type") != api_type:
+                endpoint_copy["api_type"] = api_type
+                changed = True
+            url_mode = normalize_custom_endpoint_url_mode(connection.get("url_mode"))
+            if connection.get("url_mode") != url_mode:
+                connection["url_mode"] = url_mode
+                changed = True
+            descriptor = get_model_endpoint_provider(api_type)
+            if descriptor and descriptor.default_version and not connection.get(descriptor.version_field):
+                connection[descriptor.version_field] = descriptor.default_version
+                changed = True
+            auth = endpoint_copy.get("auth") or {}
+            if not isinstance(auth, dict):
+                raise AIConnectionError("Connection authentication must be an object.")
+            auth_type = normalize_custom_endpoint_auth_type(auth.get("type") or "api_key")
+            if auth_type and auth.get("type") != auth_type:
+                auth["type"] = auth_type
+                changed = True
+            endpoint_copy["auth"] = auth
+            endpoint_copy["connection"] = connection
         operation_settings = connection.get("operation_settings")
         if operation_settings is not None:
             if not isinstance(operation_settings, dict):
@@ -2714,6 +2796,9 @@ def normalize_model_endpoints(endpoints):
             for capability, profile in operation_settings.items():
                 if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
                     raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                if capability == "embeddings":
+                    operation_settings[capability] = normalize_embedding_operation(profile)
+                    continue
                 allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
                 if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
                     raise AIConnectionError("The connection operation API is not supported.")
@@ -2741,6 +2826,10 @@ def normalize_model_endpoints(endpoints):
 
         if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
+        if endpoint_copy.get("provider") == "openai_compatible":
+            auth = endpoint_copy.get("auth") or {}
+            if auth.get("type") != "api_key":
+                raise AIConnectionError("OpenAI-compatible custom connections require API key authentication.")
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
@@ -2795,7 +2884,7 @@ def normalize_model_endpoints(endpoints):
 def is_frontend_visible_model_endpoint_provider(provider):
     """Return whether the provider should be exposed in user-facing endpoint UIs."""
     normalized_provider = (provider or "aoai").lower()
-    return normalized_provider in {"aoai", "aifoundry", "new_foundry"}
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry", "custom", "openai_compatible"}
 
 
 def merge_model_endpoint_auth(existing_auth, incoming_auth):
@@ -2807,6 +2896,14 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key", "client_secret", "bearer_token") and (
+            value in (None, "") or is_admin_settings_redacted_secret(value)
+            or (value == "Stored_In_KeyVault" and existing_auth.get(key))
+        ):
+            continue
+        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2869,7 +2966,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
     """Return model endpoint configs with secrets stripped for frontend use."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
@@ -2885,16 +2982,27 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
+        has_bearer_token = bool(auth.get("bearer_token"))
         auth.pop("api_key", None)
         auth.pop("client_secret", None)
+        auth.pop("bearer_token", None)
+        if endpoint_copy.get("provider") == "custom":
+            public_auth_fields = {
+                "type", "client_id", "token_url", "scope", "api_key_header", "api_key_prefix",
+            }
+            auth = {key: value for key, value in auth.items() if key in public_auth_fields}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider")
+                    model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+        if not include_connection_details:
+            for field in ("auth", "connection", "management", "identity_header"):
+                endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
@@ -3472,7 +3580,11 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     for k, v in full_settings.items():
         if k.startswith('content_screening'):
             continue
-        if k == 'support_feedback_recipient_email':
+        if k in (
+            'support_feedback_recipient_email', 'embedding_vector_profile',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url',
+        ):
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
@@ -3481,7 +3593,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
-            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -3531,7 +3643,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
         if k.startswith('content_screening'):

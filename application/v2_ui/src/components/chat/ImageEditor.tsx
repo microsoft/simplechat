@@ -1,22 +1,12 @@
 // ImageEditor.tsx
 // Edit mode for a generated image: an AI change with an optional region, the prompt, rendering
-// controls, and the version history.
-//
-// The image counterpart of `DiagramEditor.tsx`, with one structural difference. A diagram can be
-// hand-edited, so that panel's first tab is a source editor and the AI is an alternative. An
-// image cannot: it is pixels, and no amount of typing produces one. So every tab here ends in a
-// model call, and the honest framing is that this panel *describes a change* rather than makes
-// one.
-//
-// What replaces hand-editing is the mask. Saying "change this bit" is meaningless in words and
-// obvious with a pointer, which is why the region selector sits in the primary tab rather than
-// being tucked away as an option.
+// controls, and the version history. The server decides which inference operations are available;
+// restoring history never needs a model.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
     History,
-    Info,
     RotateCcw,
     Send,
     Settings2,
@@ -28,13 +18,13 @@ import { GlassPanel } from '../ui/primitives';
 import { ImageMaskCanvas, type MaskSelection } from './ImageMaskCanvas';
 import {
     describePromptProblem,
-    IMAGE_BACKGROUNDS,
+    imageOptionsForCapability,
     IMAGE_ORIGIN_LABELS,
-    IMAGE_QUALITIES,
     IMAGE_SIZE_LABELS,
-    IMAGE_SIZES,
     MAX_IMAGE_INSTRUCTION_LENGTH,
+    MAX_IMAGE_PROMPT_LENGTH,
     type ImageEditCapability,
+    type ImageRenderingOptions,
     type ImageRevisionState,
 } from '../../lib/imageRevisions';
 
@@ -101,12 +91,38 @@ export function ImageEditor({
 }) {
     const [tab, setTab] = useState<EditorTab>('ask');
     const [instruction, setInstruction] = useState('');
-    const [selection, setSelection] = useState<MaskSelection>(EMPTY_SELECTION);
     const [promptDraft, setPromptDraft] = useState(revisions.prompt);
     const [comparing, setComparing] = useState(false);
     const closeRef = useRef<HTMLButtonElement>(null);
 
-    const masked = capability.mode === 'masked';
+    const inferenceEnabled = capability.enabled && capability.mode !== 'unavailable'
+        && capability.availability !== 'unavailable';
+    const inferenceDisabled = revisions.busy || !revisions.canPersist || !inferenceEnabled;
+    const masked = inferenceEnabled && capability.mode === 'masked' && capability.masking;
+    const editing = inferenceEnabled && capability.editing
+        && (capability.mode === 'masked' || capability.mode === 'edit');
+    const contextKey = JSON.stringify([imageSrc, capability]);
+    const [selectionState, setSelectionState] = useState({ key: contextKey, value: EMPTY_SELECTION });
+    const [optionState, setOptionState] = useState<{ key: string; value: ImageRenderingOptions }>({
+        key: contextKey,
+        value: {},
+    });
+    const [maskReset, setMaskReset] = useState(0);
+    const selection = selectionState.key === contextKey ? selectionState.value : EMPTY_SELECTION;
+    const selectedOptions = imageOptionsForCapability(
+        capability,
+        optionState.key === contextKey ? optionState.value : {},
+    );
+    const onSelectionChange = useCallback((value: MaskSelection) => {
+        setSelectionState({ key: contextKey, value });
+    }, [contextKey]);
+
+    // Key the canvas as well as the payload: clearing the parent alone leaves drawn regions behind.
+    // The keyed reads also prevent an event before this effect from submitting an old selection.
+    useEffect(() => {
+        setSelectionState({ key: contextKey, value: EMPTY_SELECTION });
+        setOptionState({ key: contextKey, value: {} });
+    }, [contextKey]);
 
     // The stored prompt is the source of truth. When it changes underneath -- a version landed,
     // an older one was restored -- the draft follows it, because the reader is now looking at
@@ -133,11 +149,8 @@ export function ImageEditor({
     }, []);
 
     const promptProblem = useMemo(
-        () =>
-            promptDraft.trim() !== revisions.prompt.trim()
-                ? describePromptProblem(promptDraft)
-                : null,
-        [promptDraft, revisions.prompt],
+        () => describePromptProblem(promptDraft),
+        [promptDraft],
     );
 
     const previewSrc =
@@ -146,19 +159,44 @@ export function ImageEditor({
             : imageSrc;
 
     const submitInstruction = async () => {
-        if (!instruction.trim()) {
+        if (inferenceDisabled || !instruction.trim()) {
             return;
         }
         const ok = await revisions.revise({
             origin: 'ai',
+            operation: editing ? 'edit' : 'regenerate',
             instruction,
-            mask: selection.dataUrl ?? undefined,
-            maskRegions: selection.regions,
+            ...(masked && selection.dataUrl ? {
+                mask: selection.dataUrl,
+                maskRegions: selection.regions,
+            } : {}),
         });
         if (ok) {
             setInstruction('');
-            setSelection(EMPTY_SELECTION);
+            onSelectionChange(EMPTY_SELECTION);
+            setMaskReset((value) => value + 1);
         }
+    };
+
+    const regenerate = (origin: 'prompt' | 'control') => {
+        if (inferenceDisabled || (origin === 'prompt' && promptProblem)) {
+            return;
+        }
+        void revisions.revise({
+            origin,
+            operation: 'regenerate',
+            ...(origin === 'prompt' ? { prompt: promptDraft } : selectedOptions),
+        });
+    };
+
+    const selectOption = (key: keyof ImageRenderingOptions, value: string) => {
+        setOptionState({
+            key: contextKey,
+            value: {
+                ...selectedOptions,
+                [key]: selectedOptions[key] === value ? undefined : value,
+            },
+        });
     };
 
     return (
@@ -194,14 +232,15 @@ export function ImageEditor({
                     </button>
                 </div>
 
-                <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem]">
-                    <div className="flex min-h-0 flex-col gap-2 overflow-auto border-b border-edge p-4 lg:border-b-0 lg:border-r">
+                <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,2fr)_minmax(0,3fr)] lg:grid-cols-[minmax(0,1fr)_26rem] lg:grid-rows-1">
+                    <div className="flex min-h-0 min-w-0 flex-col gap-2 overflow-auto border-b border-edge p-4 lg:border-b-0 lg:border-r">
                         {tab === 'ask' && masked ? (
                             <ImageMaskCanvas
+                                key={`${contextKey}:${maskReset}`}
                                 src={imageSrc}
                                 alt={title}
-                                disabled={revisions.busy}
-                                onChange={setSelection}
+                                disabled={inferenceDisabled}
+                                onChange={onSelectionChange}
                             />
                         ) : (
                             <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -228,13 +267,18 @@ export function ImageEditor({
                         )}
                     </div>
 
-                    <div className="flex min-h-0 flex-col">
-                        <div className="flex shrink-0 gap-1 border-b border-edge px-3 py-2">
+                    <div className="flex min-h-0 min-w-0 flex-col">
+                        <div className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-3 py-2">
                             {TABS.map(({ id, label, icon: Icon }) => (
                                 <button
                                     key={id}
                                     type="button"
-                                    onClick={() => setTab(id)}
+                                    onClick={() => {
+                                        if (tab === 'ask' && id !== 'ask') {
+                                            onSelectionChange(EMPTY_SELECTION);
+                                        }
+                                        setTab(id);
+                                    }}
                                     aria-pressed={tab === id}
                                     className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
                                         tab === id
@@ -249,8 +293,34 @@ export function ImageEditor({
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-auto p-4">
+                            <div className="mb-3 rounded-lg border border-edge bg-surface-2 px-3 py-2 text-xs text-text-2" data-testid="image-edit-profile">
+                                <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 break-words">
+                                    <dt className="text-text-3">Model</dt>
+                                    <dd>{capability.model_name || 'No resolved image model'}</dd>
+                                    <dt className="text-text-3">Provider</dt>
+                                    <dd>{capability.provider_label || 'Not specified'}</dd>
+                                    <dt className="text-text-3">Endpoint cloud</dt>
+                                    <dd>{capability.cloud_label || 'Unknown'}</dd>
+                                </dl>
+                                {capability.reason && <p className="mt-2">{capability.reason}</p>}
+                            </div>
+                            {capability.availability === 'unknown' && (
+                                <p role="status" className="mb-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+                                    Availability for this configured endpoint is not documented or is unknown.
+                                    This is not a confirmation of provider support.
+                                    {capability.availability_reason ? ` ${capability.availability_reason}` : ''}
+                                </p>
+                            )}
+                            {capability.availability === 'unavailable' && capability.availability_reason && (
+                                <p role="status" className="mb-3 text-xs text-warn">{capability.availability_reason}</p>
+                            )}
+                            {!inferenceEnabled && (
+                                <p role="status" className="mb-3 text-xs text-text-2">
+                                    Generation and editing are unavailable. You can still restore saved versions in History.
+                                </p>
+                            )}
                             {revisions.error && (
-                                <div className="mb-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text-1">
+                                <div role="alert" className="mb-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text-1">
                                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                                     <span className="flex-1">{revisions.error}</span>
                                     <button
@@ -264,16 +334,6 @@ export function ImageEditor({
                                 </div>
                             )}
 
-                            {!masked && capability.reason && (
-                                <p className="mb-3 flex items-start gap-2 rounded-lg border border-edge bg-surface-2 px-3 py-2 text-xs text-text-2">
-                                    <Info size={14} className="mt-0.5 shrink-0 text-text-3" />
-                                    <span>
-                                        {capability.reason} Selecting a region is not available,
-                                        so each change produces a new version of the whole image.
-                                    </span>
-                                </p>
-                            )}
-
                             {tab === 'ask' && (
                                 <div className="flex flex-col gap-3">
                                     <label
@@ -284,6 +344,7 @@ export function ImageEditor({
                                     </label>
                                     <textarea
                                         id="image-edit-instruction"
+                                        aria-describedby="image-edit-guidance"
                                         value={instruction}
                                         onChange={(event) => setInstruction(event.target.value)}
                                         onKeyDown={(event) => {
@@ -294,7 +355,7 @@ export function ImageEditor({
                                         }}
                                         maxLength={MAX_IMAGE_INSTRUCTION_LENGTH}
                                         rows={4}
-                                        disabled={revisions.busy || !revisions.canPersist}
+                                        disabled={inferenceDisabled}
                                         placeholder={
                                             masked
                                                 ? 'Make the sky orange'
@@ -303,28 +364,33 @@ export function ImageEditor({
                                         className="w-full rounded-lg border border-edge-strong bg-surface-1 px-3 py-2 text-sm text-text-1 outline-none focus:border-accent disabled:opacity-50"
                                     />
 
-                                    {masked && (
-                                        <p className="text-[11px] leading-relaxed text-text-3">
-                                            {selection.dataUrl
-                                                ? `About ${Math.round(
-                                                      selection.coverage * 100,
-                                                  )}% of the image is selected. The model is guided by the selection but is not strictly bound by it, so areas outside it can still shift.`
-                                                : 'Select a region on the left to change only part of the image. With nothing selected the whole image is reworked.'}
-                                        </p>
-                                    )}
+                                    <p id="image-edit-guidance" className="text-[11px] leading-relaxed text-text-3">
+                                        {masked
+                                            ? `${selection.dataUrl
+                                                ? `About ${Math.round(selection.coverage * 100)}% of the image is selected.`
+                                                : 'The current image guides the edit. Optionally select a region to guide where it changes.'} The model is not strictly bound by a mask; areas outside it can still shift. Pixel-exact preservation is not guaranteed.`
+                                            : editing
+                                              ? 'The current image is used as a reference for this edit. Region selection is not supported; changes may affect the whole image.'
+                                              : inferenceEnabled
+                                                ? 'This model only supports whole-image regeneration. Ask AI creates a replacement from the prompt and your instruction, without using the current image as a reference.'
+                                                : 'Ask an administrator to configure an available image model before requesting a new version.'}
+                                    </p>
 
                                     <button
                                         type="button"
                                         onClick={() => void submitInstruction()}
                                         disabled={
-                                            revisions.busy ||
-                                            !revisions.canPersist ||
+                                            inferenceDisabled ||
                                             !instruction.trim()
                                         }
                                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         <Send size={13} />
-                                        {revisions.busy ? 'Generating…' : 'Generate a new version'}
+                                        {revisions.busy
+                                            ? 'Generating…'
+                                            : masked
+                                              ? selection.dataUrl ? 'Edit selected region' : 'Edit image'
+                                              : editing ? 'Edit using source image' : 'Regenerate whole image'}
                                     </button>
 
                                     {revisions.chat.length > 0 && (
@@ -358,38 +424,34 @@ export function ImageEditor({
                                     </label>
                                     <textarea
                                         id="image-edit-prompt"
+                                        aria-describedby="image-regenerate-guidance"
                                         value={promptDraft}
                                         onChange={(event) => setPromptDraft(event.target.value)}
                                         rows={10}
-                                        disabled={revisions.busy || !revisions.canPersist}
+                                        maxLength={MAX_IMAGE_PROMPT_LENGTH}
+                                        disabled={inferenceDisabled}
                                         className="w-full rounded-lg border border-edge-strong bg-surface-1 px-3 py-2 font-mono text-xs text-text-1 outline-none focus:border-accent disabled:opacity-50"
                                     />
                                     {promptProblem && (
                                         <p className="text-[11px] text-danger">{promptProblem}</p>
                                     )}
-                                    <p className="text-[11px] leading-relaxed text-text-3">
-                                        Rewriting the prompt rebuilds the image from scratch. Use
-                                        Ask AI instead to adjust the image you already have.
+                                    <p id="image-regenerate-guidance" className="text-[11px] leading-relaxed text-text-3">
+                                        Whole-image regeneration creates a replacement from this prompt,
+                                        without the current image or any selected region.
+                                        {editing ? ' Use Ask AI for a source-image edit instead.' : ''}
                                     </p>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap gap-2">
                                         <button
                                             type="button"
-                                            onClick={() =>
-                                                void revisions.revise({
-                                                    origin: 'prompt',
-                                                    prompt: promptDraft,
-                                                })
-                                            }
+                                            onClick={() => regenerate('prompt')}
                                             disabled={
-                                                revisions.busy ||
-                                                !revisions.canPersist ||
-                                                Boolean(promptProblem) ||
-                                                promptDraft.trim() === revisions.prompt.trim()
+                                                inferenceDisabled ||
+                                                Boolean(promptProblem)
                                             }
                                             className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             <Send size={13} />
-                                            Rebuild from this prompt
+                                            Regenerate whole image
                                         </button>
                                         <button
                                             type="button"
@@ -408,67 +470,67 @@ export function ImageEditor({
 
                             {tab === 'controls' && (
                                 <div className="flex flex-col gap-4">
-                                    <ControlGroup label="Shape">
-                                        {IMAGE_SIZES.map((size) => (
+                                    <p className="text-[11px] leading-relaxed text-text-3">
+                                        These settings apply to whole-image regeneration from this version&apos;s
+                                        prompt. The source image and any selected region are not used.
+                                        Unselected options use the selected model&apos;s defaults.
+                                    </p>
+                                    {capability.sizes.length > 0 && <ControlGroup label="Shape">
+                                        {capability.sizes.map((size) => (
                                             <ChoiceButton
                                                 key={size}
-                                                active={revisions.current?.size === size}
-                                                disabled={revisions.busy || !revisions.canPersist}
-                                                onClick={() =>
-                                                    void revisions.revise({
-                                                        origin: 'control',
-                                                        size,
-                                                    })
-                                                }
+                                                active={selectedOptions.size === size}
+                                                disabled={inferenceDisabled}
+                                                onClick={() => selectOption('size', size)}
                                             >
-                                                {IMAGE_SIZE_LABELS[size]}
+                                                {IMAGE_SIZE_LABELS[size] ? `${IMAGE_SIZE_LABELS[size]} · ${size}` : size}
                                             </ChoiceButton>
                                         ))}
-                                    </ControlGroup>
+                                    </ControlGroup>}
 
-                                    <ControlGroup label="Quality">
-                                        {IMAGE_QUALITIES.map((quality) => (
+                                    {capability.qualities.length > 0 && <ControlGroup label="Quality">
+                                        {capability.qualities.map((quality) => (
                                             <ChoiceButton
                                                 key={quality}
-                                                active={revisions.current?.quality === quality}
-                                                disabled={revisions.busy || !revisions.canPersist}
-                                                onClick={() =>
-                                                    void revisions.revise({
-                                                        origin: 'control',
-                                                        quality,
-                                                    })
-                                                }
+                                                active={selectedOptions.quality === quality}
+                                                disabled={inferenceDisabled}
+                                                onClick={() => selectOption('quality', quality)}
                                             >
                                                 {quality[0].toUpperCase() + quality.slice(1)}
                                             </ChoiceButton>
                                         ))}
-                                    </ControlGroup>
+                                    </ControlGroup>}
 
-                                    <ControlGroup label="Background">
-                                        {IMAGE_BACKGROUNDS.map((background) => (
+                                    {capability.backgrounds.length > 0 && <ControlGroup label="Background">
+                                        {capability.backgrounds.map((background) => (
                                             <ChoiceButton
                                                 key={background}
                                                 active={
-                                                    revisions.current?.background === background
+                                                    selectedOptions.background === background
                                                 }
-                                                disabled={revisions.busy || !revisions.canPersist}
-                                                onClick={() =>
-                                                    void revisions.revise({
-                                                        origin: 'control',
-                                                        background,
-                                                    })
-                                                }
+                                                disabled={inferenceDisabled}
+                                                onClick={() => selectOption('background', background)}
                                             >
-                                                {background === 'transparent'
-                                                    ? 'Transparent'
-                                                    : 'Opaque'}
+                                                {background[0].toUpperCase() + background.slice(1)}
                                             </ChoiceButton>
                                         ))}
-                                    </ControlGroup>
+                                    </ControlGroup>}
+
+                                    {!capability.sizes.length && !capability.qualities.length && !capability.backgrounds.length && (
+                                        <p className="text-xs text-text-3">No additional rendering controls are supported by this model.</p>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => regenerate('control')}
+                                        disabled={inferenceDisabled}
+                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <Send size={13} />
+                                        Regenerate whole image
+                                    </button>
 
                                     <p className="text-[11px] leading-relaxed text-text-3">
-                                        Each of these regenerates the image, so the result will
-                                        differ in detail from the version you have now. Every
+                                        A regenerated image will differ from the version you have now. Every
                                         change is recorded, so you can restore this one from the
                                         History tab.
                                     </p>
@@ -505,14 +567,9 @@ export function ImageEditor({
                                                     />
                                                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                                                         <p className="text-xs font-medium text-text-1">
-                                                            {IMAGE_ORIGIN_LABELS[revision.origin] ??
-                                                                'Change'}
-                                                            {revision.method === 'regenerate' &&
-                                                                revision.origin === 'ai' && (
-                                                                    <span className="ml-1 font-normal text-text-3">
-                                                                        (whole image)
-                                                                    </span>
-                                                                )}
+                                                            {revision.method === 'regenerate' && revision.origin === 'ai'
+                                                                ? 'AI regeneration (whole image)'
+                                                                : IMAGE_ORIGIN_LABELS[revision.origin] ?? 'Change'}
                                                         </p>
                                                         {revision.instruction && (
                                                             <p className="truncate text-[11px] text-text-2">
@@ -540,7 +597,7 @@ export function ImageEditor({
                                                             onClick={() =>
                                                                 void revisions.restore(revision.id)
                                                             }
-                                                            disabled={revisions.busy}
+                                                            disabled={revisions.busy || !revisions.canPersist}
                                                             className="inline-flex h-fit shrink-0 items-center gap-1 self-center rounded-lg border border-edge-strong px-2 py-1 text-[11px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                                         >
                                                             <RotateCcw size={12} />
@@ -568,9 +625,9 @@ function ControlGroup({
     children: React.ReactNode;
 }) {
     return (
-        <div className="flex flex-col gap-1.5">
-            <p className="text-xs font-medium text-text-2">{label}</p>
+        <fieldset className="min-w-0">
+            <legend className="mb-1.5 text-xs font-medium text-text-2">{label}</legend>
             <div className="flex flex-wrap gap-1.5">{children}</div>
-        </div>
+        </fieldset>
     );
 }

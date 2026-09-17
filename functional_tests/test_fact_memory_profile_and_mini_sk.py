@@ -1,7 +1,7 @@
 # test_fact_memory_profile_and_mini_sk.py
 """
 Functional test for profile fact memory recall and mini-SK fact-memory support.
-Version: 0.261.104
+Version: 0.261.106
 Implemented in: 0.240.077; 0.240.079; 0.240.081; 0.240.082; 0.240.083; 0.240.085
 
 This test ensures fact memory supports instruction/fact memory types,
@@ -11,6 +11,7 @@ facts, and the profile route exposes typed CRUD endpoints.
 
 import ast
 import copy
+import logging
 import re
 import os
 import types
@@ -72,6 +73,8 @@ def load_store_class():
         'VALID_MEMORY_TYPES': {'fact', 'instruction', 'describer'},
         'UNSET': object(),
         'generate_embedding': lambda value: ([float(len(str(value or ''))), 1.0], {'model_deployment_name': 'test-embedding-model'}),
+        'persist_fact_with_embedding': lambda container, item, vector: container.upsert_item(item),
+        'log_event': lambda *args, **kwargs: None,
         'exceptions': types.SimpleNamespace(CosmosResourceNotFoundError=FakeCosmosResourceNotFoundError),
         'cosmos_agent_facts_container': None,
     }
@@ -150,7 +153,7 @@ def load_tabular_fact_memory_helpers():
                     return dict(fact)
             return None
 
-    def fake_generate_embedding(value):
+    def fake_generate_embedding(value, *, purpose="document"):
         query = str(value or '').lower()
         if 'who am i' in query or 'about me' in query or 'name' in query:
             return [1.0, 0.0], {'model_deployment_name': 'test-embedding-model'}
@@ -163,6 +166,8 @@ def load_tabular_fact_memory_helpers():
         'generate_embedding': fake_generate_embedding,
         'generate_embeddings_batch': lambda values: [fake_generate_embedding(value) for value in values],
         'make_json_serializable': lambda value: value,
+        'log_event': lambda *args, **kwargs: None,
+        'logging': logging,
     }
     module = ast.Module(body=selected_nodes, type_ignores=[])
     ast.fix_missing_locations(module)

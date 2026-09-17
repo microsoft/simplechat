@@ -38,6 +38,8 @@ from langchain_text_splitters import (  # noqa: E402
 )
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from functions_ai_connections import AIConnectionError, embedding_settings_use_connections  # noqa: E402
+from functions_embedding_profile import resolve_embedding_profile  # noqa: E402
 
 
 IMPLEMENTED_IN_VERSION = "0.261.002"
@@ -82,7 +84,13 @@ def build_content_namespace():
 
 def build_settings_namespace():
     """Load the embedding budget helpers from functions_settings.py."""
-    namespace = {"WORD_CHUNK_SIZE": 400, "get_settings": lambda: {}}
+    namespace = {
+        "WORD_CHUNK_SIZE": 400, "get_settings": lambda: {},
+        "embedding_settings_use_connections": embedding_settings_use_connections,
+        "resolve_embedding_profile": resolve_embedding_profile,
+        "AIConnectionError": AIConnectionError,
+        "log_event": lambda *args, **kwargs: None,
+    }
     return load_functions(
         APP_ROOT / "functions_settings.py",
         [

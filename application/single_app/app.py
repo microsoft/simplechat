@@ -65,6 +65,7 @@ from route_frontend_v2 import register_route_frontend_v2
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
+from route_backend_analysis_results import register_route_backend_analysis_results
 from route_backend_v2 import (
     register_route_backend_v2,
     register_route_backend_v2_admin,
@@ -1384,6 +1385,7 @@ register_route_blueprint('frontend_v2', register_route_frontend_v2, user_require
 
 # ------------------- API Chat Routes --------------------
 register_route_blueprint('backend_chats', register_route_backend_chats, user_required_blueprint)
+register_route_blueprint('backend_analysis_results', register_route_backend_analysis_results, user_required_blueprint)
 
 # ------------------- API V2 UI Routes -------------------
 register_route_blueprint('backend_v2', register_route_backend_v2, user_required_blueprint)

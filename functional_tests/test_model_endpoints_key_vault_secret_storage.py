@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.261.106
+Version: 0.261.113
 Implemented in: 0.241.179
 Strict screening credential hydration and safe retrieval logging: 0.261.106
+Custom credential strict hydration merge coverage: 0.261.113
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
 returned to the UI as placeholders, resolved for backend use, and cleaned up
@@ -310,12 +311,70 @@ def test_model_endpoint_strict_hydration_success_is_nonmutating_and_logs_no_secr
         restore_modules(original_modules)
 
 
+def test_custom_endpoint_key_vault_secret_schemes():
+    """Custom secrets retain scoped staging, strict hydration, and cleanup."""
+    module, original_modules = load_functions_keyvault_module()
+    try:
+        for auth_type, field in (("bearer", "bearer_token"), ("oauth2_client_credentials", "client_secret")):
+            FakeSecretClient.reset()
+            endpoint = {"id": "custom-connection", "provider": "custom", "auth": {"type": auth_type, field: "fixture-secret"}}
+            saved = module.keyvault_model_endpoint_save_helper(endpoint, endpoint["id"], scope="global")
+            reference = saved["auth"][field]
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            for strict in (False, True):
+                resolved = module.keyvault_model_endpoint_get_helper(
+                    saved, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+                    strict=strict,
+                )
+                assert resolved["auth"][field] == "fixture-secret"
+                assert saved["auth"][field] == reference
+            unchanged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: ""}},
+                endpoint["id"], scope="global", existing_endpoint=saved,
+            )
+            assert unchanged["auth"][field] == reference
+            try:
+                module.keyvault_model_endpoint_save_helper(
+                    {"auth": {"type": auth_type, field: reference}}, "different-connection", scope="global",
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("A Custom credential reference crossed endpoint scope.")
+            staged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: "rotated-fixture-secret"}},
+                endpoint["id"], scope="global", existing_endpoint=saved, stage_new_secrets=True,
+            )
+            assert staged["auth"][field] != reference
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            module.keyvault_model_endpoint_cleanup_helper(saved, staged, endpoint["id"], scope="global")
+            assert reference not in FakeSecretClient.stored_secrets
+            module.keyvault_model_endpoint_delete_helper(staged, endpoint["id"], scope="global")
+            assert not FakeSecretClient.stored_secrets
+            assert module.keyvault_model_endpoint_get_helper(
+                staged, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+            ) == staged
+            try:
+                module.keyvault_model_endpoint_get_helper(
+                    staged, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+                    strict=True,
+                )
+            except ValueError as error:
+                assert staged["auth"][field] not in str(error)
+            else:
+                raise AssertionError("Strict Custom hydration must reject an unavailable credential.")
+    finally:
+        FakeSecretClient.reset()
+        restore_modules(original_modules)
+
+
 def run_tests():
     tests = [
         test_model_endpoint_key_vault_helper_lifecycle,
         test_model_endpoint_frontend_contract_files,
         test_model_endpoint_strict_hydration_preserves_legacy_returns_and_plaintext,
         test_model_endpoint_strict_hydration_success_is_nonmutating_and_logs_no_secrets,
+        test_custom_endpoint_key_vault_secret_schemes,
     ]
     results = []
 

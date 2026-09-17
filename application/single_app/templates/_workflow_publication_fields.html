@@ -1,0 +1,37 @@
+<!-- Explicit existing-artifact publication; shared by classic workflow editors. -->
+<div class="form-check mt-3">
+    <input type="checkbox" class="form-check-input" id="workflow-task-publication-enabled" aria-describedby="workflow-task-publication-help" />
+    <label for="workflow-task-publication-enabled" class="form-check-label">Publish an existing analysis artifact</label>
+</div>
+<div id="workflow-task-publication-help" class="form-text">
+    Use a later task to publish the preceding task's saved final artifact. This does not call a model or recreate a file.
+</div>
+<div id="workflow-task-publication-fields" class="row g-3 mt-1 d-none">
+    <div class="col-12 col-md-6">
+        <label for="workflow-task-publication-format" class="form-label">Existing artifact format</label>
+        <select id="workflow-task-publication-format" class="form-select" disabled>
+            <option value="md">Markdown</option>
+            <option value="csv">CSV</option>
+            <option value="json">JSON</option>
+            <option value="xml">XML</option>
+            <option value="docx">Word</option>
+            <option value="pdf">PDF</option>
+        </select>
+    </div>
+    <div class="col-12 col-md-6">
+        <label for="workflow-task-publication-scope" class="form-label">Publication destination</label>
+        <select id="workflow-task-publication-scope" class="form-select" disabled>
+            <option value="">Choose a destination</option>
+            <option value="personal">My personal workspace</option>
+            <option value="group">A specific group workspace</option>
+            <option value="public">A specific public workspace</option>
+        </select>
+    </div>
+    <div id="workflow-task-publication-workspace-group" class="col-12 d-none">
+        <label for="workflow-task-publication-workspace-id" class="form-label">Destination workspace ID</label>
+        <input id="workflow-task-publication-workspace-id" class="form-control" type="text" maxlength="256" aria-describedby="workflow-task-publication-destination-help" disabled />
+    </div>
+    <div id="workflow-task-publication-destination-help" class="col-12 form-text">
+        The destination is saved with this task, independently of your active workspace. Current access is checked when it runs; group and public copies still require approval.
+    </div>
+</div>

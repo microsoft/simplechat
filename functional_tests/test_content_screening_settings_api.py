@@ -1,8 +1,9 @@
 # test_content_screening_settings_api.py
 """
 Functional tests for content screening settings and authenticated API contracts.
-Version: 0.261.107
+Version: 0.261.113
 Implemented in: 0.261.106
+Embedding settings concurrency and sanitization merge coverage: 0.261.113
 
 Uses the existing unittest/Flask runners with isolated application service mocks.
 No Azure configuration, credentials, model requests or storage accounts are used.
@@ -17,11 +18,13 @@ import logging
 import sys
 import types
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import wraps
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 from flask import Blueprint, Flask, jsonify, session
 import werkzeug
 
@@ -35,6 +38,7 @@ from content_screening import access, service
 from content_screening.contracts import (
     ContentUnit,
     InspectionResult,
+    ScreeningCitationsRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
@@ -44,6 +48,7 @@ from content_screening.contracts import (
     hash_payload,
 )
 from content_screening.policies import compose_policy, default_policy
+from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY
 from functional_tests.test_content_screening_reviews import MemoryEvidence, MemoryStore, module
 from functional_tests.test_support.app_stubs import import_app_module
 
@@ -82,6 +87,11 @@ def settings_functions(**overrides):
         type_ignores=[],
     )
     namespace = {
+        "AIConnectionError": AIConnectionError,
+        "CosmosAccessConditionFailedError": CosmosAccessConditionFailedError,
+        "EMBEDDING_SELECTION_KEY": EMBEDDING_SELECTION_KEY,
+        "MatchConditions": MatchConditions,
+        "ScreeningCitationsRequiredError": ScreeningCitationsRequiredError,
         "ScreeningConfigurationError": ScreeningConfigurationError,
         "ScreeningConflictError": ScreeningConflictError,
         "ScreeningError": ScreeningError,
@@ -113,6 +123,7 @@ class ScreeningSettingsTests(unittest.TestCase):
         }
         self.container = Mock()
         self.container.read_item.side_effect = lambda **kwargs: copy.deepcopy(self.current)
+        self.container.replace_item.side_effect = lambda **kwargs: {**kwargs["body"], "_etag": "saved"}
         self.functions = settings_functions(
             get_settings=lambda **kwargs: copy.deepcopy(self.current),
             cosmos_settings_container=self.container,
@@ -121,8 +132,11 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.original_validation = service.validate_screening_configuration
         self.validate = self.stack.enter_context(patch.object(service, "validate_screening_configuration"))
+        self.embedding_guard = Mock(side_effect=lambda *args, **kwargs: nullcontext())
         self.stack.enter_context(patch.dict(sys.modules, {
-            "azure.core": module("azure.core", MatchConditions=types.SimpleNamespace(IfNotModified="if-not-modified")),
+            "functions_embedding_compatibility": module(
+                "functions_embedding_compatibility", embedding_settings_write_guard=self.embedding_guard,
+            ),
         }))
 
     def test_activation_is_off_by_default_and_schema_declares_prerequisite(self):
@@ -198,13 +212,26 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.assertTrue(self.functions["update_settings"]({"enable_content_screening": True}))
         call = self.container.replace_item.call_args
         self.assertEqual(call.kwargs["etag"], "settings-etag")
-        self.assertEqual(call.kwargs["match_condition"], "if-not-modified")
+        self.assertEqual(call.kwargs["match_condition"], MatchConditions.IfNotModified)
         self.assertIs(call.kwargs["body"]["enable_content_screening"], True)
         self.container.upsert_item.assert_not_called()
         self.current["enable_content_screening"] = True
         self.container.reset_mock()
         self.assertFalse(self.functions["update_settings"]({"enable_enhanced_citations": False}))
         self.container.replace_item.assert_not_called()
+
+    def test_retry_revalidates_screening_dependencies_against_the_new_revision(self):
+        self.current["enable_enhanced_citations"] = True
+        latest = {**self.current, "_etag": "newer", "enable_enhanced_citations": False}
+        self.container.read_item.side_effect = [copy.deepcopy(self.current), latest]
+        self.container.replace_item.side_effect = CosmosAccessConditionFailedError()
+        self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
+        self.assertEqual(self.container.read_item.call_count, 2)
+        self.validate.assert_called_once()
+        self.embedding_guard.assert_called_once()
+        self.container.replace_item.assert_called_once()
+        self.container.upsert_item.assert_not_called()
+        self.functions["_refresh_app_settings_cache_after_write"].assert_not_called()
 
     def test_disable_is_not_a_document_release_or_policy_reset(self):
         self.current.update({"enable_content_screening": True, "enable_enhanced_citations": True})
@@ -231,8 +258,14 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.container.upsert_item.assert_not_called()
         sanitized = self.functions["sanitize_settings_for_user"]({
             **value, "enable_content_screening": True, "office_docs_key": PRIVATE,
+            "embedding_vector_profile": {"id": PRIVATE},
+            "custom_model_endpoint_ca_bundle_path": PRIVATE,
+            "client_cert_path": PRIVATE, "client_key_path": PRIVATE,
+            "bearer_token": PRIVATE, "token_url": PRIVATE,
+            "nested": {"content_screening_policy": PRIVATE, "bearer_token": PRIVATE, "enabled": True},
         })
         self.assertIs(sanitized["enable_content_screening"], True)
+        self.assertIs(sanitized["nested"]["enabled"], True)
         self.assertNotIn(PRIVATE, str(sanitized))
         self.assertNotIn(PRIVATE, str(self.functions["sanitize_settings_for_logging"](value)))
 

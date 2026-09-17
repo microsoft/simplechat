@@ -1,7 +1,7 @@
 # test_model_endpoint_management_cloud_environment.py
 """
 Functional test for model endpoint management cloud environment normalization.
-Version: 0.250.004
+Version: 0.261.107
 Implemented in: 0.250.004
 
 This test ensures model endpoint normalization derives non-editable management
@@ -64,6 +64,9 @@ def load_functions_settings_module():
 
     service_health_stub = types.ModuleType("functions_service_health")
     service_health_stub.get_default_service_health = lambda: {}
+    mcp_stub = types.ModuleType("functions_mcp_server_config")
+    mcp_stub.INBOUND_MCP_SETTINGS_DEFAULTS = {}
+    mcp_stub.normalize_inbound_mcp_settings = lambda settings: None
 
     support_menu_stub = types.ModuleType("support_menu_config")
     support_menu_stub.get_default_support_latest_features_visibility = lambda: {}
@@ -79,6 +82,7 @@ def load_functions_settings_module():
         "functions_document_actions": document_actions_stub,
         "functions_icon_utils": icon_utils_stub,
         "functions_service_health": service_health_stub,
+        "functions_mcp_server_config": mcp_stub,
         "support_menu_config": support_menu_stub,
         "functions_settings": None,
     }.items():
@@ -180,6 +184,7 @@ def test_service_principal_preserves_explicit_cross_cloud_selection():
             "id": "public-foundry-sp",
             "provider": "new_foundry",
             "enabled": True,
+            "identity_header": {"mode": "inherit", "header_name": "", "value_type": ""},
             "auth": {
                 "type": "service_principal",
                 "management_cloud": "public",

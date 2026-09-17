@@ -1,7 +1,7 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.106
+Version: 0.261.113
 Implemented in: 0.261.106
 
 Runs the real durable job, scanner, repository, private storage, TXT extraction,
@@ -45,6 +45,8 @@ from content_screening.extraction import current_extraction
 from content_screening.policies import default_policy
 from content_screening.repository import ScreeningRepository
 from content_screening.storage import ScreeningStorage
+import functions_embedding_compatibility as embedding_compatibility
+from functions_embeddings import EmbeddingVector
 from test_content_screening_persistence import FakeBlob, FakeBlobContainer, FakeBlobService, FakeCosmos, FakeSdkError
 
 
@@ -120,6 +122,11 @@ def pipeline(monkeypatch):
         "enable_extract_meta_data": False, "enable_notifications": False,
         "max_file_size_mb": 16,
     }
+    embedding_profile = types.SimpleNamespace(profile_id="fixture-embedding-profile", dimensions=2, legacy=False)
+    write_profiles = []
+    monkeypatch.setattr(embedding_compatibility, "read_embedding_settings", lambda: settings)
+    monkeypatch.setattr(embedding_compatibility, "active_embedding_profile", lambda value=None: embedding_profile)
+    monkeypatch.setattr(embedding_compatibility, "_runtime_index_metadata", lambda *args: {"provenance": True})
     policy = default_policy()
     policy.update({"enabled": True, "rules": [{
         "id": "restricted", "name": "Restricted", "type": "literal",
@@ -170,7 +177,13 @@ def pipeline(monkeypatch):
                 break
         else:
             raise AssertionError("Embedding ran before complete screening and publication.")
-        return [0.25, 0.75], {"total_tokens": len(text), "model_deployment_name": "test-embedding"}
+        return EmbeddingVector([0.25, 0.75], embedding_profile), {
+            "total_tokens": len(text), "model_deployment_name": "test-embedding",
+        }
+
+    def search_write_slot(container, *, embedding_profile_id):
+        write_profiles.append(embedding_profile_id)
+        return nullcontext()
 
     def delete_chunks(document_id, **kwargs):
         search.documents = {key: value for key, value in search.documents.items() if value["document_id"] != document_id}
@@ -207,7 +220,8 @@ def pipeline(monkeypatch):
         "DOCUMENT_EXTENSIONS": {"pdf", "docx"}, "VIDEO_EXTENSIONS": {"mp4"},
         "AUDIO_EXTENSIONS": {"mp3"}, "VISIO_EXTENSIONS": {"vsdx"},
         "EMAIL_EXTENSIONS": {"msg"},
-        "hold_data_management_search_write_slot": lambda container: nullcontext(),
+        "hold_data_management_search_write_slot": search_write_slot,
+        "prepare_embedding_search_documents": embedding_compatibility.prepare_embedding_search_documents,
         "cosmos_data_management_jobs_container": None,
     }
     functions = {
@@ -232,6 +246,7 @@ def pipeline(monkeypatch):
     return types.SimpleNamespace(
         repository=repository, storage=storage, blobs=blob_service, search=search,
         settings=settings, helpers=helpers, reviews=review_requests,
+        embedding_profile=embedding_profile, write_profiles=write_profiles,
     )
 
 
@@ -284,10 +299,33 @@ def test_real_txt_intake_scans_before_embedding_and_releases_exact_source(pipeli
     document = pipeline.repository.read_document(Subject("personal", "owner", "document", "1"))
     assert document_is_available(document)
     assert "".join(item["chunk_text"] for item in pipeline.search.documents.values()) == text
+    assert pipeline.write_profiles
+    assert set(pipeline.write_profiles) == {pipeline.embedding_profile.profile_id}
+    assert all(
+        item["embedding_profile_id"] == pipeline.embedding_profile.profile_id
+        for item in pipeline.search.documents.values()
+    )
     assert result["publication"]["metadata_fingerprint"] == metadata_fingerprint(document)
     read, content = access.read_available_document_bytes("document", "owner")
     assert read["content_screening"]["scan_id"] == result["id"]
     assert content.decode("utf-8") == text
+
+
+def test_screened_publication_rejects_an_embedding_profile_change(pipeline, tmp_path, monkeypatch):
+    seed(pipeline)
+    generate = pipeline.helpers.generate_embedding
+
+    def changed_profile(text):
+        result = generate(text)
+        pipeline.embedding_profile.profile_id = "replacement-embedding-profile"
+        return result
+
+    monkeypatch.setattr(pipeline.helpers, "generate_embedding", changed_profile)
+    result = upload(pipeline, tmp_path, "Reviewed source content")
+    assert result["state"] == "publishing"
+    assert pipeline.search.documents == {}
+    document = pipeline.repository.read_document(Subject("personal", "owner", "document", "1"))
+    assert not document_is_available(document)
 
 
 def test_last_line_finding_prevents_all_search_and_original_access(pipeline, tmp_path):

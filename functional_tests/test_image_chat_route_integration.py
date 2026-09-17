@@ -1,7 +1,7 @@
 # test_image_chat_route_integration.py
 """
 Functional test for the actual /api/chat Image-mode request path.
-Version: 0.261.105
+Version: 0.261.107
 Implemented in: 0.261.105
 
 Registers the complete production chat handler with its original Flask route decorator.
@@ -86,7 +86,7 @@ def authenticated_test_user(function):
 class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
     def setUp(self):
         super().setUp()
-        self.settings = shared_image_settings()
+        self.settings = shared_image_settings(provider="custom")
         self.settings["model_endpoints"][0]["models"][0]["enabled_capabilities"] = ["image_generation"]
         self.settings["default_model_selection"] = {}
         self.settings["gpt_model"] = {"selected": []}
@@ -120,20 +120,10 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
         }
         client_class = generation._ImageOpenAIClient
 
-        def handle_image_request(http_request):
-            self.requests.append(http_request)
-            result = (
-                responses_image_response()
-                if http_request.url.path.endswith("/responses")
-                else {"created": 1, "data": [{"b64_json": IMAGE_BASE64}]}
-            )
-            return httpx.Response(200, json=result)
-
         def build_image_client(**kwargs):
-            return client_class(
-                **kwargs,
-                http_client=httpx.Client(transport=httpx.MockTransport(handle_image_request), trust_env=False),
-            )
+            if "http_client" not in kwargs:
+                kwargs["http_client"] = self.make_http_client()
+            return client_class(**kwargs)
 
         self.stack.enter_context(patch.object(generation, "_ImageOpenAIClient", side_effect=build_image_client))
         self.namespace = self.build_chat_namespace()
@@ -147,6 +137,15 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             session["user"] = {"oid": "user-1", "roles": ["User"]}
 
         self.client = self.app.test_client()
+
+    def handle_request(self, http_request):
+        self.requests.append(http_request)
+        result = (
+            responses_image_response()
+            if http_request.url.path.endswith("/responses")
+            else {"created": 1, "data": [{"b64_json": IMAGE_BASE64}]}
+        )
+        return httpx.Response(200, json=result)
 
     def authorize_conversation(self, user_id, conversation_id):
         self.assertEqual(user_id, "user-1")
@@ -255,15 +254,15 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
     def assert_image_success(self, response, *, direct=False):
         self.assertEqual(response.status_code, 200, f"{response.get_json()}; {self.logs.call_args_list}")
         payload = response.get_json()
-        deployment = "selected-image" if direct else "selected-gpt"
+        deployment = "selected-image" if direct else "gpt-5.6-terra"
         self.assertEqual(payload["image_url"], IMAGE_SOURCE)
         self.assertEqual(payload["model_deployment_name"], deployment)
         self.assertEqual(payload["conversation_id"], "conversation-1")
         self.assertEqual(len(self.requests), 1)
-        self.assertEqual(self.requests[0].url.host, "team-one.openai.azure.com")
+        self.assertEqual(self.requests[0].url.host, "team-one.openai.azure.com" if direct else "api.openai.com")
         self.assertEqual(
             self.requests[0].url.path,
-            "/openai/deployments/selected-image/images/generations" if direct else "/openai/v1/responses",
+            "/openai/deployments/selected-image/images/generations" if direct else "/v1/responses",
         )
         self.assertEqual(dict(self.requests[0].url.params), {"api-version": "2025-04-01-preview"} if direct else {})
         self.assertEqual(json.loads(self.requests[0].content)["model"], deployment)
@@ -284,12 +283,24 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
         self.assert_image_success(self.post_image())
 
     def test_actual_chat_image_mode_accepts_a_new_direct_image_only_connection(self):
+        dedicated = shared_image_settings(direct=True)
+        self.settings["model_endpoints"] = dedicated["model_endpoints"]
+        self.settings[connections.IMAGE_SELECTION_KEY] = dedicated[connections.IMAGE_SELECTION_KEY]
         endpoint = self.settings["model_endpoints"][0]
-        model = shared_image_settings(direct=True)["model_endpoints"][0]["models"][0]
+        model = endpoint["models"][0]
         model["enabled_capabilities"] = ["image_generation"]
         endpoint["models"] = [model]
         endpoint["connection"].pop("operation_settings")
         self.assert_image_success(self.post_image(), direct=True)
+
+    def test_actual_chat_rejects_an_azure_gpt_image_default_without_inference(self):
+        self.settings["model_endpoints"] = shared_image_settings()["model_endpoints"]
+        self.settings[connections.IMAGE_SELECTION_KEY]["provider"] = "aoai"
+        response = self.post_image()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.requests, [])
+        self.secret_helper.assert_not_called()
+        self.assertFalse(any(item["role"] == "image" for item in self.message_store.documents.values()))
 
     def test_actual_chat_image_mode_ignores_broken_unrelated_apim_chat_configuration(self):
         self.settings["enable_gpt_apim"] = True

@@ -25,7 +25,51 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 - Admins may require `require_member_of_workflow_user` before users can create workflows.
 - If tasks use documents, upload them or configure File Sync first.
 
-## Steps
+## Create or edit in V2
+
+Starting in **0.261.108**, open `/v2/workspace/workflows` for personal workflows,
+or select a group under `/v2/groups`. Choose **Create workflow** or edit an
+existing workflow in the native List editor.
+
+Choose a runner and manual or interval trigger, then add tasks in execution
+order. Task details separate document-action evidence from shared reference
+documents and prior-task outputs. For a synthesis task, select a specific
+earlier task under **Previous-task inputs** instead of depending on an
+intermediate note's reply. Reordering never silently retargets that binding.
+
+Use optional output requirements when later work needs a particular JSON
+shape, record identity, count, or complete source coverage. Partial acceptance
+is off by default and remains visibly partial when enabled. These requirements
+validate returned data; they do not prove factual correctness or undo an
+agent's earlier tool actions.
+
+Legacy single-prompt instructions and existing settings are retained when
+opened in V2. Advanced definitions cannot be saved through the classic editor
+because it cannot represent their data-flow fields. A stale edit retains its
+draft instead of overwriting another editor's changes.
+
+See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
+for binding semantics, shared references, and validation outcomes.
+
+## Durable execution and task approval
+
+Starting in **0.261.111**, new V2 workflows enable **Durable execution**.
+Existing workflows keep their previous setting until you opt in. The run saves
+its definition, completed task results, and decisions so closing the browser or
+restarting a worker does not discard progress.
+
+For a task that needs a review before execution, enable its approval requirement
+and explain what the reviewer should inspect. In run history, review the gate
+and choose whether to approve or reject it. Approval applies only to those
+specific inputs; it cannot make an invalid output valid.
+
+Run memory shows checkpoint units, attempts, and decisions. If a worker may have
+performed an external action without saving its result, a recovery gate asks you
+to check the destination before retrying. This is different from rerunning every
+task. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md)
+for readiness, recovery, and cancellation limits.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or a **Group Workspace**.
 2. Choose **Workflows** from **Section** or the tab row.
@@ -52,6 +96,37 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 ## Verify it worked
 
 The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger**, **Last Run**, and **Actions** columns.
+
+## How task results are passed
+
+Starting in **0.261.106**, each task saves its final output separately from presentation and diagnostic notes. The next task reads the preceding successful task's authoritative output directly; generated results do not need to be uploaded into a workspace or re-indexed first.
+
+The former 12,000-character task-handoff cap no longer clips the middle of a result. The effective model's context budget determines whether the complete selected output fits. If it does not, the result remains stored and the dependent task reports the budget problem instead of receiving a shortened substitute.
+
+This preserves the producer's final data; it does not guarantee that an extraction is semantically complete. Prefer a clear final output format, such as a JSON record array, when another task must consume structured findings. See [Workflow data flow](../explanation/features/WORKFLOW_DATA_FLOW.md) for result references and limitations.
+
+For Analyze results produced in **0.261.109**, a later explanation uses accepted
+findings and their saved provenance. Ordinary narrative analysis does not require
+you to configure columns or scoring. Read
+[Saved Analyze results](analyze-results.md) for the difference between source
+coverage, accepted findings, and validation.
+
+## Publish an existing analysis artifact
+
+In a later task, select **Publish an existing analysis artifact**, choose an
+**Existing artifact format**, and select a **Publication destination**. A group
+or public destination also requires its **Destination workspace ID**. That
+destination is saved with the task; changing your active workspace later does
+not redirect the publication.
+
+This task copies an existing artifact rather than calling a model to recreate
+it. Ensure the analysis produced the selected format. Passing validation alone
+does not publish anything: this explicit task or a manual workspace-save action
+is required. Partial or invalid results cannot be published as final outputs.
+
+Group and public copies retain their approval process. An uncertain publication
+shows the existing destination/receipt instead of blindly creating another copy.
+Once explicitly published, the copy follows the destination's access rules.
 
 ## Troubleshooting
 

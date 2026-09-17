@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.108.** Classic/V2 policy-editor alignment was implemented in this version; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.113.** Classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
@@ -94,6 +94,8 @@ Since **0.261.108**, both editors offer explicit custom literal/regex/PII creati
 The optional **Enable AI checks** switch precedes the policy's single scanner and criteria. Turning it off disables those inputs without clearing the configuration. **Models workspaces may use** is a separate administrative allowlist, not a list of model checks to execute. The baseline scanner's implicit permission is displayed without copying it into the explicit allowlist.
 
 Configured-check summaries count enabled local and mandatory baseline rules/model checks. Disabling workspace additions does not hide required administrator AI checks; a disabled baseline makes additions inactive. Summaries describe the draft rather than the separate enrollment capability.
+
+The **0.261.113** React V2 integration retains these controls alongside unified embedding/image connections and durable Analyze results. Sequential and isolated concurrent Analyze model calls recheck source availability, final coverage retains screening provenance, and completed checkpoints cannot bypass a later hold. Saved-result responses and exports retain both their source-access rules and screening checks.
 
 Use the [content-review guide]({{ '/guides/review-screened-documents/' | relative_url }}) for baseline selection, existing-workspace scans, and remediation. The capability is distinct from the existing Azure AI Content Safety chat-category feature.
 

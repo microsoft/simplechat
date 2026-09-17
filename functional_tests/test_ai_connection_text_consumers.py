@@ -1,9 +1,10 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.106
+Version: 0.261.113
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
+Custom request identity and strict hydration merge coverage: 0.261.113
 
 Execute the real consumer function bodies with the real import-safe capability
 module. SDK, credential, settings-store, and authorization seams stay in memory;
@@ -34,6 +35,12 @@ from functions_model_capabilities import (
     REASONING_IDENTIFIER_FIELDS,
     is_vision_capable_model,
     resolve_model_reasoning_policy,
+)
+from functions_model_endpoint_providers import MODEL_ENDPOINT_PROVIDER_CUSTOM, get_model_endpoint_provider
+from functions_model_endpoint_types import (
+    ModelEndpointValidationError,
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
 )
 
 
@@ -92,7 +99,7 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
         "normalize_model_endpoints": lambda values: (deepcopy(values), False),
-        "sanitize_model_endpoints_for_frontend": deepcopy,
+        "sanitize_model_endpoints_for_frontend": lambda values, **kwargs: deepcopy(values),
         "keyvault_model_endpoint_get_helper": Mock(side_effect=lambda value, *args, **kwargs: deepcopy(value)),
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_model_endpoint_identity_headers": Mock(return_value={}),
@@ -101,6 +108,11 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": "azure_openai",
         "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": "anthropic",
         "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": "openai_style",
+        "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
+        "ModelEndpointValidationError": ModelEndpointValidationError,
+        "get_model_endpoint_provider": get_model_endpoint_provider,
+        "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "infer_model_endpoint_protocol": lambda *args: "azure_openai",
         "AzureOpenAI": Mock(return_value=sentinel.client),
         "_build_azure_chat_completion": Mock(return_value=sentinel.service),
@@ -346,7 +358,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         )
         self.assertIs(client, sentinel.client)
         self.assertEqual(protocol, "anthropic")
-        infer.assert_called_once_with("new_foundry", selected["connection"]["endpoint"], "claude-sonnet-4")
+        infer.assert_called_once_with("new_foundry", selected["connection"]["endpoint"], "claude-sonnet-4", "")
         with self.assertRaises(connections.AIConnectionError):
             helpers["build_model_endpoint_sync_chat_client"](
                 selected["auth"], "new_foundry", selected["connection"]["endpoint"], "v1",
@@ -361,7 +373,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         )
         self.assertIs(client, sentinel.client)
         self.assertEqual(protocol, "anthropic")
-        self.assertEqual(infer.call_args.args[-1], "claude-sonnet-4")
+        self.assertEqual(infer.call_args.args[-2], "claude-sonnet-4")
 
     def test_chat_binding_strict_credentials_fail_safely_before_client_creation(self):
         selected = endpoint()
@@ -386,6 +398,69 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
             selected, selected["id"], scope="global", return_type="value", strict=True,
         )
         builder.assert_not_called()
+
+    def test_custom_chat_binding_keeps_request_identity_and_strict_saved_selection(self):
+        for api_type in ("openai", "azure_openai", "anthropic", "gemini"):
+            with self.subTest(api_type=api_type):
+                selected = endpoint([
+                    model("gpt-image-1", id="image-model"),
+                    model("gateway-chat-model", supportsChat=True),
+                ], provider="custom", api_type=api_type)
+                original = deepcopy(selected)
+                binding = connections.ModelBinding("chat", {
+                    "endpoint_id": selected["id"], "model_id": "selected-model", "provider": "custom",
+                }, selected, selected["models"][1])
+                hydrated = deepcopy(selected)
+                hydrated["auth"]["api_key"] = "hydrated-test-key"
+                hydrate = Mock(return_value=hydrated)
+                builder = Mock(return_value=(sentinel.client, "custom-protocol"))
+                helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+                    "_require_chat_model_for_endpoint", "build_chat_connection_client",
+                }, {"build_model_endpoint_sync_chat_client": builder})
+                vault = SimpleNamespace(
+                    SecretReturnType=SimpleNamespace(VALUE="value"),
+                    keyvault_model_endpoint_get_helper=hydrate,
+                )
+                with patch.dict(sys.modules, {"functions_keyvault": vault}):
+                    self.assertIs(
+                        helpers["build_chat_connection_client"](binding, {}, strict_credentials=True),
+                        sentinel.client,
+                    )
+                hydrate.assert_called_once_with(
+                    selected, selected["id"], scope="global", return_type="value", strict=True,
+                )
+                expected_request_model = "custom-deployment" if api_type == "azure_openai" else "gateway-chat-model"
+                self.assertEqual(builder.call_args.kwargs["deployment_name"], expected_request_model)
+                self.assertEqual(builder.call_args.kwargs["model_id"], "selected-model")
+                self.assertEqual(builder.call_args.kwargs["endpoint_config"], hydrated)
+                self.assertEqual(builder.call_args.args[0]["api_key"], "hydrated-test-key")
+                self.assertEqual(selected, original)
+
+    def test_custom_chat_binding_rejects_registry_only_or_stale_models_before_hydration(self):
+        for api_type, record, selected_id in (
+            ("openai", model("", deploymentName="", supportsChat=True), "selected-model"),
+            ("azure_openai", model("gateway-chat-model", deploymentName="", supportsChat=True), "selected-model"),
+            ("openai", model("gateway-chat-model", supportsChat=True), "missing-model"),
+        ):
+            with self.subTest(api_type=api_type, selected_id=selected_id):
+                selected = endpoint([record], provider="custom", api_type=api_type)
+                binding = connections.ModelBinding("chat", {
+                    "endpoint_id": selected["id"], "model_id": selected_id, "provider": "custom",
+                }, selected, record)
+                hydrate = Mock()
+                builder = Mock()
+                helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+                    "_require_chat_model_for_endpoint", "build_chat_connection_client",
+                }, {"build_model_endpoint_sync_chat_client": builder})
+                vault = SimpleNamespace(
+                    SecretReturnType=SimpleNamespace(VALUE="value"),
+                    keyvault_model_endpoint_get_helper=hydrate,
+                )
+                with patch.dict(sys.modules, {"functions_keyvault": vault}):
+                    with self.assertRaises(connections.AIConnectionError):
+                        helpers["build_chat_connection_client"](binding, {}, strict_credentials=True)
+                hydrate.assert_not_called()
+                builder.assert_not_called()
 
     def test_agent_catalog_keeps_foundry_projects_without_forcing_chat_mode(self):
         image = endpoint([model("gpt-image-1")], provider="new_foundry")
@@ -480,8 +555,10 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
 
     def test_workflow_runtime_rechecks_disabled_and_incompatible_saved_models(self):
         builder = Mock(return_value=(sentinel.client, "azure_openai"))
+        wrapper = Mock(side_effect=lambda client, model, provider: client)
         helpers = load_boundaries("functions_workflow_runner.py", {"_build_multi_endpoint_client"}, {
             "build_model_endpoint_sync_chat_client": builder,
+            "wrap_workflow_model_client": wrapper,
         })
         cases = [endpoint([record]) for record in incompatible_models()] + [endpoint(enabled=False)]
         for selected in cases:
@@ -492,10 +569,12 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
                     )
         helpers["keyvault_model_endpoint_get_helper"].assert_not_called()
         builder.assert_not_called()
+        wrapper.assert_not_called()
         selected = endpoint([model("private-chat-alias")])
         self.assertEqual(helpers["_build_multi_endpoint_client"](
             "reader", selected["id"], "selected-model", {"model_endpoints": [selected]},
         ), (sentinel.client, "custom-deployment", "aoai"))
+        wrapper.assert_called_once_with(sentinel.client, selected["models"][0], "aoai")
 
     def test_metadata_rejects_incompatible_models_before_loading_credentials(self):
         builder = Mock(return_value=sentinel.client)

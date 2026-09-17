@@ -339,7 +339,8 @@ def generate_search_cache_key(
     top_n: int = 50,
     enable_file_sharing: bool = True,
     tags_filter: Optional[List[str]] = None,
-    document_filter_mode: str = "intersection"
+    document_filter_mode: str = "intersection",
+    embedding_profile_id: str = "",
 ) -> str:
     """
     Generate a cache key that includes document set fingerprints and tags filter.
@@ -436,6 +437,8 @@ def generate_search_cache_key(
             '|'.join(fingerprints)
         ]
     
+    if embedding_profile_id:
+        cache_key_components.append(f"embedding:{embedding_profile_id}")
     cache_key_string = '|'.join(cache_key_components)
     cache_key = hashlib.sha256(cache_key_string.encode()).hexdigest()
     

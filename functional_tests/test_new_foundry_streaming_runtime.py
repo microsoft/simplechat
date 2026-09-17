@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for new Foundry REST streaming runtime.
-Version: 0.239.205
+Version: 0.261.107
 Implemented in: 0.239.177
 
 This test ensures that new Foundry application discovery stays REST-based,
@@ -11,6 +11,7 @@ emits agent deltas as they arrive instead of buffering them first.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,6 @@ def test_new_foundry_streaming_runtime() -> None:
     runtime_path = ROOT / "application" / "single_app" / "foundry_agent_runtime.py"
     chats_path = ROOT / "application" / "single_app" / "route_backend_chats.py"
     models_path = ROOT / "application" / "single_app" / "route_backend_models.py"
-    config_path = ROOT / "application" / "single_app" / "config.py"
 
     assert_contains(runtime_path, "async def execute_new_foundry_agent_stream(")
     assert_contains(runtime_path, '"stream": stream')
@@ -49,7 +49,7 @@ def test_new_foundry_streaming_runtime() -> None:
     assert_contains(chats_path, "response = loop.run_until_complete(agent_stream.__anext__())")
     assert_not_contains(chats_path, "chunks, stream_usage = loop.run_until_complete(stream_agent_async())")
 
-    assert_contains(config_path, 'VERSION = "0.239.205"')
+    assert_app_version_at_least("0.239.205")
 
     print("✅ New Foundry REST streaming runtime verified.")
 

@@ -1154,10 +1154,23 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
 
 
 def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, owner_user, invited_participants=None):
-    source_conversation_doc = cosmos_group_conversations_container.read_item(
-        item=source_conversation_id,
-        partition_key=source_conversation_id,
-    )
+    source_container = cosmos_group_conversations_container
+    copy_source_messages = _copy_legacy_group_messages_to_collaboration
+    source_link_field = 'legacy_source_conversation_id'
+    try:
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        # Group context can classify a conversation without moving its backing stores.
+        source_container = cosmos_conversations_container
+        copy_source_messages = _copy_legacy_personal_messages_to_collaboration
+        source_link_field = 'source_conversation_id'
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
     owner_summary = owner_user or {}
     owner_user_id = str(owner_summary.get('user_id') or '').strip()
     if not owner_user_id:
@@ -1236,8 +1249,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
-    collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
-    collaboration_conversation_doc['legacy_source_scope'] = 'group'
+    collaboration_conversation_doc[source_link_field] = source_conversation_id
+    if source_link_field == 'legacy_source_conversation_id':
+        collaboration_conversation_doc['legacy_source_scope'] = 'group'
 
     source_context = list(source_conversation_doc.get('context', []) or [])
     if source_context:
@@ -1249,7 +1263,7 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     if source_locked_contexts:
         collaboration_conversation_doc['locked_contexts'] = source_locked_contexts
 
-    copied_messages = _copy_legacy_group_messages_to_collaboration(
+    copied_messages = copy_source_messages(
         source_conversation_id,
         collaboration_conversation_doc.get('id'),
         owner_summary,
@@ -1270,7 +1284,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
     source_conversation_doc['is_hidden'] = True
     source_conversation_doc['last_updated'] = conversion_timestamp
-    cosmos_group_conversations_container.upsert_item(source_conversation_doc)
+    source_container.upsert_item(source_conversation_doc)
+    invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_converted")
+    invalidate_conversation_cache_for_item(collaboration_conversation_doc, reason="collaboration_converted")
 
     log_event(
         '[COLLABORATION] Converted group conversation into collaborative conversation',
@@ -2207,6 +2223,11 @@ def delete_collaboration_message(conversation_id, message_id, current_user_id):
     if not can_delete_message:
         raise PermissionError('You can only delete your own shared messages')
 
+    # Load Analyze cleanup only on deletion; a mirrored message never deletes its origin.
+    from functions_saved_analysis import cleanup_chat_analysis_messages
+    cleanup_chat_analysis_messages(
+        [message_doc], conversation_id=conversation_id, owner_user_id=sender_user_id or current_user_id,
+    )
     cosmos_collaboration_messages_container.delete_item(
         item=message_id,
         partition_key=conversation_id,
@@ -2568,6 +2589,11 @@ def _cleanup_linked_collaboration_source(
         parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
         partition_key=source_conversation_id,
     ))
+    # Load Analyze cleanup only on deletion, after proving the linked-source relationship.
+    from functions_saved_analysis import cleanup_chat_analysis_conversation
+    cleanup_chat_analysis_conversation(
+        source_conversation_id, source_conversation.get('user_id'), source_messages,
+    )
 
     if archiving_enabled:
         _archive_collaboration_item(
@@ -2709,6 +2735,11 @@ def _delete_collaboration_conversation_records(
         parameters=[{'name': '@conversation_id', 'value': conversation_id}],
         partition_key=conversation_id,
     ))
+    # Keep the Analyze cleanup dependency local to this deletion path.
+    from functions_saved_analysis import cleanup_chat_analysis_conversation
+    cleanup_chat_analysis_conversation(
+        conversation_id, conversation_doc.get('created_by_user_id'), messages,
+    )
     if not archiving_enabled:
         _delete_blob_backed_collaboration_files(messages)
 
