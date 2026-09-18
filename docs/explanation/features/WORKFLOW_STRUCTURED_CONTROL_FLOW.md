@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.116**
 
+Updated in version: **0.261.117**.
+
 Application version tracking: `application/single_app/config.py`.
 
 ## Purpose and scope
@@ -15,9 +17,10 @@ This is useful when an assessment should produce either an explanation or a
 review, when an optional task should run only for particular findings, or when
 a known later step can safely replace optional intermediate work.
 
-For each, Repeat until, exact Collect, generic aggregate publication, and the
-visual Flow editor are not part of this slice. The execution identity and
-paged journal are prepared for repeated execution; M4A does not admit loops.
+This page describes the M4A foundation. Version **0.261.117** adds
+[serial For each and exact Collect](WORKFLOW_FOR_EACH_COLLECT.md) to the same
+definition version and journal. Repeat until, generic aggregate publication,
+and the visual Flow editor remain separate. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 

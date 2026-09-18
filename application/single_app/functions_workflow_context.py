@@ -19,6 +19,7 @@ from functions_model_capabilities import (
 )
 from model_endpoint_clients import ModelEndpointBehavior
 from functions_workflow_execution import assert_workflow_execution_owned
+from functions_workflow_loop_runners import assert_workflow_loop_agent_type
 
 
 # This is a disclosed compatibility policy, not an invented model capability.
@@ -195,6 +196,7 @@ def raise_if_workflow_context_blocked(workflow):
 
 async def invoke_workflow_agent(agent, messages):
     """Local services guard every round; hosted agents expose only submitted input."""
+    assert_workflow_loop_agent_type(getattr(agent, "agent_type", "local"))
     if _active_workflow.get() is not None and getattr(agent, "agent_type", "local") != "local":
         serialized = [message.to_dict() for message in messages]
         _check_request(serialized, getattr(agent, "model_metadata", None) or "", provider="managed_agent")

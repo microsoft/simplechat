@@ -72,11 +72,38 @@ shown before saving; moving a block never silently changes its input source.
 Declare promised deliverables under **Final outputs**. This prevents a run from
 reporting completion when a selected path did not produce the required result.
 Structured definitions require durable execution and preserve their choices
-across waits and restarts. For each, Repeat until, Collect, and the visual Flow
-editor are not included in this slice.
+across waits and restarts. For each and Collect are added in **0.261.117** below.
+Repeat until and the visual Flow editor remain separate.
 
 See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for condition semantics, execution identity, limits, and compatibility.
+
+## Process a frozen collection
+
+In **0.261.117**, add a **For each** block to apply its body to selected
+documents, an earlier complete saved collection, or a workspace query. For a
+query, choose exhaustive metadata/keyword matches or an explicit **Best N**
+relevance selection. A preview is advisory; the loop freezes its actual
+membership when it starts and does not reselect documents on Resume.
+
+The default administrator ceiling is 500 items, and the editor shows the
+effective limit. This counts actual loop visits, not the searchable workspace.
+If the selection is too large, narrow it before running; no first-500 subset is
+silently substituted.
+
+Bind the current item to body tasks and choose current-document Analyze when
+appropriate. Keep shared criteria in shared references. Declare the body's
+exact output, then add **Collect** outside the loop to preserve every eligible
+record in item/producer order. A later task binds to Collect, not to whichever
+child ran last.
+
+For a qualitative explanation of a large collected dataset, explicitly choose
+**Saved-record report** processing. Original records remain stored while the
+report uses bounded calls and source-linked support. Ordinary tasks pause if
+their full input cannot safely fit; they do not silently become summary tasks.
+
+See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
+for local-runner requirements, partial coverage, nested scopes, and limitations.
 
 ## Durable execution and task approval
 

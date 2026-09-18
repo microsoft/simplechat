@@ -6,6 +6,8 @@ Updated in version: **0.261.108**
 
 Audited budget integration updated in version: **0.261.122**.
 
+Loop/collection integration updated in version: **0.261.117**.
+
 Version tracking: `application/single_app/config.py`.
 
 ## Overview
@@ -120,6 +122,13 @@ Known models without a matching tokenizer use a conservative UTF-8 byte bound. I
 When the selected final representation cannot fit, the upstream result remains stored and the dependent task reports a budget error. Select a suitable model, configure verified deployment limits, reduce an explicit response reservation, or use an explicit batching process. This milestone does not automatically summarize exhaustive inputs.
 
 Hosted agents can hide their internal prompts/tools. Their audit is labeled `budget_scope=submitted_messages`; their provider remains responsible for internal context management.
+
+Version **0.261.117** adds [serial For each and exact Collect](WORKFLOW_FOR_EACH_COLLECT.md).
+Explicit saved-record reporting uses bounded complete-record calls and durable
+source-linked checkpoints rather than clipping the input. Ordinary tasks still
+pause when safe splitting is unavailable. These loop/report steps require
+locally metered runners; existing non-loop hosted behavior is unchanged. A
+cumulative run-token/spend cap is not part of this slice.
 
 ## Usage and boundaries
 

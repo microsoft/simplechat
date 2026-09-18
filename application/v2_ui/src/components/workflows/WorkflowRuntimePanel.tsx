@@ -80,7 +80,6 @@ function formatIterationPath(path: WorkflowRuntimeGate['iteration_path']): strin
         const labels = [
             frame.item_id ? `item ${frame.item_id}` : '',
             frame.index !== undefined ? `index ${frame.index}` : '',
-            frame.iteration !== undefined ? `iteration ${frame.iteration}` : '',
         ].filter(Boolean);
         return labels.length ? `${loop} (${labels.join(', ')})` : loop;
     }).join(' / ');
@@ -266,10 +265,8 @@ export function WorkflowRuntimePanel({
             if (controller.signal.aborted || token !== requestToken.current) {
                 return;
             }
-            if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
-                setRuntime(null);
-                setCanDecide(false);
-            }
+            setCanDecide(false);
+            if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) setRuntime(null);
             if (cause instanceof ApiError && cause.status === 404) {
                 setError('No durable runtime record is available for this run.');
             } else if (cause instanceof ApiError && cause.status === 403) {
@@ -314,6 +311,7 @@ export function WorkflowRuntimePanel({
         scopeKey, workflowId, runId, record.version, record.gate?.id,
         record.gate?.execution_id, record.gate?.node_id, record.gate?.attempt,
         record.gate?.input_digest,
+        record.gate?.iteration_path,
     ]);
 
     const applyRuntimeResponse = (nextRuntime: WorkflowRuntimeProjection, nextCanDecide: boolean) => {
@@ -340,13 +338,13 @@ export function WorkflowRuntimePanel({
             setError('The recovery gate changed while you were reviewing it. Review the current execution and attempt before retrying.');
             return;
         }
-        if (!runtime?.gate) {
+        if (!runtime?.gate || !canDecide || !runtime.gate.choices.includes(choice)) {
             setError('The gate is no longer available. Reload this run before making another decision.');
             return;
         }
         abortRef.current?.abort();
         const gate = runtime.gate;
-        const requestKey = [
+        const requestKey = JSON.stringify([
             'decision',
             runId,
             runtime.version,
@@ -354,8 +352,10 @@ export function WorkflowRuntimePanel({
             gate.execution_id ?? '',
             gate.node_id ?? '',
             gate.attempt ?? '',
+            gate.iteration_path ?? [],
+            gate.input_digest ?? '',
             choice,
-        ].join(':');
+        ]);
         const requestId = requestIdFor(requestKey);
         setAction(choice);
         setError('');
@@ -473,6 +473,18 @@ export function WorkflowRuntimePanel({
                     {loading ? <Loader2 size={14} className="animate-spin text-text-3" /> : null}
                 </div>
                 {progressLabel ? <p className="text-xs text-text-3">{progressLabel}</p> : null}
+                {runtime?.loop_progress ? (
+                    <section aria-label="Frozen loop progress" className="space-y-1 rounded-lg border border-edge p-3 text-xs text-text-3">
+                        <p className="break-words font-medium text-text-2">For each {runtime.loop_progress.loop_id}</p>
+                        <p className="break-all">Loop execution: {runtime.loop_progress.loop_execution_id}</p>
+                        <p>Frozen selected count: {runtime.loop_progress.total} · admitted limit: {runtime.loop_progress.limit}
+                            {runtime.loop_progress.current_index !== null ? ` · current item index: ${runtime.loop_progress.current_index}` : ''}</p>
+                        <p>Completed: {runtime.loop_progress.completed}
+                            {runtime.loop_progress.completed_empty !== undefined ? ` · completed empty: ${runtime.loop_progress.completed_empty}` : ''}
+                            {' '}· skipped: {runtime.loop_progress.skipped} · failed: {runtime.loop_progress.failed} · pending: {runtime.loop_progress.pending}</p>
+                        <p>These are this run's frozen policy and item outcomes, not current workspace search counts. Later admin changes do not rewrite them.</p>
+                    </section>
+                ) : null}
                 {structuredRun && runtime?.limits ? (
                     <p className="text-xs text-text-3">
                         {runtime.limits.admitted_count} of {runtime.limits.max_executions} execution admissions used.

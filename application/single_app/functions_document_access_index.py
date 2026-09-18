@@ -2501,7 +2501,7 @@ def _is_backfill_state_ready_for_scope(state, source_scope):
     return source_scope in completed_scopes
 
 
-def _get_document_access_index_readiness(source_scope, settings=None):
+def _get_document_access_index_readiness(source_scope, settings=None, *, read_only=False):
     normalized_settings = get_document_access_index_settings(settings)
     if not normalized_settings.get('container_enabled'):
         return {
@@ -2516,7 +2516,7 @@ def _get_document_access_index_readiness(source_scope, settings=None):
             'settings': normalized_settings,
         }
     try:
-        state = _read_backfill_state()
+        state = _read_backfill_state(use_cache=False) if read_only else _read_backfill_state()
     except Exception as exc:
         log_event(
             '[DOCUMENT_ACCESS_INDEX] DAI read path readiness check failed; source document read should be used.',
@@ -2537,7 +2537,17 @@ def _get_document_access_index_readiness(source_scope, settings=None):
             'backfill_status': (state or {}).get('status'),
         }
 
-    has_repair_backlog = has_document_access_index_repair_backlog()
+    if read_only:
+        # Advisory selection must not initialize or repair catalog state.
+        try:
+            backlog_state = _read_repair_backlog_state(use_cache=False)
+            has_repair_backlog = bool(
+                isinstance(backlog_state, dict) and backlog_state.get('has_repair_backlog')
+            ) or _query_repair_backlog_exists()
+        except Exception:
+            has_repair_backlog = None
+    else:
+        has_repair_backlog = has_document_access_index_repair_backlog()
     if has_repair_backlog is None:
         return {
             'ready': False,
@@ -2559,6 +2569,88 @@ def _get_document_access_index_readiness(source_scope, settings=None):
         'settings': normalized_settings,
         'backfill_status': state.get('status'),
     }
+
+
+class DocumentAccessIndexEnumerationError(RuntimeError):
+    """A complete, read-only catalog enumeration could not be established."""
+
+    def __init__(self, code='document_catalog_unavailable'):
+        self.code = code
+        super().__init__('The document catalog is temporarily unavailable. Try again later.')
+
+
+def iter_document_access_index_candidates(
+    source_scope, *, user_id=None, group_ids=None, public_workspace_ids=None,
+    settings=None, page_size=100, check=None,
+):
+    """Page current candidate IDs without the preview helper's 1,001-row ceiling.
+
+    These projection rows are not permission grants. The caller must authorize
+    each requested scope before enumeration and each source before consumption.
+    """
+    if source_scope not in DOCUMENT_ACCESS_SOURCE_SCOPES:
+        raise DocumentAccessIndexEnumerationError('invalid_source_scope')
+    if type(page_size) is not int or not 1 <= page_size <= 1000:
+        raise DocumentAccessIndexEnumerationError('invalid_page_size')
+    scope_keys = list(dict.fromkeys(_build_shadow_scope(
+        source_scope, user_id=user_id, group_ids=group_ids,
+        public_workspace_ids=public_workspace_ids,
+    )))
+    if not scope_keys or not all(scope_keys):
+        raise DocumentAccessIndexEnumerationError('missing_scope_keys')
+    if len(scope_keys) > DOCUMENT_ACCESS_BOUNDED_CATALOG_MAX_SCOPES:
+        raise DocumentAccessIndexEnumerationError('scope_limit_exceeded')
+
+    def check_readiness():
+        if check is not None:
+            check()
+        readiness = _get_document_access_index_readiness(
+            source_scope, settings=settings, read_only=True,
+        )
+        if not readiness.get('ready'):
+            raise DocumentAccessIndexEnumerationError()
+
+    for scope_key in scope_keys:
+        check_readiness()
+        result = cosmos_document_access_index_container.query_items(
+            query=(
+                'SELECT c.document_id, c.source_document_id, c.version, c.revision_family_id '
+                'FROM c WHERE c.type = @type AND c.source_scope = @source_scope '
+                'AND c.scope_key = @scope_key AND c.access_granted = true '
+                'AND c.is_current_version = true AND c.projection_version = @projection_version '
+                'ORDER BY c.document_id ASC'
+            ),
+            parameters=[
+                {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
+                {'name': '@source_scope', 'value': source_scope},
+                {'name': '@scope_key', 'value': scope_key},
+                {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
+            ],
+            partition_key=scope_key,
+            max_item_count=page_size,
+        )
+        if not callable(getattr(result, 'by_page', None)):
+            raise DocumentAccessIndexEnumerationError('document_catalog_paging_unavailable')
+        pages = iter(result.by_page())
+        while True:
+            check_readiness()
+            page = next(pages, None)
+            if page is None:
+                if getattr(pages, 'continuation_token', None):
+                    raise DocumentAccessIndexEnumerationError('document_catalog_continuation_failed')
+                break
+            for row in page:
+                if not isinstance(row, dict) or not (
+                    row.get('source_document_id') or row.get('document_id')
+                ):
+                    raise DocumentAccessIndexEnumerationError('document_catalog_invalid')
+                yield row
+        check_readiness()
+
+
+def document_matches_list_filters(document, filters=None):
+    """Apply the shared document-list metadata semantics to a current document."""
+    return _matches_shadow_filters(document, filters)
 
 
 def query_document_access_index_documents(

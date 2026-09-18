@@ -80,6 +80,10 @@ from functions_rate_limit import (
 )
 from functions_service_health import get_default_service_health
 from json_schema_validation import validate_legacy_plugin_settings_update
+from functions_workflow_limits import (
+    WORKFLOW_LOOP_ITEMS_DEFAULT,
+    validate_workflow_max_loop_items,
+)
 import admin_settings_secret_utils as _secret_utils
 import app_settings_cache
 import copy
@@ -1371,6 +1375,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
         'workflow_max_tasks': 50,
+        'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
         'allow_group_workflows': False,
         'require_group_assignment_for_group_workflows': False,
         'group_workflow_allowed_group_ids': [],
@@ -2070,6 +2075,13 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
 
 def update_settings(new_settings, *, expected_etag=None):
     """Merge intended changes into Cosmos with OCC and shared-cache publication."""
+    if isinstance(new_settings, dict) and 'workflow_max_loop_items' in new_settings:
+        new_settings = {
+            **new_settings,
+            'workflow_max_loop_items': validate_workflow_max_loop_items(
+                new_settings['workflow_max_loop_items']
+            ),
+        }
     expected_etag = expected_etag or new_settings.get("_etag")
     updates = {
         key: copy.deepcopy(value)

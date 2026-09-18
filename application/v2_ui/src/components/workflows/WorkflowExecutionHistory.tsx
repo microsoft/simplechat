@@ -7,13 +7,18 @@ import { ApiError } from '../../lib/apiClient';
 import {
     fetchWorkflowExecutionAttemptResult,
     fetchWorkflowExecutionAttemptsPage,
+    fetchWorkflowExecutionRecordsPage,
+    fetchWorkflowExecutionProvenancePage,
     fetchWorkflowExecutionsPage,
+    fetchWorkflowLoopItemsPage,
     fetchWorkflowRuntimeDecisionsPage,
+    workflowReportingSummary,
     type WorkflowExecutionAttemptRecord,
     type WorkflowExecutionDecisionPreview,
     type WorkflowExecutionPage,
     type WorkflowExecutionRecord,
     type WorkflowRuntimeDecisionRecord,
+    type WorkflowLoopItemRecord,
 } from '../../lib/workflowExecutionHistory';
 import {
     workflowErrorMessage,
@@ -26,6 +31,7 @@ import {
 } from '../../lib/workflowEditor';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
+import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
 
 interface PagedState<T> {
     items: T[];
@@ -35,14 +41,15 @@ interface PagedState<T> {
     error: string;
     cursor: string | null;
     previousCursors: (string | null)[];
+    metadata?: WorkflowExecutionPage<T>['metadata'];
 }
 
 function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' | 'accent' {
     const value = String(status ?? '').toLowerCase();
-    if (['completed', 'succeeded', 'success', 'finished', 'valid'].includes(value)) {
+    if (['completed', 'completed_empty', 'succeeded', 'success', 'finished', 'valid'].includes(value)) {
         return 'ok';
     }
-    if (['running', 'queued', 'pending', 'in_progress', 'started', 'waiting_approval', 'waiting_output', 'waiting_recovery', 'paused', 'skipped'].includes(value)) {
+    if (['running', 'queued', 'pending', 'in_progress', 'started', 'waiting_approval', 'waiting_output', 'waiting_recovery', 'paused', 'skipped', 'completed_partial', 'accepted_partial'].includes(value)) {
         return 'warn';
     }
     if (['failed', 'error', 'cancelled', 'canceled', 'incomplete', 'invalid'].includes(value)) {
@@ -101,7 +108,6 @@ function formatIterationPath(path: WorkflowIterationFrame[] | undefined): string
         const labels = [
             text(frame.item_id) ? `item ${text(frame.item_id)}` : '',
             Number.isFinite(Number(frame.index)) ? `index ${Number(frame.index)}` : '',
-            Number.isFinite(Number(frame.iteration)) ? `iteration ${Number(frame.iteration)}` : '',
         ].filter(Boolean);
         return labels.length ? `${loop} (${labels.join(', ')})` : loop;
     }).join(' / ');
@@ -203,6 +209,7 @@ function usePagedResource<T>(
                     items: page.items,
                     nextCursor: page.next_cursor,
                     totalCount: page.total_count,
+                    metadata: page.metadata,
                     loading: false,
                     error: '',
                     cursor,
@@ -217,6 +224,7 @@ function usePagedResource<T>(
                     ...current,
                     items: [],
                     nextCursor: null,
+                    metadata: undefined,
                     loading: false,
                     error: historyErrorMessage(cause, fallbackError),
                 }));
@@ -319,6 +327,65 @@ function ConsumedInputs({ inputs }: { inputs?: WorkflowConsumedInput[] }) {
     );
 }
 
+function ReportingDiagnostics({ value }: { value: unknown }) {
+    if (value === undefined) return null;
+    const summary = workflowReportingSummary(value);
+    if (!summary) return (
+        <p role="alert" className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
+            These saved-record processing diagnostics are unsupported. Exact result inspection remains available.
+        </p>
+    );
+    const counts = [
+        ['Saved input objects read', summary.record_count],
+        ['Model-sized record pages', summary.page_count],
+        ['Qualitative reduction levels', summary.reduction_levels],
+        ['New model calls (this invocation)', summary.model_calls],
+        ['Reused checkpoint stages', summary.checkpoint_replays],
+        ['Peak estimated request tokens', summary.peak_input_tokens],
+    ] as const;
+    const budget = summary.context_budget;
+    const capacity = [
+        ['Context window capacity', budget.context_window_tokens],
+        ['Maximum input capacity', budget.max_input_tokens],
+        ['Maximum output capacity', budget.max_output_tokens],
+    ] as const;
+    const request = [
+        ['Estimated request input tokens', budget.input_tokens],
+        ['Available request input budget', budget.input_budget_tokens],
+        ['Reserved output tokens', budget.output_reserve_tokens],
+        ['Safety reserve tokens', budget.safety_tokens],
+    ] as const;
+    return (
+        <section aria-label="Saved-record reporting diagnostics" className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
+            <p className="text-sm font-medium text-text-1">Saved-record processing</p>
+            <DetailLine label="Processing mode">{summary.mode === 'record_pages' ? 'Bounded record pages' : 'Complete saved input (no batching)'}</DetailLine>
+            {summary.accepted_subset_only ? <p className="rounded-lg bg-warn-soft p-2 text-xs text-warn">
+                Accepted subset only. This explanation does not claim coverage of unresolved or unaccepted source results.
+            </p> : null}
+            <div className="grid min-w-0 gap-1 sm:grid-cols-2">
+                {counts.map(([label, count]) => count !== undefined ? <DetailLine key={label} label={label}>{count}</DetailLine> : null)}
+            </div>
+            <p className="text-xs text-text-3">
+                Input counts include complete document-result objects, not their flattened findings. Saved originals remain authoritative;
+                original sources were not reanalyzed. New call counts apply only to this invocation; checkpoint replays reuse completed stages.
+            </p>
+            <div className="space-y-1 rounded-lg bg-surface-sunken p-3">
+                <p className="text-xs font-medium text-text-2">Last completed or replayed stage context</p>
+                {budget.model_id ? <DetailLine label="Catalog model">{budget.model_id}</DetailLine> : null}
+                <DetailLine label="Limit status">{budget.limit_status ?? 'Unavailable / unverified'}</DetailLine>
+                <DetailLine label="Limit source">{budget.limit_source ?? 'Unavailable'}</DetailLine>
+                {budget.token_estimator ? <DetailLine label="Token estimator">{budget.token_estimator}</DetailLine> : null}
+                {request.map(([label, count]) => count !== undefined && count !== null ? <DetailLine key={label} label={label}>{count}</DetailLine> : null)}
+                {capacity.map(([label, count]) => <DetailLine key={label} label={label}>{count ?? 'Unknown'}</DetailLine>)}
+            </div>
+            <p className="text-xs text-text-3">
+                This is the last stage budget, not all stages. Token estimates describe request size, not billed usage or total-run spend.
+                Unknown limits are not unlimited. There is no total-run token or spending cap.
+            </p>
+        </section>
+    );
+}
+
 function V3ResultExcerpt({
     scope,
     workflowId,
@@ -396,7 +463,7 @@ function V3ResultExcerpt({
                 ) : null}
             </div>
             <p className="text-xs text-text-3">
-                V3 output inspection always reads the exact execution attempt's authoritative output.
+                V3 output inspection always reads the exact execution attempt's authoritative output. Byte excerpts may split JSON records; use Complete records for a collection.
             </p>
             {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
             {page ? (
@@ -419,16 +486,16 @@ function AttemptHistory({
     scope,
     workflowId,
     runId,
-    execution,
+    executionId,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
-    execution: WorkflowExecutionRecord;
+    executionId: string;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
-        fetchWorkflowExecutionAttemptsPage(scope, workflowId, runId, execution.execution_id, cursor, 50, signal),
-    [execution.execution_id, runId, scope, workflowId]);
+        fetchWorkflowExecutionAttemptsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
+    [executionId, runId, scope, workflowId]);
     const page = usePagedResource<WorkflowExecutionAttemptRecord>(loadPage, 'Could not load execution attempts.');
 
     return (
@@ -446,11 +513,15 @@ function AttemptHistory({
             {page.loading ? <p role="status" className="text-xs text-text-3">Loading execution attempts...</p> : null}
             {page.error ? <p role="alert" className="rounded-xl bg-danger-soft p-3 text-xs text-danger">{page.error}</p> : null}
             {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No attempts were recorded for this execution.</p> : null}
-            <ul className="space-y-2" aria-label={`Attempts for execution ${execution.execution_id}`}>
+            <ul className="space-y-2" aria-label={`Attempts for execution ${executionId}`}>
                 {page.items.map((attempt) => {
                     const validation = validationSummary(attempt.workflow_validation);
                     const resultSummary = resultReferenceSummary(attempt.workflow_result?.result_ref);
                     const inputs = attempt.consumed_inputs ?? attempt.workflow_result?.consumed_inputs;
+                    const collectionOutputs = [...new Set([
+                        ...Object.keys(attempt.workflow_result?.outputs ?? {}),
+                        attempt.workflow_result?.authoritative_output ?? '',
+                    ])].filter((name) => ['records', 'documents'].includes(name));
                     return (
                         <li key={`${attempt.execution_id}:${attempt.attempt}`} className="space-y-2 rounded-xl border border-edge p-3">
                             <div className="flex flex-wrap items-center gap-2">
@@ -461,7 +532,12 @@ function AttemptHistory({
                             </div>
                             {validation ? <DetailLine label="Validation"><Pill tone={validationTone(attempt.workflow_validation)}>{validation}</Pill></DetailLine> : null}
                             {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
+                            {attempt.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(attempt.iteration_path)}</DetailLine> : null}
                             <ConsumedInputs inputs={inputs} />
+                            <ReportingDiagnostics value={attempt.workflow_result?.reporting} />
+                            {attempt.workflow_result?.result_ref && collectionOutputs.length ? <CompleteRecords
+                                key={`records:${attempt.execution_id}:${attempt.attempt}`} scope={scope} workflowId={workflowId}
+                                runId={runId} executionId={attempt.execution_id} attempt={attempt.attempt} outputs={collectionOutputs} /> : null}
                             {attempt.workflow_result?.result_ref ? <V3ResultExcerpt
                                 key={`${workflowId}:${runId}:${attempt.execution_id}:${attempt.attempt}`}
                                 scope={scope}
@@ -475,6 +551,141 @@ function AttemptHistory({
                 })}
             </ul>
         </div>
+    );
+}
+
+function RecordPages({ scope, workflowId, runId, executionId, attempt, output }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number; output: string;
+}) {
+    const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
+        fetchWorkflowExecutionRecordsPage(scope, workflowId, runId, executionId, attempt, output, cursor, 100, signal),
+    [attempt, executionId, output, runId, scope, workflowId]);
+    const page = usePagedResource(loadPage, 'Could not read the complete saved records.');
+    const summary = validationSummary(page.metadata?.validation);
+    const coverage = page.metadata?.coverage;
+    return (
+        <div className="space-y-3">
+            <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
+                hasPrevious={page.previousCursors.length > 0} hasNext={Boolean(page.nextCursor)} nextLabel="records" totalCount={page.totalCount} />
+            <p className="text-xs text-text-3">Complete records, at most 100 per page. Pages replace each other; they are never treated as the whole collection.</p>
+            {page.loading ? <p role="status" className="text-xs text-text-3">Loading complete records...</p> : null}
+            {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
+            {summary ? <DetailLine label="Collection validation">{summary}</DetailLine> : null}
+            {coverage ? <div aria-label="Collection coverage" className="text-xs text-text-3">
+                {Object.entries(coverage).filter(([key, value]) =>
+                    ['complete', 'status', 'total', 'completed', 'completed_empty', 'skipped', 'failed', 'pending', 'missing', 'item_count', 'record_count', 'total_items', 'completed_items', 'skipped_items', 'failed_items',
+                        'expected_count', 'processed_count', 'empty_count', 'skipped_count', 'failed_count', 'partial_count'].includes(key) &&
+                    ['boolean', 'number', 'string'].includes(typeof value))
+                    .map(([key, value]) => <p key={key}>{key.replaceAll('_', ' ')}: {String(value)}</p>)}
+            </div> : null}
+            {!page.loading && !page.error ? (
+                <ol className="max-h-96 space-y-2 overflow-auto" aria-label="Complete saved records">
+                    {page.items.map((record, index) => <li key={index} className="min-w-0">
+                        <p className="text-xs text-text-3">Record {(page.metadata?.recordOffset ?? 0) + index + 1}</p>
+                        <pre className="whitespace-pre-wrap break-words rounded-lg bg-surface-sunken p-3 text-xs text-text-2">{JSON.stringify(record, null, 2)}</pre>
+                    </li>)}
+                </ol>
+            ) : null}
+            {!page.loading && !page.error && page.totalCount === 0 ? <p className="text-xs text-text-3">The saved collection is empty. Check its validation and coverage; empty is not the same as missing.</p> : null}
+        </div>
+    );
+}
+
+function CompleteRecords({ scope, workflowId, runId, executionId, attempt, outputs }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number; outputs: string[];
+}) {
+    const [output, setOutput] = useState(outputs[0]);
+    const [open, setOpen] = useState(false);
+    const [provenanceOpen, setProvenanceOpen] = useState(false);
+    return (
+        <section aria-label="Complete record inspection" className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
+            <label className="block text-xs text-text-2">Collection representation
+                <select aria-label="Complete records output" value={output} className="mt-1 w-full rounded-lg border border-edge bg-surface-1 p-2"
+                    onChange={(event) => setOutput(event.target.value)}>
+                    {outputs.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+            </label>
+            <GlassButton size="sm" onClick={() => setOpen(!open)}>{open ? 'Close complete records' : 'Load complete records'}</GlassButton>
+            {open ? <RecordPages key={`${executionId}:${attempt}:${output}`} scope={scope} workflowId={workflowId}
+                runId={runId} executionId={executionId} attempt={attempt} output={output} /> : null}
+            <GlassButton size="sm" onClick={() => setProvenanceOpen(!provenanceOpen)}>{provenanceOpen ? 'Close contributors' : 'Inspect contributors'}</GlassButton>
+            {provenanceOpen ? <ContributorPages key={`contributors:${executionId}:${attempt}`} scope={scope}
+                workflowId={workflowId} runId={runId} executionId={executionId} attempt={attempt} /> : null}
+        </section>
+    );
+}
+
+function ContributorPages({ scope, workflowId, runId, executionId, attempt }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number;
+}) {
+    const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
+        fetchWorkflowExecutionProvenancePage(scope, workflowId, runId, executionId, attempt, cursor, 50, signal),
+    [attempt, executionId, runId, scope, workflowId]);
+    const page = usePagedResource(loadPage, 'Could not read the saved contributor receipts.');
+    return (
+        <section aria-label="Paged contributor inspection" className="space-y-3">
+            <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
+                hasPrevious={page.previousCursors.length > 0} hasNext={Boolean(page.nextCursor)} nextLabel="contributors" totalCount={page.totalCount} />
+            <p className="text-xs text-text-3">Exact producer receipts and zero-based record ranges, at most 50 contributors per page. These identify original data; they are not cached access grants.</p>
+            {page.loading ? <p role="status" className="text-xs text-text-3">Loading contributors...</p> : null}
+            {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
+            {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No contributor receipts were recorded.</p> : null}
+            {page.items.length ? <ul className="space-y-2" aria-label="Saved collection contributors">
+                {page.items.map((item, index) => <li key={index} className="min-w-0 space-y-1 rounded-lg bg-surface-sunken p-3">
+                    <DetailLine label="Producer receipt">{consumedInputSummary(item, index)}</DetailLine>
+                    {item.item_id ? <DetailLine label="Source item">{item.item_id}{item.item_index !== undefined ? ` · index ${item.item_index}` : ''}</DetailLine> : null}
+                    {item.record_offset !== undefined ? <DetailLine label="Collected record offset">{item.record_offset}</DetailLine> : null}
+                    {item.record_count !== undefined ? <DetailLine label="Contributed record count">{item.record_count}</DetailLine> : null}
+                    {item.producer_record_offset !== undefined ? <DetailLine label="Original record offset">{item.producer_record_offset}</DetailLine> : null}
+                    {item.result_ref ? <DetailLine label="Source manifest">{resultReferenceSummary(item.result_ref)}</DetailLine> : null}
+                </li>)}
+            </ul> : null}
+        </section>
+    );
+}
+
+function LoopItemExecutions({ item, scope, workflowId, runId }: {
+    item: WorkflowLoopItemRecord; scope: WorkflowScope; workflowId: string; runId: string;
+}) {
+    const [selected, setSelected] = useState<string | null>(null);
+    return (
+        <>
+            {item.execution_ids?.map((id) => <GlassButton key={id} size="sm" aria-label={`Inspect item execution ${id}`}
+                onClick={() => setSelected(selected === id ? null : id)}><span className="break-all">Inspect execution {id}</span></GlassButton>)}
+            {selected ? <AttemptHistory key={selected} scope={scope} workflowId={workflowId} runId={runId} executionId={selected} /> : null}
+        </>
+    );
+}
+
+function LoopItems({ scope, workflowId, runId, executionId }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string;
+}) {
+    const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
+        fetchWorkflowLoopItemsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
+    [executionId, runId, scope, workflowId]);
+    const page = usePagedResource(loadPage, 'Could not read the frozen loop items.');
+    return (
+        <section className="space-y-3" aria-label="Frozen item inspection">
+            <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
+                hasPrevious={page.previousCursors.length > 0} hasNext={Boolean(page.nextCursor)} nextLabel="items" totalCount={page.totalCount} />
+            <p className="text-xs text-text-3">This loop instance's immutable membership, in frozen order. At most 50 items per page; an item may contribute zero, one, or many records.</p>
+            {page.metadata?.frozenAt ? <DetailLine label="Frozen at">{formatTimestamp(page.metadata.frozenAt)}</DetailLine> : null}
+            {page.metadata?.admittedLimit !== undefined ? <DetailLine label="Frozen admission ceiling">{page.metadata.admittedLimit}</DetailLine> : null}
+            <WorkflowLoopSelectionDetails selection={page.metadata?.selection} frozen />
+            {page.loading ? <p role="status" className="text-xs text-text-3">Loading frozen items...</p> : null}
+            {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
+            {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No frozen items are available for this loop instance.</p> : null}
+            {page.items.length ? <ul className="space-y-3" aria-label="Frozen loop items">
+                {page.items.map((item) => <li key={item.item_id} className="min-w-0 space-y-2 rounded-lg border border-edge p-3">
+                    <div className="flex flex-wrap items-center gap-2"><Pill tone={statusTone(item.state)}>{item.state}</Pill>
+                        <span className="break-words text-sm text-text-2">{item.index + 1}. {item.label}</span></div>
+                    <DetailLine label="Item ID">{item.item_id}</DetailLine>
+                    <DetailLine label="Iteration path">{formatIterationPath(item.iteration_path)}</DetailLine>
+                    {item.record_count !== undefined ? <DetailLine label="Output records">{item.record_count}</DetailLine> : null}
+                    <LoopItemExecutions item={item} scope={scope} workflowId={workflowId} runId={runId} />
+                </li>)}
+            </ul> : null}
+        </section>
     );
 }
 
@@ -534,6 +745,7 @@ function DecisionHistory({
                                         </DetailLine>
                                     ) : null}
                                     {text(decision.input_digest) ? <DetailLine label="Input digest">{text(decision.input_digest)}</DetailLine> : null}
+                                    {decision.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(decision.iteration_path)}</DetailLine> : null}
                                 </li>
                             );
                         })}
@@ -600,7 +812,9 @@ export function WorkflowExecutionHistory({
                                         <div className="flex flex-wrap items-center gap-2">
                                             <RowAction
                                                 icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                                                label={expanded ? `Hide execution attempts for ${executionId}` : `Show execution attempts for ${executionId}`}
+                                                label={execution.node_kind === 'for_each'
+                                                    ? `${expanded ? 'Hide' : 'Show'} frozen items for ${executionId}`
+                                                    : `${expanded ? 'Hide' : 'Show'} execution attempts for ${executionId}`}
                                                 onClick={() => setExpandedExecutionId(expanded ? null : executionId)}
                                             />
                                             <Pill tone={statusTone(execution.state)}>{execution.state || 'unknown'}</Pill>
@@ -622,11 +836,12 @@ export function WorkflowExecutionHistory({
                                         </div>
                                         <ConsumedInputs inputs={inputs} />
                                         {expanded ? (
-                                            <AttemptHistory
+                                            execution.node_kind === 'for_each' ? <LoopItems key={executionId}
+                                                scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} /> : <AttemptHistory
                                                 scope={scope}
                                                 workflowId={workflowId}
                                                 runId={runId}
-                                                execution={execution}
+                                                executionId={executionId}
                                             />
                                         ) : null}
                                     </GlassPanel>

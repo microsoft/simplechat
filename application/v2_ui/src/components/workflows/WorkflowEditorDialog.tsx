@@ -13,10 +13,13 @@ import { WorkflowStructuredList } from './WorkflowStructuredList';
 import {
     convertToStructuredWorkflow,
     defaultFlowPredicate,
+    enclosingFlowLoops,
+    flowTaskNodeId,
     flowUnsupportedReason,
     isFlowBinding,
     isLegacyWorkflowBinding,
     type WorkflowTaskNode,
+    type WorkflowForEachNode,
 } from '../../lib/workflowFlow';
 import {
     createWorkflowTask,
@@ -30,6 +33,7 @@ import {
     sameWorkflowDefinition,
     saveWorkflowDefinition,
     workflowErrorMessage,
+    workflowInputProcessingErrors,
     workflowForSave,
     WORKFLOW_APPROVAL_MESSAGE_LIMIT,
     workflowSchemaErrors,
@@ -141,11 +145,13 @@ function AgentPicker({
     options,
     onChange,
     label = 'Agent',
+    localOnly = false,
 }: {
     value?: WorkflowAgentReference;
     options: WorkflowEditorOptions;
     onChange: (value: WorkflowAgentReference | undefined) => void;
     label?: string;
+    localOnly?: boolean;
 }) {
     const selectedKey = workflowAgentKey(value);
     return (
@@ -159,9 +165,10 @@ function AgentPicker({
             >
                 <option value="">Select an agent</option>
                 {options.agents.map((agent) => (
-                    <option key={workflowAgentKey(agent)} value={workflowAgentKey(agent)}>
+                    <option key={workflowAgentKey(agent)} value={workflowAgentKey(agent)} disabled={localOnly && agent.loop_eligible !== true}>
                         {agent.display_name || agent.name}
                         {agent.is_global ? ' · Provided' : agent.is_group ? ' · Group' : ''}
+                        {localOnly && agent.loop_eligible !== true ? ' · unavailable for locally metered work' : ''}
                     </option>
                 ))}
             </select>
@@ -175,12 +182,14 @@ function ModelPicker({
     options,
     onChange,
     label = 'Model',
+    localOnly = false,
 }: {
     endpointId?: string;
     modelId?: string;
     options: WorkflowEditorOptions;
     onChange: (endpointId: string, modelId: string) => void;
     label?: string;
+    localOnly?: boolean;
 }) {
     const selected = options.models.findIndex((model) =>
         model.endpoint_id === (endpointId ?? '') && model.model_id === (modelId ?? ''));
@@ -199,10 +208,13 @@ function ModelPicker({
                     onChange(model?.endpoint_id ?? '', model?.model_id ?? '');
                 }}
             >
-                <option value="">{defaultInvalid ? `${defaultLabel} · unavailable` : defaultLabel}</option>
+                <option value="" disabled={localOnly && options.default_model?.loop_eligible === false}>
+                    {defaultInvalid || localOnly && options.default_model?.loop_eligible === false ? `${defaultLabel} · unavailable` : defaultLabel}
+                </option>
                 {options.models.map((model, index) => (
-                    <option key={`${index}:${model.endpoint_id}:${model.model_id}`} value={String(index)}>
+                    <option key={`${index}:${model.endpoint_id}:${model.model_id}`} value={String(index)} disabled={localOnly && model.loop_eligible === false}>
                         {model.label} · {model.provider}
+                        {localOnly && model.loop_eligible === false ? ' · unavailable for locally metered work' : ''}
                     </option>
                 ))}
             </select>
@@ -568,10 +580,12 @@ function TaskRunnerFields({
     runner,
     options,
     onChange,
+    localOnly = false,
 }: {
     runner: WorkflowTaskRunner;
     options: WorkflowEditorOptions;
     onChange: (runner: WorkflowTaskRunner) => void;
+    localOnly?: boolean;
 }) {
     return (
         <div className="space-y-3">
@@ -593,6 +607,7 @@ function TaskRunnerFields({
                     label="Task agent"
                     value={runner.selected_agent}
                     options={options}
+                    localOnly={localOnly}
                     onChange={(selectedAgent) => onChange({ type: 'agent', selected_agent: selectedAgent })}
                 />
             ) : null}
@@ -602,9 +617,60 @@ function TaskRunnerFields({
                     endpointId={runner.model_endpoint_id}
                     modelId={runner.model_id}
                     options={options}
+                    localOnly={localOnly}
                     onChange={(endpointId, modelId) => onChange({ type: 'model', model_endpoint_id: endpointId, model_id: modelId })}
                 />
             ) : null}
+            {localOnly ? <p className="text-xs text-text-3">Loops and saved-record reports require locally metered models or eligible local agents. Hosted agents are unavailable; model context limits are checked per task, not a total-run token cap.</p> : null}
+        </div>
+    );
+}
+
+function TaskInputProcessingFields({ task, workflow, options, onChange }: {
+    task: WorkflowTask;
+    workflow: WorkflowDefinition;
+    options: WorkflowEditorOptions;
+    onChange: (task: WorkflowTask) => void;
+}) {
+    const errors = workflowInputProcessingErrors(workflow, task, options);
+    return (
+        <div className="space-y-2 rounded-xl border border-edge p-3">
+            <label className="block text-sm text-text-2">
+                Large saved inputs
+                <select className={`${inputClass} mt-1`} aria-label="Large saved inputs" value={task.input_processing ?? 'full'}
+                    onChange={(event) => {
+                        const mode = event.target.value === 'saved_record_report' ? 'saved_record_report' : 'full';
+                        if (mode === 'full' && task.input_processing === undefined) return;
+                        onChange({
+                            ...task, input_processing: mode,
+                            ...(mode === 'saved_record_report' && task.document_action === undefined
+                                ? { document_action: { type: 'none' as const } } : {}),
+                        });
+                    }}>
+                    {task.input_processing !== undefined && !['full', 'saved_record_report'].includes(task.input_processing)
+                        ? <option value={task.input_processing}>Unsupported saved processing mode</option> : null}
+                    <option value="full">Require full input</option>
+                    <option value="saved_record_report" disabled={workflow.definition_version !== 3 ||
+                        !options.supported_input_processing_modes?.includes('saved_record_report')}>Saved-record report (bounded batches)</option>
+                </select>
+            </label>
+            <p className="text-xs text-text-3">
+                Require full input keeps normal task behavior; unsafe oversized requests pause rather than lose data.
+                Saved-record report reads all records in bounded batches, retains the originals, and produces a qualitative,
+                source-linked explanation. It cannot silently replace arbitrary transforms or quantitative tasks; keep those in Require full input.
+            </p>
+            {task.input_processing === 'saved_record_report' ? <p className="text-xs text-text-3">
+                Requires a text output contract, at least one saved records or document-results input, No document action,
+                no publication, and a locally metered runner. This is an explicit processing choice, not a promise of exact arithmetic or a total-run spending cap.
+            </p> : null}
+            {task.input_processing === 'saved_record_report' && task.document_action === undefined ? (
+                <GlassButton size="sm" onClick={() => onChange({ ...task, document_action: { type: 'none' } })}>
+                    Use no document action
+                </GlassButton>
+            ) : null}
+            {errors.length ? <ul role="alert" className="space-y-1 rounded-lg bg-danger-soft p-3 text-xs text-danger">
+                {errors.map((error) => <li key={error}>{error}</li>)}
+            </ul> : null}
         </div>
     );
 }
@@ -712,7 +778,7 @@ function actionMode(action: WorkflowDocumentAction | undefined): string {
         return 'none';
     }
     if (action.type === 'analyze') {
-        return 'analyze';
+        return action.target_mode === 'current_item' ? 'current_item' : 'analyze';
     }
     if (action.type === 'comparison') {
         return 'comparison';
@@ -741,10 +807,12 @@ function DocumentActionFields({
     scope,
     task,
     onChange,
+    loops = [],
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
     onChange: (task: WorkflowTask) => void;
+    loops?: WorkflowForEachNode[];
 }) {
     const [mode, setMode] = useState(() => actionMode(task.document_action));
     const [evidence, setEvidence] = useState(() => evidenceFromAction(task.document_action));
@@ -767,6 +835,10 @@ function DocumentActionFields({
             onChange({ ...task, document_action: documentActionFromSelection('search', nextEvidence, { mode: 'selected', analysisMode: nextAnalysisMode }) });
         } else if (nextMode === 'analyze') {
             onChange({ ...task, document_action: documentActionFromSelection('analyze', nextEvidence, { mode: 'selected', analysisMode: nextAnalysisMode }) });
+        } else if (nextMode === 'current_item') {
+            const loopId = loops.some((loop) => loop.id === task.document_action?.loop_id)
+                ? task.document_action?.loop_id : loops[loops.length - 1]?.id ?? '';
+            onChange({ ...task, document_action: { type: 'analyze', target_mode: 'current_item', loop_id: loopId, analysis_mode: 'combined' } });
         } else if (nextMode === 'comparison') {
             onChange({ ...task, document_action: comparisonActionFromSelection(nextLeft, nextRight) });
         }
@@ -815,6 +887,7 @@ function DocumentActionFields({
                 >
                     <option value="none">No document action</option>
                     <option value="analyze">Analyze selected evidence</option>
+                    {loops.length || mode === 'current_item' ? <option value="current_item">Analyze current loop document</option> : null}
                     <option value="search_selected">Search selected evidence</option>
                     <option value="search_relevance">Search by relevance</option>
                     <option value="comparison">Compare source and target documents</option>
@@ -827,7 +900,21 @@ function DocumentActionFields({
                     It will be preserved unless you choose a different document action.
                 </p>
             ) : null}
-            {mode !== 'none' && mode !== 'preserve' ? (
+            {mode === 'current_item' ? (
+                <label className="block text-sm text-text-2">
+                    Current document loop
+                    <select className={`${inputClass} mt-1`} aria-label="Current document loop" value={task.document_action?.loop_id ?? ''}
+                        onChange={(event) => onChange({ ...task, document_action: {
+                            type: 'analyze', target_mode: 'current_item', loop_id: event.target.value, analysis_mode: 'combined',
+                        } })}>
+                        {!loops.some((loop) => loop.id === task.document_action?.loop_id)
+                            ? <option value={task.document_action?.loop_id ?? ''}>Unavailable document loop (retained)</option> : null}
+                        {loops.map((loop) => <option key={loop.id} value={loop.id}>{loop.id}</option>)}
+                    </select>
+                    <span className="mt-1 block text-xs text-text-3">Analyzes only this visit's authorized frozen document, with combined analysis. It never repeats the whole selection or trusts a record's document ID.</span>
+                </label>
+            ) : null}
+            {mode !== 'none' && mode !== 'preserve' && mode !== 'current_item' ? (
                 <label className="text-sm text-text-2">
                     Analysis mode
                     <select
@@ -1020,19 +1107,25 @@ function TaskCard({
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
                 <div className="mt-4 space-y-5">
                     {structuredNode ? <TaskPublicationFields task={task} onChange={onChange} /> : null}
-                    {!task.publication ? <TaskRunnerFields runner={task.runner} options={options} onChange={(runner) => onChange({ ...task, runner })} /> : null}
+                    {!task.publication ? <TaskRunnerFields runner={task.runner} options={options}
+                        localOnly={task.input_processing === 'saved_record_report' ||
+                            Boolean(structuredNode && enclosingFlowLoops(workflow, structuredNode.id).length)}
+                        onChange={(runner) => onChange({ ...task, runner })} /> : null}
                     <TaskApprovalFields
                         task={task}
                         durableExecution={durableExecution}
                         onNeedsDurable={onNeedsDurable}
                         onChange={onChange}
                     />
-                    {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange} /> : null}
+                    {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange}
+                        loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} /> : null}
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
                             bindings={(task.inputs ?? []).filter(isFlowBinding)} label={`${task.name} inputs`}
                             onChange={(inputs) => onChange({ ...task, inputs })} />
                     ) : <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />}
+                    {structuredNode && Boolean(options.supported_input_processing_modes?.length) || task.input_processing !== undefined ? <TaskInputProcessingFields task={task}
+                        workflow={workflow} options={options} onChange={onChange} /> : null}
                     <TaskReferences task={task} workflow={workflow} onChange={onChange} />
                     <label className="text-sm text-text-2">
                         Output contract
@@ -1184,9 +1277,12 @@ export function WorkflowEditorDialog({
     const [confirmClose, setConfirmClose] = useState(false);
     const [confirmStructured, setConfirmStructured] = useState(false);
     const [schemaFieldErrors, setSchemaFieldErrors] = useState<Record<string, string>>({});
-    const unsupportedFlow = flowUnsupportedReason(draft);
+    const unsupportedFlow = flowUnsupportedReason(draft, options);
     const unsupported = !(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version) || Boolean(unsupportedFlow);
     const readOnly = unsupported || !options.can_manage;
+    const localRunner = draft.definition_version === 3 && draft.tasks.some((task) =>
+        task.runner.type === 'inherit' && !task.publication &&
+        (task.input_processing === 'saved_record_report' || enclosingFlowLoops(draft, flowTaskNodeId(draft, task.id)).length > 0));
     const dirty = !sameWorkflowDefinition(baseline, draft) ||
         draft.tasks.some((task) => Boolean(schemaFieldErrors[task.id]));
     const preserved = preservedWorkflowFieldLabels(original);
@@ -1399,6 +1495,7 @@ export function WorkflowEditorDialog({
                                 <AgentPicker
                                     value={draft.selected_agent}
                                     options={options}
+                                    localOnly={localRunner}
                                     onChange={(selectedAgent) => setWorkflow((current) => ({ ...current, selected_agent: selectedAgent }))}
                                 />
                             ) : (
@@ -1406,6 +1503,7 @@ export function WorkflowEditorDialog({
                                     endpointId={draft.model_endpoint_id}
                                     modelId={draft.model_id}
                                     options={options}
+                                    localOnly={localRunner}
                                     onChange={(endpointId, modelId) => setWorkflow((current) => ({
                                         ...current,
                                         model_endpoint_id: endpointId,
@@ -1565,7 +1663,7 @@ export function WorkflowEditorDialog({
                                 <p role="status" className="text-xs text-warn">Maximum task count reached for this scope.</p>
                             ) : null}
                             {draft.definition_version === 3 ? (
-                                <WorkflowStructuredList workflow={draft} options={options} onChange={(next) => setWorkflow(next)}
+                                <WorkflowStructuredList workflow={draft} options={options} scope={scope} onChange={(next) => setWorkflow(next)}
                                     renderTask={(task, node, onNodeChange) => (
                                         <TaskCard key={task.id} scope={scope} task={task}
                                             index={draft.tasks.findIndex((item) => item.id === task.id)}

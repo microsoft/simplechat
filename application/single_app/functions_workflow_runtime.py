@@ -132,6 +132,9 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
         raise ValueError("This workflow definition requires a newer execution engine.")
     if current.get("definition_version") == 3:
         compile_workflow_flow(current)
+        from functions_workflow_loop_runners import validate_workflow_loop_runners
+
+        validate_workflow_loop_runners(current, actor_user_id=actor_user_id, settings=settings)
     if request_id is not None and not isinstance(request_id, str):
         raise ValueError("A workflow request identifier must be a UUID string.")
     request_id = str(uuid.UUID(request_id)) if request_id is not None else str(uuid.uuid4())
@@ -157,9 +160,15 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
             if snapshot.get("definition_version") == 3 else
             save_workflow_task_result(current, run_id, "runtime:definition", snapshot, settings=settings)
         )
+    loop_policy = None
+    if snapshot.get("definition_version") == 3:
+        from functions_workflow_limits import get_workflow_loop_item_limit
+
+        loop_policy = {"max_items": get_workflow_loop_item_limit(settings)}
     control = store.initialize(
         snapshot_ref=snapshot_ref, definition_revision=snapshot["definition_revision"],
         actor_user_id=actor_user_id, request_id=request_id,
+        **({"loop_policy": loop_policy} if loop_policy is not None else {}),
     )
     if control["state"] in RUNTIME_TERMINAL_STATES:
         run = services["runs"].read_item(item=run_id, partition_key=services["partition"])
