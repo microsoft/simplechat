@@ -35,7 +35,7 @@ def resume_pending_workflows(
             candidate["status"] = "recovery_required"
             candidate["recovery_reason"] = "A continuation worker stopped before acknowledging its result."
             jobs.replace_item(
-                candidate["id"], body=candidate, partition_key=candidate["user_id"],
+                candidate["id"], body=candidate,
                 etag=candidate["_etag"], match_condition=MatchConditions.IfNotModified,
             )
             log_event(
@@ -70,7 +70,7 @@ def resume_pending_workflows(
         }
         try:
             claimed = jobs.replace_item(
-                candidate["id"], body=claimed, partition_key=candidate["user_id"],
+                candidate["id"], body=claimed,
                 etag=candidate["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         except CosmosHttpResponseError as error:
@@ -90,7 +90,7 @@ def resume_pending_workflows(
             if current.get("_etag") == claimed["_etag"]:
                 current["status"] = "recovery_required"
                 jobs.replace_item(
-                    current["id"], body=current, partition_key=current["user_id"],
+                    current["id"], body=current,
                     etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
                 )
             raise
@@ -99,7 +99,7 @@ def resume_pending_workflows(
             current["status"] = "completed" if result.get("success") else "failed"
             current["completed_at"] = now.isoformat()
             jobs.replace_item(
-                current["id"], body=current, partition_key=current["user_id"],
+                current["id"], body=current,
                 etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         outcomes.append({"request_id": claimed["id"], "result": result})

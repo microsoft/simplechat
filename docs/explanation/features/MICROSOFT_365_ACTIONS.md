@@ -1,9 +1,12 @@
-# Microsoft 365 actions and conversation evidence (v0.261.030)
+# Microsoft 365 actions and conversation evidence (v0.261.031)
 
 Implemented in version: **0.261.029**
 
 Authorization bootstrap and workflow diagnostic handling updated in **0.261.030**.
 See the [CodeQL remediation](../fixes/M365_CODEQL_REMEDIATION_FIX.md).
+
+Cosmos SDK compatibility and streamed execution-context lifetime were corrected
+in **0.261.031**. See the [agent streaming fix](../fixes/M365_AGENT_STREAMING_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.

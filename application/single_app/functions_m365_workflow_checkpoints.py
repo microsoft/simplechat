@@ -94,6 +94,6 @@ def save_m365_task_checkpoint(task_id, task_result):
         },
     }
     jobs.replace_item(
-        record["id"], body=updated, partition_key=context.data_user_id,
+        record["id"], body=updated,
         etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
     )

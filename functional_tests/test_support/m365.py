@@ -1,5 +1,5 @@
 # m365.py
-"""Scoped cloud fakes for Microsoft 365 behavior tests (version 0.261.029)."""
+"""Scoped cloud fakes for Microsoft 365 behavior tests (version 0.261.031)."""
 
 import copy
 import threading
@@ -93,8 +93,10 @@ class CosmosContainer:
                 raise exceptions.CosmosResourceNotFoundError(status_code=404, message="Not found.")
             return copy.deepcopy(self.items[key])
 
-    def replace_item(self, item, body, partition_key, etag, match_condition):
+    def replace_item(self, item, body, *, etag, match_condition):
+        """Match Cosmos replace semantics: partition routing comes from the body."""
         with self.lock:
+            partition_key = body[self.partition_field]
             current = self.read_item(item, partition_key)
             if match_condition != MatchConditions.IfNotModified or current["_etag"] != etag:
                 raise exceptions.CosmosHttpResponseError(status_code=412, message="ETag conflict.")

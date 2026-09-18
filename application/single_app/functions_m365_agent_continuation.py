@@ -1,6 +1,7 @@
 # functions_m365_agent_continuation.py
 """Checkpoint real agent tool history so an approval does not repeat completed calls."""
 
+from contextlib import aclosing
 from contextvars import ContextVar
 from functools import wraps
 import hashlib
@@ -178,7 +179,7 @@ class AgentContinuationJournal:
             self.key: {"run_id": run_id, "fingerprint": self.fingerprint},
         }
         self.jobs.replace_item(
-            job["id"], body=updated, partition_key=self.context.data_user_id,
+            job["id"], body=updated,
             etag=job["_etag"], match_condition=MatchConditions.IfNotModified,
         )
 
@@ -352,16 +353,18 @@ def m365_agent_stream_continuation(function):
         context = get_m365_execution_context()
         args, kwargs = _add_declined_source_notice(args, kwargs)
         if not _needs_journal(context):
-            async for response in function(agent, *args, **kwargs):
-                yield response
+            async with aclosing(function(agent, *args, **kwargs)) as stream:
+                async for response in stream:
+                    yield response
             return
         journal = AgentContinuationJournal(agent, context)
         token = _current_journal.set(journal)
         try:
             args, kwargs = await journal.prepare(args, kwargs)
-            async for response in function(agent, *args, **kwargs):
-                if journal.pending is None:
-                    yield response
+            async with aclosing(function(agent, *args, **kwargs)) as stream:
+                async for response in stream:
+                    if journal.pending is None:
+                        yield response
             await journal.finish()
         finally:
             _current_journal.reset(token)

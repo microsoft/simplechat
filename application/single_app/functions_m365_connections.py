@@ -382,7 +382,7 @@ class M365ConnectionService:
     def _replace(self, previous, updated):
         try:
             return self.container.replace_item(
-                item=previous["id"], body=updated, partition_key=previous["user_id"],
+                item=previous["id"], body=updated,
                 etag=previous["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         except cosmos_exceptions.CosmosHttpResponseError as exc:

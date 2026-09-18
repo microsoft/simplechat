@@ -3228,7 +3228,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         ):
             if doc.get('_etag'):
                 cosmos_user_settings_container.replace_item(
-                    user_id, body=doc, partition_key=user_id,
+                    user_id, body=doc,
                     etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
                 )
             else:

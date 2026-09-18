@@ -159,7 +159,6 @@ def resolve_m365_memory(execution):
         try:
             cosmos_conversations_container.replace_item(
                 conversation["id"], body={**conversation, "m365_working_memory": True},
-                partition_key=context.conversation_id,
                 etag=conversation["_etag"], match_condition=MatchConditions.IfNotModified,
             )
             break

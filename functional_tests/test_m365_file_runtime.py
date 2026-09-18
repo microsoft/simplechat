@@ -1,7 +1,7 @@
 # test_m365_file_runtime.py
 """
 Functional regressions for persisted Microsoft 365 request budgets.
-Version: 0.261.030
+Version: 0.261.031
 Implemented in: 0.261.030
 
 Loads the real resolver with scoped owner/I/O dependencies. Conditional-write
@@ -89,7 +89,7 @@ def test_conditional_conflicts_retry_the_same_budget_with_fresh_etags(runtime, m
     def racing_replace(item, body, **kwargs):
         attempts.append(body["memory_budget_run_id"])
         if len(attempts) <= conflicts:
-            current = runtime.jobs.read_item(item, kwargs["partition_key"])
+            current = runtime.jobs.read_item(item, body["user_id"])
             runtime.jobs.upsert_item({**current, "other_worker_progress": len(attempts)})
             raise CosmosHttpResponseError(status_code=412)
         return replace(item, body, **kwargs)
@@ -122,7 +122,7 @@ def test_conflict_cannot_switch_to_another_request_budget(runtime, monkeypatch):
     seed_request(runtime)
 
     def conflicting_budget(item, body, **kwargs):
-        current = runtime.jobs.read_item(item, kwargs["partition_key"])
+        current = runtime.jobs.read_item(item, body["user_id"])
         runtime.jobs.upsert_item({**current, "memory_budget_run_id": "different-budget"})
         raise CosmosHttpResponseError(status_code=412)
 

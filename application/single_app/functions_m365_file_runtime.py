@@ -84,7 +84,7 @@ def resolve_m365_budget_run(context) -> str:
         completed.pop("memory_budget_initializing", None)
         try:
             container.replace_item(
-                record["id"], body=completed, partition_key=context.data_user_id,
+                record["id"], body=completed,
                 etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
             )
             g.m365_has_pending_record = True

@@ -1,4 +1,5 @@
 # agent_logging_chat_completion.py
+from contextlib import aclosing
 import json
 import logging
 from pydantic import Field
@@ -213,8 +214,9 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     
     @m365_agent_stream_continuation
     async def invoke_stream(self, *args, **kwargs):
-        async for response in super().invoke_stream(*args, **kwargs):
-            yield response
+        async with aclosing(super().invoke_stream(*args, **kwargs)) as stream:
+            async for response in stream:
+                yield response
 
     def _capture_tool_invocations_simplified(self, args, response):
         """

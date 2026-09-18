@@ -207,7 +207,7 @@ def initialize_m365_chat_context(user_id, conversation_id, *, allow_new=False):
             raise M365PolicyError("m365_request_changed", "The pending request changed or has already completed.")
         claimed = {**job, "status": "running"}
         cosmos_m365_execution_runs_container.replace_item(
-            job["id"], body=claimed, partition_key=user_id,
+            job["id"], body=claimed,
             etag=job["_etag"], match_condition=MatchConditions.IfNotModified,
         )
         g.m365_has_pending_record = True
@@ -881,7 +881,7 @@ def _save_m365_wait_record(record, prior, context):
     try:
         if prior:
             cosmos_m365_execution_runs_container.replace_item(
-                record["id"], body=record, partition_key=context.data_user_id,
+                record["id"], body=record,
                 etag=prior["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         else:
@@ -910,7 +910,7 @@ def complete_m365_request(*, success=True):
     record.pop("payload", None)
     record.pop("request_fingerprint", None)
     cosmos_m365_execution_runs_container.replace_item(
-        record["id"], body=record, partition_key=context.data_user_id,
+        record["id"], body=record,
         etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
     )
     if record.get("approval_id"):
@@ -940,7 +940,7 @@ def cancel_m365_workflow_requests(workflow_id, run_id):
         record.pop("payload", None)
         record.pop("request_fingerprint", None)
         jobs.replace_item(
-            record["id"], body=record, partition_key=record["user_id"],
+            record["id"], body=record,
             etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
         )
         if record.get("approval_id"):

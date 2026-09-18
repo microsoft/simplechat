@@ -344,7 +344,7 @@ class M365ApprovalService:
         try:
             return self.container.replace_item(
                 item=approval["id"], body=updated,
-                partition_key=approval["group_id"], etag=approval["_etag"],
+                etag=approval["_etag"],
                 match_condition=MatchConditions.IfNotModified,
             )
         except cosmos_exceptions.CosmosHttpResponseError as exc:
@@ -895,7 +895,7 @@ class M365ApprovalService:
         }
         try:
             self.container.replace_item(
-                item=approval_id, body=updated, partition_key=subject_user_id,
+                item=approval_id, body=updated,
                 etag=approval["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         except cosmos_exceptions.CosmosHttpResponseError as exc:

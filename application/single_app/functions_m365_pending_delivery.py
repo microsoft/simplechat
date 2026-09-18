@@ -50,7 +50,7 @@ def notify_m365_pending_delivery(action):
         return
     latest["m365_notification_pending"] = False
     container.replace_item(
-        latest["id"], body=latest, partition_key=latest["user_id"],
+        latest["id"], body=latest,
         etag=latest["_etag"], match_condition=MatchConditions.IfNotModified,
     )
 
@@ -114,7 +114,7 @@ def dispatch_m365_pending_delivery(user_id, action_id, *, cancel=False):
         claimed["delivery_note"] = "Automatic delivery stopped. An existing Outlook draft is not deleted."
     try:
         claimed = container.replace_item(
-            action_id, body=claimed, partition_key=user_id,
+            action_id, body=claimed,
             etag=action["_etag"], match_condition=MatchConditions.IfNotModified,
         )
     except CosmosHttpResponseError as error:
@@ -177,7 +177,7 @@ def dispatch_m365_pending_delivery(user_id, action_id, *, cancel=False):
             {"action_id": action_id, "error_code": code, "status": completed["status"]},
         )
     saved = container.replace_item(
-        action_id, body=completed, partition_key=user_id,
+        action_id, body=completed,
         etag=claimed["_etag"], match_condition=MatchConditions.IfNotModified,
     )
     notify_m365_pending_delivery(saved)
@@ -217,7 +217,7 @@ def dispatch_due_m365_deliveries(*, limit=25):
             )
             try:
                 container.replace_item(
-                    action["id"], body=action, partition_key=action["user_id"],
+                    action["id"], body=action,
                     etag=action["_etag"], match_condition=MatchConditions.IfNotModified,
                 )
             except CosmosHttpResponseError as error:

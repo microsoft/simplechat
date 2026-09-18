@@ -88,7 +88,7 @@ def _queue_chat_job(job, user_id):
     }
     try:
         jobs.replace_item(
-            request_id, body=queued, partition_key=user_id,
+            request_id, body=queued,
             etag=job["_etag"], match_condition=MatchConditions.IfNotModified,
         )
     except CosmosHttpResponseError as error:
@@ -103,7 +103,7 @@ def _queue_chat_job(job, user_id):
         if latest.get("status") == "ready_to_resume" and latest.get("resume_queue_id") == queue_id:
             latest["status"] = job["status"]
             jobs.replace_item(
-                request_id, body=latest, partition_key=user_id,
+                request_id, body=latest,
                 etag=latest["_etag"], match_condition=MatchConditions.IfNotModified,
             )
         raise
@@ -155,7 +155,7 @@ def _execute_chat_continuation(app, cookie_header, job):
                 else "recovery_required"
             )
             jobs.replace_item(
-                latest["id"], body=latest, partition_key=latest["user_id"],
+                latest["id"], body=latest,
                 etag=latest["_etag"], match_condition=MatchConditions.IfNotModified,
             )
             if latest.get("approval_id"):

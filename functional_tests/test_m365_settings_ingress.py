@@ -1,7 +1,7 @@
 # test_m365_settings_ingress.py
 """
 Regression tests for retired Graph actions at the generic settings boundary.
-Version: 0.261.029
+Version: 0.261.031
 Implemented in: 0.261.029
 
 Executes the production writer with isolated storage/cache I/O and the real
@@ -80,11 +80,11 @@ def test_existing_exact_legacy_entry_remains_editable():
 ])
 def test_concurrent_removal_cannot_be_undone_by_a_stale_settings_write(changes):
     class Container(CosmosContainer):
-        def replace_item(self, item, body, partition_key, **kwargs):
-            latest = self.read_item(item, partition_key)
+        def replace_item(self, item, body, **kwargs):
+            latest = self.read_item(item, body[self.partition_field])
             latest["settings"]["plugins"] = []
             self.upsert_item(body=latest)
-            return super().replace_item(item, body, partition_key, **kwargs)
+            return super().replace_item(item, body, **kwargs)
 
     container = Container("id")
     container.create_item(body={

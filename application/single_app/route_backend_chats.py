@@ -128,6 +128,7 @@ from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
 from functions_chat_stream_events import build_user_message_persisted_stream_event
+from functions_async_stream import SyncAsyncStream
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -24274,38 +24275,39 @@ def register_route_backend_chats(bp):
                                         )
                                     else:
                                         agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
-                                    while True:
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
-                                        try:
-                                            response = loop.run_until_complete(agent_stream.__anext__())
-                                        except StopAsyncIteration:
-                                            break
+                                    with SyncAsyncStream(agent_stream, loop) as stream_reader:
+                                        while True:
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
+                                            try:
+                                                response = next(stream_reader)
+                                            except StopIteration:
+                                                break
 
-                                        response_metadata = getattr(response, 'metadata', None)
-                                        if isinstance(response_metadata, dict):
-                                            usage = response_metadata.get('usage')
-                                            if usage:
-                                                stream_usage = usage
-                                            response_model = response_metadata.get('model')
-                                            if isinstance(response_model, str) and response_model.strip():
-                                                actual_model_used = response_model.strip()
+                                            response_metadata = getattr(response, 'metadata', None)
+                                            if isinstance(response_metadata, dict):
+                                                usage = response_metadata.get('usage')
+                                                if usage:
+                                                    stream_usage = usage
+                                                response_model = response_metadata.get('model')
+                                                if isinstance(response_model, str) and response_model.strip():
+                                                    actual_model_used = response_model.strip()
 
-                                        chunk_content = None
-                                        if hasattr(response, 'content') and response.content:
-                                            chunk_content = str(response.content)
-                                        elif isinstance(response, str) and response:
-                                            chunk_content = response
+                                            chunk_content = None
+                                            if hasattr(response, 'content') and response.content:
+                                                chunk_content = str(response.content)
+                                            elif isinstance(response, str) and response:
+                                                chunk_content = response
 
-                                        if chunk_content:
-                                            accumulated_content += chunk_content
-                                            if not suppress_streamed_file_payload:
-                                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            if chunk_content:
+                                                accumulated_content += chunk_content
+                                                if not suppress_streamed_file_payload:
+                                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -24346,7 +24348,18 @@ def register_route_backend_chats(bp):
                                 f"retried={agent_retry_plan is not None} | error={stream_error}"
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
-                            traceback.print_exc()
+                            log_event(
+                                "[STREAMING] Agent streaming failed.",
+                                extra={
+                                    "user_id": user_id,
+                                    "conversation_id": conversation_id,
+                                    "agent_name": agent_name_used,
+                                    "exception_type": type(stream_error).__name__,
+                                    "retried": agent_retry_plan is not None,
+                                },
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
