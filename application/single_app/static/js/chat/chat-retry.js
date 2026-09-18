@@ -264,8 +264,18 @@ window.executeMessageRetry = function() {
         // Model mode - get model and reasoning effort
         const retryModelSelect = document.getElementById('retry-model-select');
         const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
-        const selectedModel = selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
+        const selectedModel = selectedOption?.dataset?.requestModel
+            || selectedOption?.dataset?.deploymentName
+            || (retryModelSelect ? retryModelSelect.value : null);
         requestBody.model = selectedModel;
+        requestBody.model_id = selectedOption?.dataset?.modelId || null;
+        requestBody.model_endpoint_id = selectedOption?.dataset?.endpointId || null;
+        requestBody.model_provider = selectedOption?.dataset?.provider || null;
+        try {
+            requestBody.model_icon = JSON.parse(selectedOption?.dataset?.modelIcon || '{}');
+        } catch (error) {
+            requestBody.model_icon = {};
+        }
         
         let reasoningEffort = null;
         const retryReasoningContainer = document.getElementById('retry-reasoning-container');

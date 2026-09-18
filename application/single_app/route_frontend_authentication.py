@@ -172,6 +172,7 @@ def register_route_frontend_authentication(bp):
         session.pop("last_activity_epoch", None)
         clear_requested_oauth_scopes()
 
+        select_account = request.args.get('select_account') == '1'
         is_teams_login = request.args.get('teams', 'false').lower() == 'true'
         if is_teams_login and ENABLE_TEAMS_SSO:
             settings = get_settings() or {}
@@ -213,10 +214,14 @@ def register_route_frontend_authentication(bp):
         debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
         debug_print(f"Using redirect_uri for Azure AD: {redirect_uri}")
 
-        auth_url = msal_app.get_authorization_request_url(
-            scopes=SCOPE, # Use SCOPE from config (includes offline_access)
-            redirect_uri=redirect_uri
-        )
+        authorization_request = {
+            "scopes": SCOPE,
+            "redirect_uri": redirect_uri,
+        }
+        if select_account:
+            authorization_request["prompt"] = "select_account"
+
+        auth_url = msal_app.get_authorization_request_url(**authorization_request)
         print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
