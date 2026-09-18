@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.029"
+version: "0.261.032"
 ---
 
 ## Choose the right action
@@ -52,6 +52,24 @@ Declining a source lets the request continue without that source. Private
 single-user chats do not require a sharing acknowledgement merely because
 they use a group workspace.
 
+## Connect from a conversation
+
+When a selected Microsoft 365 action needs fresh source access, Chat checks the
+current user's delegated permissions before asking the model to answer.
+Missing access pauses the request and offers **Connect Microsoft 365** with
+the relevant sources. Use that button to sign in and review Microsoft's
+permission consent; there is no need to open Profile first.
+
+After successful sign-in, SimpleChat returns to the original conversation and
+queues its saved request. The authorization code and token cache stay in the
+server-side login flow, not in browser storage or the conversation. Sign in as
+the same tenant account that started the request.
+
+The **workflow connection** status in Profile applies to unattended workflow
+access. A disconnected workflow account does not mean interactive chat is
+disabled. Reloading already-published file evidence also does not require a
+fresh source sign-in.
+
 ## Share evidence deliberately
 
 A sharing acknowledgement covers **retained source evidence, not only the final
@@ -95,10 +113,16 @@ Use the Profile Microsoft 365 connection controls for explicit background
 access. Saved workflow connections require configured Key Vault protection;
 normal interactive actions do not.
 
-Connections start with read permissions. In **Additional workflow permissions**,
-explicitly select invitations, draft management, sending mail, or recipient lookup
-when your enabled action operations need them. Manual mail drafts need both draft
-management and sending permissions before they can be sent.
+Choose the sources once; there is no second set of permission checkboxes.
+Calendar includes events, invitations, timezone, and recipient lookup. Email
+includes reading, drafts/read state, sending, and recipient lookup. OneDrive
+and SharePoint include file discovery and reading. Review these permissions
+on Microsoft's consent page.
+
+Granting a source bundle does not enable disabled agent capabilities or approve
+an outgoing message. Existing action limits, delivery review, and workflow
+Run as approval remain separate. Older read-only connections need an explicit
+reconnect before workflows can use newly requested write permissions.
 
 Select the **Microsoft 365 Run as** account on the workflow. That person must
 approve the workflow's sources, instructions, and destinations. Material edits

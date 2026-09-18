@@ -81,16 +81,6 @@
             }
         }
 
-        function updateOptionalPermissions() {
-            const sources = new Set(Array.from(root.querySelectorAll('[data-m365-connect-source]:checked')).map(input => input.dataset.m365ConnectSource));
-            root.querySelectorAll('[data-m365-extra-scope]').forEach(input => {
-                input.disabled = !input.dataset.m365ExtraSources.split(' ').some(source => sources.has(source));
-                if (input.disabled) {
-                    input.checked = false;
-                }
-            });
-        }
-
         async function loadConnection() {
             const fields = document.getElementById('m365-connection-fields');
             fields.disabled = true;
@@ -121,11 +111,6 @@
                 root.querySelectorAll('[data-m365-connect-source]').forEach(checkbox => {
                     checkbox.checked = (connection?.sources || []).includes(checkbox.dataset.m365ConnectSource);
                 });
-                const grantedScopes = new Set((connection?.authorized_scopes || []).map(scope => scope.split('/').pop().toLowerCase()));
-                root.querySelectorAll('[data-m365-extra-scope]').forEach(input => {
-                    input.checked = grantedScopes.has(input.dataset.m365ExtraScope.toLowerCase());
-                });
-                updateOptionalPermissions();
                 fields.disabled = false;
                 document.getElementById('m365-connect-btn').textContent = connection?.id ? 'Reconnect Microsoft 365 for workflows' : 'Connect Microsoft 365 for workflows';
                 document.getElementById('m365-disconnect-btn').disabled = !connection?.id || status === 'disconnected';
@@ -143,9 +128,7 @@
                 if (!sources.length) {
                     throw new Error('Select at least one source to connect for workflows.');
                 }
-                const scopes = Array.from(root.querySelectorAll('[data-m365-extra-scope]:checked')).map(input => input.dataset.m365ExtraScope);
-                const body = scopes.length ? { sources, scopes } : { sources };
-                const result = await api.requestJson('/api/m365/connections/connect', { method: 'POST', body });
+                const result = await api.requestJson('/api/m365/connections/connect', { method: 'POST', body: { sources } });
                 const target = new URL(result.authorization_url);
                 if (target.protocol !== 'https:' || !target.hostname || target.username || target.password) {
                     throw new Error('The server did not return a valid Microsoft 365 sign-in URL.');
@@ -271,9 +254,6 @@
         });
         document.getElementById('m365-preferences-form').addEventListener('submit', savePreferences);
         document.getElementById('m365-connect-btn').addEventListener('click', connect);
-        root.querySelectorAll('[data-m365-connect-source]').forEach(input => {
-            input.addEventListener('change', updateOptionalPermissions);
-        });
         document.getElementById('m365-revoke-confirm').addEventListener('click', revoke);
         document.getElementById('m365-profile-refresh').addEventListener('click', refresh);
         document.getElementById('m365-bindings-more').addEventListener('click', () => loadBindings(true));

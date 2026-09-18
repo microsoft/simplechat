@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.030
+Version: 0.261.032
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -165,18 +165,18 @@ class M365ConnectionTests(unittest.TestCase):
         self.clients.append(client)
         return client
 
-    def begin(self, sources=None):
+    def begin(self, sources=None, scopes=None):
         result = self.service.start_connection(
             "user-a", "tenant-a", sources or ["email"],
             f"https://simplechat.example.test{connections.CONNECTION_CALLBACK_PATH}",
-            "session-binding-for-user-a",
+            "session-binding-for-user-a", scopes=scopes,
         )
         query = parse_qs(urlsplit(result["authorization_url"]).query)
         self.http.nonce = query["nonce"][0]
         return result, query
 
-    def connect(self, sources=None):
-        started, query = self.begin(sources)
+    def connect(self, sources=None, scopes=None):
+        started, query = self.begin(sources, scopes)
         connected = self.service.complete_connection(
             "user-a", "tenant-a", {"state": query["state"][0], "code": "one-use-code"},
             "session-binding-for-user-a",
@@ -521,7 +521,7 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(no_match["error"], "m365_account_mismatch")
 
     def test_missing_workflow_scopes_return_safe_reconnect_requirements(self):
-        connected, _started, _query = self.connect()
+        connected, _started, _query = self.connect(scopes=["Mail.Read"])
         ctx = self.workflow(connected)
         missing = connections.get_m365_access_token(["Mail.Send"], context=ctx)
         self.assertEqual(missing["error"], "m365_consent_required")
@@ -534,6 +534,170 @@ class M365ConnectionTests(unittest.TestCase):
                 f"https://simplechat.example.test{connections.CONNECTION_CALLBACK_PATH}",
                 "session-binding-for-user-a", scopes=["SecurityEvents.Read.All"],
             )
+
+    def test_source_selection_includes_all_supported_operations_without_extra_checkboxes(self):
+        expected = {
+            "calendar": {"Calendars.Read", "Calendars.ReadWrite", "MailboxSettings.Read", "User.ReadBasic.All"},
+            "email": {"Mail.Read", "Mail.ReadWrite", "Mail.Send", "User.ReadBasic.All"},
+            "onedrive": {"Files.Read.All", "Sites.Read.All"},
+            "spo": {"Files.Read.All", "Sites.Read.All"},
+        }
+        for source, scopes in expected.items():
+            with self.subTest(source=source):
+                _started, query = self.begin([source])
+                granted = {value.rsplit("/", 1)[-1] for value in query["scope"][0].split()}
+                self.assertTrue(scopes.issubset(granted))
+                if source in {"onedrive", "spo"}:
+                    self.assertNotIn("Mail.Send", granted)
+                    self.assertNotIn("Calendars.ReadWrite", granted)
+
+    def begin_chat(self):
+        session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+        result = self.service.start_chat_connection(
+            "user-a", "tenant-a", "chat-request", "chat-conversation",
+            ["User.Read", "Files.Read.All", "Sites.Read.All"],
+            f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+        )
+        query = parse_qs(urlsplit(result["authorization_url"]).query)
+        self.http.nonce = query["nonce"][0]
+        return result, query
+
+    def test_chat_connection_uses_real_pkce_and_session_cache_without_workflow_storage_or_key_vault(self):
+        self.service.key_provider = Mock(side_effect=AssertionError("Interactive chat does not require Key Vault."))
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        with app.test_request_context():
+            started, query = self.begin_chat()
+            original_user = copy.deepcopy(session["user"])
+            completed = self.service.complete_chat_connection(
+                "user-a", "tenant-a", {"state": query["state"][0], "code": "chat-code"},
+            )
+            cached = session["token_cache"]
+            current_user = copy.deepcopy(session["user"])
+            flow_present = connections.CHAT_AUTH_SESSION_KEY in session
+            token = connections.get_m365_access_token(["Files.Read.All"], include_auth_url=False)
+            with self.assertRaises(connections.M365ConnectionError) as replay:
+                self.service.complete_chat_connection(
+                    "user-a", "tenant-a", {"state": query["state"][0], "code": "chat-code"},
+                )
+        self.assertEqual(completed, {"request_id": "chat-request", "conversation_id": "chat-conversation"})
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertTrue(query["state"][0].startswith(connections.CHAT_AUTH_STATE_PREFIX))
+        self.assertIn("code_verifier", self.http.posts[0])
+        self.assertIn("refresh-token-must-stay-server-side", cached)
+        self.assertNotIn("access-token-must-stay-server-side", json.dumps(started))
+        self.assertNotIn("access-token-must-stay-server-side", json.dumps(completed))
+        self.assertIn("access_token", token)
+        self.assertEqual(current_user, original_user)
+        self.assertFalse(flow_present)
+        self.assertEqual(replay.exception.code, "m365_auth_state_invalid")
+        self.assertEqual(self.container.items, {})
+        self.assertEqual(self.approval_container.items, {})
+        self.service.key_provider.assert_not_called()
+
+    def test_chat_connection_rejects_wrong_user_tenant_nonce_and_guest_claims(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        for claims in ({"oid": "another-user"}, {"tid": "another-tenant"}, {"acct": 1}, {"nonce": "wrong"}):
+            with self.subTest(claims=claims), app.test_request_context():
+                _started, query = self.begin_chat()
+                self.http.claim_overrides = claims
+                with self.assertRaises(connections.M365ConnectionError):
+                    self.service.complete_chat_connection(
+                        "user-a", "tenant-a", {"state": query["state"][0], "code": "wrong-account"},
+                    )
+                self.assertNotIn("token_cache", session)
+                self.http.claim_overrides = {}
+
+    def test_chat_connection_expiry_and_cross_session_callbacks_fail_before_token_exchange(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        with app.test_request_context():
+            _started, query = self.begin_chat()
+            self.clock.advance(seconds=connections.AUTH_FLOW_SECONDS + 1)
+            with self.assertRaises(connections.M365ConnectionError) as expired:
+                self.service.complete_chat_connection(
+                    "user-a", "tenant-a", {"state": query["state"][0], "code": "expired"},
+                )
+        with app.test_request_context():
+            session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+            with self.assertRaises(connections.M365ConnectionError) as absent:
+                self.service.complete_chat_connection(
+                    "user-a", "tenant-a", {"state": query["state"][0], "code": "another-session"},
+                )
+        self.assertEqual(expired.exception.code, "m365_auth_state_invalid")
+        self.assertEqual(absent.exception.code, "m365_auth_state_invalid")
+        self.assertEqual(self.http.posts, [])
+
+    def test_chat_callback_rejects_malformed_state_without_consuming_the_valid_flow(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        with app.test_request_context():
+            _started, query = self.begin_chat()
+            for state in ("m365-chat-short", "m365-chat-" + "\u00e9" * 43, "m365-chat-" + "a" * 200):
+                with self.subTest(state_length=len(state)), self.assertRaises(connections.M365ConnectionError) as raised:
+                    self.service.complete_chat_connection("user-a", "tenant-a", {"state": state, "code": "invalid"})
+                self.assertEqual(raised.exception.code, "m365_auth_state_invalid")
+            saved_state = session[connections.CHAT_AUTH_SESSION_KEY]["flow"]["state"]
+        self.assertEqual(saved_state, query["state"][0])
+        self.assertEqual(self.http.posts, [])
+
+    def test_chat_preflight_prompts_for_selected_remote_sources_before_model_execution(self):
+        context = execution.M365ExecutionContext("user-a", "user-a", "tenant-a", request_id="request")
+        manifests = [
+            {"id": "calendar", "type": "m365_calendar"},
+            {"id": "files", "type": "m365_sharepoint"},
+            {"id": "native", "type": "custom"},
+        ]
+        with patch.object(connections, "get_m365_access_token", return_value={
+            "error": "interactive_auth_required", "message": "Connect first.",
+        }) as acquire:
+            with self.assertRaises(connections.M365SignInRequired) as pending:
+                connections.preflight_m365_chat_authentication(manifests, context)
+        self.assertEqual(pending.exception.payload["sources"], ["calendar", "spo"])
+        self.assertIn("Calendars.ReadWrite", pending.exception.payload["scopes"])
+        self.assertIn("Files.Read.All", pending.exception.payload["scopes"])
+        self.assertNotIn("Mail.Send", pending.exception.payload["scopes"])
+        self.assertIs(acquire.call_args.kwargs["context"], context)
+        self.assertFalse(acquire.call_args.kwargs["include_auth_url"])
+
+    def test_snapshot_only_preflight_does_not_force_a_remote_connection(self):
+        context = execution.M365ExecutionContext("user-a", "user-a", "tenant-a", request_id="request")
+        with patch.object(connections, "get_m365_access_token") as acquire:
+            result = connections.preflight_m365_chat_authentication([{
+                "id": "files", "type": "m365_sharepoint", "enabled_functions": ["read_file_chunk", "analyze_file"],
+            }], context)
+        self.assertIsNone(result)
+        acquire.assert_not_called()
+
+    def test_chat_preflight_recovers_empty_or_invalid_session_cache_with_explicit_connection(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        context = execution.M365ExecutionContext("user-a", "user-a", "tenant-a", request_id="request")
+        for cache in ("{}", "invalid-cache"):
+            with self.subTest(cache=cache), app.test_request_context():
+                session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+                session["token_cache"] = cache
+                with self.assertRaises(connections.M365SignInRequired) as pending:
+                    connections.preflight_m365_chat_authentication([{
+                        "id": "calendar", "type": "m365_calendar",
+                    }], context)
+                self.assertEqual(pending.exception.payload["sources"], ["calendar"])
+                self.assertTrue(pending.exception.payload["auth_required"])
+                self.assertEqual(session["token_cache"], cache)
+        self.assertEqual(self.http.posts, [])
+
+    def test_profile_connection_can_publish_only_its_verified_cache_to_the_live_session(self):
+        _started, query = self.begin()
+        cache_writer = Mock()
+        result = self.service.complete_connection(
+            "user-a", "tenant-a", {"state": query["state"][0], "code": "profile-code"},
+            "session-binding-for-user-a", cache_writer=cache_writer,
+        )
+        self.assertEqual(result["status"], "connected")
+        cache_writer.assert_called_once()
+        self.assertIn("refresh-token-must-stay-server-side", cache_writer.call_args.args[0])
+        self.assertNotIn("refresh-token-must-stay-server-side", json.dumps(result))
 
     def test_corrupt_serialized_cache_does_not_become_an_empty_signed_in_cache(self):
         for serialized in ("[]", "not-json", '{"Account": []}', '{"RefreshToken": {"entry": "invalid"}}'):

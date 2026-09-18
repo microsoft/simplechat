@@ -41,6 +41,7 @@ from functions_m365_operations import (
     M365_ACTION_DEFINITIONS,
     M365_LEGACY_OPERATION_SOURCES,
 )
+from functions_m365_connections import preflight_m365_chat_authentication
 from functions_m365_workflow_binding import workflow_execution_fingerprint
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 
@@ -243,6 +244,7 @@ def preflight_m365_manifests(manifests):
     context = get_m365_execution_context()
     if context is not None and context.action_configs:
         ensure_m365_execution_record(context)
+        preflight_m365_chat_authentication(permitted, context)
     return permitted
 
 
@@ -742,7 +744,11 @@ def record_m365_auth_wait(error, *, user_message_id=None):
         create_notification(
             user_id=context.data_user_id, notification_type="system_announcement",
             title="Microsoft 365 sign-in required",
-            message="Your Microsoft 365 request is paused. Review it in Approvals or reconnect your workflow account in Profile.",
+            message=(
+                "Your Microsoft 365 workflow is paused. Review it in Approvals or reconnect its account in Profile."
+                if context.workflow_id else
+                "Your Microsoft 365 chat request is paused. Connect in the conversation or Approvals, then resume it."
+            ),
             link_url="/approvals",
             metadata={"m365_request_id": context.request_id, "workflow_id": context.workflow_id},
         )

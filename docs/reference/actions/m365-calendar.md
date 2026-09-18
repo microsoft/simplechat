@@ -4,7 +4,7 @@ title: "Microsoft 365 Calendar"
 description: "Read calendar context and prepare invitations using delegated Microsoft 365 access."
 section: "Reference"
 audience: user
-version: "0.261.029"
+version: "0.261.032"
 ---
 
 <!-- action-slug: m365-calendar -->
@@ -24,6 +24,11 @@ to share calendar context does not replace invitation approval.
 Create a **Microsoft 365 Calendar** action, enable the required capabilities,
 and assign it to an agent. Choose conservative invitation delivery settings if
 users should review invitations before sending.
+
+Chat offers **Connect Microsoft 365** before model execution when Calendar
+consent is missing. Selecting Calendar requests its event, invitation,
+timezone, and recipient-lookup permission bundle in one consent flow.
+This does not enable invitation capabilities that the action owner disabled.
 
 Microsoft Entra consent is separate from SimpleChat's sharing acknowledgement.
 In a shared conversation, the acknowledgement explains that calendar context

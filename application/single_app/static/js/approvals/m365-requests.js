@@ -25,6 +25,12 @@
                     link.className = 'btn btn-outline-primary btn-sm';
                     link.textContent = 'Review Microsoft 365 connection';
                     row.appendChild(link);
+                } else if (item.status === 'awaiting_sign_in' && window.SimpleChatM365Connect) {
+                    window.SimpleChatM365Connect.renderPrompt(row, {
+                        ...item,
+                        m365_request_id: item.id,
+                        message: 'Connect Microsoft 365 to continue this saved chat request.'
+                    });
                 } else if (item.status !== 'recovery_required') {
                     const button = document.createElement('button');
                     button.type = 'button';
@@ -38,21 +44,17 @@
                                 { method: 'POST', body: {} },
                             );
                             if (result.auth_required) {
-                                const signInUrl = result.auth_url || result.consent_url;
-                                if (!signInUrl) {
-                                    label.textContent = result.message || 'Sign in to SimpleChat again, then resume this request.';
-                                    label.className = 'alert alert-warning';
-                                    return;
+                                label.textContent = result.message || 'Connect Microsoft 365 to continue this saved chat request.';
+                                label.className = 'alert alert-warning';
+                                row.querySelector('.m365-connect-prompt')?.remove();
+                                if (window.SimpleChatM365Connect) {
+                                    window.SimpleChatM365Connect.renderPrompt(row, {
+                                        ...result,
+                                        sources: result.sources || item.sources,
+                                        m365_request_id: item.id
+                                    });
+                                    button.remove();
                                 }
-                                const link = document.createElement('a');
-                                const authUrl = new URL(signInUrl);
-                                if (authUrl.protocol !== 'https:') {
-                                    throw new Error('The sign-in link is invalid.');
-                                }
-                                link.href = authUrl.href;
-                                link.className = 'btn btn-primary btn-sm ms-2';
-                                link.textContent = 'Sign in to Microsoft 365';
-                                row.appendChild(link);
                             } else {
                                 label.textContent = 'Request queued. Its result will appear in the original conversation.';
                                 label.className = 'alert alert-info';

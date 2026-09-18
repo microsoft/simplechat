@@ -18,7 +18,7 @@ class M365SignInRequired(M365PolicyError):
     def __init__(self, code, details=None):
         details = details or {}
         safe = {
-            key: details[key] for key in ("scopes", "auth_url", "consent_url", "profile_url")
+            key: details[key] for key in ("scopes", "sources", "auth_url", "consent_url", "profile_url")
             if key in details
         }
         super().__init__(

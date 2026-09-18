@@ -29,6 +29,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from flask import has_request_context, session
 
 from functions_m365_context import get_m365_execution_context
+from functions_m365_operations import M365_ACTION_DEFINITIONS, get_m365_remote_function_names
+from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
 from functions_m365_approvals import (
     M365ApprovalRequired,
     M365PolicyError,
@@ -46,6 +48,9 @@ MAX_CACHE_BYTES = 512 * 1024
 AUTH_FLOW_SECONDS = 600
 REFRESH_LEASE_SECONDS = 90
 CONNECTION_CALLBACK_PATH = "/api/m365/connections/callback"
+CHAT_CALLBACK_PATH = "/getAToken"
+CHAT_AUTH_SESSION_KEY = "m365_chat_auth_flow"
+CHAT_AUTH_STATE_PREFIX = "m365-chat-"
 _OIDC_SCOPES = frozenset({"openid", "profile", "offline_access", "email"})
 _SOURCE_SCOPE_NAMES = {
     "calendar": frozenset({"User.Read", "Calendars.Read", "MailboxSettings.Read"}),
@@ -58,6 +63,12 @@ _SOURCE_OPTIONAL_SCOPE_NAMES = {
     "email": frozenset({"Mail.ReadWrite", "Mail.Send", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"}),
     "onedrive": frozenset({"Files.Read"}),
     "spo": frozenset(),
+}
+_SOURCE_CONNECT_SCOPE_NAMES = {
+    "calendar": _SOURCE_SCOPE_NAMES["calendar"] | {"Calendars.ReadWrite", "User.ReadBasic.All"},
+    "email": _SOURCE_SCOPE_NAMES["email"] | {"Mail.ReadWrite", "Mail.Send", "User.ReadBasic.All"},
+    "onedrive": _SOURCE_SCOPE_NAMES["onedrive"],
+    "spo": _SOURCE_SCOPE_NAMES["spo"],
 }
 _LEGACY_DIRECT_SCOPE_NAMES = frozenset({"SecurityEvents.Read.All"})
 _ALLOWED_SCOPE_NAMES = {
@@ -263,6 +274,35 @@ def _scope_names(scopes, config):
     }
 
 
+def _validate_callback_uri(redirect_uri, *, interactive=False):
+    redirect = urlsplit(redirect_uri)
+    if (
+        redirect.path != (CHAT_CALLBACK_PATH if interactive else CONNECTION_CALLBACK_PATH)
+        or redirect.query or redirect.fragment or redirect.username or redirect.password
+        or not redirect.hostname
+        or (redirect.scheme != "https" and not (
+            redirect.scheme == "http" and redirect.hostname in {"localhost", "127.0.0.1"}
+        ))
+    ):
+        raise M365ConnectionError(
+            "m365_callback_invalid",
+            "Microsoft 365 needs a valid HTTPS callback for this site. Contact an administrator.",
+        )
+
+
+def _validate_auth_flow(flow, config):
+    parsed_auth = urlsplit(flow.get("auth_uri", ""))
+    query = parse_qs(parsed_auth.query)
+    if (
+        not flow.get("state") or not flow.get("nonce") or not flow.get("code_verifier")
+        or parsed_auth.scheme != "https"
+        or parsed_auth.netloc.lower() != urlsplit(config.authority).netloc.lower()
+        or query.get("code_challenge_method") != ["S256"]
+        or not query.get("code_challenge")
+    ):
+        raise M365ConnectionError("m365_auth_flow_invalid", "A protected Microsoft 365 sign-in flow could not be created.")
+
+
 def _default_config():
     # These owners are fully initialized before any connection operation.
     import config as app_config
@@ -447,18 +487,11 @@ class M365ConnectionService:
             or any(source not in M365_SOURCES for source in sources)
         ):
             raise ValueError("Select at least one supported Microsoft 365 source.")
-        redirect = urlsplit(redirect_uri)
-        if (
-            redirect.path != CONNECTION_CALLBACK_PATH
-            or redirect.query or redirect.fragment or redirect.username or redirect.password
-            or not redirect.hostname
-            or (redirect.scheme != "https" and not (
-                redirect.scheme == "http" and redirect.hostname in {"localhost", "127.0.0.1"}
-            ))
-        ):
-            raise ValueError("Invalid Microsoft 365 callback URI.")
+        _validate_callback_uri(redirect_uri)
         required = set().union(*(_SOURCE_SCOPE_NAMES[source] for source in sources))
-        if scopes is not None:
+        if scopes is None:
+            required = set().union(*(_SOURCE_CONNECT_SCOPE_NAMES[source] for source in sources))
+        else:
             allowed = required | set().union(*(_SOURCE_OPTIONAL_SCOPE_NAMES[source] for source in sources))
             normalized_optional = normalize_m365_scopes(scopes, config)
             if not _scope_names(normalized_optional, config).issubset({name.lower() for name in allowed}):
@@ -473,16 +506,7 @@ class M365ConnectionService:
             scopes=required, redirect_uri=redirect_uri,
             state=secrets.token_urlsafe(32), prompt="select_account",
         )
-        parsed_auth = urlsplit(flow.get("auth_uri", ""))
-        query = parse_qs(parsed_auth.query)
-        if (
-            not flow.get("state") or not flow.get("nonce") or not flow.get("code_verifier")
-            or parsed_auth.scheme != "https"
-            or parsed_auth.netloc.lower() != urlsplit(config.authority).netloc.lower()
-            or query.get("code_challenge_method") != ["S256"]
-            or not query.get("code_challenge")
-        ):
-            raise M365ConnectionError("m365_auth_flow_invalid", "A protected Microsoft 365 sign-in flow could not be created.")
+        _validate_auth_flow(flow, config)
         expires_at = self.clock() + timedelta(seconds=AUTH_FLOW_SECONDS)
         record = {
             "id": f"m365-oauth-{hashlib.sha256(flow['state'].encode('utf-8')).hexdigest()}",
@@ -504,7 +528,7 @@ class M365ConnectionService:
             "expires_at": expires_at.isoformat(),
         }
 
-    def complete_connection(self, user_id, tenant_id, auth_response, session_binding):
+    def complete_connection(self, user_id, tenant_id, auth_response, session_binding, *, cache_writer=None):
         config = self.config_provider()
         state = auth_response.get("state") if isinstance(auth_response, dict) else None
         if not isinstance(state, str) or not 20 <= len(state) <= 256:
@@ -578,7 +602,85 @@ class M365ConnectionService:
         }
         updated["encrypted_cache"] = encrypt_m365_cache(cache.serialize(), updated, self.key_provider())
         saved = self._replace(current, updated)
+        if cache_writer is not None:
+            cache_writer(cache.serialize())
         return sanitize_m365_connection(saved)
+
+    def start_chat_connection(self, user_id, tenant_id, request_id, conversation_id, scopes, redirect_uri):
+        """Store a short-lived PKCE flow in the existing server-side login session."""
+        config = self.config_provider()
+        user = session.get("user") or {}
+        if (
+            user.get("oid") != user_id or user.get("tid") != tenant_id
+            or tenant_id != config.tenant_id or user.get("acct") in (1, "1")
+        ):
+            raise M365ConnectionError("m365_account_mismatch", "Connect the same account that started this conversation.")
+        _identifier(request_id)
+        _identifier(conversation_id)
+        _validate_callback_uri(redirect_uri, interactive=True)
+        required = normalize_m365_scopes(scopes, config)
+        client = self.msal_factory(msal.SerializableTokenCache(), config)
+        flow = client.initiate_auth_code_flow(
+            scopes=required, redirect_uri=redirect_uri,
+            state=f"{CHAT_AUTH_STATE_PREFIX}{secrets.token_urlsafe(32)}",
+            prompt="select_account",
+        )
+        _validate_auth_flow(flow, config)
+        expires_at = self.clock() + timedelta(seconds=AUTH_FLOW_SECONDS)
+        session[CHAT_AUTH_SESSION_KEY] = {
+            "flow": flow, "user_id": user_id, "tenant_id": tenant_id,
+            "request_id": request_id, "conversation_id": conversation_id,
+            "configuration": config.binding(), "required_scopes": required,
+            "expires_at": expires_at.isoformat(),
+        }
+        return {"authorization_url": flow["auth_uri"], "expires_at": expires_at.isoformat()}
+
+    def complete_chat_connection(self, user_id, tenant_id, auth_response):
+        config = self.config_provider()
+        record = session.get(CHAT_AUTH_SESSION_KEY)
+        state = auth_response.get("state")
+        user = session.get("user") or {}
+        if (
+            not isinstance(record, dict) or not isinstance(state, str)
+            or re.fullmatch(r"m365-chat-[A-Za-z0-9_-]{32,128}", state) is None
+            or not hmac.compare_digest((record.get("flow") or {}).get("state", ""), state)
+            or record.get("user_id") != user_id or record.get("tenant_id") != tenant_id
+            or user.get("oid") != user_id or user.get("tid") != tenant_id
+            or record.get("configuration") != config.binding()
+            or utc_datetime(record["expires_at"]) <= self.clock()
+        ):
+            raise M365ConnectionError("m365_auth_state_invalid", "This sign-in request expired or changed. Connect again from chat.")
+        session.pop(CHAT_AUTH_SESSION_KEY)
+        cache = msal.SerializableTokenCache()
+        client = self.msal_factory(cache, config)
+        try:
+            result = client.acquire_token_by_auth_code_flow(record["flow"], auth_response)
+        except (ValueError, RuntimeError) as exc:
+            raise M365ConnectionError("m365_auth_validation_failed", "Microsoft 365 sign-in validation failed. Connect again from chat.") from exc
+        if not result or result.get("error") or not result.get("access_token"):
+            raise M365ConnectionError("m365_consent_required", "Microsoft 365 sign-in or consent was not completed.")
+        claims = result.get("id_token_claims") or {}
+        if (
+            claims.get("oid") != user_id or claims.get("tid") != tenant_id
+            or claims.get("acct") in (1, "1")
+        ):
+            raise M365ConnectionError("m365_account_mismatch", "Use the same tenant account that started this conversation.")
+        accounts = client.get_accounts()
+        select_m365_account(accounts, user_id, tenant_id)
+        if len(accounts) != 1:
+            raise M365ConnectionError("m365_account_mismatch", "The sign-in result must contain only your own account.")
+        granted = [
+            scope for scope in result.get("scope", "").split()
+            if scope.lower() not in _OIDC_SCOPES
+        ]
+        if not granted or not _scope_names(record["required_scopes"], config).issubset(_scope_names(granted, config)):
+            raise M365ConnectionError("m365_consent_required", "The selected source permissions were not all authorized.")
+        serialized = cache.serialize()
+        deserialize_m365_cache(serialized)
+        session["token_cache"] = serialized
+        return {
+            "request_id": record["request_id"], "conversation_id": record["conversation_id"],
+        }
 
     def disconnect(self, connection_id, user_id, tenant_id):
         for _attempt in range(3):
@@ -724,7 +826,7 @@ def get_m365_connection_service():
     return _service
 
 
-def _direct_access_token(scopes, context):
+def _direct_access_token(scopes, context, *, include_auth_url=True):
     if not has_request_context() or not isinstance(session.get("user"), dict):
         return _auth_error("not_logged_in", "Sign in to SimpleChat to access Microsoft 365.")
     user = session["user"]
@@ -746,7 +848,15 @@ def _direct_access_token(scopes, context):
     try:
         cache = deserialize_m365_cache(serialized)
         client = _service.msal_factory(cache, config)
-        account = select_m365_account(client.get_accounts(), user_id, tenant_id)
+        try:
+            account = select_m365_account(client.get_accounts(), user_id, tenant_id)
+        except M365ConnectionError as exc:
+            if include_auth_url or exc.code != "m365_account_mismatch":
+                raise
+            return _auth_error(
+                "interactive_auth_required", "Connect your own Microsoft 365 account for this agent.",
+                scopes=required,
+            )
         result = client.acquire_token_silent_with_error(required, account=account)
     except (ValueError, requests.RequestException) as exc:
         _log_failure("m365_token_acquisition_failed", exc)
@@ -758,6 +868,11 @@ def _direct_access_token(scopes, context):
         if claims and (claims.get("oid") != user_id or claims.get("tid") != tenant_id):
             return _auth_error("m365_account_mismatch", "Microsoft 365 returned a different account.")
         return {"access_token": result["access_token"]}
+    if not include_auth_url:
+        return _auth_error(
+            "interactive_auth_required", "Connect Microsoft 365 to authorize this agent's sources.",
+            scopes=required,
+        )
     # Reuse only the existing consent URL builder, never its first-account fallback.
     from functions_authentication import _build_plugin_auth_response
     needs_consent = bool(
@@ -774,13 +889,13 @@ def _direct_access_token(scopes, context):
     )
 
 
-def get_m365_access_token(scopes, context=None):
+def get_m365_access_token(scopes, context=None, *, include_auth_url=True):
     """Never fall back from a workflow binding to a caller, owner, or app token."""
     context = context or get_m365_execution_context()
     try:
         if context is not None and context.workflow_id:
             return _service.acquire_workflow_token(scopes, context)
-        return _direct_access_token(scopes, context)
+        return _direct_access_token(scopes, context, include_auth_url=include_auth_url)
     except M365ApprovalRequired:
         raise
     except M365PolicyError as exc:
@@ -791,3 +906,26 @@ def get_m365_access_token(scopes, context=None):
     except (AzureError, requests.RequestException) as exc:
         _log_failure("m365_connection_unavailable", exc)
         return _auth_error("m365_connection_unavailable", "The Microsoft 365 connection is temporarily unavailable.")
+
+
+def preflight_m365_chat_authentication(manifests, context):
+    """Check selected remote sources before model execution, not only after a tool call."""
+    if context.workflow_id:
+        return
+    sources = set()
+    for manifest in manifests:
+        action_type = manifest.get("type")
+        if action_type in M365_ACTION_DEFINITIONS and get_m365_remote_function_names(action_type, manifest):
+            sources.add(M365_ACTION_DEFINITIONS[action_type]["source"])
+    if not sources:
+        return
+    scopes = sorted(set().union(*(_SOURCE_CONNECT_SCOPE_NAMES[source] for source in sources)))
+    result = get_m365_access_token(scopes, context=context, include_auth_url=False)
+    if result.get("access_token"):
+        return
+    code = result.get("error") or "m365_authorization_unavailable"
+    if code in M365_AUTH_INTERACTION_CODES or code == "m365_cache_unavailable":
+        raise M365SignInRequired(code, {"scopes": scopes, "sources": sorted(sources)})
+    raise M365PolicyError(
+        code, result.get("message") or "Microsoft 365 access could not be verified. No source access has been allowed.",
+    )

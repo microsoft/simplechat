@@ -1,8 +1,9 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.029
+Version: 0.261.032
 Implemented in: 0.261.029
+In-chat onboarding regression coverage implemented in: 0.261.032
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -11,6 +12,8 @@ AZURE_PLAYWRIGHT_TOKEN_SCOPE to connect to an existing Azure Playwright workspac
 using DefaultAzureCredential and azure-mgmt-playwright. Without that environment,
 the identical workflows run in local Chromium; local runs do not qualify Azure
 tenant authentication or live Microsoft 365 access.
+PKCE/state coverage checks opaque browser navigation through /getAToken and
+same-request resume, not the server-side token exchange.
 """
 
 import copy
@@ -18,7 +21,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 import pytest
 from azure.identity import DefaultAzureCredential
@@ -95,10 +98,32 @@ class ApiFixture:
         self.errors = []
         self.connection = None
         self.connect_requests = []
+        self.chat_connect_requests = []
+        self.authorization_url = "https://login.microsoftonline.com/ui-test-tenant/oauth2/v2.0/authorize?state=fixture"
+        self.oauth_navigations = []
+        self.chat_callback_url = None
+        self.auth_callbacks = []
+        self.api_paths = []
+        self.csrf_token = CSRF_TOKEN
+        self.preference_reads = 0
+        self.m365_posts = []
+        self.post_failures = {}
         self.fail_decision = False
         self.waiting_requests = []
         self.resume_requests = []
         self.resume_response = {"resume_scheduled": True, "execution_status": "queued"}
+        self.chat_requests = []
+        self.stream_events = []
+        self.stream_json_response = None
+        self.stream_http_status = 200
+        self.stream_pending = False
+        self.queue_stream_on_resume = False
+        self.auto_chat_start = False
+        self.stream_status_requests = []
+        self.reattach_requests = []
+        self.message_loads = []
+        self.collaboration_requests = []
+        self.messages = [{"id": "saved-user-message", "role": "user", "content": "Original saved request."}]
         self.run_as_users = [{"id": "data-user", "display_name": "Connected reader"}]
         self.audit_records = []
         self.preferences = {
@@ -111,14 +136,25 @@ class ApiFixture:
 
     def handle_api(self, route, path):
         request = route.request
+        self.api_paths.append(path)
         body = json.loads(request.post_data or "{}")
         if request.method in ("POST", "PATCH", "PUT") and path.startswith("/api/m365/"):
-            if request.headers.get("x-m365-csrf-token") != CSRF_TOKEN:
-                self.respond(route, {"message": "Anti-forgery token is required."}, 403)
+            self.m365_posts.append({
+                "path": path, "body": body, "method": request.method,
+                "csrf": request.headers.get("x-m365-csrf-token"),
+            })
+            failures = self.post_failures.get(path)
+            if failures:
+                payload, status = failures.pop(0)
+                self.respond(route, payload, status)
+                return
+            if request.headers.get("x-m365-csrf-token") != self.csrf_token:
+                self.respond(route, {"error": "m365_csrf_invalid", "message": "Anti-forgery token is required."}, 403)
                 return
         if path == "/api/m365/preferences":
             if request.method == "GET":
-                self.respond(route, {"preferences": self.preferences, "csrf_token": CSRF_TOKEN})
+                self.preference_reads += 1
+                self.respond(route, {"preferences": self.preferences, "csrf_token": self.csrf_token})
             else:
                 if request.method != "PATCH" or set(body) - {"sources", "extended_analysis"}:
                     self.respond(route, {"message": "Invalid preference fields."}, 400)
@@ -127,7 +163,7 @@ class ApiFixture:
                 self.preferences.update(copy.deepcopy(body))
                 self.respond(route, {"success": True, "preferences": self.preferences})
         elif path == "/api/m365/connections":
-            self.respond(route, {"success": True, "connection": self.connection, "csrf_token": CSRF_TOKEN})
+            self.respond(route, {"success": True, "connection": self.connection, "csrf_token": self.csrf_token})
         elif path == "/api/m365/connections/connect":
             self.connect_requests.append(body)
             self.respond(route, {"message": "Key Vault is required for workflow connections."}, 503)
@@ -143,9 +179,14 @@ class ApiFixture:
         elif path == "/api/m365/bindings":
             self.respond(route, {"items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"], "continuation_token": None})
         elif path == "/api/m365/requests":
-            self.respond(route, {"items": self.waiting_requests, "continuation_token": None, "csrf_token": CSRF_TOKEN})
+            self.respond(route, {"items": self.waiting_requests, "continuation_token": None, "csrf_token": self.csrf_token})
+        elif path.startswith("/api/m365/requests/") and path.endswith("/connect"):
+            self.chat_connect_requests.append((path, body))
+            self.respond(route, {"success": True, "authorization_url": self.authorization_url})
         elif path.startswith("/api/m365/requests/") and path.endswith("/resume"):
             self.resume_requests.append(path)
+            if self.queue_stream_on_resume:
+                self.stream_pending = True
             self.respond(route, self.resume_response)
         elif path == "/api/workflows/m365-run-as-users":
             self.respond(route, {"users": self.run_as_users})
@@ -198,6 +239,49 @@ class ApiFixture:
             })
         elif path == "/api/approvals":
             self.respond(route, {"approvals": list(self.records.values()), "total_count": len(self.records), "page": 1, "page_size": 20})
+        elif path == "/api/conversations/feed":
+            self.respond(route, {"conversations": [{
+                "id": "visible-conversation", "title": "Original conversation",
+                "chat_type": "personal_single_user", "last_updated": "2026-09-18T18:00:00Z",
+            }], "has_more": False})
+        elif path.startswith("/api/conversations/") and path.endswith("/metadata"):
+            self.respond(route, {
+                "id": "visible-conversation", "title": "Original conversation",
+                "chat_type": "personal_single_user", "context": [],
+            })
+        elif path == "/api/chat/stream":
+            self.chat_requests.append(body)
+            if self.stream_json_response is not None:
+                self.respond(route, self.stream_json_response, self.stream_http_status)
+            else:
+                route.fulfill(
+                    content_type="text/event-stream",
+                    body="".join(f"data: {json.dumps(event)}\n\n" for event in self.stream_events),
+                )
+        elif path.startswith("/api/chat/stream/status/"):
+            self.stream_status_requests.append(path)
+            self.respond(route, {"pending": self.stream_pending, "reattachable": self.stream_pending})
+        elif path.startswith("/api/chat/stream/reattach/"):
+            self.reattach_requests.append(path)
+            self.stream_pending = False
+            final_message = {
+                "done": True, "conversation_id": path.split("/")[-1],
+                "message_id": "saved-assistant-message", "full_content": "Resumed original saved request.",
+            }
+            route.fulfill(content_type="text/event-stream", body=f"data: {json.dumps(final_message)}\n\n")
+        elif path.startswith("/api/collaboration/conversations/"):
+            self.collaboration_requests.append(path)
+            conversation_id = path.split("/")[4]
+            if path.endswith("/messages"):
+                self.respond(route, {"messages": self.messages})
+            elif path.endswith("/events"):
+                route.fulfill(content_type="text/event-stream", body=": connected\n\n")
+            else:
+                self.respond(route, {"conversation": {
+                    "id": conversation_id, "title": "Shared original conversation",
+                    "conversation_kind": "collaborative", "chat_type": "group_multi_user",
+                    "can_post_messages": True, "participants": [],
+                }})
         elif path.startswith("/api/"):
             self.respond(route, {})
         else:
@@ -242,6 +326,14 @@ def ui(m365_browser, monkeypatch):
         "/audit-m365": '<div id="conversation-details"></div>',
         "/requests-m365": '<div id="m365-waiting-requests"></div>',
         "/admin-m365": admin_m365,
+        "/chats": (
+            '<main><div id="conversations-list"></div><h1 id="current-conversation-title">Chat</h1>'
+            '<div id="toast-container"></div>'
+            '<div id="chat-messages-container"><div id="chatbox"></div></div>'
+            '<textarea id="user-input"></textarea><button type="button" id="send-btn">Send</button>'
+            '<select id="prompt-select"></select><div id="prompt-selection-container"></div>'
+            '<select id="model-select"><option value="test-model">Test model</option></select></main>'
+        ),
         "/workflow-controls": (
             '<div id="workflow-activity-pending-action-controls"></div>'
             '<button id="workflow-activity-cancel-btn" class="d-none"><span>Cancel run</span></button>'
@@ -252,11 +344,28 @@ def ui(m365_browser, monkeypatch):
         parsed = urlsplit(route.request.url)
         path = parsed.path
         if parsed.netloc != "simplechat.test":
+            if route.request.is_navigation_request() and route.request.url == api.authorization_url:
+                api.oauth_navigations.append(route.request.url)
+                route.fulfill(content_type="text/html", body="<h1>Microsoft sign-in fixture</h1>")
+                return
             route.abort()
             api.errors.append("Unexpected nonlocal browser request")
             return
         if path.startswith("/api/"):
             api.handle_api(route, path)
+            return
+        if path == "/getAToken" and api.chat_callback_url:
+            api.auth_callbacks.append(route.request.url)
+            # A fulfilled redirect bypasses subsequent Playwright routes. Keep
+            # its destination local to this fixture using an inert navigation link.
+            callback_html = environment.from_string(
+                '<h1>OAuth callback fixture</h1><a href="{{ destination }}">Return to original chat</a>'
+            ).render(destination=api.chat_callback_url)
+            route.fulfill(content_type="text/html", body=callback_html)
+            return
+        if path.startswith("/conversation/") and path.endswith("/messages"):
+            api.message_loads.append(path.split("/")[2])
+            api.respond(route, {"messages": api.messages})
             return
         if path.startswith("/static/"):
             asset = (APP_ROOT / "static" / unquote(path[len("/static/"):])).resolve()
@@ -269,6 +378,19 @@ def ui(m365_browser, monkeypatch):
             route.fulfill(status=404, body="")
             return
         scripts = '<script src="/static/js/chat/chat-m365-approvals.js"></script>'
+        if path in ("/chats", "/requests-m365"):
+            scripts += '<script src="/static/js/chat/chat-m365-connect.js"></script>'
+        if path == "/chats":
+            scripts += (
+                '<script src="/static/js/toast.js"></script>'
+                '<script src="/static/js/chat/marked.min.js"></script>'
+                '<script src="/static/js/chat/purify.min.js"></script>'
+            )
+            if api.auto_chat_start:
+                scripts += (
+                    '<script src="/static/js/chat/chat-global.js"></script>'
+                    '<script type="module" src="/static/js/chat/chat-onload.js"></script>'
+                )
         if path == "/profile":
             scripts += '<script src="/static/js/profile/profile-m365.js"></script>'
         if path == "/approvals":
@@ -286,6 +408,433 @@ def ui(m365_browser, monkeypatch):
     context.route("**/*", route_request)
     yield page, api
     context.close()
+
+
+def initialize_chat(page, shared=False):
+    page.evaluate("""async shared => {
+        window.appSettings = {
+            enable_thoughts: false, enable_text_to_speech: false,
+            enable_collaborative_conversations: shared, documentActionCapabilities: {}
+        };
+        window.enable_document_classification = false;
+        window.currentConversationId = 'visible-conversation';
+        window.currentUser = { id: 'data-user', display_name: 'Connected reader' };
+        window.scrollChatToBottom = () => {};
+        window.streamFailures = [];
+        window.finishedStreams = 0;
+        window.resumeEvents = [];
+        window.addEventListener('m365-chat-resumed', event => window.resumeEvents.push(event.detail));
+        const item = document.createElement('div');
+        item.className = 'conversation-item active';
+        item.dataset.conversationId = 'visible-conversation';
+        item.dataset.conversationKind = shared ? 'collaborative' : 'personal';
+        item.dataset.chatType = shared ? 'group_multi_user' : 'personal_single_user';
+        document.getElementById('conversations-list').appendChild(item);
+        window.messagesModule = await import('/static/js/chat/chat-messages.js');
+        window.streamingModule = await import('/static/js/chat/chat-streaming.js');
+        if (shared) {
+            await import('/static/js/chat/chat-collaboration.js');
+        }
+    }""", shared)
+
+
+def auth_pause(request_id="saved/request id"):
+    return {
+        "type": "m365_sign_in_required", "auth_required": True,
+        "m365_request_id": request_id, "conversation_id": "private-backing-conversation",
+        "sources": list(SOURCES), "scopes": ["Calendars.ReadWrite", "Mail.ReadWrite", "Files.Read.All"],
+        "message": 'Connect to continue. <img src=x onerror="window.injected=true">',
+        "error": "Microsoft 365 sign-in is required.", "done": True,
+        "user_message_id": "saved-user-message", "message_persisted": True,
+    }
+
+
+def start_chat_stream(page):
+    page.evaluate("""() => {
+        window.messagesModule.appendMessage('You', 'Original saved request.', null, 'temp_user_m365');
+        window.streamingModule.sendMessageWithStreaming(
+            { message: 'Original saved request.', conversation_id: 'visible-conversation' },
+            'temp_user_m365', 'visible-conversation',
+            {
+                onError: message => window.streamFailures.push(message),
+                onFinally: () => { window.finishedStreams += 1; }
+            }
+        );
+    }""")
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("transport,persisted", [
+    ("sse", True), ("sse", False), ("json_error", True), ("json_success", True),
+])
+def test_chat_auth_pause_preserves_messages_and_never_blindly_retries(ui, transport, persisted):
+    page, api = ui
+    payload = {**auth_pause(), "message_persisted": persisted}
+    if transport == "sse":
+        api.stream_events = [{"content": "Saved partial answer."}, payload]
+    else:
+        api.stream_json_response = {**payload, "partial_content": "Saved partial answer."}
+        api.stream_http_status = 403 if transport == "json_error" else 200
+    page.goto(f"{ORIGIN}/chats")
+    initialize_chat(page)
+    start_chat_stream(page)
+    prompt = page.get_by_role("region", name="Microsoft 365 connection required")
+    expect(prompt.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_be_visible()
+    expect(prompt).to_contain_text("Calendar, Email, OneDrive, SharePoint Online (SPO)")
+    expect(prompt).to_contain_text("sharing acknowledgements")
+    expect(prompt).to_contain_text("workflow Run as approvals")
+    expect(prompt).to_contain_text('<img src=x onerror="window.injected=true">')
+    expect(prompt.locator("img")).to_have_count(0)
+    expect(page.locator("#chatbox")).to_contain_text("Saved partial answer.")
+    expect(page.locator("#chatbox")).not_to_contain_text("Foundry")
+    expect(page.locator("#chatbox")).not_to_contain_text("Stream interrupted")
+    if persisted:
+        expect(page.locator('[data-message-id="saved-user-message"]').first).to_be_visible()
+        expect(page.locator('[data-message-id="temp_user_m365"]')).to_have_count(0)
+    else:
+        expect(page.locator('[data-message-id="temp_user_m365"]').first).to_be_visible()
+        expect(page.locator('[data-message-id="saved-user-message"]')).to_have_count(0)
+    expect(page.locator(".stream-stop-btn")).to_have_count(0)
+    state = page.evaluate("({ failures: window.streamFailures, finished: window.finishedStreams, injected: Boolean(window.injected) })")
+    assert state == {"failures": [], "finished": 1, "injected": False}
+    assert len(api.chat_requests) == 1
+    assert not api.stream_status_requests
+    assert not api.reattach_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("authorization_endpoint", [
+    "https://login.microsoftonline.com/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://login.microsoftonline.us/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://login.chinacloudapi.cn/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://identity.custom-cloud.test:8443/organizations/ui-test-tenant/authentication/start",
+])
+def test_chat_connect_posts_only_saved_request_with_csrf_and_uses_server_validated_oauth(ui, authorization_endpoint):
+    page, api = ui
+    api.authorization_url = f"{authorization_endpoint}?state=fixture"
+    api.stream_events = [auth_pause()]
+    page.goto(f"{ORIGIN}/chats")
+    initialize_chat(page)
+    start_chat_stream(page)
+    page.get_by_role("button", name="Connect Microsoft 365", exact=True).click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.oauth_navigations == [api.authorization_url]
+    assert api.chat_connect_requests == [("/api/m365/requests/saved%2Frequest%20id/connect", {})]
+    assert api.m365_posts == [{
+        "path": "/api/m365/requests/saved%2Frequest%20id/connect",
+        "method": "POST", "body": {}, "csrf": CSRF_TOKEN,
+    }]
+    assert not api.connect_requests
+    assert not api.decisions
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("authorization_endpoint", [
+    "https://login.microsoftonline.com/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://login.microsoftonline.us/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://identity.custom-cloud.test:8443/organizations/ui-test-tenant/authentication/start",
+])
+def test_chat_pkce_get_token_round_trip_needs_no_workflow_connection(ui, authorization_endpoint):
+    """Preserve the opaque server OAuth URL and resume through the existing callback."""
+    page, api = ui
+    app_origin = "https://simplechat.test"
+    request_id = "get-token/request"
+    oauth_query = {
+        "client_id": "ui-test-client",
+        "response_type": "code",
+        "redirect_uri": f"{app_origin}/getAToken",
+        "scope": "Calendars.ReadWrite Mail.ReadWrite Files.Read.All",
+        "state": "ui-test-state.with+reserved/&values",
+        "code_challenge": "ui-test-pkce-challenge-not-a-credential",
+        "code_challenge_method": "S256",
+        "response_mode": "query",
+    }
+    api.authorization_url = f"{authorization_endpoint}?{urlencode(oauth_query)}"
+    api.stream_events = [auth_pause(request_id)]
+    page.add_init_script("""
+        window.appSettings = { documentActionCapabilities: {} };
+        window.enable_document_classification = false;
+        window.currentUser = { id: 'data-user', display_name: 'Connected reader' };
+    """)
+    page.goto(f"{app_origin}/chats")
+    initialize_chat(page)
+    start_chat_stream(page)
+    page.get_by_role("button", name="Connect Microsoft 365", exact=True).click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    forwarded_query = parse_qs(urlsplit(api.oauth_navigations[0]).query)
+    assert forwarded_query == {key: [value] for key, value in oauth_query.items()}
+
+    api.auto_chat_start = True
+    api.queue_stream_on_resume = True
+    return_query = urlencode({
+        "conversationId": "visible-conversation",
+        "m365_request_id": request_id,
+        "m365_auth": "connected",
+    })
+    api.chat_callback_url = f"{app_origin}/chats?{return_query}"
+    callback_query = urlencode({"code": "ui-test-code-not-a-credential", "state": oauth_query["state"]})
+    callback_url = f"{app_origin}/getAToken?{callback_query}"
+    page.goto(callback_url)
+    page.get_by_role("link", name="Return to original chat", exact=True).click()
+    expect(page.locator("#m365-chat-connect-status")).to_contain_text("queued or resuming")
+    expect(page.locator("#chatbox")).to_contain_text("Resumed original saved request.")
+    expect(page).to_have_url(f"{app_origin}/chats?conversationId=visible-conversation")
+    assert api.auth_callbacks == [callback_url]
+    expected_request_path = f"/api/m365/requests/{quote(request_id, safe='')}"
+    assert api.m365_posts == [
+        {"path": f"{expected_request_path}/{action}", "method": "POST", "body": {}, "csrf": CSRF_TOKEN}
+        for action in ("connect", "resume")
+    ]
+    assert not any(path.startswith("/api/m365/connections") for path in api.api_paths)
+    assert not api.decisions
+    assert len(api.chat_requests) == 1
+    assert api.reattach_requests == ["/api/chat/stream/reattach/visible-conversation"]
+    storage = page.evaluate("JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } })")
+    for sensitive_value in (request_id, CSRF_TOKEN, oauth_query["state"], oauth_query["code_challenge"], "ui-test-code-not-a-credential"):
+        assert sensitive_value not in storage
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("url", [
+    "javascript:window.injected=true",
+    "http://login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+    "https://user:password@login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+    "https://",
+    "https://[invalid/authorize",
+    "",
+    None,
+])
+def test_chat_connect_rejects_unsafe_or_malformed_oauth_navigation(ui, url):
+    page, api = ui
+    api.authorization_url = url
+    page.goto(f"{ORIGIN}/chats")
+    page.evaluate("payload => window.SimpleChatM365Connect.renderPrompt(document.getElementById('chatbox'), payload)", auth_pause())
+    page.get_by_role("button", name="Connect Microsoft 365", exact=True).click()
+    expect(page.get_by_role("alert")).to_contain_text("valid HTTPS Microsoft 365 sign-in URL")
+    expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_be_enabled()
+    assert page.url == f"{ORIGIN}/chats"
+    assert not api.oauth_navigations
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_chat_connect_failure_is_visible_text_and_can_be_retried_explicitly(ui):
+    page, api = ui
+    api.post_failures["/api/m365/requests/saved%2Frequest%20id/connect"] = [
+        ({"message": 'Sign-in is unavailable. <img src=x onerror="window.injected=true">'}, 503)
+    ]
+    page.goto(f"{ORIGIN}/chats")
+    page.evaluate("payload => window.SimpleChatM365Connect.renderPrompt(document.getElementById('chatbox'), payload)", auth_pause())
+    page.get_by_role("button", name="Connect Microsoft 365", exact=True).click()
+    expect(page.get_by_role("alert")).to_contain_text("Sign-in is unavailable.")
+    expect(page.get_by_role("alert")).to_be_focused()
+    expect(page.locator(".m365-connect-prompt img")).to_have_count(0)
+    expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_be_enabled()
+    assert len(api.m365_posts) == 1
+    assert not api.oauth_navigations
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("shared", [False, True])
+def test_oauth_callback_after_chat_initialization_resumes_original_request_without_replay(ui, shared):
+    page, api = ui
+    request_id = auth_pause()["m365_request_id"]
+    api.resume_response["conversation_id"] = "private-backing-conversation"
+    api.stream_pending = True
+    query = urlencode({
+        "conversationId": "visible-conversation", "m365_request_id": request_id,
+        "m365_auth": "connected", "scope": "group" if shared else "personal",
+    })
+    page.goto(f"{ORIGIN}/chats?{query}#messages")
+    assert not api.resume_requests
+    initialize_chat(page, shared=shared)
+    expected_reattach = "/api/collaboration/conversations/visible-conversation/events" if shared else "/api/chat/stream/reattach/visible-conversation"
+    with page.expect_request(f"{ORIGIN}{expected_reattach}"):
+        page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    expect(page.locator("#m365-chat-connect-status")).to_contain_text("queued or resuming")
+    expect(page.locator("#chatbox")).to_contain_text("Original saved request.")
+    page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    resumed_events = page.evaluate("window.resumeEvents")
+    storage = page.evaluate("JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } })")
+    assert resumed_events == [{"requestId": request_id, "conversationId": "visible-conversation"}]
+    assert api.resume_requests == [f"/api/m365/requests/{quote(request_id, safe='')}/resume"]
+    assert api.m365_posts[0]["body"] == {}
+    assert api.m365_posts[0]["csrf"] == CSRF_TOKEN
+    assert "m365_auth" not in page.url and "m365_request_id" not in page.url
+    assert "conversationId=visible-conversation" in page.url
+    assert "scope=" in page.url and page.url.endswith("#messages")
+    assert request_id not in storage and CSRF_TOKEN not in storage
+    if shared:
+        assert "/api/collaboration/conversations/visible-conversation/messages" in api.collaboration_requests
+        assert not api.message_loads
+        assert not api.stream_status_requests
+    else:
+        expect(page.locator("#chatbox")).to_contain_text("Resumed original saved request.")
+        assert api.message_loads == ["visible-conversation"]
+        assert api.reattach_requests == [expected_reattach]
+    page.reload()
+    initialize_chat(page, shared=shared)
+    page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    assert len(api.resume_requests) == 1
+    assert not api.chat_requests
+    assert not api.decisions
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_real_chat_startup_handles_oauth_callback_after_deep_link_selection(ui):
+    page, api = ui
+    api.auto_chat_start = True
+    api.queue_stream_on_resume = True
+    page.add_init_script("""
+        window.appSettings = { documentActionCapabilities: {} };
+        window.enable_document_classification = false;
+        window.currentUser = { id: 'data-user', display_name: 'Connected reader' };
+    """)
+    page.goto(f"{ORIGIN}/chats?conversationId=visible-conversation&m365_request_id=request&m365_auth=connected")
+    expect(page.locator("#m365-chat-connect-status")).to_contain_text("queued or resuming")
+    expect(page.locator("#chatbox")).to_contain_text("Resumed original saved request.")
+    assert api.message_loads == ["visible-conversation", "visible-conversation"]
+    assert api.resume_requests == ["/api/m365/requests/request/resume"]
+    assert api.reattach_requests == ["/api/chat/stream/reattach/visible-conversation"]
+    assert "m365_request_id" not in page.url
+    assert not api.chat_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_oauth_callback_failure_is_visible_and_only_explicit_retry_resumes(ui):
+    page, api = ui
+    api.post_failures["/api/m365/requests/request/resume"] = [
+        ({"message": 'Resume is unavailable. <svg onload="window.injected=true">'}, 503)
+    ]
+    page.goto(f"{ORIGIN}/chats?conversationId=visible-conversation&m365_request_id=request&m365_auth=connected")
+    initialize_chat(page)
+    page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    expect(page.get_by_role("alert")).to_contain_text("Resume is unavailable.")
+    expect(page.locator("#m365-chat-connect-status svg")).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry resume")).to_be_enabled()
+    assert len(api.m365_posts) == 1
+    assert "m365_auth" not in page.url and "m365_request_id" not in page.url
+    assert not api.message_loads
+    page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    assert len(api.m365_posts) == 1
+    page.get_by_role("button", name="Retry resume").click()
+    expect(page.locator("#m365-chat-connect-status")).to_contain_text("queued or resuming")
+    expect(page.get_by_role("button", name="Retry resume")).to_be_hidden()
+    assert len(api.m365_posts) == 2
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("result", [
+    {"auth_required": True, "message": "The Microsoft 365 session needs sign-in."},
+    {"execution_status": "awaiting_approval", "message": "A separate sharing approval is still needed."},
+])
+def test_callback_does_not_treat_sign_in_or_separate_approval_as_queued_execution(ui, result):
+    page, api = ui
+    api.resume_response = result
+    page.goto(f"{ORIGIN}/chats?conversationId=visible-conversation&m365_request_id=request&m365_auth=connected")
+    initialize_chat(page)
+    page.evaluate("window.SimpleChatM365Connect.handleCallback()")
+    expect(page.locator("#m365-chat-connect-status")).to_contain_text(result["message"])
+    if result.get("auth_required"):
+        expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_be_visible()
+    else:
+        expect(page.get_by_role("link", name="Review Approvals")).to_be_visible()
+    assert not api.message_loads
+    assert not api.stream_status_requests
+    assert not api.decisions
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("transport", ["sse", "json_error"])
+def test_foundry_auth_prompt_keeps_its_existing_label_and_link(ui, transport):
+    page, api = ui
+    payload = {
+        "error": "Grant access to the Foundry agent.", "auth_required": True,
+        "auth_url": "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+        "done": True,
+    }
+    if transport == "sse":
+        api.stream_events = [payload]
+    else:
+        api.stream_json_response = payload
+        api.stream_http_status = 403
+    page.goto(f"{ORIGIN}/chats")
+    initialize_chat(page)
+    start_chat_stream(page)
+    expect(page.locator("#chatbox")).to_contain_text("Foundry access required:")
+    expect(page.get_by_role("link", name="Sign in or grant Foundry access")).to_have_attribute("target", "_blank")
+    expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_have_count(0)
+    state = page.evaluate("({ failures: window.streamFailures, finished: window.finishedStreams })")
+    assert state == {"failures": ["Grant access to the Foundry agent."], "finished": 1}
+    assert not api.chat_connect_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_waiting_interactive_sign_in_connects_without_profile_or_workflow_consent(ui):
+    page, api = ui
+    api.waiting_requests = [
+        {"id": "chat-request", "conversation_id": "visible-conversation", "status": "awaiting_sign_in", "sources": ["email"]},
+        {"id": "workflow-request", "workflow_id": "workflow", "conversation_id": "workflow-conversation", "status": "awaiting_sign_in"},
+        {"id": "recovery-request", "conversation_id": "recovery-conversation", "status": "recovery_required"},
+    ]
+    page.goto(f"{ORIGIN}/requests-m365")
+    expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_have_count(1)
+    expect(page.get_by_role("link", name="Review Microsoft 365 connection")).to_have_attribute("href", "/profile?tab=settings")
+    expect(page.get_by_role("button", name="Resume request")).to_have_count(0)
+    page.get_by_role("button", name="Connect Microsoft 365", exact=True).click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.chat_connect_requests == [("/api/m365/requests/chat-request/connect", {})]
+    assert not api.resume_requests
+    assert not api.connect_requests
+    assert not api.decisions
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_m365_mutation_refreshes_an_exact_stale_csrf_token_once(ui):
+    page, api = ui
+    api.waiting_requests = [{"id": "request", "conversation_id": "conversation", "status": "awaiting_approval"}]
+    page.goto(f"{ORIGIN}/requests-m365")
+    expect(page.get_by_role("button", name="Resume request")).to_be_visible()
+    api.csrf_token = f"{CSRF_TOKEN}-rotated"
+    page.get_by_role("button", name="Resume request").click()
+    expect(page.locator("#m365-waiting-requests")).to_contain_text("Request queued.")
+    assert [request["csrf"] for request in api.m365_posts] == [CSRF_TOKEN, api.csrf_token]
+    assert [request["body"] for request in api.m365_posts] == [{}, {}]
+    assert api.preference_reads == 1
+    assert api.resume_requests == ["/api/m365/requests/request/resume"]
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("status,code,attempts,refreshes", [
+    (403, "forbidden", 1, 0),
+    (403, "m365_csrf_invalid", 2, 1),
+    (400, "m365_csrf_invalid", 1, 0),
+])
+def test_m365_csrf_retry_is_bounded_and_does_not_retry_genuine_forbidden(ui, status, code, attempts, refreshes):
+    page, api = ui
+    api.waiting_requests = [{"id": "request", "conversation_id": "conversation", "status": "awaiting_approval"}]
+    api.post_failures["/api/m365/requests/request/resume"] = [
+        ({"error": code, "message": "The request was forbidden."}, status) for _ in range(attempts)
+    ]
+    page.goto(f"{ORIGIN}/requests-m365")
+    page.get_by_role("button", name="Resume request").click()
+    expect(page.locator("#m365-waiting-requests")).to_contain_text("The request was forbidden.")
+    expect(page.get_by_role("button", name="Resume request")).to_be_enabled()
+    assert len(api.m365_posts) == attempts
+    assert api.preference_reads == refreshes
+    assert not api.resume_requests
+    assert not api.errors
 
 
 @pytest.mark.ui
@@ -312,7 +861,7 @@ def test_workflow_run_as_selection_preserves_an_unavailable_saved_account(ui):
 def test_waiting_request_resumes_through_approvals_with_csrf(ui):
     page, api = ui
     api.waiting_requests = [{
-        "id": "request", "conversation_id": "original-conversation", "status": "awaiting_sign_in",
+        "id": "request", "conversation_id": "original-conversation", "status": "awaiting_approval",
     }]
     page.goto(f"{ORIGIN}/requests-m365")
     page.get_by_role("button", name="Resume request").click()
@@ -322,15 +871,17 @@ def test_waiting_request_resumes_through_approvals_with_csrf(ui):
 
 
 @pytest.mark.ui
-def test_waiting_request_shows_sign_in_guidance_when_no_consent_link_is_available(ui):
+def test_waiting_request_resume_can_transition_to_in_chat_sign_in(ui):
     page, api = ui
     api.waiting_requests = [{
-        "id": "request", "conversation_id": "conversation", "status": "awaiting_sign_in",
+        "id": "request", "conversation_id": "conversation", "status": "awaiting_approval",
     }]
     api.resume_response = {"auth_required": True, "message": "Sign in again to restore your session."}
     page.goto(f"{ORIGIN}/requests-m365")
     page.get_by_role("button", name="Resume request").click()
     expect(page.locator("#m365-waiting-requests")).to_contain_text("Sign in again to restore your session.")
+    expect(page.get_by_role("button", name="Connect Microsoft 365", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Resume request")).to_have_count(0)
     expect(page.locator("#m365-waiting-requests a")).to_have_count(0)
     assert not api.errors
 
@@ -387,22 +938,22 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
 
 
 @pytest.mark.ui
-def test_profile_write_scopes_are_explicit_and_source_bounded(ui):
+@pytest.mark.parametrize("source,description", [
+    ("calendar", "reading events, creating invitations"),
+    ("email", "reading messages, managing drafts and read state, sending mail"),
+    ("onedrive", "file discovery and reading"),
+    ("spo", "file discovery and reading"),
+])
+def test_profile_source_selection_authorizes_supported_bundle_without_extra_checkboxes(ui, source, description):
     page, api = ui
     page.goto(f"{ORIGIN}/profile")
-    calendar = page.locator('[data-m365-extra-scope="Calendars.ReadWrite"]')
-    mail = page.locator('[data-m365-extra-scope="Mail.Send"]')
-    expect(mail).to_be_disabled()
-    page.locator("#m365-connect-email").check()
-    expect(mail).to_be_enabled()
-    expect(calendar).to_be_disabled()
-    page.locator('[data-m365-extra-scope="Mail.ReadWrite"]').check()
-    mail.check()
+    expect(page.locator('[data-m365-extra-scope]')).to_have_count(0)
+    expect(page.locator("#m365-source-permissions-help")).to_contain_text(description)
+    expect(page.locator("#m365-source-permissions-help")).to_contain_text("workflow Run as approvals")
+    page.locator(f"#m365-connect-{source}").check()
     page.locator("#m365-connect-btn").click()
     expect(page.locator("#m365-connection-status")).to_contain_text("Key Vault")
-    assert api.connect_requests == [{"sources": ["email"], "scopes": ["Mail.ReadWrite", "Mail.Send"]}]
-    page.locator("#m365-connect-email").uncheck()
-    expect(mail).not_to_be_checked()
+    assert api.connect_requests == [{"sources": [source]}]
     assert not api.errors
 
 

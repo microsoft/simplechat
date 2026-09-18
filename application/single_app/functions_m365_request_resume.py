@@ -40,8 +40,12 @@ def queue_approved_chat(approval, user_id):
     return _queue_chat_job(job, user_id)
 
 
-def resume_m365_chat_request(request_id, user_id):
-    job = cosmos_m365_execution_runs_container.read_item(request_id, partition_key=user_id)
+def get_m365_chat_request(request_id, user_id):
+    """Read only a subject-owned, resumable interactive request."""
+    try:
+        job = cosmos_m365_execution_runs_container.read_item(request_id, partition_key=user_id)
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError("The saved Microsoft 365 chat request no longer exists.") from exc
     if (
         job.get("user_id") != user_id or job.get("actor_user_id") != user_id
         or job.get("workflow_id") or job.get("type") != "m365_execution_request"
@@ -49,12 +53,18 @@ def resume_m365_chat_request(request_id, user_id):
         raise PermissionError("This request cannot be resumed as your chat.")
     if job.get("status") not in {"awaiting_sign_in", "awaiting_approval", "ready_to_resume"}:
         raise M365PolicyError("m365_request_not_waiting", "This request is not waiting for a user decision.")
+    return job
+
+
+def resume_m365_chat_request(request_id, user_id):
+    job = get_m365_chat_request(request_id, user_id)
     if job.get("status") == "awaiting_sign_in":
         from functions_m365_connections import get_m365_access_token
         token_result = get_m365_access_token(job.get("required_scopes") or ["User.Read"])
         if not token_result.get("access_token"):
             return {
                 "resume_scheduled": False, "auth_required": True,
+                "m365_request_id": request_id,
                 **{key: token_result[key] for key in ("auth_url", "consent_url", "message") if key in token_result},
             }
     if job.get("status") == "ready_to_resume":

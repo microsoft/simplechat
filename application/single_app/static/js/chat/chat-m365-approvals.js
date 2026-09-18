@@ -27,6 +27,7 @@
     let active = null;
     let resumeHandler = null;
     let csrfToken = null;
+    let csrfRefresh = null;
     let sequence = 0;
 
     function makeElement(tag, className, text) {
@@ -38,7 +39,7 @@
         return element;
     }
 
-    async function requestJson(path, options = {}) {
+    async function requestJson(path, options = {}, csrfRetried = false) {
         const target = new URL(path, window.location.origin);
         if (target.origin !== window.location.origin || !target.pathname.startsWith('/api/m365/')) {
             throw new Error('Microsoft 365 requests must use the local authenticated API.');
@@ -65,8 +66,15 @@
             throw new Error('The Microsoft 365 service returned an invalid response.');
         }
         if (!response.ok || result.success === false) {
+            if (response.status === 403 && result.error === 'm365_csrf_invalid' && !csrfRetried && options.method && options.method !== 'GET') {
+                csrfRefresh = csrfRefresh || requestJson('/api/m365/preferences')
+                    .finally(() => { csrfRefresh = null; });
+                await csrfRefresh;
+                return requestJson(path, options, true);
+            }
             const error = new Error(result.message || 'The Microsoft 365 request could not be completed. Refresh before trying again.');
             error.status = response.status;
+            error.code = result.error;
             throw error;
         }
         if (typeof result.csrf_token === 'string' && result.csrf_token.length >= 32) {

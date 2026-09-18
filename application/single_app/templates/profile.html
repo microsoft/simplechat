@@ -1226,6 +1226,7 @@
         <hr />
         <h6>Connect Microsoft 365 for workflows</h6>
         <p class="small">This is separate from ordinary sign-in, sharing preferences, and workflow approval. Each selected Run as workflow revision needs your explicit authorization. Disconnect stops future connected-account use and invalidates bindings; it does not sign you out of other applications.</p>
+        <p class="small">This status is for saved workflow access. Interactive chat asks you to connect in the conversation when permission is needed; a disconnected workflow account does not disable chat.</p>
         <div id="m365-connection-status" class="alert alert-info" role="status" aria-live="polite">Loading workflow connection...</div>
         <dl id="m365-connection-details" class="row small"></dl>
         <fieldset id="m365-connection-fields" disabled>
@@ -1238,21 +1239,7 @@
                 </div>
                 {% endfor %}
             </div>
-            <fieldset class="mb-3" id="m365-optional-permissions">
-                <legend class="fs-6">Additional workflow permissions (optional)</legend>
-                <p class="form-text">Select only the operations your workflows need. Reading a source does not automatically authorize sending mail or creating invitations.</p>
-                {% for m365_scope, m365_sources, m365_scope_label in [
-                    ("Calendars.ReadWrite", "calendar", "Create calendar invitations"),
-                    ("Mail.ReadWrite", "email", "Create and manage mail drafts"),
-                    ("Mail.Send", "email", "Send mail"),
-                    ("User.ReadBasic.All", "calendar email", "Look up directory recipients")
-                ] %}
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="m365-scope-{{ loop.index }}" data-m365-extra-scope="{{ m365_scope }}" data-m365-extra-sources="{{ m365_sources }}" disabled />
-                    <label class="form-check-label" for="m365-scope-{{ loop.index }}">{{ m365_scope_label }} ({{ m365_scope }})</label>
-                </div>
-                {% endfor %}
-            </fieldset>
+            <p class="form-text" id="m365-source-permissions-help">Each source includes the permissions for all of its supported operations. Calendar includes reading events, creating invitations, mailbox timezone, and recipient lookup. Email includes reading messages, managing drafts and read state, sending mail, and recipient lookup. OneDrive and SPO include file discovery and reading. Microsoft shows the permissions before you consent. Your action capabilities, delivery confirmations, and workflow Run as approvals still control what can actually run.</p>
             <div class="d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-primary" id="m365-connect-btn">Connect Microsoft 365 for workflows</button>
                 <button type="button" class="btn btn-outline-danger" id="m365-disconnect-btn" disabled>Disconnect</button>

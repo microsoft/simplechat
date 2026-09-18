@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.030
+Version: 0.261.032
 Implemented in: 0.261.029
 
 Imports the real route module with scoped authentication/logging I/O seams.
@@ -366,6 +366,166 @@ class M365RouteTests(unittest.TestCase):
         self.assertEqual(invalid_connect.status_code, 400)
         self.assertEqual(foreign_disconnect.status_code, 404)
         self.assertEqual(self.connection_container.items, {})
+
+    def test_callbacks_use_public_https_behind_app_service_and_keep_local_development(self):
+        dependencies = {
+            "config": module_stub("config", LOGIN_REDIRECT_URL=None),
+            "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
+        }
+        with patch.dict(sys.modules, dependencies):
+            with self.app.test_request_context(base_url="http://simplechat.example.test"):
+                deployed = self.routes._callback_uri()
+            with self.app.test_request_context(base_url="http://localhost:5000"):
+                local = self.routes._callback_uri()
+            dependencies["config"].LOGIN_REDIRECT_URL = "https://public.example.test/getAToken"
+            with self.app.test_request_context(base_url="http://internal.example.test"):
+                configured = self.routes._callback_uri()
+        self.assertEqual(deployed, "https://simplechat.example.test/api/m365/connections/callback")
+        self.assertEqual(local, "http://localhost:5000/api/m365/connections/callback")
+        self.assertEqual(configured, "https://public.example.test/api/m365/connections/callback")
+
+    def test_stale_csrf_has_a_specific_retriable_code_without_mutating_preferences(self):
+        response = self.client.patch(
+            "/api/m365/preferences", json={"sources": {"email": "always"}},
+            headers={"X-M365-CSRF-Token": "stale-token"},
+        )
+        preferences = self.service.get_preferences("user-a")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "m365_csrf_invalid")
+        self.assertEqual(preferences["sources"]["email"], "ask")
+
+    def chat_request_dependencies(self, jobs):
+        config = module_stub(
+            "config", LOGIN_REDIRECT_URL=None,
+            cosmos_m365_execution_runs_container=jobs,
+            cosmos_conversations_container=CosmosContainer("id"),
+        )
+        spec = importlib.util.spec_from_file_location(
+            "m365_test_chat_resume", APP_DIR / "functions_m365_request_resume.py",
+        )
+        resume = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {
+            "config": config,
+            "functions_appinsights": module_stub("functions_appinsights", log_event=Mock()),
+        }):
+            spec.loader.exec_module(resume)
+        return {
+            "config": config,
+            "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
+            "functions_m365_request_resume": resume,
+        }
+
+    def test_chat_connect_uses_saved_own_scopes_and_never_accepts_caller_authority(self):
+        jobs = CosmosContainer("user_id")
+        jobs.create_item(body={
+            "id": "request", "type": "m365_execution_request",
+            "user_id": "user-a", "actor_user_id": "user-a", "conversation_id": "conversation",
+            "status": "awaiting_sign_in", "required_scopes": ["Files.Read.All", "Sites.Read.All"],
+        })
+        dependencies = self.chat_request_dependencies(jobs)
+        begin = Mock(return_value={"authorization_url": "https://login.microsoftonline.com/tenant-a/authorize"})
+        with patch.dict(sys.modules, dependencies), patch.object(self.connection_service, "start_chat_connection", begin):
+            missing_csrf = self.client.post("/api/m365/requests/request/connect", json={})
+            invalid = self.client.post(
+                "/api/m365/requests/request/connect",
+                json={"user_id": "user-b", "scopes": ["Mail.Send"]},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            connected = self.client.post(
+                "/api/m365/requests/request/connect", json={},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(missing_csrf.status_code, 403)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(connected.status_code, 200)
+        begin.assert_called_once_with(
+            "user-a", "tenant-a", "request", "conversation",
+            ["Files.Read.All", "Sites.Read.All"], "http://localhost/getAToken",
+        )
+
+    def test_chat_connect_rejects_other_subjects_workflows_and_completed_requests(self):
+        for changes in (
+            {"actor_user_id": "other-actor"},
+            {"workflow_id": "workflow"},
+            {"status": "completed"},
+        ):
+            with self.subTest(changes=changes):
+                jobs = CosmosContainer("user_id")
+                jobs.create_item(body={
+                    "id": "request", "type": "m365_execution_request",
+                    "user_id": "user-a", "actor_user_id": "user-a", "conversation_id": "conversation",
+                    "status": "awaiting_sign_in", "required_scopes": ["Files.Read.All"], **changes,
+                })
+                with patch.dict(sys.modules, self.chat_request_dependencies(jobs)), \
+                     patch.object(self.connection_service, "start_chat_connection") as begin:
+                    result = self.client.post(
+                        "/api/m365/requests/request/connect", json={},
+                        headers={"X-M365-CSRF-Token": self.csrf},
+                    )
+                self.assertIn(result.status_code, (400, 403))
+                begin.assert_not_called()
+
+    def test_chat_connect_hides_requests_owned_by_another_user(self):
+        jobs = CosmosContainer("user_id")
+        jobs.create_item(body={
+            "id": "request", "type": "m365_execution_request",
+            "user_id": "user-b", "actor_user_id": "user-b", "conversation_id": "private-conversation",
+            "status": "awaiting_sign_in", "required_scopes": ["Files.Read.All"],
+        })
+        with patch.dict(sys.modules, self.chat_request_dependencies(jobs)), \
+             patch.object(self.connection_service, "start_chat_connection") as begin:
+            response = self.client.post(
+                "/api/m365/requests/request/connect", json={},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("private-conversation", response.get_data(as_text=True))
+        begin.assert_not_called()
+
+    def test_registered_chat_callback_returns_no_store_for_success_and_failure(self):
+        for result in ("connected", "invalid"):
+            with self.subTest(result=result), self.app.test_request_context(
+                "/getAToken?state=m365-chat-state&code=opaque",
+            ):
+                session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+                with patch.object(self.routes, "_complete_chat_connection") as complete:
+                    if result == "connected":
+                        complete.return_value = self.app.response_class(status=302, headers={"Location": "/chats"})
+                    else:
+                        complete.side_effect = approvals.M365PolicyError("m365_auth_state_invalid", "Connect again.")
+                    response = self.routes.complete_m365_chat_connection_callback()
+                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+                self.assertEqual(response.headers["Pragma"], "no-cache")
+                self.assertEqual(response.status_code, 302 if result == "connected" else 400)
+
+    def test_chat_callback_returns_to_original_visible_conversation_without_running_a_request(self):
+        jobs = CosmosContainer("user_id")
+        jobs.create_item(body={
+            "id": "request", "type": "m365_execution_request",
+            "user_id": "user-a", "actor_user_id": "user-a", "conversation_id": "backing-conversation",
+            "status": "awaiting_sign_in",
+        })
+        dependencies = self.chat_request_dependencies(jobs)
+        authorize = Mock(return_value=(
+            {"id": "backing-conversation"}, {"collaboration_conversation_id": "visible-conversation"}, {},
+        ))
+        dependencies["functions_m365_runtime"] = module_stub(
+            "functions_m365_runtime", _conversation_access=authorize,
+        )
+        with patch.dict(sys.modules, dependencies), patch.object(
+            self.connection_service, "complete_chat_connection",
+            return_value={"request_id": "request", "conversation_id": "backing-conversation"},
+        ) as complete:
+            result = self.client.get("/api/m365/connections/callback?state=m365-chat-state&code=opaque")
+        self.assertEqual(result.status_code, 302)
+        self.assertEqual(
+            result.headers["Location"],
+            "/chats?conversationId=visible-conversation&m365_request_id=request&m365_auth=connected",
+        )
+        complete.assert_called_once_with("user-a", "tenant-a", {"state": "m365-chat-state", "code": "opaque"})
+        authorize.assert_called_once_with("user-a", "backing-conversation")
+        saved = jobs.read_item("request", "user-a")
+        self.assertEqual(saved["status"], "awaiting_sign_in")
 
     def test_connection_profile_and_approval_responses_are_not_cached(self):
         for path in ("/api/m365/preferences", "/api/m365/connections"):

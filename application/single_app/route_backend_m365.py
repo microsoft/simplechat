@@ -4,11 +4,11 @@
 import hmac
 import logging
 import secrets
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import requests
 from azure.core.exceptions import AzureError
-from flask import Blueprint, jsonify, redirect, request, session
+from flask import Blueprint, jsonify, make_response, redirect, request, session
 
 from functions_appinsights import log_event
 from functions_authentication import login_required, user_required, user_required_blueprint
@@ -22,7 +22,12 @@ from functions_m365_approvals import (
     is_m365_approval_subject,
     sanitize_m365_approval,
 )
-from functions_m365_connections import CONNECTION_CALLBACK_PATH, get_m365_connection_service
+from functions_m365_connections import (
+    CHAT_AUTH_STATE_PREFIX,
+    CHAT_CALLBACK_PATH,
+    CONNECTION_CALLBACK_PATH,
+    get_m365_connection_service,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -67,10 +72,10 @@ def validate_m365_csrf():
     supplied = request.headers.get("X-M365-CSRF-Token")
     if (
         not isinstance(expected, str) or not isinstance(supplied, str)
-        or not hmac.compare_digest(expected, supplied)
+        or not hmac.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
         or request.headers.get("Sec-Fetch-Site", "").lower() == "cross-site"
     ):
-        raise PermissionError("Refresh the Microsoft 365 form before submitting.")
+        raise M365PolicyError("m365_csrf_invalid", "Refresh the Microsoft 365 controls before submitting.")
 
 
 def _body():
@@ -92,7 +97,7 @@ def _error_response(exc):
         code = exc.code
         if code == "not_logged_in":
             status = 401
-        elif code in {"m365_principal_mismatch", "m365_account_mismatch", "m365_workflow_not_authorized"}:
+        elif code in {"m365_principal_mismatch", "m365_account_mismatch", "m365_workflow_not_authorized", "m365_csrf_invalid"}:
             status = 403
         elif isinstance(exc, M365ApprovalConflict) or code in {
             "m365_approval_required", "m365_connection_busy", "m365_connection_changed",
@@ -101,7 +106,7 @@ def _error_response(exc):
             status = 409
         elif code in {
             "m365_key_vault_required", "m365_key_unavailable", "m365_key_invalid",
-            "m365_configuration_invalid", "m365_tenant_authority_required",
+            "m365_configuration_invalid", "m365_tenant_authority_required", "m365_callback_invalid",
             "m365_workflow_validation_unavailable", "m365_audit_validation_unavailable",
             "m365_approval_validation_unavailable",
             "m365_authorization_unavailable", "m365_preflight_unavailable",
@@ -118,6 +123,12 @@ def _error_response(exc):
     if isinstance(exc, LookupError):
         return jsonify({"success": False, "error": "not_found", "message": "Microsoft 365 request not found."}), 404
     if isinstance(exc, ValueError):
+        log_event(
+            "[AUTH] Microsoft 365 request validation failed",
+            extra={"exception_type": type(exc).__name__, "endpoint": request.endpoint},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
         return jsonify({"success": False, "error": "invalid_request", "message": "Invalid Microsoft 365 request."}), 400
     log_event(
         "[AUTH] Microsoft 365 request dependency unavailable",
@@ -161,7 +172,7 @@ def m365_approval_decision_response(approval, user_id, data, *, deny=False):
         return _error_response(exc)
 
 
-def _callback_uri():
+def _callback_uri(callback_path=CONNECTION_CALLBACK_PATH):
     # The configured Front Door URL is an owner-supplied origin, not callback input.
     from config import LOGIN_REDIRECT_URL
     from functions_settings import get_settings
@@ -173,7 +184,52 @@ def _callback_uri():
         origin = f"{parsed.scheme}://{parsed.netloc}"
     else:
         origin = request.host_url.rstrip("/")
-    return f"{origin}{CONNECTION_CALLBACK_PATH}"
+        # App Service terminates TLS before forwarding HTTP to the Flask worker.
+        parsed = urlsplit(origin)
+        if parsed.hostname not in {"localhost", "127.0.0.1"}:
+            origin = parsed._replace(scheme="https").geturl()
+    return f"{origin}{callback_path}"
+
+
+def _complete_chat_connection(user_id, tenant_id, auth_response):
+    # These owners are initialized before an authenticated OAuth callback.
+    from functions_m365_request_resume import get_m365_chat_request
+    from functions_m365_runtime import _conversation_access
+    completed = get_m365_connection_service().complete_chat_connection(user_id, tenant_id, auth_response)
+    job = get_m365_chat_request(completed["request_id"], user_id)
+    if job.get("conversation_id") != completed["conversation_id"]:
+        raise M365PolicyError("m365_request_changed", "The conversation request changed during sign-in.")
+    conversation, access, _shared = _conversation_access(user_id, job["conversation_id"])
+    if conversation is None:
+        raise LookupError("The original conversation no longer exists.")
+    visible_id = (access or {}).get("collaboration_conversation_id") or conversation["id"]
+    query = urlencode({
+        'conversationId': visible_id,
+        'm365_request_id': job['id'],
+        'm365_auth': 'connected',
+    })
+    return redirect(f"/chats?{query}")
+
+
+@login_required
+@user_required
+def complete_m365_chat_connection_callback():
+    """Use the registered login callback without replacing the SimpleChat principal."""
+    try:
+        user_id, tenant_id = _subject()
+        auth_response = request.args.to_dict()
+        if (
+            set(auth_response) - {"state", "code", "error", "error_description", "error_uri", "session_state", "client_info"}
+            or any(len(value) > 16384 for value in auth_response.values())
+        ):
+            raise ValueError("Invalid authorization response.")
+        result = _complete_chat_connection(user_id, tenant_id, auth_response)
+    except (M365PolicyError, PermissionError, LookupError, ValueError, AzureError, requests.RequestException) as exc:
+        result = _error_response(exc)
+    response = make_response(result)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 def register_route_backend_m365(bp):
@@ -223,6 +279,26 @@ def register_route_backend_m365(bp):
         user_id, _tenant_id = _subject()
         validate_m365_csrf()
         return jsonify(resume_m365_chat_request(request_id, user_id))
+
+    @bp.route("/api/m365/requests/<request_id>/connect", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def connect_m365_chat_request(request_id):
+        # Request storage belongs to the initialized chat/runtime owner.
+        from functions_m365_request_resume import get_m365_chat_request
+        user_id, tenant_id = _subject()
+        validate_m365_csrf()
+        if _body():
+            raise ValueError("The saved request supplies the Microsoft 365 connection scope.")
+        job = get_m365_chat_request(request_id, user_id)
+        if job["status"] != "awaiting_sign_in":
+            raise M365PolicyError("m365_request_not_waiting", "This request is not waiting for Microsoft 365 sign-in.")
+        result = get_m365_connection_service().start_chat_connection(
+            user_id, tenant_id, request_id, job["conversation_id"],
+            job.get("required_scopes") or [], _callback_uri(CHAT_CALLBACK_PATH),
+        )
+        return jsonify({"success": True, **result})
 
     @bp.route("/api/m365/preferences", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -351,16 +427,22 @@ def register_route_backend_m365(bp):
     @user_required
     def complete_m365_profile_connection():
         user_id, tenant_id = _subject()
-        session_binding = session.pop("m365_workflow_oauth_binding", None)
-        if not session_binding:
-            raise M365PolicyError("m365_auth_state_invalid", "Start Connect again from Profile.")
         auth_response = request.args.to_dict()
         if (
             set(auth_response) - {"state", "code", "error", "error_description", "error_uri", "session_state", "client_info"}
             or any(len(value) > 16384 for value in auth_response.values())
         ):
             raise ValueError("Invalid authorization response.")
-        get_m365_connection_service().complete_connection(user_id, tenant_id, auth_response, session_binding)
+        service = get_m365_connection_service()
+        if (auth_response.get("state") or "").startswith(CHAT_AUTH_STATE_PREFIX):
+            return _complete_chat_connection(user_id, tenant_id, auth_response)
+        session_binding = session.pop("m365_workflow_oauth_binding", None)
+        if not session_binding:
+            raise M365PolicyError("m365_auth_state_invalid", "Start Connect again from Profile.")
+        service.complete_connection(
+            user_id, tenant_id, auth_response, session_binding,
+            cache_writer=lambda serialized: session.__setitem__("token_cache", serialized),
+        )
         return redirect("/profile?m365_connection=connected")
 
     @bp.route("/api/m365/connections/disconnect", methods=["POST"])

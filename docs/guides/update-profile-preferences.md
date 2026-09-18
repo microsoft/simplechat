@@ -54,9 +54,16 @@ OneDrive and SharePoint also have separate fast/deeper-analysis preferences.
 Workflow connections are explicit, revocable opt-ins and are not implied by
 ordinary sign-in.
 
+The workflow connection status is not the status of interactive chat. When
+an agent needs Microsoft 365 consent, Chat offers **Connect Microsoft 365**
+in the conversation and resumes the saved request after sign-in.
+For workflows, select each source once; its supported read/write permissions
+are explained before Microsoft's consent step, without extra permission
+checkboxes. Action capability limits and outgoing-delivery review still apply.
+
 See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
 for approval duration, retained-evidence sharing, and Run as behavior
-introduced in **0.261.029**.
+introduced in **0.261.029** and updated in **0.261.032**.
 
 ## Verify it worked
 

@@ -4,7 +4,7 @@ title: "Microsoft 365 Email"
 description: "Read mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.029"
+version: "0.261.032"
 ---
 
 <!-- action-slug: m365-email -->
@@ -25,6 +25,11 @@ mailbox credentials.
 Create a **Microsoft 365 Email** action and enable only the operations the agent
 needs. Keep **Send mail** separate from reading. Preserve a manual-review
 delivery mode where messages must not leave the mailbox without user review.
+
+When consent is missing, Chat offers **Connect Microsoft 365** for the Email
+source rather than requiring Profile setup. The source permission bundle
+includes mail reads, drafts/read-state changes, sending, and recipient lookup.
+Granting it does not enable disabled action capabilities or approve a send.
 
 Example: "Summarize the recent project emails and draft a reply for me to review."
 

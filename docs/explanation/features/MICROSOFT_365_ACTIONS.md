@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.031)
+# Microsoft 365 actions and conversation evidence (v0.261.032)
 
 Implemented in version: **0.261.029**
 
@@ -7,6 +7,9 @@ See the [CodeQL remediation](../fixes/M365_CODEQL_REMEDIATION_FIX.md).
 
 Cosmos SDK compatibility and streamed execution-context lifetime were corrected
 in **0.261.031**. See the [agent streaming fix](../fixes/M365_AGENT_STREAMING_FIX.md).
+
+In-chat connection, source permission bundles, and early agent binding were
+corrected in **0.261.032**. See the [connection onboarding fix](../fixes/M365_CHAT_CONNECTION_ONBOARDING_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.
@@ -27,7 +30,7 @@ operations also pass through source-sharing checks.
 - Existing agents/actions, conversation storage, and Microsoft Entra sign-in.
 - A member account in the deployment tenant. Guest/mismatched accounts fail
   closed rather than falling back to another cached identity.
-- Delegated scopes appropriate to the enabled operations. Graph file search
+- Delegated consent for each selected source's supported operation bundle. Graph file search
   uses `Files.Read.All`; Copilot Retrieval requires both delegated
   `Files.Read.All` and `Sites.Read.All`.
 - Configure delegated Microsoft Graph permissions on the existing Entra app
@@ -42,6 +45,9 @@ operations also pass through source-sharing checks.
   while rotating active connection caches.
 - Register `/api/m365/connections/callback` as a redirect URI for workflow
   connection. This connection is separate from ordinary interactive sign-in.
+- Interactive chat reuses the registered `/getAToken` callback with a separate
+  state/nonce/PKCE-protected flow and the existing server-side login session.
+  It does not require a saved workflow connection or Key Vault.
 
 Admin Settings, **Agents & Actions**, offers `m365_retrieval_provider`
 (`auto` or `graph`) and `m365_trusted_download_hosts`. These hosts control
@@ -144,10 +150,12 @@ Task outputs and actual tool history survive approval waits. Committed
 operations are not replayed. Uncertain external mutations require recovery
 rather than being blindly repeated.
 
-Profile offers explicit optional permission choices for invitations, draft
-management, mail sending, and directory recipient lookup. Enable only the
-operations the action needs; a read connection never silently acquires write
-permissions. Missing scopes pause a workflow for reconnect and consent.
+Profile uses one selection per source. Calendar consent includes event reads,
+invitations, mailbox timezone, and recipient lookup; Email includes reads, draft
+and read-state changes, sending, and recipient lookup. Microsoft displays these
+permissions before consent. Existing narrower connections need an explicit
+reconnect to acquire additional permissions; no permission is silently added.
+Action capabilities and outgoing-delivery reviews still restrict actual use.
 
 Workflow mail and calendar deliveries retain identity and approval references,
 not bearer tokens. Scheduled delivery is recovered by the workflow scheduler

@@ -47,6 +47,13 @@ The local approval dialog offers only the durations permitted by the action.
 The same request is available in **Approvals** and notifications; declining a
 source keeps unrelated tools available. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
+**Connect Microsoft 365** appears on a paused request when the selected source
+needs delegated sign-in or consent. It opens Microsoft's authorization flow
+for that request's sources and returns to the same conversation to resume it.
+It does not send you to Profile, approve data sharing, or create a workflow
+Run as binding. Connection failures stay visible in the request instead of
+being presented as a model answer that no documents exist.
+
 {% include media.html src="reference/chat-controls-composer-tools.png" alt="Message composer with quick tools, upload controls, URL review, web search, and send button visible." title="Chat tools and composer" capture="Capture the message composer with quick tools, upload controls, URL review, web search, and send button visible." %}
 
 | Control | What it does | Why you would use it | Enabled by |

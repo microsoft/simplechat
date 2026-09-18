@@ -3697,6 +3697,9 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
                 'selected_agent': agent,
                 'tasks': [],
             })
+            if manifests and getattr(g, 'm365_new_conversation', False):
+                g.m365_initial_conversation = _create_personal_conversation(user_id, conversation_id)
+                g.m365_new_conversation = False
             preflight_m365_manifests(manifests)
         g.m365_chat_preflight_complete = True
     return authorized_context
@@ -21177,7 +21180,9 @@ def register_route_backend_chats(bp):
                         g.request_agent_info = {'name': request_agent_info}
                         g.request_agent_name = request_agent_info
 
-                # Initialize Semantic Kernel if needed
+                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+
+                # Initialize Semantic Kernel only after binding the selected agent's actions.
                 redis_client = None
                 if enable_semantic_kernel and per_user_semantic_kernel:
                     redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
@@ -21220,8 +21225,6 @@ def register_route_backend_chats(bp):
                 if image_gen_enabled:
                     yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
                     return
-
-                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
                 # Clear plugin invocations
                 plugin_logger = get_plugin_logger()
@@ -21741,7 +21744,9 @@ def register_route_backend_chats(bp):
 
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
-                    conversation_item = _create_personal_conversation(user_id, conversation_id=conversation_id)
+                    conversation_item = getattr(g, 'm365_initial_conversation', None) or _create_personal_conversation(
+                        user_id, conversation_id=conversation_id,
+                    )
                     debug_print(f"[STREAMING] Created new conversation {conversation_id}")
                 else:
                     try:
