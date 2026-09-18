@@ -10,7 +10,7 @@ import hashlib
 from io import BytesIO
 from flask import make_response
 from azure.core import MatchConditions
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import AzureError, ResourceExistsError
 from content_screening.contracts import (
     SCREENING_FIELD,
     DocumentHeldError,
@@ -43,6 +43,9 @@ from content_screening.service import (
 )
 from config import *
 from functions_appinsights import log_event
+from functions_artifact_publication_readiness import (
+    PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
+)
 from functions_ai_connections import require_model_capability
 from functions_embedding_compatibility import active_embedding_profile, prepare_embedding_search_documents
 from functions_model_capabilities import is_vision_capable_model
@@ -10962,6 +10965,21 @@ def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """Keep screened intake private until its complete, revision-bound decision."""
     document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if document and document.get(PUBLICATION_BINDING):
+        try:
+            should_process = begin_publication_processing(document, temp_file_path)
+        except (AzureError, OSError, ValueError, RuntimeError) as exc:
+            log_event(
+                "[SIMPLE_CHAT] Publication native processing could not start",
+                extra={"document_id": document_id, "error_type": type(exc).__name__}, level=logging.WARNING,
+            )
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise
+        if not should_process:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return
     if document_requires_screening(document, get_settings()):
         return process_screened_upload(
             document_id, user_id, temp_file_path, original_filename,
@@ -11250,6 +11268,8 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
             group_id=group_id,
             public_workspace_id=public_workspace_id
         )
+        if final_document_metadata and final_document_metadata.get(PUBLICATION_BINDING):
+            finish_publication_processing(final_document_metadata, indexed_chunks=total_chunks_saved)
         sync_chat_upload_workspace_attachment_status(final_document_metadata)
 
         print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved and {total_embedding_tokens} embedding tokens used.")
@@ -11456,6 +11476,8 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
+            if failed_document_metadata and failed_document_metadata.get(PUBLICATION_BINDING):
+                finish_publication_processing(failed_document_metadata, failed=True)
             sync_chat_upload_workspace_attachment_status(failed_document_metadata)
         except Exception as update_e:
             print(f"Critical Error: Failed to update document status to error for {document_id}: {update_e}")

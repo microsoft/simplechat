@@ -14,6 +14,7 @@ WORKFLOW_DEFINITION_VERSION = 2
 WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
 WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_results"})
 WORKFLOW_INPUT_PROCESSING_MODES = frozenset({"full", "saved_record_report"})
+WORKFLOW_PUBLICATION_COMPLETION_POLICIES = ("submitted", "approved", "indexed_ready")
 WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval", "input_processing"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
@@ -43,6 +44,23 @@ class WorkflowDefinitionError(ValueError):
 
 class WorkflowDefinitionConflict(WorkflowDefinitionError):
     """The editor is stale or cannot preserve the stored definition."""
+
+
+def normalize_publication_completion_policy(value):
+    if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_COMPLETION_POLICIES:
+        raise WorkflowDefinitionError("Publication completion must be submitted, approved, or indexed_ready.")
+    return value
+
+
+def validate_workflow_publication_completion(workflow):
+    for task in workflow.get("tasks") or []:
+        if not isinstance(task, dict):
+            raise WorkflowDefinitionError("A workflow task must be an object.")
+        publication = task.get("publication")
+        if isinstance(publication, dict) and "completion_policy" in publication:
+            normalize_publication_completion_policy(publication["completion_policy"])
+            if workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True:
+                raise WorkflowDefinitionError("Publication completion policies require a version-3 durable workflow.")
 
 
 def workflow_output_kind_matches(actual, expected):
@@ -268,6 +286,10 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         if existing.get("active_run_id"):
             raise WorkflowDefinitionConflict("Wait for the active run to finish or cancel it before editing this workflow.")
     raw_tasks = payload.get("tasks", existing.get("tasks", []))
+    validate_workflow_publication_completion({
+        **payload, "tasks": raw_tasks,
+        "durable_execution": payload.get("durable_execution", existing.get("durable_execution", False)),
+    })
     if len(raw_tasks) != len(tasks):
         raise WorkflowDefinitionError("Task data does not match the normalized task list.")
     if version != 3 and any("input_processing" in task for task in raw_tasks):

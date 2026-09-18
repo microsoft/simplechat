@@ -22,6 +22,10 @@ from config import (
     cosmos_user_documents_container,
 )
 from functions_appinsights import log_event
+from functions_artifact_publication_readiness import (
+    PUBLICATION_BINDING, inspect_publication_readiness, publication_binding_matches,
+    publication_handoff_observed, publication_processing_observation, public_publication_status,
+)
 from functions_collaboration import build_conversation_participation_context
 from functions_documents import allowed_file, create_document, update_document
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
@@ -129,6 +133,13 @@ def _receipt_change(artifact, key, change):
         updated = change(receipt)
         if updated is None:
             return receipt, False
+        if updated.get("completion_policy") and any(
+            other_key != key and other.get("request_id") == updated.get("request_id")
+            for other_key, other in receipts.items()
+        ):
+            raise ValueError("This publication request is already bound to different artifact bytes.")
+        if receipt is None and len(receipts) >= MAX_ARTIFACT_PUBLICATION_REQUESTS:
+            raise ValueError("This artifact has reached its publication request limit.")
         if not current.get("_etag"):
             raise RuntimeError("Conditional publication persistence is unavailable.")
         current = deepcopy(current)
@@ -197,8 +208,10 @@ def _notification_exists(receipt, notification_type):
     )))
 
 
-def _notify_once(artifact, receipt, stage, notification_type, create):
+def _notify_once(artifact, receipt, stage, notification_type, create, *, before=None):
     if _stage(artifact, receipt, stage):
+        if before is not None:
+            before()
         try:
             if create():
                 _stage(artifact, receipt, stage, complete=True)
@@ -212,6 +225,8 @@ def _notify_once(artifact, receipt, stage, notification_type, create):
 def _publication_response(artifact, receipt, container):
     receipt, _ = _receipt_change(artifact, receipt["id"], lambda current: None)
     document = _destination_document(container, receipt)
+    if receipt.get("completion_policy"):
+        return _completion_response(receipt, document)
     scope = receipt["destination"]["workspace_scope"]
     stages = receipt.get("stages") or {}
     required = ["create", "prepare", "queue"] if scope == "personal" else [
@@ -244,8 +259,101 @@ def _publication_response(artifact, receipt, container):
     }
 
 
+def _completion_response(receipt, document):
+    scope = receipt["destination"]["workspace_scope"]
+    required = ["create", "prepare", "queue"] if scope == "personal" else [
+        "create", "prepare", "workspace_notification", "submitter_notification",
+    ]
+    decision = (receipt.get("decision") or {}).get("choice", "pending")
+    if decision not in {"pending", "approved", "rejected", "cancelled"}:
+        raise ValueError("The saved publication decision is unsupported.")
+    if decision == "approved":
+        required.append("approval_queue")
+    unresolved = [name for name in required if receipt.get("stages", {}).get(name) != "complete"]
+    processing = publication_processing_observation(receipt, document)
+    if processing == "not_started" and receipt.get("stages", {}).get("queue") == "complete":
+        processing = "queued"
+    status = {
+        "version": 1, "id": receipt["id"], "document_id": receipt["document_id"],
+        "document_version": receipt.get("document_version"), "destination": deepcopy(receipt["destination"]),
+        "completion_policy": receipt["completion_policy"], "policy_satisfied": False,
+        "state": "uncertain", "submission": "uncertain" if unresolved else "confirmed",
+        "approval": "not_required" if scope == "personal" else decision,
+        "processing": processing, "screening": "not_required", "index": "pending",
+        "reason_code": "", "retryable": False, "unresolved_stages": unresolved,
+    }
+    facts = {}
+    if publication_binding_matches(receipt, document):
+        facts = inspect_publication_readiness(receipt, document, check_index=False)
+        status.update({key: facts[key] for key in ("processing", "screening", "index")})
+        if status["processing"] == "not_started" and any(
+            receipt.get("stages", {}).get(stage) == "complete" for stage in ("queue", "approval_queue")
+        ):
+            status["processing"] = "queued"
+    if decision in {"rejected", "cancelled"}:
+        status.update(state=decision, reason_code=f"publication_{decision}")
+    elif document is None and receipt.get("stages", {}).get("create") != "complete":
+        status.update(reason_code="publication_effect_uncertain", retryable=True)
+    elif document is None:
+        status.update(state="unavailable", reason_code="publication_destination_unavailable")
+    elif not publication_binding_matches(receipt, document):
+        status.update(state="content_changed", reason_code="publication_revision_changed")
+    elif document.get("generated_artifact_promotion_status") == "approval_failed" and receipt.get("stages", {}).get("approval_queue") != "complete":
+        status.update(state="approval_failed", approval="failed", reason_code="publication_approval_failed", retryable=True)
+    elif unresolved:
+        status.update(reason_code="publication_effect_uncertain", retryable=True)
+    elif facts.get("reason_code") == "publication_content_changed":
+        status.update(state="content_changed", reason_code="publication_content_changed")
+    elif status["processing"] == "failed":
+        status.update(state="processing_failed", reason_code="publication_processing_failed", retryable=True)
+    elif receipt["completion_policy"] == "submitted":
+        status.update(state="submitted", policy_satisfied=True)
+    elif status["approval"] == "pending":
+        status["state"] = "waiting_approval"
+    elif receipt["completion_policy"] == "approved":
+        status.update(state="approved", policy_satisfied=True)
+    else:
+        status.update(inspect_publication_readiness(receipt, document))
+        reason = status["reason_code"]
+        if reason:
+            status.update(
+                state="content_changed" if reason in {"publication_content_changed", "publication_revision_changed"} else
+                "processing_failed" if reason == "publication_processing_failed" else "unavailable",
+                retryable=reason in {"publication_processing_failed", "publication_screening_unavailable"},
+            )
+        elif status["index"] == "ready":
+            status.update(state="indexed_ready", policy_satisfied=True)
+        else:
+            status["state"] = (
+                "waiting_screening" if status["screening"] in {"pending", "held"} else
+                "waiting_index" if status["processing"] == "complete" else "waiting_processing"
+            )
+    messages = {
+        "submitted": "The existing artifact was submitted. Approval and index readiness were not requested.",
+        "approved": "Publication approval is satisfied. Index readiness was not requested.",
+        "indexed_ready": "The original artifact's exact destination revision is indexed and available.",
+        "waiting_approval": "Waiting for destination approval in the existing workspace review.",
+        "waiting_processing": "Waiting for the existing destination document to finish processing.",
+        "waiting_screening": "Waiting for the destination's content screening and review.",
+        "waiting_index": "Waiting for the complete destination revision to become visible in the index.",
+        "uncertain": "An existing publication effect could not be confirmed. Check the same receipt; do not create another copy.",
+        "rejected": "The destination rejected this publication. Cancel this run before starting a new request.",
+        "cancelled": "The destination publication request was cancelled.",
+        "approval_failed": "Destination approval could not finish processing. Check the existing request.",
+        "processing_failed": "The existing destination document could not finish processing.",
+        "unavailable": "The exact destination or its readiness proof is unavailable. No replacement was published.",
+        "content_changed": "The destination content or revision changed. The original publication policy was not satisfied.",
+    }
+    return {
+        "message": messages[status["state"]], **receipt["destination"], "approval_required": scope != "personal",
+        "document": {"id": receipt["document_id"], "file_name": receipt["file_name"]},
+        "publication": public_publication_status(status),
+    }
+
+
 def publish_generated_chat_artifact_for_user(
     user_id, *, conversation_id, message_id, destination, request_id, requester_display_name="", file_name="",
+    completion_policy=None, source_receipt=None, execution_check=None,
 ):
     """Copy or request approval once; uncertain external work is never blindly repeated."""
     user_id = _text(user_id, "Acting user")
@@ -254,8 +362,17 @@ def publish_generated_chat_artifact_for_user(
         user_id, _text(conversation_id, "Conversation id"), _text(message_id, "Artifact message id"),
     )
     destination, workspace_name, container = _authorize_destination(user_id, destination)
+    if completion_policy is not None:
+        # Kept at this opt-in boundary so ordinary artifact publication needs no workflow compiler.
+        from functions_workflow_definitions import normalize_publication_completion_policy
+
+        completion_policy = normalize_publication_completion_policy(completion_policy)
+        if not isinstance(source_receipt, dict) or (source_receipt.get("producer") or {}).get("kind") == "chat":
+            raise ValueError("Publication completion needs an exact saved workflow source receipt.")
 
     def reauthorize():
+        if execution_check is not None:
+            execution_check()
         current = _authorize_artifact(user_id, artifact["conversation_id"], artifact["id"])
         if _artifact_identity(current) != _artifact_identity(artifact):
             raise ValueError("The generated artifact changed before publication.")
@@ -292,16 +409,28 @@ def publish_generated_chat_artifact_for_user(
         "content_sha256": content_sha256, "document_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"simplechat-publication:{key}")),
         "file_name": name, "created_at": datetime.now(timezone.utc).isoformat(), "stages": {},
     }
+    if completion_policy is not None:
+        receipt.update(
+            completion_policy=completion_policy, source_receipt=deepcopy(source_receipt),
+            artifact_reference={"conversation_id": conversation_id, "artifact_message_id": message_id},
+            source_identity=_artifact_identity(artifact),
+        )
     if len(metadata.get(RECEIPTS_FIELD) or {}) >= MAX_ARTIFACT_PUBLICATION_REQUESTS and key not in metadata[RECEIPTS_FIELD]:
         raise ValueError("This artifact has reached its publication request limit.")
     reauthorize()
     receipt, _ = _receipt_change(artifact, key, lambda current: None if current else receipt)
+    if receipt.get("completion_policy") != completion_policy or completion_policy is not None and receipt.get("source_receipt") != source_receipt:
+        raise ValueError("The publication request is already bound to different inputs or a different policy.")
     document = _destination_document(container, receipt)
+    if completion_policy and (receipt.get("decision") or {}).get("choice") in {"rejected", "cancelled"}:
+        return _completion_response(receipt, document)
     scope_args = {field: value for field, value in destination.items() if field != "workspace_scope"}
     scope = destination["workspace_scope"]
     if document is None:
         reauthorize()
     if document is None and _stage(artifact, receipt, "create"):
+        if completion_policy:
+            reauthorize()
         try:
             with ExitStack() as cleanup:
                 source_file_path = None
@@ -324,10 +453,26 @@ def publish_generated_chat_artifact_for_user(
     if document is None:
         return _publication_response(artifact, receipt, container)
     _stage(artifact, receipt, "create", complete=True)
+    if completion_policy and "document_version" not in receipt:
+        if type(document.get("version")) is not int or document["version"] < 1:
+            raise ValueError("The publication destination has no valid native revision.")
+        reauthorize()
+        receipt, _ = _receipt_change(
+            artifact, key, lambda current: {**current, "document_version": document["version"]}
+            if "document_version" not in current else None,
+        )
     if not document.get("generated_artifact_publication_receipt_id"):
         reauthorize()
     if not document.get("generated_artifact_publication_receipt_id") and _stage(artifact, receipt, "prepare"):
+        if completion_policy:
+            reauthorize()
         updates = {"generated_artifact_publication_receipt_id": key}
+        if completion_policy:
+            updates[PUBLICATION_BINDING] = {
+                "version": 1, "receipt_id": key, "document_version": receipt["document_version"],
+                "content_sha256": content_sha256, "conversation_id": conversation_id,
+                "artifact_message_id": message_id,
+            }
         if scope != "personal":
             updates.update(
                 generated_artifact_promotion_status="pending_approval",
@@ -360,6 +505,8 @@ def publish_generated_chat_artifact_for_user(
                 raise ValueError("The generated artifact bytes changed.")
         reauthorize()
         if _stage(artifact, receipt, "queue"):
+            if completion_policy:
+                reauthorize()
             try:
                 queue_generated_document_processing(
                     document_id=receipt["document_id"], owner_user_id=user_id,
@@ -369,7 +516,10 @@ def publish_generated_chat_artifact_for_user(
                 invalidate_personal_search_cache(user_id)
             except (AzureError, OSError, RuntimeError) as exc:
                 _log_uncertain("queue", exc)
-        elif document.get("status") not in {None, "", "Queued for processing"}:
+        elif (
+            publication_handoff_observed(receipt, document)
+            if completion_policy else document.get("status") not in {None, "", "Queued for processing"}
+        ):
             _stage(artifact, receipt, "queue", complete=True)
     elif document.get("generated_artifact_promotion_status") == "pending_approval":
         reauthorize()
@@ -381,13 +531,19 @@ def publish_generated_chat_artifact_for_user(
             "publication_receipt_id": key, "conversation_id": conversation_id, "message_id": message_id,
         }
         notify_workspace = create_group_notification if scope == "group" else create_public_workspace_notification
+        def workspace_notice():
+            kwargs = {
+                "notification_type": "approval_request_pending", "title": "Approval required: generated artifact",
+                "message": f"{requester_display_name or 'A workspace member'} requested approval for {name} in {workspace_name}.",
+                "link_url": link_url, "link_context": link_context, "metadata": notification_metadata,
+            }
+            if completion_policy:
+                return create_notification(**scope_args, **kwargs, idempotency_key=f"publication:{key}:workspace")
+            return notify_workspace(destination[target_field], kwargs.pop("notification_type"), kwargs.pop("title"), kwargs.pop("message"), **kwargs)
+
         _notify_once(
             artifact, receipt, "workspace_notification", "approval_request_pending",
-            lambda: notify_workspace(
-                destination[target_field], "approval_request_pending", "Approval required: generated artifact",
-                f"{requester_display_name or 'A workspace member'} requested approval for {name} in {workspace_name}.",
-                link_url=link_url, link_context=link_context, metadata=notification_metadata,
-            ),
+            workspace_notice, before=reauthorize if completion_policy else None,
         )
         reauthorize()
         _notify_once(
@@ -397,14 +553,20 @@ def publish_generated_chat_artifact_for_user(
                 title="Generated artifact submitted for approval",
                 message=f"{name} is waiting for approval in {workspace_name}.",
                 link_url=link_url, link_context=link_context, metadata=notification_metadata,
+                **({"idempotency_key": f"publication:{key}:submitter"} if completion_policy else {}),
             ),
+            before=reauthorize if completion_policy else None,
         )
         if scope == "group":
             invalidate_group_search_cache(destination["group_id"])
+    if completion_policy:
+        reauthorize()
     return _publication_response(artifact, receipt, container)
 
 
-def publish_workflow_analysis_artifact(user_id, *, publication, artifact_reference, request_id):
+def publish_workflow_analysis_artifact(
+    user_id, *, publication, artifact_reference, request_id, source_receipt=None, execution_check=None,
+):
     """Dispatch only a configured publication task using an actual upstream artifact address."""
     if publication is None:
         return {"reply": "", "execution_status": "skipped", "publication": {"state": "not_requested"}, "model_calls": 0}
@@ -424,13 +586,271 @@ def publish_workflow_analysis_artifact(user_id, *, publication, artifact_referen
         output_format = "md"
     if output_format != publication["artifact_format"]:
         raise ValueError("The requested format is not available. Publish an existing upstream artifact.")
+    if "completion_policy" in publication:
+        producer = metadata.get("analysis_producer") or {}
+        if (
+            producer.get("kind") != "workflow" or not producer.get("execution_id")
+            or not isinstance(source_receipt, dict)
+            or source_receipt.get("producer") != {key: value for key, value in producer.items() if key != "kind"}
+            or not isinstance(source_receipt.get("result_ref"), dict)
+            or not isinstance(source_receipt.get("output_ref"), dict)
+            or not source_receipt.get("output_name")
+        ):
+            raise ValueError("Publication completion needs the exact native workflow result and attempt.")
     result = publish_generated_chat_artifact_for_user(
         user_id, conversation_id=conversation_id, message_id=message_id,
-        destination={key: value for key, value in publication.items() if key != "artifact_format"},
+        destination={key: value for key, value in publication.items() if key not in {"artifact_format", "completion_policy"}},
         request_id=request_id,
+        completion_policy=publication.get("completion_policy"), source_receipt=source_receipt,
+        execution_check=execution_check,
     )
-    return {
+    response = {
         "reply": result["message"], "publication": result["publication"], "model_calls": 0,
         "execution_status": "blocked" if result["publication"]["state"] in {"uncertain", "approval_failed"} else "succeeded",
         "authoritative_result": {"kind": "json", "value": {"publication": result["publication"]}},
     }
+    if "completion_policy" in publication:
+        response["execution_status"] = "succeeded" if result["publication"]["policy_satisfied"] else "pending"
+        response["_publication_request"] = {
+            "publication": deepcopy(publication), "artifact_reference": deepcopy(artifact_reference),
+            "request_id": request_id, "receipt_id": result["publication"]["id"],
+            "source_receipt": deepcopy(source_receipt),
+        }
+    return response
+
+
+def read_workflow_artifact_publication(
+    user_id, request, *, reconcile=False, execution_check=None, authorization_only=False,
+):
+    """Observe one exact receipt. Only the leased workflow may reconcile stage acknowledgements."""
+    publication = normalize_workflow_publication(request["publication"])
+    address = request["artifact_reference"]
+    artifact = _authorize_artifact(user_id, address["conversation_id"], address["artifact_message_id"])
+    receipt, _ = _receipt_change(artifact, request["receipt_id"], lambda current: None)
+    if not receipt or any(receipt.get(name) != expected for name, expected in (
+        ("actor_user_id", user_id), ("request_id", request["request_id"]),
+        ("completion_policy", publication.get("completion_policy")), ("source_receipt", request["source_receipt"]),
+        ("artifact_reference", {key: address[key] for key in ("conversation_id", "artifact_message_id")}),
+    )):
+        raise PermissionError("The publication receipt does not match this workflow request.")
+    destination = {key: value for key, value in publication.items() if key not in {"artifact_format", "completion_policy"}}
+    if (
+        receipt["destination"] != destination or receipt.get("source_identity") != _artifact_identity(artifact)
+        or address.get("producer") != (artifact.get("metadata") or {}).get("analysis_producer")
+    ):
+        raise PermissionError("The publication receipt belongs to a different producer or destination.")
+    _, _, container = _authorize_destination(user_id, destination)
+    document = _destination_document(container, receipt)
+    if authorization_only:
+        # A fulfilled checkpoint is historical; later deletion must not rewrite it.
+        if reconcile or document is not None and not publication_binding_matches(receipt, document):
+            raise PermissionError("The completed publication destination could not be confirmed.")
+        if execution_check is not None:
+            execution_check()
+        return None
+    if reconcile:
+        if execution_check is None:
+            raise ValueError("Publication reconciliation requires the current workflow write fence.")
+        execution_check()
+        confirmed = []
+        if document:
+            confirmed.append("create")
+        if publication_binding_matches(receipt, document):
+            confirmed.append("prepare")
+            if publication_handoff_observed(receipt, document):
+                confirmed.append("queue")
+                if (receipt.get("decision") or {}).get("choice") == "approved":
+                    confirmed.append("approval_queue")
+        for stage, notification in (
+            ("workspace_notification", "approval_request_pending"),
+            ("submitter_notification", "approval_request_pending_submitter"),
+        ):
+            if receipt.get("stages", {}).get(stage) == "started" and _notification_exists(receipt, notification):
+                confirmed.append(stage)
+        for stage in confirmed:
+            if receipt.get("stages", {}).get(stage) == "started":
+                execution_check()
+                _stage(artifact, receipt, stage, complete=True)
+        receipt, _ = _receipt_change(artifact, receipt["id"], lambda current: None)
+    result = _completion_response(receipt, document)
+    _authorize_artifact(user_id, address["conversation_id"], address["artifact_message_id"])
+    _authorize_destination(user_id, destination)
+    if execution_check is not None:
+        execution_check()
+    return result
+
+
+def _replace_publication_destination(container, receipt, updates):
+    for _ in range(8):
+        document = _destination_document(container, receipt)
+        if not publication_binding_matches(receipt, document):
+            raise ValueError("The publication destination revision is unavailable.")
+        try:
+            container.replace_item(
+                item=document["id"], body={**document, **updates}, etag=document["_etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
+            return
+        except CosmosHttpResponseError as exc:
+            if exc.status_code != 412:
+                raise
+    raise RuntimeError("The publication destination is busy.")
+
+
+def authorize_publication_status_read(user_id, status, *, actor_user_id):
+    """A workflow viewer does not inherit the publisher's destination permissions."""
+    destination = status["destination"]
+    scope = destination["workspace_scope"]
+    if scope == "personal":
+        if user_id != actor_user_id:
+            raise PermissionError("This publication destination is private to its requester.")
+        container = cosmos_user_documents_container
+    elif scope == "group":
+        assert_group_role(user_id, destination["group_id"], allowed_roles=("Owner", "Admin", "DocumentManager", "User"))
+        container = cosmos_group_documents_container
+    elif scope == "public" and find_public_workspace_by_id(destination["public_workspace_id"]):
+        container = cosmos_public_documents_container
+    else:
+        raise PermissionError("Publication destination access could not be confirmed.")
+    try:
+        document = container.read_item(item=status["document_id"], partition_key=status["document_id"])
+    except CosmosResourceNotFoundError:
+        return
+    field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[scope]
+    if (
+        document.get(field) != (actor_user_id if scope == "personal" else destination[field])
+        or document.get("generated_artifact_publication_receipt_id") != status["id"]
+    ):
+        raise PermissionError("Publication destination access could not be confirmed.")
+
+
+def decide_artifact_publication(user_id, document, choice):
+    """Use the destination's existing review role, while retaining a durable receipt outcome."""
+    try:
+        return _decide_artifact_publication(user_id, document, choice)
+    except PermissionError as exc:
+        _log_uncertain("destination_authorization", exc)
+        raise PermissionError("Current publication source or destination access could not be confirmed.") from exc
+    except (AzureError, OSError, RuntimeError) as exc:
+        _log_uncertain("destination_decision", exc)
+        raise RuntimeError("The publication decision could not be fully confirmed. Refresh the existing request.") from exc
+
+
+def _decide_artifact_publication(user_id, document, choice):
+    if choice not in {"approved", "rejected", "cancelled"}:
+        raise ValueError("Invalid publication decision.")
+    roles = ("Owner", "Admin", "DocumentManager", "User") if choice == "cancelled" else ("Owner", "Admin", "DocumentManager")
+    if document.get("group_id"):
+        assert_group_role(user_id, document["group_id"], allowed_roles=roles)
+    elif document.get("public_workspace_id"):
+        workspace = find_public_workspace_by_id(document["public_workspace_id"])
+        if not workspace or get_user_role_in_public_workspace(workspace, user_id) not in roles:
+            raise PermissionError("You cannot decide this publication request.")
+    else:
+        raise ValueError("Personal publication does not require workspace approval.")
+    binding = document.get(PUBLICATION_BINDING) or {}
+    artifact = cosmos_messages_container.read_item(
+        item=binding["artifact_message_id"], partition_key=binding["conversation_id"],
+    )
+    receipt, _ = _receipt_change(artifact, binding["receipt_id"], lambda current: None)
+    if not receipt or not publication_binding_matches(receipt, document):
+        raise ValueError("The publication decision does not match its destination.")
+    destination = receipt["destination"]
+    scope = destination["workspace_scope"]
+    if scope not in {"group", "public"}:
+        raise ValueError("Personal publication does not require workspace approval.")
+    if (
+        scope == "group" and destination["group_id"] != document.get("group_id")
+        or scope == "public" and destination["public_workspace_id"] != document.get("public_workspace_id")
+        or receipt["document_id"] != document["id"]
+    ):
+        raise PermissionError("The publication belongs to a different workspace.")
+    def authorize_decision():
+        if scope == "group":
+            assert_group_role(user_id, destination["group_id"], allowed_roles=roles)
+        else:
+            workspace = find_public_workspace_by_id(destination["public_workspace_id"])
+            if not workspace or get_user_role_in_public_workspace(workspace, user_id) not in roles:
+                raise PermissionError("You cannot decide this publication request.")
+        if choice == "cancelled" and receipt["actor_user_id"] != user_id:
+            raise PermissionError("Only the publication requester can cancel this request.")
+
+    authorize_decision()
+    source_bytes = None
+    if choice == "approved":
+        if receipt.get("source_identity") != _artifact_identity(artifact):
+            raise ValueError("The original publication artifact changed.")
+        _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
+        _authorize_destination(receipt["actor_user_id"], destination)
+        source_bytes = download_blob_content(artifact["blob_container"], artifact["blob_path"])
+        if hashlib.sha256(source_bytes).hexdigest() != receipt["content_sha256"]:
+            raise ValueError("The original publication artifact changed.")
+        _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
+        _authorize_destination(receipt["actor_user_id"], destination)
+    authorize_decision()
+
+    def record_decision(current):
+        previous = current.get("decision")
+        if previous:
+            if previous.get("choice") != choice:
+                raise ValueError("A different publication decision already committed.")
+            return None
+        current["decision"] = {
+            "choice": choice, "actor_user_id": user_id, "decided_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return current
+
+    receipt, _ = _receipt_change(artifact, receipt["id"], record_decision)
+    container = cosmos_group_documents_container if scope == "group" else cosmos_public_documents_container
+    scope_args = {key: destination[key] for key in ("group_id", "public_workspace_id") if key in destination}
+    if choice == "approved":
+        authorize_decision()
+        _replace_publication_destination(container, receipt, {
+            "generated_artifact_promotion_status": "approved",
+            "generated_artifact_approved_at": receipt["decision"]["decided_at"],
+            "generated_artifact_approved_by_user_id": receipt["decision"]["actor_user_id"],
+        })
+        if _stage(artifact, receipt, "approval_queue"):
+            try:
+                _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
+                _authorize_destination(receipt["actor_user_id"], destination)
+                authorize_decision()
+                queue_generated_document_processing(
+                    document_id=receipt["document_id"], owner_user_id=receipt["actor_user_id"],
+                    normalized_file_name=receipt["file_name"], file_content_bytes=source_bytes, **scope_args,
+                )
+                _stage(artifact, receipt, "approval_queue", complete=True)
+            except (AzureError, OSError, RuntimeError, ValueError, PermissionError) as exc:
+                _log_uncertain("approval_queue", exc)
+                _replace_publication_destination(container, receipt, {
+                    "generated_artifact_promotion_status": "approval_failed",
+                })
+                raise RuntimeError("Approval was recorded, but its existing processing handoff needs reconciliation.") from exc
+        elif publication_handoff_observed(receipt, _destination_document(container, receipt)):
+            _stage(artifact, receipt, "approval_queue", complete=True)
+    else:
+        # The durable decision survives removal of the pending destination shell.
+        from functions_documents import delete_document_revision
+
+        authorize_decision()
+        if _destination_document(container, receipt):
+            delete_document_revision(
+                user_id=user_id, document_id=receipt["document_id"], delete_mode="current_only", **scope_args,
+            )
+    if choice != "cancelled":
+        notification_type = "approval_request_approved" if choice == "approved" else "approval_request_denied"
+        _notify_once(
+            artifact, receipt, "decision_notification", notification_type,
+            lambda: create_notification(
+                user_id=receipt["actor_user_id"], notification_type=notification_type,
+                title="Generated artifact approved" if choice == "approved" else "Generated artifact denied",
+                message="The destination approved your generated artifact." if choice == "approved" else
+                "The destination rejected your generated artifact.",
+                link_url="/group_workspaces" if scope == "group" else "/public_workspaces",
+                link_context={"workspace_type": scope, **scope_args, "document_id": receipt["document_id"]},
+                metadata={**scope_args, "document_id": receipt["document_id"], "publication_receipt_id": receipt["id"],
+                          "request_type": "generated_artifact_promotion"},
+                idempotency_key=f"publication:{receipt['id']}:decision",
+            ),
+        )
+    return {"message": f"Publication {choice}.", "document_id": receipt["document_id"]}

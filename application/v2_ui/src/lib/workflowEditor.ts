@@ -71,6 +71,7 @@ export interface WorkflowEditorOptions {
     supported_query_modes?: string[];
     supported_binding_sources?: string[];
     supported_input_processing_modes?: string[];
+    supported_publication_completion_policies?: string[];
     flow_limits?: {
         max_nodes: number;
         max_depth: number;
@@ -131,6 +132,90 @@ export interface WorkflowPublication {
     workspace_scope: 'personal' | 'group' | 'public';
     group_id?: string;
     public_workspace_id?: string;
+    completion_policy?: WorkflowPublicationCompletionPolicy;
+}
+
+export const WORKFLOW_PUBLICATION_COMPLETION_LABELS = {
+    submitted: 'Submitted',
+    approved: 'Approved',
+    indexed_ready: 'Indexed and ready',
+} as const;
+
+export type WorkflowPublicationCompletionPolicy = keyof typeof WORKFLOW_PUBLICATION_COMPLETION_LABELS;
+
+export function isWorkflowPublicationCompletionPolicy(value: unknown): value is WorkflowPublicationCompletionPolicy {
+    return typeof value === 'string' && Object.hasOwn(WORKFLOW_PUBLICATION_COMPLETION_LABELS, value);
+}
+
+const PUBLICATION_FACT_VALUES = {
+    state: [
+        'submitted', 'approved', 'indexed_ready', 'waiting_approval', 'waiting_processing',
+        'waiting_screening', 'waiting_index', 'uncertain', 'rejected', 'cancelled',
+        'approval_failed', 'processing_failed', 'unavailable', 'content_changed',
+    ],
+    submission: ['pending', 'confirmed', 'uncertain'],
+    approval: ['not_required', 'pending', 'approved', 'rejected', 'cancelled', 'failed'],
+    processing: ['not_started', 'queued', 'running', 'complete', 'failed', 'unavailable'],
+    screening: ['not_required', 'pending', 'held', 'available', 'rejected', 'changed', 'unavailable'],
+    index: ['pending', 'ready', 'unavailable'],
+} as const;
+
+export interface WorkflowPublicationStatus {
+    version: 1;
+    id: string;
+    document_id: string;
+    document_version: number | null;
+    destination: {
+        workspace_scope: WorkflowReferenceScope;
+        group_id?: string;
+        public_workspace_id?: string;
+    };
+    completion_policy: WorkflowPublicationCompletionPolicy;
+    policy_satisfied: boolean;
+    state: typeof PUBLICATION_FACT_VALUES.state[number];
+    submission: typeof PUBLICATION_FACT_VALUES.submission[number];
+    approval: typeof PUBLICATION_FACT_VALUES.approval[number];
+    processing: typeof PUBLICATION_FACT_VALUES.processing[number];
+    screening: typeof PUBLICATION_FACT_VALUES.screening[number];
+    index: typeof PUBLICATION_FACT_VALUES.index[number];
+    reason_code: string;
+    retryable: boolean;
+    unresolved_stages: string[];
+}
+
+export function isWorkflowPublicationStatus(value: unknown): value is WorkflowPublicationStatus {
+    const identity = (item: unknown): item is string =>
+        typeof item === 'string' && item.length > 0 && item.length <= 256 && item === item.trim();
+    const code = (item: unknown): item is string =>
+        typeof item === 'string' && /^[a-z][a-z0-9_]{0,127}$/.test(item);
+    if (!isRecord(value) || value.version !== 1 ||
+        Object.keys(value).some((key) => ![
+            'version', 'id', 'document_id', 'document_version', 'destination', 'completion_policy',
+            'policy_satisfied', 'state', 'submission', 'approval', 'processing', 'screening',
+            'index', 'reason_code', 'retryable', 'unresolved_stages',
+        ].includes(key)) ||
+        typeof value.id !== 'string' || !/^[a-f0-9]{64}$/.test(value.id) ||
+        !identity(value.document_id) ||
+        value.document_version !== null && (typeof value.document_version !== 'number' ||
+            !Number.isSafeInteger(value.document_version) || value.document_version < 1) ||
+        !isWorkflowPublicationCompletionPolicy(value.completion_policy) ||
+        typeof value.policy_satisfied !== 'boolean' || typeof value.retryable !== 'boolean' ||
+        value.reason_code !== '' && !code(value.reason_code) ||
+        !Array.isArray(value.unresolved_stages) || value.unresolved_stages.length > 32 ||
+        !value.unresolved_stages.every(code) ||
+        Object.entries(PUBLICATION_FACT_VALUES).some(([key, allowed]) => {
+            const fact = value[key];
+            return typeof fact !== 'string' || !(allowed as readonly string[]).includes(fact);
+        }) ||
+        !isRecord(value.destination)) return false;
+    const destination = value.destination;
+    const scope = destination.workspace_scope;
+    return (scope === 'personal' || scope === 'group' || scope === 'public') &&
+        Object.keys(destination).every((key) =>
+            key === 'workspace_scope' || scope === 'group' && key === 'group_id' ||
+            scope === 'public' && key === 'public_workspace_id') &&
+        (scope !== 'group' || identity(destination.group_id)) &&
+        (scope !== 'public' || identity(destination.public_workspace_id));
 }
 
 export interface WorkflowTask {
@@ -208,6 +293,7 @@ export interface WorkflowRuntimeGate {
     node_id?: string;
     attempt?: number;
     iteration_path?: WorkflowIterationFrame[];
+    publication?: WorkflowPublicationStatus;
 }
 
 export interface WorkflowIterationFrame {
@@ -1000,8 +1086,6 @@ export function workflowValidationErrors(
     }
     if (draft.definition_version === 3) {
         errors.push(...analyzeWorkflowFlow(draft).errors);
-        const unsupported = flowUnsupportedReason(draft, options);
-        if (unsupported) errors.push(unsupported);
         flowLoops(draft).forEach(({ node }) => {
             errors.push(...loopSelectionErrors(node, workflowLoopLimit(options)));
             const sources = node.iterable.kind === 'documents' ? node.iterable.documents
@@ -1030,6 +1114,8 @@ export function workflowValidationErrors(
         };
         checkCollects(draft.flow);
     }
+    const unsupported = flowUnsupportedReason(draft, options);
+    if (unsupported) errors.push(unsupported);
     if (draft.trigger_type === 'interval' && draft.schedule.value < 1) {
         errors.push('Interval workflows need a positive schedule value.');
     }
@@ -1224,7 +1310,7 @@ export async function fetchWorkflowEditorOptions(
     const ceiling = response.flow_limits?.max_loop_items;
     if (ceiling !== undefined && (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > 5000) ||
         [response.supported_node_kinds, response.supported_iterable_kinds, response.supported_query_modes, response.supported_binding_sources,
-            response.supported_input_processing_modes]
+            response.supported_input_processing_modes, response.supported_publication_completion_policies]
             .some((values) => values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== 'string'))) ||
         [...response.agents, ...response.models, response.default_model ?? {}]
             .some((runner) => !isRecord(runner) || runner.loop_eligible !== undefined && typeof runner.loop_eligible !== 'boolean')) {
@@ -1412,6 +1498,10 @@ function checkedRuntimeResponse(response: WorkflowRuntimeResponse): WorkflowRunt
     ];
     if (!response?.runtime || paths.some((path) => path !== undefined && !validWorkflowIterationPath(path))) {
         throw new Error('The workflow runtime contains an unsupported iteration identity. Reload before making a decision.');
+    }
+    const publication = response.runtime.gate?.publication;
+    if (publication !== undefined && !isWorkflowPublicationStatus(publication)) {
+        throw new Error('The workflow runtime returned an unsupported publication status. Reload before making a decision.');
     }
     const progress = response.runtime.loop_progress;
     if (progress && (

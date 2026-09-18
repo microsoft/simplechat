@@ -33,6 +33,7 @@ from test_support.app_stubs import import_app_module
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 saved_analysis = import_app_module("functions_saved_analysis")
+definitions = import_app_module("functions_workflow_definitions")
 
 
 def load_functions(filename, names, namespace):
@@ -53,6 +54,7 @@ def normalizers():
         "WORKFLOW_TASK_LIMIT_MAX": 100, "WORKFLOW_MAX_TASKS": 50,
         "WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH": 12000, "WORKFLOW_TASK_NAME_MAX_LENGTH": 120,
         "WORKFLOW_TASK_RUNNER_TYPES": {"inherit", "agent", "model"},
+        "normalize_publication_completion_policy": definitions.normalize_publication_completion_policy,
     })
 
 
@@ -155,7 +157,7 @@ def publication(monkeypatch):
             state["create_hook"]()
         if state["failure"] == "create_before":
             raise TimeoutError("Create not acknowledged")
-        destination_for(values).put({"id": values["document_id"], **values})
+        destination_for(values).put({"id": values["document_id"], "version": 1, **values})
         if state["failure"] == "create_after":
             raise TimeoutError("Create acknowledgement lost")
 

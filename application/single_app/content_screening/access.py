@@ -64,6 +64,7 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "canonical_ref", "units_ref", "result_ref", "original_blob_path",
     "original_blob_container", "active_manifest_id", "active_content_manifest",
     PROVENANCE_FIELD,
+    "generated_artifact_publication_binding", "generated_artifact_publication_processing",
 })
 
 
@@ -768,7 +769,9 @@ def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return deepcopy(dict(document))
+        return {key: deepcopy(value) for key, value in document.items() if key not in {
+            "generated_artifact_publication_binding", "generated_artifact_publication_processing",
+        }}
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -776,9 +779,15 @@ def public_document_payload(document):
         available = True
     except (ScreeningError, AttributeError):
         available = False
+    public_fields = HELD_PUBLIC_FIELDS
+    if document.get("generated_artifact_publication_binding"):
+        public_fields = public_fields | {
+            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
+            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
+        }
     payload = {
         key: deepcopy(value) for key, value in document.items()
-        if (available or key in HELD_PUBLIC_FIELDS)
+        if (available or key in public_fields)
         and key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
         and not key.startswith("_") and not key.startswith("screening_")
     }
@@ -878,6 +887,7 @@ def reject_screening_fields(payload):
         for key, value in payload.items():
             normalized = str(key).replace("_", "").replace("-", "").lower()
             if normalized.startswith(("contentscreening", "screening")) or normalized in {
+                "generatedartifactpublicationbinding", "generatedartifactpublicationprocessing",
                 "availabilitygeneration", "activecontentmanifest", "activemanifestid",
                 "canonicalref", "unitsref", "resultref", "sourceref",
                 "scanid", "reviewid", "contentfingerprint", "sourcerevision",

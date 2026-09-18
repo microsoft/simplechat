@@ -567,6 +567,20 @@ function onlyFields(value: object, fields: string[], errors: string[], label: st
 
 export function flowUnsupportedReason(workflow: WorkflowDefinition, options?: WorkflowEditorOptions): string {
     if (workflow.editor_readonly_reason) return workflow.editor_readonly_reason;
+    for (const task of workflow.tasks) {
+        const publication = task.publication;
+        if (!isRecord(publication) || !Object.hasOwn(publication, 'completion_policy')) continue;
+        const policy = publication.completion_policy;
+        if (typeof policy !== 'string' || !['submitted', 'approved', 'indexed_ready'].includes(policy)) {
+            return 'This publication contains an unsupported completion policy. Its original configuration is preserved and read-only.';
+        }
+        if (workflow.definition_version !== 3 || workflow.durable_execution !== true) {
+            return 'Publication completion policies require a durable definition-v3 workflow. The saved definition is preserved and read-only.';
+        }
+        if (options && !options.supported_publication_completion_policies?.includes(policy)) {
+            return 'This server does not support the saved publication completion policy. Its original configuration is preserved and read-only.';
+        }
+    }
     if (workflow.definition_version !== 3) return '';
     if (!isFlowRegion(workflow.flow)) return 'This structured definition contains an unsupported or malformed region, node, binding, or condition.';
     if (!Array.isArray(workflow.flow.outputs)) return 'This structured definition must explicitly declare root outputs, including an empty list. Its saved definition is preserved.';

@@ -7,10 +7,12 @@ import {
     workflowUrl,
     workflowLoopSelection,
     validWorkflowIterationPath,
+    isWorkflowPublicationStatus,
     type WorkflowConsumedInput,
     type WorkflowIterationFrame,
     type WorkflowLoopSelection,
     type WorkflowResultReference,
+    type WorkflowPublicationStatus,
     type WorkflowRunResultPage,
     type WorkflowScope,
     type WorkflowValidationResult,
@@ -50,6 +52,7 @@ export interface WorkflowExecutionRecord {
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
         reporting?: unknown;
+        publication?: WorkflowPublicationStatus;
     };
     workflow_validation?: WorkflowValidationResult;
     consumed_inputs?: WorkflowConsumedInput[];
@@ -73,6 +76,7 @@ export interface WorkflowExecutionAttemptRecord {
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
         reporting?: unknown;
+        publication?: WorkflowPublicationStatus;
     };
     workflow_validation?: WorkflowValidationResult;
     consumed_inputs?: WorkflowConsumedInput[];
@@ -207,7 +211,9 @@ function validInputs(value: unknown): boolean {
 
 function validResultMetadata(value: Record<string, unknown>): boolean {
     return validInputs(value.consumed_inputs) &&
-        (value.workflow_result === undefined || isRecord(value.workflow_result) && validInputs(value.workflow_result.consumed_inputs)) &&
+        (value.workflow_result === undefined || isRecord(value.workflow_result) &&
+            validInputs(value.workflow_result.consumed_inputs) &&
+            (value.workflow_result.publication === undefined || isWorkflowPublicationStatus(value.workflow_result.publication))) &&
         (value.workflow_validation === undefined || isRecord(value.workflow_validation));
 }
 

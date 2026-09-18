@@ -21,6 +21,7 @@ import {
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
+import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
 
 function runtimeTone(state: string): 'ok' | 'warn' | 'danger' | 'neutral' | 'accent' {
     if (state === 'completed') {
@@ -212,6 +213,7 @@ export function WorkflowRuntimePanel({
     durable,
     structuredRun = false,
     onRuntimeChanged,
+    onAccessLost,
 }: {
     scope: WorkflowScope;
     workflowId: string;
@@ -219,6 +221,7 @@ export function WorkflowRuntimePanel({
     durable: boolean;
     structuredRun?: boolean;
     onRuntimeChanged?: () => void;
+    onAccessLost?: (status: number) => void;
 }) {
     const scopeKey = workflowScopeKey(scope);
     const [enabled, setEnabled] = useState(durable);
@@ -266,7 +269,14 @@ export function WorkflowRuntimePanel({
                 return;
             }
             setCanDecide(false);
-            if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) setRuntime(null);
+            setRuntime((current) => current?.gate?.publication ? null : current);
+            if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                setRuntime(null);
+                setConfirmRetry(false);
+                setRetryTarget(null);
+                retryRequest.current = null;
+                onAccessLost?.(cause.status);
+            }
             if (cause instanceof ApiError && cause.status === 404) {
                 setError('No durable runtime record is available for this run.');
             } else if (cause instanceof ApiError && cause.status === 403) {
@@ -280,7 +290,7 @@ export function WorkflowRuntimePanel({
                 setPollReadToken((value) => value + 1);
             }
         }
-    }, [runId, scope, scopeKey, workflowId]);
+    }, [onAccessLost, runId, scope, scopeKey, workflowId]);
 
     useEffect(() => {
         if (!enabled) {
@@ -321,13 +331,15 @@ export function WorkflowRuntimePanel({
         onRuntimeChanged?.();
     };
 
-    const clearRuntimeAfterPermissionLoss = () => {
+    const clearRuntimeAfterPermissionLoss = (status = 403) => {
         retryRequest.current = null;
         setRuntime(null);
         setCanDecide(false);
         setConfirmRetry(false);
         setRetryTarget(null);
-        setError('You no longer have access to this workflow runtime. Reload or ask an owner to restore access.');
+        setError(status === 404 ? 'No durable runtime record is available for this run.'
+            : 'You no longer have access to this workflow runtime. Reload or ask an owner to restore access.');
+        onAccessLost?.(status);
     };
 
     const decide = async (choice: WorkflowRuntimeDecisionChoice) => {
@@ -338,7 +350,8 @@ export function WorkflowRuntimePanel({
             setError('The recovery gate changed while you were reviewing it. Review the current execution and attempt before retrying.');
             return;
         }
-        if (!runtime?.gate || !canDecide || !runtime.gate.choices.includes(choice)) {
+        if (!runtime?.gate || !canDecide || !runtime.gate.choices.includes(choice) ||
+            runtime.gate.publication && ['approve', 'reject', 'retry'].includes(choice)) {
             setError('The gate is no longer available. Reload this run before making another decision.');
             return;
         }
@@ -372,8 +385,8 @@ export function WorkflowRuntimePanel({
                 retryRequest.current = null;
                 await loadRuntime(true);
                 setError('Runtime changed before your decision was applied. Review the current gate and click again.');
-            } else if (cause instanceof ApiError && cause.status === 403) {
-                clearRuntimeAfterPermissionLoss();
+            } else if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                clearRuntimeAfterPermissionLoss(cause.status);
             } else {
                 const message = cause instanceof Error && cause.message
                     ? cause.message
@@ -407,8 +420,8 @@ export function WorkflowRuntimePanel({
                 retryRequest.current = null;
                 await loadRuntime(true);
                 setError('Runtime changed before your resume request was applied. Review the current runtime and click again.');
-            } else if (cause instanceof ApiError && cause.status === 403) {
-                clearRuntimeAfterPermissionLoss();
+            } else if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                clearRuntimeAfterPermissionLoss(cause.status);
             } else {
                 const message = cause instanceof Error && cause.message
                     ? cause.message
@@ -432,7 +445,9 @@ export function WorkflowRuntimePanel({
             await loadRuntime(true);
             onRuntimeChanged?.();
         } catch (cause: unknown) {
-            setError(workflowErrorMessage(cause, 'Could not cancel this workflow run.'));
+            if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                clearRuntimeAfterPermissionLoss(cause.status);
+            } else setError(workflowErrorMessage(cause, 'Could not cancel this workflow run.'));
         } finally {
             setAction(null);
         }
@@ -441,7 +456,8 @@ export function WorkflowRuntimePanel({
     const gate = runtime?.gate;
     const unsupportedRuntimeSchema = Boolean(runtime && runtime.schema_version !== undefined && ![1, 2].includes(runtime.schema_version));
     const gateAllows = (choice: WorkflowRuntimeDecisionChoice) =>
-        Boolean(gate?.choices.includes(choice));
+        Boolean(gate?.choices.includes(choice) &&
+            (!gate.publication || !['approve', 'reject', 'retry'].includes(choice)));
     const progressLabel = useMemo(() => {
         if (!runtime?.progress) {
             return '';
@@ -510,9 +526,13 @@ export function WorkflowRuntimePanel({
                         </div>
                         {gateReference(gate) ? <p className="break-words text-xs text-text-3">{gateReference(gate)}</p> : null}
                         {gate.reason ? <p className="text-xs text-text-2">{gate.reason}</p> : null}
-                        {gate.input_digest ? <p className="text-xs text-text-3">Input digest: {gate.input_digest}</p> : null}
+                        <WorkflowPublicationDetails publication={gate.publication} />
+                        {gate.input_digest && !gate.publication ? <p className="text-xs text-text-3">Input digest: {gate.input_digest}</p> : null}
                         {gate.kind === 'output' ? (
-                            <p className="rounded-xl bg-warn-soft p-3 text-xs text-warn">Waiting for required output. Approval and retry are not available for this gate.</p>
+                            <p className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
+                                {gate.publication ? 'Waiting for the requested publication completion level.' : 'Waiting for required output.'}
+                                {' '}Approval and retry are not available for this gate.
+                            </p>
                         ) : null}
                         {canMutate && gate.kind === 'approval' ? (
                             <div className="flex flex-wrap gap-2">
@@ -556,7 +576,7 @@ export function WorkflowRuntimePanel({
                                 {gateAllows('resume') ? (
                                     <GlassButton size="sm" variant="primary" disabled={Boolean(action)} onClick={() => void decide('resume')}>
                                         {action === 'resume' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                                        Resume run
+                                        {gate.publication ? 'Resume / check again' : 'Resume run'}
                                     </GlassButton>
                                 ) : null}
                                 {gateAllows('cancel') ? (
