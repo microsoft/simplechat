@@ -9,6 +9,23 @@ from functions_workflow_runtime_store import workflow_runtime_store
 
 
 def authorize_execution_payload(workflow, run_id, payload, *, reader_user_id):
+    if payload.get("iteration_path"):
+        from functions_workflow_iterations import authorize_iteration_path
+
+        authorize_iteration_path(
+            workflow, run_id, payload, reader_user_id=reader_user_id,
+            receipts=payload.get("iteration_inputs") or [],
+        )
+    if payload.get("node_kind") == "for_each":
+        from functions_workflow_iterations import authorize_frozen_loop
+
+        store = workflow_runtime_store(workflow, run_id)
+        loop = store.journal_read("loop", payload["execution_id"])
+        if loop:
+            authorize_frozen_loop(
+                workflow, run_id, {"producer": loop["payload"]["identity"], "manifest_ref": loop["payload"]["manifest_ref"]},
+                reader_user_id=reader_user_id, store=store,
+            )
     references = payload.get("reference_sources") or []
     if references:
         policy = build_analysis_access(references)
@@ -66,7 +83,8 @@ def workflow_execution_result_page(workflow, run_id, execution_id, attempt, *, r
     summary = payload.get("workflow_result") or {}
     identity = summary.get("producer") or {}
     expected = workflow_node_identity(
-        workflow, run_id, payload["node_id"], execution_id, attempt, task_id=payload.get("task_id"), iteration_path=[],
+        workflow, run_id, payload["node_id"], execution_id, attempt,
+        task_id=payload.get("task_id"), iteration_path=payload.get("iteration_path") or [],
     )
     if identity != expected or not summary.get("result_ref"):
         raise ValueError("This exact attempt has no saved result.")

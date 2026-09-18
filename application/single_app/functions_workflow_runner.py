@@ -6039,6 +6039,14 @@ def _add_workflow_activity_thought(
     if not thought_tracker:
         return None
 
+    execution = current_workflow_execution()
+    if workflow.get('definition_version') == 3 and execution is not None and execution.iteration_path:
+        identity = execution.selectors()
+        activity_key = f"{activity_key}:{identity['execution_id']}:{identity['attempt']}"
+        lane_key = identity['execution_id']
+        lane_label = ' / '.join(
+            f"{frame['loop_id']} item {frame['index'] + 1}" for frame in identity['iteration_path']
+        )
     return thought_tracker.add_thought(
         step_type,
         content,
@@ -7523,7 +7531,11 @@ def _get_workflow_active_task(workflow):
     return active_task if isinstance(active_task, dict) else {}
 
 
-def _document_run_item_id(run_id, document_id, task_id=''):
+def _document_run_item_id(run_id, document_id, task_id='', execution_id=None, attempt=None):
+    if execution_id is not None:
+        return str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f'workflow-document:{run_id}:{execution_id}:{attempt}:{document_id}',
+        ))
     normalized_document_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(document_id or '').strip())
     normalized_task_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(task_id or '').strip())
     if normalized_task_id:
@@ -7555,8 +7567,15 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
     file_sync_document = _file_sync_document_details(file_sync_result or {}, document_id)
     active_task = _get_workflow_active_task(workflow)
     task_id = str(active_task.get('id') or '').strip()
+    identity = {}
+    execution = current_workflow_execution()
+    if workflow.get('definition_version') == 3 and execution is not None and execution.node and execution.iteration_path:
+        identity = execution.selectors()
     item = {
-        'id': _document_run_item_id(run_id, document_id, task_id=task_id),
+        'id': _document_run_item_id(
+            run_id, document_id, task_id=task_id,
+            execution_id=identity.get('execution_id'), attempt=identity.get('attempt'),
+        ),
         'type': 'workflow_run_item',
         'item_type': 'document',
         'run_id': run_id,
@@ -7565,6 +7584,7 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
         'task_id': task_id or None,
+        **identity,
         'task_name': str(active_task.get('name') or '').strip() or None,
         'document_id': document_id,
         'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
@@ -8313,6 +8333,8 @@ def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker
         _accumulate_token_usage(token_usage, completion)
     if workflow.get('_saved_analysis_input_only'):
         reply += (
+            '\n\n_This explanation uses saved workflow records. The original sources were not independently rechecked._'
+            if (report.get('analysis_consumption') or {}).get('input_kind') == 'workflow_records' else
             '\n\n_This explanation uses saved Analyze data. '
             'The original documents were not independently rechecked._'
         )
@@ -9684,6 +9706,8 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             reply = str(result)
             if workflow.get('_saved_analysis_input_only'):
                 reply += (
+                    '\n\n_This explanation uses saved workflow records. The original sources were not independently rechecked._'
+                    if (report.get('analysis_consumption') or {}).get('input_kind') == 'workflow_records' else
                     '\n\n_This explanation uses saved Analyze data. '
                     'The original documents were not independently rechecked._'
                 )
@@ -9932,6 +9956,15 @@ def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
         requested_mode,
         normalized_runner,
     )
+    execution = current_workflow_execution()
+    if execution is not None and (
+        getattr(execution, 'iteration_path', []) or task.get('input_processing') == 'saved_record_report'
+    ):
+        from functions_workflow_loop_runners import require_local_loop_runner
+
+        require_local_loop_runner(
+            execution_workflow, actor_user_id=actor_user_id or workflow.get('user_id'), settings=settings,
+        )
     return execution_workflow, runner_audit
 
 
@@ -10385,7 +10418,7 @@ def _execute_workflow_task_sequence(
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
-                    publication_inputs = flow_runner.resolve(task['inputs']) if flow_runner else None
+                    publication_inputs = flow_runner.resolve(task['inputs'], metadata_only=True) if flow_runner else None
                     task_result, consumed_inputs = workflow_unit(
                         task_unit_key,
                         lambda: _execute_workflow_analysis_publication(
@@ -10419,6 +10452,7 @@ def _execute_workflow_task_sequence(
                 consumed_inputs = []
                 reference_context = ''
                 reference_sources = []
+                record_inputs = []
                 if advanced_definition:
                     inputs = resolve_workflow_task_inputs(
                         workflow, {**task, 'inputs': []} if structured_definition else task,
@@ -10436,7 +10470,13 @@ def _execute_workflow_task_sequence(
                         reference_cache=reference_cache,
                     )
                     if flow_runner:
-                        inputs.update(flow_runner.resolve(task['inputs']))
+                        inputs.update(flow_runner.resolve(
+                            task['inputs'],
+                            stream_collections=(flow_runner.has_loops or task.get('input_processing') == 'saved_record_report')
+                            and (task.get('output_contract') or {}).get('kind', 'any') in {'text', 'any'}
+                            and (task.get('document_action') or {}).get('type', 'none') == 'none',
+                        ))
+                        record_inputs = inputs['record_inputs']
                     previous_input = inputs['task_context']
                     consumed_inputs = inputs['consumed_inputs']
                     reference_context = inputs['reference_context']
@@ -10450,9 +10490,14 @@ def _execute_workflow_task_sequence(
                         ).get('type') == DOCUMENT_ACTION_TYPE_NONE,
                     )
                     consumed_inputs.append(consumed)
+                execution_task = task
+                if flow_runner and (task.get('document_action') or {}).get('target_mode') == 'current_item':
+                    execution_task = {
+                        **task, 'document_action': flow_runner.current_document_action(task['document_action']),
+                    }
                 attempt_workflow = _build_workflow_task_execution_workflow(
                     resolved_workflow,
-                    task,
+                    execution_task,
                     previous_reply='' if isinstance(previous_input, SavedAnalysisInput) else previous_input,
                     include_document_action=task_index == 0 and not structured_definition,
                     include_file_sync_context=task_index == 0 and not structured_definition,
@@ -10475,8 +10520,18 @@ def _execute_workflow_task_sequence(
                             'Complete saved records cannot be silently omitted from a document action.'
                         )
                     attempt_workflow['_saved_analysis_inputs'] = [previous_input]
+                if record_inputs:
+                    from functions_workflow_reporting import WorkflowRecordReportingInput
+
+                    attempt_workflow['_saved_analysis_inputs'] = [
+                        WorkflowRecordReportingInput(
+                            item['reader'], name=item['name'], execution=durable,
+                            allow_bounded_reporting=task.get('input_processing') == 'saved_record_report',
+                        )
+                        for item in record_inputs
+                    ]
                 if (
-                    any(item.get('analysis_result') for item in consumed_inputs)
+                    (record_inputs or any(item.get('analysis_result') for item in consumed_inputs))
                     and _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_NONE
                 ):
                     attempt_workflow['_saved_analysis_input_only'] = True
@@ -10506,6 +10561,7 @@ def _execute_workflow_task_sequence(
                     'task': task, 'prompt': attempt_workflow['task_prompt'],
                     'consumed_inputs': consumed_inputs, 'references': reference_sources,
                     'runner': runner_audit,
+                    **({'iteration_inputs': durable.iteration_inputs} if flow_runner and durable.iteration_path else {}),
                 }
                 replay_safe = (
                     attempt_workflow.get('runner_type') == 'model'
@@ -10521,11 +10577,16 @@ def _execute_workflow_task_sequence(
                                 workflow, run_id, task_id, actor_id, settings,
                             )
                             attempt_workflow['_analysis_checkpoints'] = analysis_checkpoints
-                    return _execute_workflow_dispatch(
-                        attempt_workflow, settings, conversation_id, run_id, thought_tracker,
-                        {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
-                        file_sync_result=file_sync_result,
-                    )
+                    try:
+                        return _execute_workflow_dispatch(
+                            attempt_workflow, settings, conversation_id, run_id, thought_tracker,
+                            {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
+                            file_sync_result=file_sync_result,
+                        )
+                    except (WorkflowContextBudgetError, WorkflowResultNotReadyError) as exc:
+                        if flow_runner and (flow_runner.has_loops or task.get('input_processing') == 'saved_record_report'):
+                            durable.pause_input(str(exc), code='workflow_context_limit')
+                        raise
 
                 with workflow_context_budget_scope(attempt_workflow):
                     task_result = workflow_unit(
@@ -10556,6 +10617,10 @@ def _execute_workflow_task_sequence(
                 safe_error = WorkflowContextBudgetError(blocked_audit) if blocked_audit else exc
                 if structured_definition and task_stage == 'input' and isinstance(safe_error, AnalysisResultUnavailable):
                     durable._pause(task_unit_key, durable.unit(task_unit_key).get('input_digest', ''))
+                if flow_runner and flow_runner.has_loops and task_stage == 'input' and isinstance(
+                    safe_error, (WorkflowContextBudgetError, WorkflowResultNotReadyError),
+                ):
+                    durable.pause_input(str(safe_error), code='workflow_input_unavailable')
                 log_event(
                     '[WORKFLOW_RUNNER] Task execution failed',
                     extra={'run_id': run_id, 'task_id': task_id, 'attempt': attempt_count,
@@ -10744,6 +10809,9 @@ def _execute_workflow_task_sequence(
                 'error': task_error,
                 'runner': runner_audit,
                 'consumed_inputs': consumed_inputs,
+                **({
+                    'execution_id': durable.execution_id(), 'iteration_path': [dict(frame) for frame in durable.iteration_path],
+                } if flow_runner else {}),
             })
             if structured_definition:
                 durable.finish_node(
@@ -10782,6 +10850,8 @@ def _execute_workflow_task_sequence(
                 previous_result_ref = result_ref
                 previous_task_id = task_id
             else:
+                if flow_runner:
+                    flow_runner.note_item_failure(task_status)
                 if durable is not None:
                     durable.invalidate_task(task_unit_key)
                 if error_strategy != 'continue':
@@ -10808,7 +10878,12 @@ def _execute_workflow_task_sequence(
             'error': task_error,
             'runner': runner_audit,
             'consumed_inputs': (attempt_workflow or {}).get('consumed_inputs') or [],
+            **({
+                'execution_id': durable.execution_id(), 'iteration_path': [dict(frame) for frame in durable.iteration_path],
+            } if flow_runner else {}),
         })
+        if flow_runner:
+            flow_runner.note_item_failure()
         if thought_tracker and run_id:
             _add_workflow_activity_thought(
                 thought_tracker,
@@ -10842,7 +10917,14 @@ def _execute_workflow_task_sequence(
                 'status': 'completed_partial' if flow_runner.partial else 'completed',
                 'success': True,
             }
-        durable.set_node(None, workflow['flow']['id'])
+        elif flow_runner.has_loops and flow_runner.failed:
+            merged['workflow_outcome'] = {'status': 'failed', 'success': False}
+        if flow_runner.has_loops:
+            merged['execution_history_available'] = True
+            merged['execution_count'] = int((durable.check().get('journal_counts') or {}).get('execution') or 0)
+            if not merged.get('reply'):
+                merged['reply'] = 'Workflow results are retained in the execution history and declared final outputs.'
+        durable.set_node(None, workflow['flow']['id'], iteration_path=[], iteration_inputs=[])
     return merged
 
 

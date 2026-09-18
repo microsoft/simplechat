@@ -92,6 +92,11 @@ from functions_personal_workflows import (
     WORKFLOW_TASK_LIMIT_MAX,
     WORKFLOW_TASK_LIMIT_MIN,
 )
+from functions_workflow_limits import (
+    WorkflowLoopLimitError,
+    get_workflow_max_loop_items,
+    validate_workflow_max_loop_items,
+)
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
@@ -1139,6 +1144,15 @@ def register_route_frontend_admin_settings(bp):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+            try:
+                workflow_max_loop_items = (
+                    validate_workflow_max_loop_items(form_data['workflow_max_loop_items'])
+                    if 'workflow_max_loop_items' in form_data
+                    else get_workflow_max_loop_items(settings)
+                )
+            except WorkflowLoopLimitError as error:
+                flash(error.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             def admin_secret(field_name, form_field_name=None):
                 submitted_value = form_data.get(form_field_name or field_name, '').strip()
@@ -2541,6 +2555,7 @@ def register_route_frontend_admin_settings(bp):
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
                 'workflow_max_tasks': workflow_max_tasks,
+                'workflow_max_loop_items': workflow_max_loop_items,
                 **chat_orchestration_settings,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',

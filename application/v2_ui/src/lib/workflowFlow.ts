@@ -6,6 +6,9 @@ import type {
     WorkflowInputBinding,
     WorkflowOutputKind,
     WorkflowDocumentAction,
+    WorkflowOutputContract,
+    WorkflowEditorOptions,
+    WorkflowReferenceScope,
 } from './workflowEditor';
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
 
@@ -18,12 +21,20 @@ export type WorkflowPredicate =
     | { op: 'all' | 'any'; conditions: WorkflowPredicate[] }
     | { op: 'not'; condition: WorkflowPredicate };
 
-export interface WorkflowFlowSource {
+export interface WorkflowNodeOutputSource {
     kind: 'node_output';
     node_id: string;
     output: string;
     scope: 'current';
 }
+
+export interface WorkflowLoopItemSource {
+    kind: 'loop_item';
+    loop_id: string;
+    scope: 'current';
+}
+
+export type WorkflowFlowSource = WorkflowNodeOutputSource | WorkflowLoopItemSource;
 
 export interface WorkflowFlowBinding {
     name: string;
@@ -71,7 +82,53 @@ export interface WorkflowRouteNode {
     target: { node_id: string } | { exit_region_id: string };
 }
 
-export type WorkflowFlowNode = WorkflowTaskNode | WorkflowIfNode | WorkflowRouteNode;
+export interface WorkflowLoopScope {
+    scope_type: WorkflowReferenceScope;
+    scope_id?: string;
+}
+
+export interface WorkflowLoopDocument extends WorkflowLoopScope {
+    document_id: string;
+}
+
+export interface WorkflowQueryIterable {
+    kind: 'workspace_query';
+    scopes: WorkflowLoopScope[];
+    filters: {
+        search?: string;
+        classification?: string;
+        author?: string;
+        keywords?: string;
+        abstract?: string;
+        tags?: string[];
+    };
+    content?: { mode: 'keyword' | 'hybrid'; query: string };
+    selection: { mode: 'all_matches' } | { mode: 'best_n'; count: number };
+}
+
+export type WorkflowLoopIterable =
+    | { kind: 'input'; name: string }
+    | { kind: 'documents'; documents: WorkflowLoopDocument[] }
+    | WorkflowQueryIterable;
+
+export interface WorkflowForEachNode {
+    id: string;
+    kind: 'for_each';
+    inputs: WorkflowFlowBinding[];
+    iterable: WorkflowLoopIterable;
+    item_key: 'source_identity';
+    max_items: number;
+    body: WorkflowFlowRegion & { outputs: WorkflowFlowBinding[] };
+}
+
+export interface WorkflowCollectNode {
+    id: string;
+    kind: 'collect';
+    source: { loop_id: string; output: string };
+    output_contract: WorkflowOutputContract & { kind: 'records' | 'document_results' };
+}
+
+export type WorkflowFlowNode = WorkflowTaskNode | WorkflowIfNode | WorkflowRouteNode | WorkflowForEachNode | WorkflowCollectNode;
 
 export interface WorkflowFlowRegion {
     id: string;
@@ -90,6 +147,8 @@ export const DEFAULT_FLOW_LIMITS: WorkflowFlowLimits = {
 };
 export const FLOW_MAX_NODES = 256;
 export const FLOW_MAX_DEPTH = 4;
+export const DEFAULT_LOOP_MAX_ITEMS = 500;
+export const MAX_LOOP_ITEMS = 5000;
 export const FLOW_MAX_PREDICATE_DEPTH = 8;
 export const FLOW_MAX_PREDICATE_NODES = 100;
 export const FLOW_ALIAS_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -98,11 +157,42 @@ export const FLOW_FINAL_OUTPUTS = ['authoritative', 'text', 'records', 'json', '
 export const FLOW_COMPARISONS: WorkflowComparison[] = ['eq', 'ne', 'lt', 'lte', 'gt', 'gte'];
 
 export function isFlowBinding(value: unknown): value is WorkflowFlowBinding {
-    return isRecord(value) && typeof value.name === 'string' && isRecord(value.source) &&
-        value.source.kind === 'node_output' && value.source.scope === 'current' &&
-        typeof value.source.node_id === 'string' && typeof value.source.output === 'string' &&
+    if (!isRecord(value) || !isRecord(value.source) || value.source.scope !== 'current') return false;
+    const source = value.source;
+    return typeof value.name === 'string' &&
+        (source.kind === 'node_output' && typeof source.node_id === 'string' && typeof source.output === 'string' ||
+            source.kind === 'loop_item' && typeof source.loop_id === 'string' && ['json', 'any'].includes(String(value.expected_kind))) &&
         typeof value.required === 'boolean' && typeof value.allow_partial === 'boolean' &&
         FLOW_OUTPUT_KINDS.some((kind) => kind === value.expected_kind);
+}
+
+function isLoopScope(value: unknown): value is WorkflowLoopScope {
+    return isRecord(value) && ['personal', 'group', 'public'].includes(String(value.scope_type)) &&
+        (value.scope_id === undefined || typeof value.scope_id === 'string');
+}
+
+export function isLoopIterable(value: unknown): value is WorkflowLoopIterable {
+    if (!isRecord(value)) return false;
+    if (value.kind === 'input') return typeof value.name === 'string';
+    if (value.kind === 'documents') {
+        return Array.isArray(value.documents) && value.documents.every((item) =>
+            isLoopScope(item) && isRecord(item) && typeof item.document_id === 'string');
+    }
+    return value.kind === 'workspace_query' && Array.isArray(value.scopes) && value.scopes.every(isLoopScope) &&
+        isRecord(value.filters) && Object.entries(value.filters).every(([key, filter]) =>
+            key === 'tags' ? Array.isArray(filter) && filter.every((tag) => typeof tag === 'string') : typeof filter === 'string') &&
+        (value.content === undefined || isRecord(value.content) && ['keyword', 'hybrid'].includes(String(value.content.mode)) &&
+            typeof value.content.query === 'string') &&
+        isRecord(value.selection) && (value.selection.mode === 'all_matches' ||
+            value.selection.mode === 'best_n' && typeof value.selection.count === 'number');
+}
+
+function isCollectContract(value: unknown): value is WorkflowCollectNode['output_contract'] {
+    return isRecord(value) && ['records', 'document_results'].includes(String(value.kind)) &&
+        typeof value.require_complete_coverage === 'boolean' && typeof value.allow_partial === 'boolean' &&
+        (value.schema === undefined || isRecord(value.schema)) &&
+        (value.expected_count === undefined || typeof value.expected_count === 'number') &&
+        (value.identity_field === undefined || typeof value.identity_field === 'string');
 }
 
 export function isLegacyWorkflowBinding(
@@ -148,6 +238,16 @@ export function isFlowRegion(value: unknown, depth = 0): value is WorkflowFlowRe
         if (node.kind === 'task') {
             return typeof node.task_id === 'string' && (node.run_when === undefined || isFlowPredicate(node.run_when));
         }
+        if (node.kind === 'collect') {
+            return isRecord(node.source) && typeof node.source.loop_id === 'string' &&
+                typeof node.source.output === 'string' && isCollectContract(node.output_contract);
+        }
+        if (node.kind === 'for_each') {
+            return Array.isArray(node.inputs) && node.inputs.every(isFlowBinding) &&
+                isLoopIterable(node.iterable) && node.item_key === 'source_identity' &&
+                typeof node.max_items === 'number' && isFlowRegion(node.body, depth + 1) &&
+                Array.isArray(node.body.outputs);
+        }
         if (!Array.isArray(node.inputs) || !node.inputs.every(isFlowBinding) || !isFlowPredicate(node.condition)) return false;
         if (node.kind === 'route') {
             return isRecord(node.target) &&
@@ -173,10 +273,17 @@ export function flowBinding(name: string, nodeId: string, output = 'authoritativ
     };
 }
 
+export function loopItemBinding(name: string, loopId: string): WorkflowFlowBinding {
+    return {
+        name, source: { kind: 'loop_item', loop_id: loopId, scope: 'current' },
+        expected_kind: 'json', required: true, allow_partial: false,
+    };
+}
+
 export interface FlowProducer {
     id: string;
     label: string;
-    outputs: { name: string; kind: WorkflowOutputKind; required: boolean; schema?: Record<string, unknown> }[];
+    outputs: { name: string; kind: WorkflowOutputKind; kinds?: WorkflowOutputKind[]; required: boolean; schema?: Record<string, unknown> }[];
 }
 
 export function flowProducers(workflow: WorkflowDefinition): FlowProducer[] {
@@ -202,6 +309,16 @@ export function flowProducers(workflow: WorkflowDefinition): FlowProducer[] {
                 });
             }
             result.push({ id: node.id, label: task.name || node.id, outputs });
+        } else if (node.kind === 'for_each') {
+            walk(node.body);
+        } else if (node.kind === 'collect') {
+            result.push({
+                id: node.id,
+                label: `Collect ${node.source.output || node.id}`,
+                outputs: ['authoritative', node.output_contract.kind === 'document_results' ? 'documents' : 'records'].map((name) => ({
+                    name, kind: node.output_contract.kind, required: true, schema: node.output_contract.schema,
+                })),
+            });
         } else if (node.kind === 'if') {
             walk(node.then);
             walk(node.else);
@@ -209,12 +326,19 @@ export function flowProducers(workflow: WorkflowDefinition): FlowProducer[] {
                 id: node.join.id,
                 label: `Join ${node.id}`,
                 outputs: node.join.exports.map((item) => {
-                    const thenSchema = result.find((producer) => producer.id === item.then.node_id)?.outputs
-                        .find((output) => output.name === item.then.output)?.schema;
-                    const elseSchema = result.find((producer) => producer.id === item.else.node_id)?.outputs
-                        .find((output) => output.name === item.else.output)?.schema;
+                    const thenOutput = result.find((producer) => producer.id === item.then.node_id)?.outputs
+                        .find((output) => output.name === item.then.output);
+                    const elseOutput = result.find((producer) => producer.id === item.else.node_id)?.outputs
+                        .find((output) => output.name === item.else.output);
+                    const thenSchema = thenOutput?.schema;
+                    const elseSchema = elseOutput?.schema;
                     return {
-                        name: item.name, kind: item.expected_kind, required: item.required,
+                        name: item.name, kind: thenOutput?.kind === elseOutput?.kind ? thenOutput?.kind ?? item.expected_kind : item.expected_kind,
+                        kinds: [...new Set([
+                            ...(thenOutput?.kinds ?? [thenOutput?.kind ?? 'any']),
+                            ...(elseOutput?.kinds ?? [elseOutput?.kind ?? 'any']),
+                        ])],
+                        required: item.required,
                         ...(thenSchema && sameEditorValue(thenSchema, elseSchema) ? { schema: thenSchema } : {}),
                     };
                 }),
@@ -233,6 +357,8 @@ export function flowRegions(flow: WorkflowFlowRegion): { id: string; label: stri
             if (node.kind === 'if') {
                 walk(node.then, `${label} / ${node.id} / Then`, depth + 1);
                 walk(node.else, `${label} / ${node.id} / Else`, depth + 1);
+            } else if (node.kind === 'for_each') {
+                walk(node.body, `${label} / ${node.id} / Body`, depth + 1);
             }
         });
     };
@@ -248,18 +374,148 @@ export function updateFlowRegion(
     if (flow.id === regionId) return update(flow);
     return {
         ...flow,
-        nodes: flow.nodes.map((node) => node.kind === 'if' ? {
-            ...node,
-            then: updateFlowRegion(node.then, regionId, update),
-            else: updateFlowRegion(node.else, regionId, update),
-        } : node),
+        nodes: flow.nodes.map((node) => {
+            if (node.kind === 'if') return {
+                ...node,
+                then: updateFlowRegion(node.then, regionId, update),
+                else: updateFlowRegion(node.else, regionId, update),
+            };
+            if (node.kind === 'for_each') {
+                const body = updateFlowRegion(node.body, regionId, update);
+                return { ...node, body: { ...body, outputs: body.outputs ?? [] } };
+            }
+            return node;
+        }),
     };
 }
 
 export function flowTaskIds(node: WorkflowFlowNode): string[] {
     if (node.kind === 'task') return [node.task_id];
-    if (node.kind === 'route') return [];
+    if (node.kind === 'route' || node.kind === 'collect') return [];
+    if (node.kind === 'for_each') return node.body.nodes.flatMap(flowTaskIds);
     return [...node.then.nodes, ...node.else.nodes].flatMap(flowTaskIds);
+}
+
+export function flowTaskNodeId(workflow: WorkflowDefinition, taskId: string): string {
+    if (!isFlowRegion(workflow.flow)) return '';
+    const walk = (region: WorkflowFlowRegion): string => {
+        for (const node of region.nodes) {
+            if (node.kind === 'task' && node.task_id === taskId) return node.id;
+            const id = node.kind === 'for_each' ? walk(node.body)
+                : node.kind === 'if' ? walk(node.then) || walk(node.else) : '';
+            if (id) return id;
+        }
+        return '';
+    };
+    return walk(workflow.flow);
+}
+
+export function flowLoops(workflow: WorkflowDefinition): { node: WorkflowForEachNode; regionId: string }[] {
+    const loops: { node: WorkflowForEachNode; regionId: string }[] = [];
+    if (!isFlowRegion(workflow.flow)) return loops;
+    const walk = (region: WorkflowFlowRegion) => region.nodes.forEach((node) => {
+        if (node.kind === 'for_each') {
+            loops.push({ node, regionId: region.id });
+            walk(node.body);
+        } else if (node.kind === 'if') {
+            walk(node.then);
+            walk(node.else);
+        }
+    });
+    walk(workflow.flow);
+    return loops;
+}
+
+export function enclosingFlowLoops(workflow: WorkflowDefinition, targetId: string): WorkflowForEachNode[] {
+    if (!isFlowRegion(workflow.flow)) return [];
+    const walk = (region: WorkflowFlowRegion, parents: WorkflowForEachNode[]): WorkflowForEachNode[] | undefined => {
+        if (region.id === targetId) return parents;
+        for (const node of region.nodes) {
+            if (node.id === targetId || node.kind === 'if' && node.join.id === targetId) return parents;
+            const found = node.kind === 'for_each' ? walk(node.body, [...parents, node])
+                : node.kind === 'if' ? walk(node.then, parents) ?? walk(node.else, parents) : undefined;
+            if (found) return found;
+        }
+        return undefined;
+    };
+    return walk(workflow.flow, []) ?? [];
+}
+
+export function flowBindingSchema(workflow: WorkflowDefinition, binding?: WorkflowFlowBinding): Record<string, unknown> | undefined {
+    if (!binding) return undefined;
+    const source = binding.source;
+    const producers = flowProducers(workflow);
+    if (source.kind === 'node_output') {
+        return producers.find((item) => item.id === source.node_id)?.outputs.find((item) => item.name === source.output)?.schema;
+    }
+    const loop = flowLoops(workflow).find((item) => item.node.id === source.loop_id)?.node;
+    let value: Record<string, unknown> = {};
+    if (loop?.iterable.kind === 'input') {
+        const name = loop.iterable.name;
+        const input = loop.inputs.find((item) => item.name === name)?.source;
+        if (input?.kind === 'node_output') {
+            const schema = producers.find((item) => item.id === input.node_id)?.outputs.find((item) => item.name === input.output)?.schema;
+            if (isRecord(schema?.items)) value = schema.items;
+        }
+    } else if (loop) {
+        value = { type: 'object', properties: {
+            document_id: { type: 'string' }, scope_type: { type: 'string' }, scope_id: { type: 'string' },
+        } };
+    }
+    return { type: 'object', properties: { value, key: { type: 'string' }, index: { type: 'integer' } }, required: ['value', 'key', 'index'] };
+}
+
+export function workflowLoopLimit(options: WorkflowEditorOptions): number {
+    const limit = options.flow_limits?.max_loop_items;
+    return Number.isInteger(limit) && Number(limit) >= 1 && Number(limit) <= MAX_LOOP_ITEMS
+        ? Number(limit) : DEFAULT_LOOP_MAX_ITEMS;
+}
+
+export function loopSelectionErrors(node: WorkflowForEachNode, ceiling = MAX_LOOP_ITEMS): string[] {
+    const errors: string[] = [];
+    const limit = Math.min(node.max_items, ceiling);
+    if (!Number.isInteger(node.max_items) || node.max_items < 1 || node.max_items > MAX_LOOP_ITEMS) {
+        errors.push('Loop maximum must be a whole number from 1 to 5,000.');
+    }
+    const iterable = node.iterable;
+    const scopes = iterable.kind === 'workspace_query' ? iterable.scopes : iterable.kind === 'documents' ? iterable.documents : [];
+    scopes.forEach((scope) => {
+        if (scope.scope_type !== 'personal' && !scope.scope_id?.trim()) errors.push('Group and public loop sources require an explicit workspace ID.');
+        if (scope.scope_type === 'personal' && scope.scope_id !== undefined) errors.push('Personal loop ownership is server-derived; omit the scope ID.');
+    });
+    if (iterable.kind === 'documents') {
+        if (iterable.documents.some((document) => !document.document_id.trim())) errors.push('Select an identified document for every loop item.');
+        const identities = iterable.documents.map((document) => `${document.scope_type}:${document.scope_id ?? ''}:${document.document_id}`);
+        if (new Set(identities).size !== identities.length) errors.push('Each selected document must appear only once in this loop.');
+        if (iterable.documents.length > limit) {
+            errors.push(`This selection has ${iterable.documents.length} documents. This loop allows ${limit} items. Select ${limit} or fewer documents before starting a new run.`);
+        }
+    } else if (iterable.kind === 'workspace_query') {
+        if (!iterable.scopes.length || iterable.scopes.length > 100) errors.push('Choose between 1 and 100 authorized workspaces for the query.');
+        if (new Set(iterable.scopes.map((scope) => `${scope.scope_type}:${scope.scope_id ?? ''}`)).size !== iterable.scopes.length) {
+            errors.push('Query workspaces must be unique.');
+        }
+        Object.entries(iterable.filters).forEach(([name, value]) => {
+            if (name !== 'tags' && (typeof value !== 'string' || !value.trim() || value.length > 1000)) {
+                errors.push('Query metadata filters must contain 1 to 1,000 characters; clear unused filters.');
+            }
+        });
+        const tags = iterable.filters.tags ?? [];
+        if (tags.length > 100 || new Set(tags).size !== tags.length || tags.some((tag) => !tag.trim() || tag.length > 256)) {
+            errors.push('Use at most 100 unique query tags, each with 1 to 256 characters.');
+        }
+        if (iterable.content && !iterable.content.query.trim()) errors.push('Enter a content query or choose metadata only.');
+        if (iterable.content && iterable.content.query.length > 4000) errors.push('Content queries must be 4,000 characters or fewer.');
+        if (iterable.content?.mode === 'hybrid' && iterable.selection.mode !== 'best_n') {
+            errors.push('Semantic / hybrid queries require Best N; they cannot promise exhaustive All matches.');
+        }
+        if (iterable.selection.mode === 'best_n' &&
+            (!Number.isInteger(iterable.selection.count) || iterable.selection.count < 1 || iterable.selection.count > limit)) {
+            errors.push(`Best N must be a whole number from 1 to the effective limit of ${limit} items.`);
+        }
+        if (iterable.selection.mode === 'best_n' && !iterable.content) errors.push('Best N needs an explicit keyword or semantic / hybrid content query.');
+    }
+    return errors;
 }
 
 export function convertToStructuredWorkflow(workflow: WorkflowDefinition, rootId: string): WorkflowDefinition {
@@ -309,10 +565,11 @@ function onlyFields(value: object, fields: string[], errors: string[], label: st
     if (Object.keys(value).some((field) => !fields.includes(field))) errors.push(`${label} contains unsupported executable fields.`);
 }
 
-export function flowUnsupportedReason(workflow: WorkflowDefinition): string {
+export function flowUnsupportedReason(workflow: WorkflowDefinition, options?: WorkflowEditorOptions): string {
     if (workflow.editor_readonly_reason) return workflow.editor_readonly_reason;
     if (workflow.definition_version !== 3) return '';
     if (!isFlowRegion(workflow.flow)) return 'This structured definition contains an unsupported or malformed region, node, binding, or condition.';
+    if (!Array.isArray(workflow.flow.outputs)) return 'This structured definition must explicitly declare root outputs, including an empty list. Its saved definition is preserved.';
     const errors: string[] = [];
     const operand = (value: WorkflowOperand) =>
         onlyFields(value, 'literal' in value ? ['literal'] : ['input', 'path'], errors, 'Condition operand');
@@ -334,19 +591,55 @@ export function flowUnsupportedReason(workflow: WorkflowDefinition): string {
     };
     const bindings = (values: (WorkflowFlowBinding | WorkflowInputBinding)[]) => values.forEach((binding) => {
         if (!isFlowBinding(binding)) {
-            errors.push('Structured task inputs require explicit node-output bindings.');
+            errors.push('Structured task inputs require supported explicit bindings.');
             return;
         }
         onlyFields(binding, ['name', 'source', 'required', 'expected_kind', 'allow_partial'], errors, 'Input');
-        onlyFields(binding.source, ['kind', 'node_id', 'output', 'scope'], errors, 'Input source');
+        onlyFields(binding.source, binding.source.kind === 'loop_item'
+            ? ['kind', 'loop_id', 'scope'] : ['kind', 'node_id', 'output', 'scope'], errors, 'Input source');
+        if (options && binding.source.kind === 'loop_item' && !options.supported_binding_sources?.includes('loop_item')) {
+            errors.push('This server does not support current loop item bindings. The saved definition is preserved.');
+        }
     });
-    const walk = (region: WorkflowFlowRegion, root = false) => {
-        onlyFields(region, root ? ['id', 'nodes', 'outputs'] : ['id', 'nodes'], errors, 'Region');
+    const outputContract = (contract: WorkflowOutputContract) =>
+        onlyFields(contract, ['kind', 'schema', 'expected_count', 'identity_field', 'require_complete_coverage', 'allow_partial'], errors, 'Output contract');
+    const walk = (region: WorkflowFlowRegion, exports = false) => {
+        onlyFields(region, exports ? ['id', 'nodes', 'outputs'] : ['id', 'nodes'], errors, 'Region');
         bindings(region.outputs ?? []);
         region.nodes.forEach((node) => {
+            if (options && ['for_each', 'collect'].includes(node.kind) && !options.supported_node_kinds?.includes(node.kind)) {
+                errors.push(`This server does not support ${node.kind} nodes. The saved definition is preserved.`);
+            }
             if (node.kind === 'task') {
                 onlyFields(node, ['id', 'kind', 'task_id', 'run_when'], errors, 'Task node');
                 if (node.run_when) predicate(node.run_when);
+            } else if (node.kind === 'collect') {
+                onlyFields(node, ['id', 'kind', 'source', 'output_contract'], errors, 'Collect');
+                onlyFields(node.source, ['loop_id', 'output'], errors, 'Collect source');
+                outputContract(node.output_contract);
+            } else if (node.kind === 'for_each') {
+                onlyFields(node, ['id', 'kind', 'inputs', 'iterable', 'item_key', 'max_items', 'body'], errors, 'For each');
+                bindings(node.inputs);
+                const iterable = node.iterable;
+                if (options && !options.supported_iterable_kinds?.includes(iterable.kind)) {
+                    errors.push('This server does not support this loop source. The saved definition is preserved.');
+                }
+                if (iterable.kind === 'input') onlyFields(iterable, ['kind', 'name'], errors, 'Saved collection');
+                else if (iterable.kind === 'documents') {
+                    onlyFields(iterable, ['kind', 'documents'], errors, 'Selected documents');
+                    iterable.documents.forEach((document) =>
+                        onlyFields(document, ['document_id', 'scope_type', 'scope_id'], errors, 'Loop document'));
+                } else {
+                    onlyFields(iterable, ['kind', 'scopes', 'filters', 'content', 'selection'], errors, 'Workspace query');
+                    iterable.scopes.forEach((scope) => onlyFields(scope, ['scope_type', 'scope_id'], errors, 'Query scope'));
+                    onlyFields(iterable.filters, ['search', 'classification', 'author', 'keywords', 'abstract', 'tags'], errors, 'Query filters');
+                    if (iterable.content) onlyFields(iterable.content, ['mode', 'query'], errors, 'Query content');
+                    onlyFields(iterable.selection, iterable.selection.mode === 'best_n' ? ['mode', 'count'] : ['mode'], errors, 'Query selection');
+                    if (options && !options.supported_query_modes?.includes(iterable.selection.mode)) {
+                        errors.push('This server does not support this query selection. The saved definition is preserved.');
+                    }
+                }
+                walk(node.body, true);
             } else {
                 bindings(node.inputs);
                 predicate(node.condition);
@@ -371,10 +664,24 @@ export function flowUnsupportedReason(workflow: WorkflowDefinition): string {
     workflow.tasks.forEach((task) => {
         onlyFields(task, [
             'id', 'type', 'name', 'instructions', 'order', 'runner', 'document_action', 'inputs',
-            'reference_ids', 'output_contract', 'approval', 'publication',
+            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing',
         ], errors, 'Task configuration');
+        if (task.input_processing !== undefined && !['full', 'saved_record_report'].includes(task.input_processing)) {
+            errors.push('This task contains an unsupported large-input processing mode. Its original configuration is preserved.');
+        }
+        if (options && task.input_processing !== undefined && !options.supported_input_processing_modes?.includes(task.input_processing)) {
+            errors.push('This server does not support this task input-processing mode. The saved definition is preserved.');
+        }
         onlyFields(task.runner, ['type', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'model_binding_summary'], errors, 'Task runner');
         bindings(task.inputs ?? []);
+        if (task.output_contract) outputContract(task.output_contract);
+        if (task.document_action?.target_mode === 'current_item') {
+            onlyFields(task.document_action, ['type', 'target_mode', 'loop_id', 'analysis_mode'], errors, 'Current document Analyze');
+            if (task.document_action.type !== 'analyze' || task.document_action.analysis_mode !== 'combined' ||
+                typeof task.document_action.loop_id !== 'string') {
+                errors.push('This current-document action is not supported by the editor.');
+            }
+        }
     });
     if (isRecord(workflow.limits)) onlyFields(workflow.limits, ['max_executions', 'deadline_seconds'], errors, 'Run limits');
     return errors[0] ?? '';
@@ -419,6 +726,7 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
     if (workflow.durable_execution !== true) errors.push('Structured control flow requires durable execution.');
     const producers = new Map(flowProducers(workflow).map((producer) => [producer.id, producer]));
     const tasks = new Map(workflow.tasks.map((task) => [task.id, task]));
+    const loops = new Map(flowLoops(workflow).map((loop) => [loop.node.id, loop]));
     const usedTasks = new Set<string>();
     const ids = new Set<string>();
     const root = workflow.flow;
@@ -440,6 +748,9 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                 register(node.join.id);
                 shape(node.then, depth + 1);
                 shape(node.else, depth + 1);
+            } else if (node.kind === 'for_each') {
+                shape(node.body, depth + 1);
+                errors.push(...loopSelectionErrors(node).map((error) => `${node.id}: ${error}`));
             }
         });
     };
@@ -462,13 +773,17 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
             errors.push(`${label} has an expected kind that disagrees with its producer.`);
         }
     };
-    const checkBindings = (bindings: WorkflowFlowBinding[], state: Availability, label: string) => {
+    const checkBindings = (bindings: WorkflowFlowBinding[], state: Availability, label: string, parents: WorkflowForEachNode[]) => {
         const names = new Set<string>();
         bindings.forEach((binding) => {
             if (!FLOW_ALIAS_PATTERN.test(binding.name)) errors.push(`${label} needs valid input aliases (letter first, up to 64 letters, digits, underscores or dashes).`);
             if (names.has(binding.name)) errors.push(`${label} has duplicate input aliases.`);
             names.add(binding.name);
-            checkSource(binding.source, binding.required, state, `${label}: ${binding.name || 'input'}`, binding.expected_kind);
+            if (binding.source.kind === 'loop_item') {
+                const loopId = binding.source.loop_id;
+                if (!parents.some((node) => node.id === loopId)) errors.push(`${label}: ${binding.name} must select a current item from an enclosing For each.`);
+                if (!['json', 'any'].includes(binding.expected_kind) || binding.allow_partial) errors.push(`${label}: current items are complete JSON values, not partial outputs.`);
+            } else checkSource(binding.source, binding.required, state, `${label}: ${binding.name || 'input'}`, binding.expected_kind);
         });
     };
     const checkPredicate = (condition: WorkflowPredicate, bindings: WorkflowFlowBinding[], label: string) => {
@@ -484,10 +799,10 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                 errors.push(`${label} needs a valid JSON pointer for its field.`);
             }
             if (binding) {
-                const output = producers.get(binding.source.node_id)?.outputs.find((item) => item.name === binding.source.output);
-                if (!output?.schema) errors.push(`${label} must select a schema-validated producer field.`);
+                const schema = flowBindingSchema(workflow, binding);
+                if (!schema) errors.push(`${label} must select a schema-validated producer field.`);
                 else {
-                    const field = workflowSchemaAtPointer(output.schema, value.path);
+                    const field = workflowSchemaAtPointer(schema, value.path);
                     if (!field) errors.push(`${label} references a field that is not declared in its producer's schema.`);
                     const types = field && (Array.isArray(field.type) ? field.type : [field.type]);
                     if (types?.every((type): type is string => typeof type === 'string')) {
@@ -528,7 +843,7 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
         walk(condition, 1);
         if (count > FLOW_MAX_PREDICATE_NODES || JSON.stringify(condition).length > 16384) errors.push(`${label} exceeds the condition size limit.`);
     };
-    const walk = (region: WorkflowFlowRegion, incoming: Availability): Availability => {
+    const walk = (region: WorkflowFlowRegion, incoming: Availability, parents: WorkflowForEachNode[] = [], branch = false): Availability => {
         const inputs = new Map<number, Availability[]>();
         const exits: Availability[] = [];
         let current = incoming;
@@ -539,7 +854,13 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                 const task = tasks.get(node.task_id);
                 if (!task) return;
                 const bindings = (task.inputs ?? []).filter(isFlowBinding);
-                checkBindings(bindings, current, task.name || node.id);
+                checkBindings(bindings, current, task.name || node.id, parents);
+                if (task.document_action?.target_mode === 'current_item') {
+                    const loop = parents.find((item) => item.id === task.document_action?.loop_id);
+                    if (!loop || loop.iterable.kind === 'input') {
+                        errors.push(`${task.name}: current-document Analyze requires an enclosing document selection or workspace query, not a saved record containing a document ID.`);
+                    }
+                }
                 if (task.publication) {
                     if (bindings.length !== 1) errors.push(`${task.name} publication requires exactly one explicit native Analyze input.`);
                     if (!['md', 'csv', 'json'].includes(task.publication.artifact_format) ||
@@ -556,12 +877,55 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                 }
                 if (node.run_when) checkPredicate(node.run_when, bindings, `Run when for ${task.name || node.id}`);
                 current = withProducer(current, node.id, node.run_when === undefined);
+            } else if (node.kind === 'for_each') {
+                checkBindings(node.inputs, current, node.id, parents);
+                if (node.iterable.kind === 'input') {
+                    const name = node.iterable.name;
+                    const binding = node.inputs.find((item) => item.name === name);
+                    const source = binding?.source;
+                    const output = source?.kind === 'node_output'
+                        ? producers.get(source.node_id)?.outputs.find((item) => item.name === source.output) : undefined;
+                    if (!binding || !binding.required || binding.allow_partial || source?.kind !== 'node_output' ||
+                        !output || !['records', 'document_results'].includes(output.kind)) {
+                        errors.push(`${node.id}: choose a required, complete saved records or document-results producer.`);
+                    }
+                }
+                const bodyEnd = walk(node.body, current, [...parents, node]);
+                node.body.outputs.forEach((binding) => {
+                    if (binding.source.kind !== 'node_output' ||
+                        !sameEditorValue(enclosingFlowLoops(workflow, binding.source.node_id).map((loop) => loop.id), [...parents, node].map((loop) => loop.id))) {
+                        errors.push(`Body outputs for ${node.id} must select an exact producer in this loop's body scope.`);
+                    }
+                });
+                checkBindings(node.body.outputs, bodyEnd, `Body outputs for ${node.id}`, [...parents, node]);
+                current = withProducer(current, node.id, true);
+            } else if (node.kind === 'collect') {
+                const source = loops.get(node.source.loop_id);
+                const output = source?.node.body.outputs.find((item) => item.name === node.source.output);
+                if (!source || !output) errors.push(`${node.id}: select an existing loop and declared body output for Collect.`);
+                else {
+                    if (!sameEditorValue(enclosingFlowLoops(workflow, source.node.id).map((loop) => loop.id), parents.map((loop) => loop.id)) ||
+                        !current.definite.has(source.node.id)) {
+                        errors.push(`${node.id}: Collect must follow its loop in that loop's enclosing scope on every reaching path.`);
+                    }
+                    const representation = output.source.kind === 'node_output' ? producers.get(output.source.node_id)?.outputs
+                        .find((item) => output.source.kind === 'node_output' && item.name === output.source.output) : undefined;
+                    if (!representation || !['records', 'document_results'].includes(representation.kind) ||
+                        representation.kind !== node.output_contract.kind) {
+                        errors.push(`${node.id}: Collect must preserve a records or document-results body output's kind.`);
+                    }
+                    if ((!output.required || output.allow_partial) &&
+                        (!node.output_contract.allow_partial || node.output_contract.require_complete_coverage)) {
+                        errors.push(`${node.id}: optional or partial body outputs need explicit partial acceptance without requiring complete coverage.`);
+                    }
+                }
+                current = withProducer(current, node.id, true);
             } else {
-                checkBindings(node.inputs, current, node.id);
+                checkBindings(node.inputs, current, node.id, parents);
                 checkPredicate(node.condition, node.inputs, `Condition for ${node.id}`);
                 if (node.kind === 'route') {
                     if ('exit_region_id' in node.target) {
-                        if (region.id === root.id || node.target.exit_region_id !== region.id) {
+                        if (!branch || node.target.exit_region_id !== region.id) {
                             errors.push(`Route ${node.id} can exit only its current branch region.`);
                         } else exits.push(current);
                     } else {
@@ -571,8 +935,8 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                         else inputs.set(target, [...(inputs.get(target) ?? []), current]);
                     }
                 } else {
-                    const thenEnd = walk(node.then, current);
-                    const elseEnd = walk(node.else, current);
+                    const thenEnd = walk(node.then, current, parents, true);
+                    const elseEnd = walk(node.else, current, parents, true);
                     const names = new Set<string>();
                     node.join.exports.forEach((item) => {
                         if (!FLOW_ALIAS_PATTERN.test(item.name) || names.has(item.name)) errors.push(`Join ${node.join.id} needs unique, valid output names.`);
@@ -586,11 +950,12 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
         });
         const end = combineAvailability([current, ...exits]);
         branchEnds.set(region.id, end.possible);
+        available.set(region.id, end.possible);
         return end;
     };
     const end = walk(root, { possible: new Set(), definite: new Set() });
     available.set(root.id, end.possible);
-    checkBindings(root.outputs ?? [], end, 'Final outputs');
+    checkBindings(root.outputs ?? [], end, 'Final outputs', []);
     const limits = workflow.limits;
     if (!isRecord(limits) || !Number.isInteger(limits.max_executions) ||
         Number(limits.max_executions) < 1 || Number(limits.max_executions) > DEFAULT_FLOW_LIMITS.max_executions) {

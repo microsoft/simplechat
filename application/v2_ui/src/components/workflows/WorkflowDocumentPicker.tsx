@@ -41,12 +41,15 @@ function referenceKey(reference: WorkflowReferenceInput): string {
 function documentReference(
     document: WorkspaceDocument,
     source: DocumentSource,
+    retainRequestedGroupScope = false,
 ): WorkflowReferenceInput | null {
     const id = documentId(document);
     if (!id) {
         return null;
     }
-    const scopeId = workflowDocumentScopeId(document, source.scopeType, source.scopeId);
+    const scopeId = retainRequestedGroupScope && source.scopeType === 'group'
+        ? source.scopeId
+        : workflowDocumentScopeId(document, source.scopeType, source.scopeId);
     return {
         id: `${source.scopeType}:${scopeId}:${id}`,
         name: safeWorkflowAlias(documentTitle(document), `ref_${id}`),
@@ -67,6 +70,7 @@ export function WorkflowDocumentPicker({
     availableLabel = 'Available documents',
     emptyDescription,
     hideAliasFields = false,
+    retainRequestedGroupScope = false,
 }: {
     scope: WorkflowScope;
     references: WorkflowReferenceInput[];
@@ -78,6 +82,7 @@ export function WorkflowDocumentPicker({
     availableLabel?: string;
     emptyDescription?: string;
     hideAliasFields?: boolean;
+    retainRequestedGroupScope?: boolean;
 }) {
     const userId = useBootstrapStore((state) => state.data?.user?.id ?? '');
     const groups = useBootstrapStore((state) => state.data?.scope?.groups ?? []);
@@ -160,7 +165,7 @@ export function WorkflowDocumentPicker({
     const selected = new Set(references.map(referenceKey));
     const canGoNext = page * 10 < totalCount;
     const addReference = (document: WorkspaceDocument) => {
-        const reference = documentReference(document, source);
+        const reference = documentReference(document, source, retainRequestedGroupScope);
         if (!reference || selected.has(referenceKey(reference))) {
             return;
         }
@@ -269,7 +274,7 @@ export function WorkflowDocumentPicker({
                     {documents.length ? (
                         <ul className="max-h-64 space-y-2 overflow-y-auto" aria-label={availableLabel}>
                             {documents.map((document) => {
-                                const reference = documentReference(document, source);
+                                const reference = documentReference(document, source, retainRequestedGroupScope);
                                 const chosen = Boolean(reference && selected.has(referenceKey(reference)));
                                 const title = documentTitle(document);
                                 return (
