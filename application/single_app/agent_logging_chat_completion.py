@@ -1,8 +1,12 @@
-
+# agent_logging_chat_completion.py
 import json
 import logging
 from pydantic import Field
 from semantic_kernel.agents import ChatCompletionAgent
+from functions_m365_agent_continuation import (
+    m365_agent_continuation,
+    m365_agent_stream_continuation,
+)
 from functions_appinsights import log_event
 import datetime
 import re
@@ -131,6 +135,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         """
         return []  # Plugin invocation logger handles this now
 
+    @m365_agent_continuation
     async def invoke(self, *args, **kwargs):
         # Clear previous tool invocations
         self.tool_invocations = []
@@ -206,6 +211,11 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 }
             )
     
+    @m365_agent_stream_continuation
+    async def invoke_stream(self, *args, **kwargs):
+        async for response in super().invoke_stream(*args, **kwargs):
+            yield response
+
     def _capture_tool_invocations_simplified(self, args, response):
         """
         SIMPLIFIED: Basic fallback citation capture.

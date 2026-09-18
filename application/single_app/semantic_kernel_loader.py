@@ -9,6 +9,7 @@ import logging
 import builtins
 import os
 from openai import AsyncOpenAI
+from azure.core.exceptions import AzureError
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
@@ -104,6 +105,13 @@ from functions_msgraph_operations import (
     get_msgraph_enabled_function_names,
     resolve_msgraph_action_capabilities,
 )
+from functions_m365_operations import (
+    M365_PLUGIN_TYPES,
+    get_m365_default_capabilities,
+    get_m365_enabled_function_names,
+)
+from functions_m365_approvals import M365PolicyError
+import functions_m365_execution as m365_execution
 from functions_simplechat_operations import (
     SIMPLECHAT_PLUGIN_TYPE,
     get_simplechat_enabled_function_names,
@@ -1355,6 +1363,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         else:
             print(f"[SK_LOADER] Logged plugin loader completed successfully: {successful_count}/{total_count}")
         
+    except (M365PolicyError, ImportError):
+        raise
     except Exception as e:
         log_event(
             f"[SK_LOADER][Error] Error in agent-specific plugin loading: {e}",
@@ -1394,6 +1404,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 group_id=group_id,
             )
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
+        except (M365PolicyError, ImportError):
+            raise
         except Exception as fallback_error:
             log_event(
                 f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}",
@@ -1402,6 +1414,31 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 exceptionTraceback=True
             )
             print(f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}")
+
+
+def _preflight_m365_plugin_manifests(plugin_manifests):
+    if (
+        m365_execution.get_m365_execution_context() is None
+        or not any(manifest.get('type') in (*M365_PLUGIN_TYPES, MSGRAPH_PLUGIN_TYPE) for manifest in plugin_manifests)
+    ):
+        return plugin_manifests
+    try:
+        permitted = m365_execution.preflight_m365_manifests(plugin_manifests)
+        if not isinstance(permitted, list) or any(not isinstance(manifest, dict) for manifest in permitted):
+            raise TypeError("Microsoft 365 preflight must return effective manifests.")
+        return permitted
+    except M365PolicyError:
+        raise
+    except (AttributeError, TypeError, ValueError, RuntimeError, LookupError, PermissionError, AzureError) as exc:
+        log_event(
+            "[SK_LOADER] Microsoft 365 authorization preflight is unavailable.",
+            extra={"error_type": type(exc).__name__},
+            level=logging.ERROR,
+        )
+        raise M365PolicyError(
+            "m365_preflight_unavailable",
+            "Microsoft 365 authorization could not be verified. No source access has been allowed.",
+        ) from exc
 
 
 def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):
@@ -1450,11 +1487,11 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
             manifest_copy['enabled_chart_types'] = get_enabled_chart_type_keys(capabilities)
 
         if manifest_copy.get('type') == MSGRAPH_PLUGIN_TYPE:
-            action_defaults = manifest_copy.get('msgraph_capabilities')
+            additional_fields = manifest_copy.get('additionalFields')
+            action_defaults = additional_fields.get('msgraph_capabilities') if isinstance(additional_fields, dict) else None
+            runtime_limits = manifest_copy.get('msgraph_capabilities')
             if action_defaults is None:
-                additional_fields = manifest_copy.get('additionalFields')
-                if isinstance(additional_fields, dict):
-                    action_defaults = additional_fields.get('msgraph_capabilities')
+                action_defaults = runtime_limits
 
             capabilities = resolve_msgraph_action_capabilities(
                 action_capabilities,
@@ -1462,8 +1499,51 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
                 action_id=manifest_copy.get('id'),
                 action_name=manifest_copy.get('name'),
             )
+            source_capabilities = resolve_msgraph_action_capabilities({}, action_defaults=action_defaults)
+            if runtime_limits is not None:
+                runtime_capabilities = resolve_msgraph_action_capabilities({}, action_defaults=runtime_limits)
+                source_capabilities = {
+                    key: enabled and runtime_capabilities.get(key, False)
+                    for key, enabled in source_capabilities.items()
+                }
+            explicit_functions = manifest_copy.get('enabled_functions')
+            capabilities = {
+                key: bool(value and source_capabilities.get(key))
+                and (explicit_functions is None or key in explicit_functions)
+                for key, value in capabilities.items()
+            }
             manifest_copy['msgraph_capabilities'] = capabilities
             manifest_copy['enabled_functions'] = get_msgraph_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') in M365_PLUGIN_TYPES:
+            action_type = manifest_copy['type']
+            additional_fields = manifest_copy.get('additionalFields') or {}
+            if not isinstance(additional_fields, dict):
+                raise ValueError("Microsoft 365 additionalFields must be an object.")
+            agent_limits = None
+            for key in (manifest_copy.get('id'), manifest_copy.get('name')):
+                if key and key in action_capabilities:
+                    agent_limits = action_capabilities[key]
+                    break
+            action_defaults = additional_fields.get('m365_capabilities')
+            runtime_limits = manifest_copy.get('m365_capabilities')
+            if action_defaults is None:
+                action_defaults = runtime_limits
+            enabled = get_m365_enabled_function_names(
+                action_type,
+                action_defaults,
+                enabled_functions=manifest_copy.get('enabled_functions'),
+                agent_capabilities=agent_limits,
+            )
+            if runtime_limits is not None:
+                enabled = get_m365_enabled_function_names(
+                    action_type, action_defaults,
+                    enabled_functions=enabled, agent_capabilities=runtime_limits,
+                )
+            manifest_copy['m365_capabilities'] = {
+                key: key in enabled for key in get_m365_default_capabilities(action_type)
+            }
+            manifest_copy['enabled_functions'] = enabled
 
         if manifest_copy.get('type') == BLOB_STORAGE_PLUGIN_TYPE:
             action_defaults = manifest_copy.get('blob_storage_capabilities')
@@ -1483,13 +1563,14 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
 
         overlaid_manifests.append(manifest_copy)
 
-    return overlaid_manifests
+    return _preflight_m365_plugin_manifests(overlaid_manifests)
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
     """
     Original agent plugin loading method as fallback.
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     try:
         # Load the filtered plugins using original method
         discovered_plugins = discover_plugins()
@@ -1560,6 +1641,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     log_event(f"[SK_LOADER] Successfully loaded agent plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                             
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     print(f"[SK_LOADER] Failed to load agent plugin {name}: {e}")
                     log_event(f"[SK_LOADER] Failed to load agent plugin: {name}: {e}",
@@ -1570,6 +1653,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 log_event(f"[SK_LOADER] No matching plugin class found for: {name} (type: {plugin_type})",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
                         
+    except M365PolicyError:
+        raise
     except Exception as e:
         print(f"[SK_LOADER] Error loading agent-specific plugins: {e}")
         log_event(f"[SK_LOADER] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -2060,6 +2145,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
+        except M365PolicyError:
+            raise
         except Exception as e:
             print(f"[SK_LOADER] EXCEPTION creating agent {agent_config['name']}: {e}")
             log_event(
@@ -2240,6 +2327,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
         try:
             plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
@@ -2357,6 +2445,8 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             level=logging.INFO
         )
         
+    except M365PolicyError:
+        raise
     except Exception as e:
         log_event(
             f"[SK_LOADER] Error loading plugins with logged loader for {mode_label} mode: {e}",
@@ -2374,6 +2464,7 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     """
     Original plugin loading method as fallback.
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     try:
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
@@ -2430,6 +2521,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                             log_event(f"[SK_LOADER] Plugin {name} exposes {len(functions) if functions else 0} functions",
                                     {"plugin_name": name, "plugin_type": plugin_type, "function_count": len(functions) if functions else 0}, 
                                     level=logging.DEBUG)
+                        except M365PolicyError:
+                            raise
                         except Exception as e:
                             log_event(f"[SK_LOADER] Warning: Plugin {name} get_functions() failed: {e}",
                                     {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.WARNING)
@@ -2440,6 +2533,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
                     log_event(f"[SK_LOADER] Successfully loaded plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to instantiate plugin: {name}: {e}",
                             {"plugin_name": name, "plugin_type": plugin_type, "error": str(e), "error_type": type(e).__name__}, 
@@ -2449,6 +2544,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
             else:
                 log_event(f"[SK_LOADER] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+    except M365PolicyError:
+        raise
     except Exception as e:
         log_event(f"[SK_LOADER] Error discovering plugin types for {mode_label} mode: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
 
@@ -3012,6 +3109,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         },
                         level=logging.INFO
                     )
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     log_event(
                         f"[SK_LOADER] Failed to initialize ChatCompletionAgent for agent: {agent_config['name']}: {e}",
@@ -3127,6 +3226,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                     },
                     level=logging.INFO
                 )
+            except M365PolicyError:
+                raise
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to initialize OrchestratorAgent: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
 # region Single-agent orchestration

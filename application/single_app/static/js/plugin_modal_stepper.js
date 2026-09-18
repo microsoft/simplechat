@@ -5,6 +5,7 @@ import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
+const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
 const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
 const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];
 const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
@@ -98,7 +99,6 @@ const ACTION_CONNECTION_TEST_CONFIG = {
 };
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
-const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
 const MSGRAPH_MAIL_SEND_MODE_AUTO_SEND = 'auto_send';
@@ -1037,7 +1037,7 @@ export class PluginModalStepper {
 
       this.availableTypes = await res.json();
       // Hide deprecated/internal action types from the creation UI
-      this.availableTypes = this.availableTypes.filter(t => !HIDDEN_ACTION_TYPES.includes(t.type));
+      this.availableTypes = this.availableTypes.filter(t => !HIDDEN_ACTION_TYPES.includes(t.type) && !this.isLegacyMsGraphType(t.type));
       // Sort action types alphabetically by display name
       this.availableTypes.sort((a, b) => {
         const nameA = (a.display || a.displayName || a.type || a.name || '').toLowerCase();
@@ -1170,6 +1170,10 @@ export class PluginModalStepper {
   }
 
   selectActionType(typeName) {
+    if (this.isLegacyMsGraphType(typeName) && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+        this.showError('New combined Microsoft Graph actions are no longer supported. Choose a Microsoft 365 source.');
+        return;
+    }
     // Remove previous selection
     document.querySelectorAll('.action-type-card').forEach(card => {
       card.classList.remove('selected');
@@ -1179,7 +1183,11 @@ export class PluginModalStepper {
     const selectedCard = document.querySelector(`[data-type="${typeName}"]`);
     if (selectedCard) {
       selectedCard.classList.add('selected');
+      const typeChanged = this.selectedType !== typeName;
       this.selectedType = typeName;
+      if (typeChanged && this.isMsGraphType()) {
+          this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+      }
 
       // Update hidden field
       document.getElementById('plugin-type').value = typeName;
@@ -1195,6 +1203,15 @@ export class PluginModalStepper {
 
       // Pre-configure for step 3 if needed
       this.showConfigSectionForType();
+      if (typeChanged && this.isM365Type()) {
+          const defaults = typeData?.defaults || {};
+          this.setMsGraphMailSendConfiguration(defaults);
+          this.setMsGraphCalendarSendConfiguration({
+              msgraph_calendar_send_mode: 'draft_manual',
+              ...defaults
+          });
+          document.getElementById('m365-maximum-sharing-acknowledgement').value = 'always';
+      }
     }
   }
 
@@ -1389,7 +1406,37 @@ export class PluginModalStepper {
   }
 
   isMsGraphType(type = this.selectedType) {
-    return !!(type && type.toLowerCase() === 'msgraph');
+    return this.isLegacyMsGraphType(type) || this.isM365Type(type);
+  }
+
+  isLegacyMsGraphType(type = this.selectedType) {
+    return ['msgraph', 'microsoftgraph', 'msgraphplugin', 'microsoftgraphplugin'].includes(String(type || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+  }
+
+  isM365Type(type = this.selectedType) {
+    return M365_ACTION_TYPES.includes(type);
+  }
+
+  getMsGraphCapabilityDefinitions() {
+    if (!this.isM365Type()) {
+        return MSGRAPH_CAPABILITY_DEFINITIONS;
+    }
+    const definition = this.availableTypes.find(item => item.type === this.selectedType);
+    return Array.isArray(definition?.capabilities) ? definition.capabilities : [];
+  }
+
+  getMsGraphAdditionalFields() {
+    const fields = {
+        [this.isM365Type() ? 'm365_capabilities' : 'msgraph_capabilities']: this.getSelectedMsGraphCapabilities(),
+        maximum_sharing_acknowledgement: document.getElementById('m365-maximum-sharing-acknowledgement').value
+    };
+    if (this.isLegacyMsGraphType() || this.selectedType === 'm365_email') {
+        Object.assign(fields, this.getMsGraphMailSendConfiguration());
+    }
+    if (this.isLegacyMsGraphType() || this.selectedType === 'm365_calendar') {
+        Object.assign(fields, this.getMsGraphCalendarSendConfiguration());
+    }
+    return fields;
   }
 
   isAzureMapsType(type = this.selectedType) {
@@ -1481,8 +1528,8 @@ export class PluginModalStepper {
 
   getDefaultMsGraphCapabilities() {
     const defaults = {};
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
+      defaults[definition.key] = definition.default !== false;
     });
     return defaults;
   }
@@ -1493,7 +1540,7 @@ export class PluginModalStepper {
       return defaults;
     }
 
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
       if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
         defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
       }
@@ -1503,13 +1550,27 @@ export class PluginModalStepper {
   }
 
   renderMsGraphConfiguration() {
-    const list = document.getElementById('msgraph-capabilities-list');
+    const listId = this.isM365Type() ? `${this.selectedType}-capabilities-list` : 'msgraph-capabilities-list';
+    const list = document.getElementById(listId);
     if (!list) {
       return;
     }
 
-    list.innerHTML = '';
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    const savedMail = this.getMsGraphMailSendConfiguration();
+    const savedCalendar = this.getMsGraphCalendarSendConfiguration();
+    ['msgraph', ...M365_ACTION_TYPES].forEach(type => {
+        document.getElementById(`${type}-capabilities-list`)?.replaceChildren();
+    });
+    document.getElementById('msgraph-legacy-notice')?.classList.toggle('d-none', !this.isLegacyMsGraphType());
+    document.getElementById('msgraph-legacy-capabilities')?.classList.toggle('d-none', this.isM365Type());
+    M365_ACTION_TYPES.forEach(type => {
+        document.getElementById(`${type}-config-section`)?.classList.toggle('d-none', type !== this.selectedType);
+    });
+    const definitions = this.getMsGraphCapabilityDefinitions();
+    if (this.isM365Type() && !definitions.length) {
+        this.showError('Microsoft 365 capability definitions are unavailable. Reload before saving this action.');
+    }
+    definitions.forEach(definition => {
       const wrapper = document.createElement('div');
       wrapper.className = 'form-check mb-3';
 
@@ -1522,7 +1583,13 @@ export class PluginModalStepper {
       const label = document.createElement('label');
       label.className = 'form-check-label';
       label.setAttribute('for', checkbox.id);
-      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+      const title = document.createElement('span');
+      title.className = 'fw-medium';
+      title.textContent = definition.label;
+      const detail = document.createElement('span');
+      detail.className = 'd-block text-muted small';
+      detail.textContent = definition.description;
+      label.append(title, detail);
 
       let deliveryOptions = null;
       if (definition.key === 'send_mail') {
@@ -1551,6 +1618,8 @@ export class PluginModalStepper {
       list.appendChild(wrapper);
     });
 
+    this.setMsGraphMailSendConfiguration(savedMail);
+    this.setMsGraphCalendarSendConfiguration(savedCalendar);
     this.updateMsGraphMailDelayVisibility();
     this.updateMsGraphCalendarDelayVisibility();
   }
@@ -3899,6 +3968,10 @@ export class PluginModalStepper {
 
     switch (this.currentStep) {
       case 1:
+        if (this.isLegacyMsGraphType() && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+            this.showError('Choose a source-specific Microsoft 365 action. Legacy actions cannot be recreated.');
+            return false;
+        }
         if (!this.selectedType) {
           this.showError('Please select an action type.');
           return false;
@@ -6506,9 +6579,10 @@ export class PluginModalStepper {
       this.setSimpleChatCapabilities(additionalFields.simplechat_capabilities || plugin.simplechat_capabilities || null);
     } else if (this.isMsGraphType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
-      this.setMsGraphCapabilities(additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
+      this.setMsGraphCapabilities(additionalFields.m365_capabilities || additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
       this.setMsGraphMailSendConfiguration(additionalFields);
       this.setMsGraphCalendarSendConfiguration(additionalFields);
+      document.getElementById('m365-maximum-sharing-acknowledgement').value = additionalFields.maximum_sharing_acknowledgement || 'always';
     } else if (this.isAzureMapsType(plugin.type)) {
       const auth = plugin.auth || {};
       document.getElementById('azure-maps-key').value = auth.key || '';
@@ -6549,6 +6623,12 @@ export class PluginModalStepper {
   }
 
   getFormData() {
+    if (this.isLegacyMsGraphType() && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+        throw new Error('A live existing Microsoft Graph action ID is required for editing.');
+    }
+    if (this.isM365Type() && !this.getMsGraphCapabilityDefinitions().length) {
+        throw new Error('Microsoft 365 capability definitions are unavailable. Reload before saving.');
+    }
     // Determine which configuration section is active
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
@@ -6818,11 +6898,9 @@ export class PluginModalStepper {
       auth.type = 'user';
       additionalFields.simplechat_capabilities = this.getSelectedSimpleChatCapabilities();
     } else if (this.isMsGraphType()) {
-      endpoint = MSGRAPH_DEFAULT_ENDPOINT;
+      endpoint = this.isM365Type() ? '' : (this.originalPlugin?.endpoint || '');
       auth.type = 'user';
-      additionalFields.msgraph_capabilities = this.getSelectedMsGraphCapabilities();
-      Object.assign(additionalFields, this.getMsGraphMailSendConfiguration());
-      Object.assign(additionalFields, this.getMsGraphCalendarSendConfiguration());
+      additionalFields = this.getMsGraphAdditionalFields();
     } else if (isAzureMapsVisible) {
       const azureMapsConfig = this.getAzureMapsConfiguration();
       endpoint = azureMapsConfig.endpoint;
@@ -6900,6 +6978,9 @@ export class PluginModalStepper {
 
     if (identityId) {
       formData.identity_id = identityId;
+    }
+    if (this.isEditMode && this.originalPlugin?.id) {
+        formData.id = this.originalPlugin.id;
     }
 
     return formData;
@@ -7003,7 +7084,9 @@ export class PluginModalStepper {
       databaseTypeRow.style.display = '';
     } else if (isMsGraphType) {
       endpointRow.style.display = 'none';
-      document.getElementById('summary-plugin-database-type').textContent = 'Built-in Microsoft Graph action';
+      document.getElementById('summary-plugin-database-type').textContent = this.isM365Type()
+          ? (this.availableTypes.find(item => item.type === this.selectedType)?.display || this.selectedType)
+          : 'Built-in Microsoft Graph action (legacy)';
       databaseTypeRow.style.display = '';
     } else if (isAzureMapsType) {
       endpointRow.style.display = 'none';
@@ -7116,7 +7199,7 @@ export class PluginModalStepper {
     } else if (isLogAnalyticsType) {
       return this.getLogAnalyticsConfiguration().endpoint;
     } else if (isMsGraphType) {
-      return MSGRAPH_DEFAULT_ENDPOINT;
+      return this.isM365Type() ? '' : (this.originalPlugin?.endpoint || '');
     } else if (isChartType) {
       return CHART_DEFAULT_ENDPOINT;
     } else {
@@ -7620,7 +7703,7 @@ export class PluginModalStepper {
     }
 
     if (!this.isMsGraphType()) {
-      msGraphSection.style.display = 'none';
+      msGraphSection.classList.add('d-none');
       return;
     }
 
@@ -7628,7 +7711,7 @@ export class PluginModalStepper {
     const enabledLabels = [];
     const disabledLabels = [];
 
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
       if (capabilities[definition.key]) {
         enabledLabels.push(definition.label);
       } else {
@@ -7638,6 +7721,8 @@ export class PluginModalStepper {
 
     enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    const policy = document.getElementById('m365-maximum-sharing-acknowledgement');
+    document.getElementById('summary-m365-sharing-policy').textContent = policy.selectedOptions[0]?.textContent || '';
 
     const mailConfig = this.getMsGraphMailSendConfiguration();
     const mailModeRow = document.getElementById('summary-msgraph-mail-mode-row');
@@ -7676,7 +7761,7 @@ export class PluginModalStepper {
     if (calendarDelayRow) {
       calendarDelayRow.classList.toggle('d-none', !calendarEnabled || calendarConfig.msgraph_calendar_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
     }
-    msGraphSection.style.display = '';
+    msGraphSection.classList.remove('d-none');
   }
 
   populateChartSummary() {
@@ -7787,7 +7872,7 @@ export class PluginModalStepper {
       } else if (isSimpleChatType) {
         currentEndpoint = '';
       } else if (isMsGraphType) {
-        currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
+        currentEndpoint = this.getEndpointValue();
       } else if (isAzureMapsType) {
         currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
       } else if (isLogAnalyticsType) {
@@ -7905,11 +7990,7 @@ export class PluginModalStepper {
           simplechat_capabilities: this.getSelectedSimpleChatCapabilities()
         }, null, 2);
       } else if (isMsGraphType) {
-        currentAdditionalFields = JSON.stringify({
-          msgraph_capabilities: this.getSelectedMsGraphCapabilities(),
-          ...this.getMsGraphMailSendConfiguration(),
-          ...this.getMsGraphCalendarSendConfiguration()
-        }, null, 2);
+        currentAdditionalFields = JSON.stringify(this.getMsGraphAdditionalFields(), null, 2);
       } else if (isAzureMapsType) {
         currentAdditionalFields = '{}';
       } else if (isLogAnalyticsType) {
@@ -8322,6 +8403,7 @@ export class PluginModalStepper {
     this.renderSimpleChatConfiguration();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.renderMsGraphConfiguration();
+    document.getElementById('m365-maximum-sharing-acknowledgement').value = 'always';
     this.setMsGraphMailSendConfiguration({});
     this.setMsGraphCalendarSendConfiguration({});
     this.chartCapabilityState = this.getDefaultChartCapabilities();

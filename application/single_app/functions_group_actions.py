@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from functions_debug import debug_print
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 from flask import current_app
 
@@ -24,6 +25,7 @@ from functions_workspace_identities import (
 )
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -101,7 +103,7 @@ def get_group_action(
 
 def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
-    payload = dict(action_data)
+    payload = normalize_m365_action_payload(dict(action_data))
     action_id = payload.get("id") or str(uuid.uuid4())
 
     payload["id"] = action_id
@@ -118,8 +120,11 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
         )
     except exceptions.CosmosResourceNotFoundError:
         pass
-    except Exception:
-        pass
+
+    validate_legacy_action_update(payload, existing_action, 'group_id', group_id)
+    legacy_type = is_legacy_msgraph_type(payload.get('type'))
+    if legacy_type:
+        payload['type'] = 'msgraph'
 
     if existing_action:
         payload["created_by"] = existing_action.get("created_by", user_id)
@@ -163,7 +168,15 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
     )
 
     try:
-        stored = cosmos_group_actions_container.upsert_item(body=payload)
+        if legacy_type:
+            stored = cosmos_group_actions_container.replace_item(
+                item=action_id,
+                body=payload,
+                etag=existing_action['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            stored = cosmos_group_actions_container.upsert_item(body=payload)
         bump_chat_bootstrap_global_cache_version(reason="group_action_saved")
         return _clean_action(stored, group_id, SecretReturnType.TRIGGER)
     except Exception as exc:

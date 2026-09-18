@@ -642,6 +642,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         reconnectStatusLabel = 'Reconnecting...',
         fallbackAgentInfo = null,
         initialPersistedUserMessageId = null,
+        onM365Resume = null,
     } = options;
 
     if (currentStreamController) {
@@ -730,6 +731,46 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+
+            if (data.type === 'm365_approval_required') {
+                streamCompleted = true;
+                stopThoughtPolling();
+                clearStreamingThoughtSession(tempAiMessageId);
+                removeStreamingStopButton(tempAiMessageId);
+                clearCurrentStreamController(abortController);
+                if (data.user_message_id) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
+                handleStreamError(
+                    tempAiMessageId, accumulatedContent,
+                    'Microsoft 365 approval is required. You can also respond from Approvals.',
+                    data,
+                );
+                const approvals = window.SimpleChatM365Approvals;
+                if (approvals) {
+                    void approvals.openApprovals(data, {
+                        onResume: async result => {
+                            if (result.approvals?.some(approval => approval.resume_scheduled === true)) {
+                                const visibleConversationId = recoveryConversationId || data.conversation_id;
+                                await loadMessages(visibleConversationId);
+                                void reattachStreamingConversation(visibleConversationId);
+                                return;
+                            }
+                            if (result.status === 'decided' && typeof onM365Resume === 'function') {
+                                onM365Resume(data);
+                            }
+                        },
+                    }).catch(error => {
+                        handleStreamError(tempAiMessageId, accumulatedContent, error.message, data);
+                    });
+                }
+                if (typeof onFinally === 'function') {
+                    onFinally();
+                }
+                return true;
+            }
 
             if (data.error) {
                 if (data.user_message_id && data.message_persisted === true) {
@@ -1135,6 +1176,26 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         {
             ...options,
             recoveryConversationId,
+            onM365Resume: approvalData => {
+                const resumedPayload = {
+                    ...messageData,
+                    m365_request_id: approvalData.m365_request_id,
+                    conversation_id: approvalData.conversation_id || currentConversationId,
+                };
+                const sourceMessageId = approvalData.m365_source_user_message_id
+                    || approvalData.user_message_id;
+                if (sourceMessageId) {
+                    resumedPayload.retry_user_message_id = sourceMessageId;
+                }
+                const oldPlaceholder = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
+                if (oldPlaceholder) {
+                    oldPlaceholder.remove();
+                }
+                sendMessageWithStreaming(
+                    resumedPayload, tempUserMessageId,
+                    approvalData.conversation_id || currentConversationId, options,
+                );
+            },
         },
     );
 }

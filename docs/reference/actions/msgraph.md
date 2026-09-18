@@ -12,6 +12,14 @@ audience: user
 
 ## What this action does
 
+The combined Microsoft Graph action is **legacy-only** from version
+**0.261.029**. Existing records remain editable and runnable, but new combined
+actions, clones, and recreation after deletion are not supported. For a new
+setup, use the separate [Calendar](../m365-calendar/), [Email](../m365-email/),
+[OneDrive](../m365-onedrive/), or [SharePoint Online](../m365-sharepoint/) action.
+Existing Email, Calendar, and OneDrive operations also follow the new
+[sharing acknowledgement rules]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
 Microsoft Graph uses the signed-in user's delegated permissions and the standard Graph endpoint. Its capabilities include profile, timezone, calendar events, calendar invites, mail read/update/send, directory search, user lookup, OneDrive listing, and security alerts available to the user.
 
 ## Why and when to use it
@@ -27,7 +35,7 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 
 ## Configure the action
 
-1. Choose **Microsoft Graph**.
+1. Open an existing **Microsoft Graph** action for editing.
 2. Review **Default Microsoft Graph Capabilities** and enable only needed operations.
 3. For mail, choose manual draft, delayed draft, or auto-send where allowed.
 4. Set mail delay seconds when using delayed delivery.
@@ -53,4 +61,3 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
 - [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
 - [Governance]({{ '/admin/governance/' | relative_url }})
-

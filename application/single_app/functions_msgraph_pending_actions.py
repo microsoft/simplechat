@@ -14,9 +14,12 @@ from azure.cosmos import exceptions
 
 from config import cosmos_msgraph_pending_actions_container
 from functions_appinsights import log_event
-from functions_authentication import get_valid_access_token_for_plugins
+from functions_m365_connections import get_m365_access_token as get_valid_access_token_for_plugins
 from functions_debug import debug_print
 from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT
+from functions_m365_pending_delivery import (
+    capture_workflow_delivery, dispatch_m365_pending_delivery, notify_m365_pending_delivery,
+)
 
 
 MSGRAPH_PENDING_ACTION_TYPE = 'msgraph_pending_action'
@@ -29,6 +32,8 @@ MSGRAPH_PENDING_TERMINAL_STATUSES = {
     MSGRAPH_PENDING_STATUS_SENT,
     MSGRAPH_PENDING_STATUS_CANCELLED,
     MSGRAPH_PENDING_STATUS_FAILED,
+    'sending',
+    'recovery_required',
 }
 
 MSGRAPH_PENDING_OPERATION_SEND_MAIL = 'send_mail'
@@ -118,7 +123,7 @@ def build_calendar_pending_action_summary(event_payload):
     }
 
 
-def sanitize_msgraph_pending_action_for_client(action):
+def sanitize_msgraph_pending_action_for_client(action, *, viewer_user_id=None):
     """Return a browser-safe pending action payload without stored Graph request bodies."""
     action = action if isinstance(action, dict) else {}
     status = _normalize_text(action.get('status')) or MSGRAPH_PENDING_STATUS_PENDING
@@ -126,6 +131,7 @@ def sanitize_msgraph_pending_action_for_client(action):
     graph_resource_type = _normalize_text(action.get('graph_resource_type'))
     terminal = status in MSGRAPH_PENDING_TERMINAL_STATUSES
     due_at = _normalize_text(action.get('auto_send_at_utc'))
+    can_manage = viewer_user_id is None or viewer_user_id == action.get('user_id')
 
     return {
         'id': action.get('id'),
@@ -150,9 +156,10 @@ def sanitize_msgraph_pending_action_for_client(action):
         'failed_at': action.get('failed_at') or '',
         'delay_seconds': action.get('delay_seconds'),
         'error': action.get('error') or '',
-        'can_approve': not terminal and action_mode == MSGRAPH_PENDING_ACTION_MANUAL,
-        'can_cancel': not terminal,
-        'can_send_now': not terminal,
+        'delivery_note': action.get('delivery_note') or '',
+        'can_approve': can_manage and not terminal and action_mode == MSGRAPH_PENDING_ACTION_MANUAL,
+        'can_cancel': can_manage and not terminal,
+        'can_send_now': can_manage and not terminal,
         'will_auto_send': not terminal and action_mode == MSGRAPH_PENDING_ACTION_DELAYED and bool(due_at),
     }
 
@@ -190,6 +197,7 @@ def create_msgraph_pending_action(
     delay_seconds=None,
     graph_endpoint=MSGRAPH_DEFAULT_ENDPOINT,
     web_link='',
+    m365_action_id='',
 ):
     """Create a pending Microsoft Graph action record."""
     created_at = _utc_now_iso()
@@ -220,7 +228,14 @@ def create_msgraph_pending_action(
         'created_at': created_at,
         'updated_at': created_at,
     }
-    return save_msgraph_pending_action(user_id, action_record)
+    delivery = capture_workflow_delivery(user_id, m365_action_id, workflow_id, run_id)
+    if delivery is not None:
+        action_record['m365_execution'] = delivery
+        action_record['m365_notification_pending'] = action_mode == MSGRAPH_PENDING_ACTION_MANUAL
+    saved = save_msgraph_pending_action(user_id, action_record)
+    if delivery is not None:
+        notify_m365_pending_delivery(saved)
+    return saved
 
 
 def get_msgraph_pending_action(user_id, action_id):
@@ -449,6 +464,8 @@ def approve_msgraph_pending_action(user_id, action_id):
     action = get_msgraph_pending_action(user_id, action_id)
     if not action:
         return None, {'error': 'not_found', 'message': 'Pending Microsoft Graph action was not found.'}
+    if action.get('m365_execution'):
+        return dispatch_m365_pending_delivery(user_id, action_id)
 
     operation = _normalize_text(action.get('operation'))
     scopes = ['Mail.Send'] if operation == MSGRAPH_PENDING_OPERATION_SEND_MAIL else ['Calendars.ReadWrite']
@@ -464,6 +481,8 @@ def cancel_msgraph_pending_action(user_id, action_id):
     action = get_msgraph_pending_action(user_id, action_id)
     if not action:
         return None, {'error': 'not_found', 'message': 'Pending Microsoft Graph action was not found.'}
+    if action.get('m365_execution'):
+        return dispatch_m365_pending_delivery(user_id, action_id, cancel=True)
 
     status = _normalize_text(action.get('status'))
     if status in MSGRAPH_PENDING_TERMINAL_STATUSES:
@@ -508,6 +527,8 @@ def _cancel_scheduled_timer(action_id):
 def schedule_msgraph_pending_action_auto_commit(action, token):
     """Schedule an in-process auto-commit for a delayed pending action."""
     action = action if isinstance(action, dict) else {}
+    if action.get('m365_execution'):
+        return True
     action_id = _normalize_text(action.get('id'))
     user_id = _normalize_text(action.get('user_id'))
     auto_send_at = _coerce_datetime(action.get('auto_send_at_utc'))

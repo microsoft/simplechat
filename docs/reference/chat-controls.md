@@ -24,6 +24,11 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Conversation header and status
 
+The conversation details dialog includes a paginated **Microsoft 365 sharing
+and analysis acknowledgements** section. It shows the recorded source, decision,
+effective duration, and approval reference without exposing credentials or
+private profile preferences.
+
 {% include media.html src="reference/chat-controls-conversation-header.png" alt="Conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible." title="Conversation header" capture="Capture the conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible. Redact conversation title." %}
 
 | Control | What it does | Why you would use it | Enabled by |
@@ -36,6 +41,11 @@ Use this page when you can see a control in Chat but are not sure what it does o
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
 
 ## Chat tools and composer
+
+Microsoft 365 agents can pause for a source-sharing or deeper-analysis decision.
+The local approval dialog offers only the durations permitted by the action.
+The same request is available in **Approvals** and notifications; declining a
+source keeps unrelated tools available. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
 {% include media.html src="reference/chat-controls-composer-tools.png" alt="Message composer with quick tools, upload controls, URL review, web search, and send button visible." title="Chat tools and composer" capture="Capture the message composer with quick tools, upload controls, URL review, web search, and send button visible." %}
 

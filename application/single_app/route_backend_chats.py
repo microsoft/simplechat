@@ -208,6 +208,18 @@ from functions_citation_tracking import (
     resolve_citation_location,
 )
 from functions_collaboration import build_conversation_participation_context
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_execution import get_m365_execution_context
+from functions_m365_runtime import (
+    attach_m365_message_provenance,
+    complete_m365_request,
+    initialize_m365_chat_context,
+    record_m365_pending,
+    preflight_m365_manifests,
+    workflow_m365_manifests,
+    record_m365_auth_wait,
+)
+from m365_interaction import M365SignInRequired
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -3665,6 +3677,27 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
 
     g.conversation_id = conversation_id
     g.authorized_chat_context = authorized_context
+    if get_m365_execution_context() is None:
+        initialize_m365_chat_context(
+            user_id, conversation_id,
+            allow_new=bool(getattr(g, 'm365_new_conversation', False)),
+        )
+    agent_selection = (request.get_json(silent=True) or {}).get('agent_info')
+    if agent_selection and not getattr(g, 'm365_chat_preflight_complete', False):
+        agent = _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection)
+        if agent:
+            g.m365_selected_agent_ref = {
+                key: agent[key] for key in ('id', 'name', 'is_global', 'is_group', 'group_id')
+                if key in agent
+            }
+            manifests, _fingerprint = workflow_m365_manifests({
+                'user_id': user_id,
+                'group_id': agent.get('group_id') if agent.get('is_group') else None,
+                'selected_agent': agent,
+                'tasks': [],
+            })
+            preflight_m365_manifests(manifests)
+        g.m365_chat_preflight_complete = True
     return authorized_context
 
 
@@ -14545,8 +14578,23 @@ def register_route_backend_chats(bp):
                 else:
                     event_iterator = event_generator_factory()
 
+                terminal_success = False
                 for event in event_iterator:
                     publish_background_event(event)
+                    if isinstance(event, str) and event.startswith("data:"):
+                        try:
+                            payload = json.loads(event[5:].strip())
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload, dict) and payload.get("done"):
+                            terminal_success = not (
+                                payload.get("error") or payload.get("cancelled") or payload.get("canceled")
+                            )
+                complete_m365_request(success=terminal_success)
+            except M365ApprovalRequired as error:
+                publish_background_event(
+                    f"data: {json.dumps(record_m365_pending(error))}\n\n"
+                )
             except Exception as e:
                 debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
                 stream_status = stream_session.get_status_snapshot() if stream_session else {}
@@ -15278,6 +15326,8 @@ def register_route_backend_chats(bp):
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
+        if conversation_id:
+            initialize_m365_chat_context(user_id, conversation_id)
 
         selected_document_id = data.get('selected_document_id')
         selected_document_ids = data.get('selected_document_ids', [])
@@ -16016,7 +16066,7 @@ def register_route_backend_chats(bp):
                 'document_action': normalized_action,
             },
         })
-        cosmos_messages_container.upsert_item(assistant_doc)
+        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
         try:
             raise_if_mixed_source_cancelled(
                 cancel_requested,
@@ -19600,6 +19650,8 @@ def register_route_backend_chats(bp):
                     try:
                         result = step['func']()
                         return step['on_success'](result)
+                    except (M365ApprovalRequired, M365SignInRequired):
+                        raise
                     except Exception as e:
                         log_event(
                             f"[FALLBACK_FAILURE] Fallback step {step['name']} failed: {e}",
@@ -20656,7 +20708,7 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
-            cosmos_messages_container.upsert_item(assistant_doc)
+            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
             if selected_agent and agent_name:
                 log_agent_run(
@@ -20810,6 +20862,15 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except M365ApprovalRequired as error:
+            return jsonify(record_m365_pending(
+                error,
+                user_message_id=locals().get('user_message_id'),
+            )), 409
+        except M365SignInRequired as error:
+            return jsonify(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id'))), 409
+        except M365PolicyError as error:
+            return jsonify(error.payload), 403
         except Exception as e:
             error_traceback = traceback.format_exc()
             debug_print(f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}")
@@ -21034,6 +21095,11 @@ def register_route_backend_chats(bp):
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
                 conversation_id = finalized_conversation_id
+                g.m365_new_conversation = is_new_stream_conversation
+                initialize_m365_chat_context(
+                    user_id, conversation_id,
+                    allow_new=is_new_stream_conversation,
+                )
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 url_access_enabled = data.get('url_access_enabled')
@@ -24031,7 +24097,7 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
-                        cosmos_messages_container.upsert_item(assistant_doc)
+                        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         initialize_conversation_used_document_tracking(conversation_item)
                         try:
@@ -24267,6 +24333,9 @@ def register_route_backend_chats(bp):
                                             )
                                             continue
                                     raise
+                        except (M365ApprovalRequired, M365SignInRequired):
+                            plugin_logger_cb.deregister_callbacks(callback_key)
+                            raise
                         except Exception as stream_error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
@@ -24799,7 +24868,7 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
-                    cosmos_messages_container.upsert_item(assistant_doc)
+                    cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
                         'finalization',
@@ -25092,7 +25161,7 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
-                            cosmos_messages_container.upsert_item(assistant_doc)
+                            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
                             initialize_conversation_used_document_tracking(
@@ -25159,6 +25228,12 @@ def register_route_backend_chats(bp):
                         **interrupted_citation_tracking,
                     )
 
+            except M365ApprovalRequired as error:
+                yield f"data: {json.dumps(record_m365_pending(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except M365SignInRequired as error:
+                yield f"data: {json.dumps(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except M365PolicyError as error:
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 debug_print(f"[STREAM_API_ERROR] Unhandled exception: {str(e)}")

@@ -649,6 +649,13 @@ async function fetchJson(url, options = {}) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
+        if (payload.type === 'm365_approval_required' && window.SimpleChatM365Approvals) {
+            const decision = await window.SimpleChatM365Approvals.openApprovals(payload);
+            if (decision.status === 'decided') {
+                return fetchJson(url, options);
+            }
+            throw new Error('Sharing is waiting for your Microsoft 365 acknowledgement.');
+        }
         throw new Error(payload.error || `Request failed (${response.status})`);
     }
     return payload;

@@ -10,6 +10,11 @@ const pageState = {
 };
 
 const BOTTOM_SCROLL_THRESHOLD = 24;
+const WORKFLOW_ACTIVE_STATUSES = new Set([
+    "running", "cancelling", "awaiting_approval", "awaiting_sharing_approval",
+    "awaiting_analysis_approval", "awaiting_run_as_approval", "awaiting_sign_in",
+    "ready_to_resume", "resuming",
+]);
 const MICROSOFT_365_CONSENT_MESSAGE = "User consent is required to access Microsoft 365 resources like Outlook email, Calendar, OneDrive, or SharePoint.";
 const MICROSOFT_365_ACCESS_PENDING_MESSAGE = "Microsoft 365 access is not available yet. Grant access in the popup, then test access again.";
 
@@ -308,7 +313,7 @@ function renderPendingActionControls(activity) {
 
     pendingActionControlsEl.classList.remove("d-none");
     const status = normalizeText(action.status).toLowerCase();
-    const terminal = ["sent", "cancelled", "canceled", "failed"].includes(status);
+    const terminal = ["sent", "cancelled", "canceled", "failed", "sending", "recovery_required"].includes(status);
     const isDelayed = normalizeText(action.action_mode).toLowerCase() === "delayed";
 
     const heading = document.createElement("div");
@@ -319,7 +324,7 @@ function renderPendingActionControls(activity) {
     const detail = document.createElement("div");
     detail.className = "workflow-pending-action-detail text-muted";
     if (terminal) {
-        detail.textContent = status === "sent" ? "This action has been sent." : `This action is ${status}.`;
+        detail.textContent = status === "sent" ? "This action has been sent." : `This action is ${status.replaceAll("_", " ")}.`;
     } else if (isDelayed) {
         detail.textContent = `This action will send at ${formatDateTime(action.auto_send_at_utc)} unless it is sent now or cancelled.`;
     } else {
@@ -335,13 +340,15 @@ function renderPendingActionControls(activity) {
     countdownEl.className = "workflow-pending-action-countdown d-none";
     controls.appendChild(countdownEl);
 
-    if (!terminal) {
+    if (!terminal && action.can_send_now !== false) {
         const sendButton = createPendingActionButton(isDelayed ? "Send now" : "Send", "bi bi-send me-1", "btn btn-sm btn-primary");
         sendButton.addEventListener("click", () => {
             void submitWorkflowPendingAction(action.id, "send-now", pendingActionControlsEl);
         });
         controls.appendChild(sendButton);
 
+    }
+    if (!terminal && action.can_cancel !== false) {
         const cancelButton = createPendingActionButton("Cancel", "bi bi-x-circle me-1", "btn btn-sm btn-outline-secondary");
         cancelButton.addEventListener("click", () => {
             void submitWorkflowPendingAction(action.id, "cancel", pendingActionControlsEl);
@@ -351,9 +358,11 @@ function renderPendingActionControls(activity) {
 
     const messageEl = document.createElement("div");
     messageEl.className = "workflow-pending-action-message small text-muted";
+    messageEl.textContent = action.error || action.delivery_note
+        || (action.can_send_now === false && !terminal ? "Only the selected Run as user can send or cancel this action." : "");
     pendingActionControlsEl.appendChild(messageEl);
 
-    if (isDelayed && !terminal) {
+    if (isDelayed && !terminal && action.can_send_now !== false) {
         const updateCountdown = () => {
             const secondsRemaining = calculatePendingActionSeconds(action);
             countdownEl.classList.remove("d-none");
@@ -502,7 +511,7 @@ function applyStatusBadge(element, status) {
     const normalizedStatus = normalizeText(status).toLowerCase() || "idle";
     const className = normalizedStatus === "running"
         ? "text-bg-primary"
-        : normalizedStatus === "cancelling"
+        : WORKFLOW_ACTIVE_STATUSES.has(normalizedStatus)
             ? "text-bg-warning"
         : normalizedStatus === "failed"
             ? "text-bg-danger"
@@ -519,7 +528,7 @@ function applyStatusBadge(element, status) {
             ? "Failed"
             : normalizedStatus === "completed"
                 ? "Completed"
-                : normalizedStatus;
+                : normalizedStatus.replaceAll("_", " ");
 
     element.className = `badge ${className}`;
     element.textContent = label;
@@ -533,7 +542,7 @@ function updateWorkflowCancelButton(workflow, run) {
     const workflowId = normalizeText(workflow?.id || getQueryParam("workflowId"));
     const runId = normalizeText(run?.id || getQueryParam("runId"));
     const runStatus = normalizeText(run?.status).toLowerCase();
-    const isActive = ["running", "cancelling"].includes(runStatus);
+    const isActive = WORKFLOW_ACTIVE_STATUSES.has(runStatus);
     const isCancelling = runStatus === "cancelling";
     const labelEl = cancelRunBtn.querySelector("span");
 
@@ -863,7 +872,7 @@ function shouldListenForUpdates(snapshot) {
         return true;
     }
 
-    return Boolean(snapshot?.live) || ["running", "cancelling"].includes(normalizeText(run.status).toLowerCase());
+    return Boolean(snapshot?.live) || WORKFLOW_ACTIVE_STATUSES.has(normalizeText(run.status).toLowerCase());
 }
 
 function stopEventStream() {
@@ -893,7 +902,7 @@ function startEventStream() {
     };
     eventSource.onerror = () => {
         const runStatus = normalizeText(pageState.snapshot?.run?.status).toLowerCase();
-        if (runStatus && !["running", "cancelling"].includes(runStatus)) {
+        if (runStatus && !WORKFLOW_ACTIVE_STATUSES.has(runStatus) && !pageState.snapshot?.live) {
             stopEventStream();
         }
     };

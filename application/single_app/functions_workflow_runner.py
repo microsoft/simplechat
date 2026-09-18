@@ -24,6 +24,18 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from flask import Flask, g, has_request_context, session
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
+from functions_m365_runtime import (
+    attach_m365_message_provenance, cancel_m365_workflow_requests, complete_m365_request,
+    workflow_m365_context, workflow_m365_manifests,
+)
+from functions_m365_workflow_binding import build_waiting_workflow_result
+from functions_m365_workflow_checkpoints import (
+    m365_workflow_task_context,
+    read_m365_task_checkpoint,
+    save_m365_task_checkpoint,
+)
 from openai import AzureOpenAI
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
@@ -5701,8 +5713,8 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
     return message_doc
 
 
-def _initialize_workflow_assistant_tracking(conversation_id, user_id, user_message_doc):
-    assistant_message_id = str(uuid.uuid4())
+def _initialize_workflow_assistant_tracking(conversation_id, user_id, user_message_doc, assistant_message_id=None):
+    assistant_message_id = assistant_message_id or str(uuid.uuid4())
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
     thought_tracker = ThoughtTracker(
         conversation_id=conversation_id,
@@ -6138,7 +6150,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             },
         },
     }
-    cosmos_messages_container.upsert_item(assistant_doc)
+    cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
     token_usage = result.get('token_usage') if isinstance(result.get('token_usage'), dict) else None
     if token_usage and token_usage.get('total_tokens'):
@@ -9837,6 +9849,11 @@ def _execute_workflow_task_sequence(
         task['order'] = task_index + 1
         task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
         task['id'] = task_id
+        completed_task = read_m365_task_checkpoint(task_id)
+        if completed_task is not None:
+            task_results.append(completed_task)
+            previous_reply = str((completed_task.get('result') or {}).get('reply') or '')
+            continue
         created_at = _utc_now_iso()
         runner_audit = {
             'requested_mode': _get_workflow_task_requested_runner_mode(task),
@@ -9893,15 +9910,16 @@ def _execute_workflow_task_sequence(
                     created_at=created_at,
                     runner_audit=runner_audit,
                 )
-                task_result = _execute_workflow_dispatch(
-                    attempt_workflow,
-                    settings,
-                    conversation_id,
-                    run_id,
-                    thought_tracker,
-                    url_access_context,
-                    file_sync_result=file_sync_result,
-                )
+                with m365_workflow_task_context(task_id):
+                    task_result = _execute_workflow_dispatch(
+                        attempt_workflow,
+                        settings,
+                        conversation_id,
+                        run_id,
+                        thought_tracker,
+                        url_access_context,
+                        file_sync_result=file_sync_result,
+                    )
                 task_error = ''
                 runner_audit = dict(runner_audit)
                 model_deployment_name = str(task_result.get('model_deployment_name') or '').strip()
@@ -9911,6 +9929,8 @@ def _execute_workflow_task_sequence(
                 if provider:
                     runner_audit['provider'] = provider
                 break
+            except (M365ApprovalRequired, M365SignInRequired):
+                raise
             except Exception as exc:
                 task_error = str(exc)
                 if attempt_index >= retry_count:
@@ -9941,14 +9961,16 @@ def _execute_workflow_task_sequence(
                 runner_audit=runner_audit,
                 token_usage=_merge_token_usage_summaries([task_result]),
             )
-            task_results.append({
+            completed_task = {
                 'task': task,
                 'status': 'succeeded',
                 'attempt_count': attempt_count,
                 'result': task_result,
                 'error': '',
                 'runner': runner_audit,
-            })
+            }
+            save_m365_task_checkpoint(task_id, completed_task)
+            task_results.append(completed_task)
             if thought_tracker and run_id:
                 _add_workflow_activity_thought(
                     thought_tracker,
@@ -10056,6 +10078,8 @@ def _finalize_cancelled_workflow_run(
         'error': '',
     })
     _mark_unfinished_workflow_run_items_cancelled(workflow, run_id)
+    if workflow.get('m365_run_as_user_id'):
+        cancel_m365_workflow_requests(workflow_id, run_id)
     if thought_tracker:
         _add_workflow_activity_thought(
             thought_tracker,
@@ -10112,16 +10136,117 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     workflow = workflow if isinstance(workflow, dict) else {}
     resolved_run_id = str(run_id or create_workflow_run_id())
     with workflow_alert_signal_scope(workflow, resolved_run_id):
-        return _run_personal_workflow_impl(
-            workflow,
-            trigger_source=trigger_source,
-            user_roles=user_roles,
-            actor_user_id=actor_user_id,
-            run_id=resolved_run_id,
-        )
+        try:
+            return _run_personal_workflow_impl(
+                workflow,
+                trigger_source=trigger_source,
+                user_roles=user_roles,
+                actor_user_id=actor_user_id,
+                run_id=resolved_run_id,
+            )
+        except M365PolicyError as error:
+            return _fail_m365_workflow_run(workflow, resolved_run_id, trigger_source, actor_user_id, error)
+
+
+def _fail_m365_workflow_run(workflow, run_id, trigger_source, actor_user_id, error):
+    now = _utc_now_iso()
+    message = error.payload["message"]
+    run = _get_workflow_run_record(workflow, run_id) or {
+        'id': run_id, 'workflow_id': workflow['id'], 'user_id': workflow['user_id'],
+        'group_id': workflow.get('group_id'), 'started_at': now,
+        'triggered_by': actor_user_id or workflow['user_id'], 'trigger_source': trigger_source,
+    }
+    if run.get('status') in {'cancelled', 'canceled'}:
+        return {
+            'success': True, 'run': run,
+            'workflow_updates': {'status': 'idle', 'active_run_id': '', 'last_run_status': 'cancelled'},
+        }
+    run.update(status='failed', success=False, error=message, completed_at=now)
+    _save_workflow_run_record(workflow, run)
+    log_event(
+        '[MS_GRAPH_PLUGIN] Workflow authorization failed.',
+        extra={'workflow_id': workflow['id'], 'run_id': run_id, 'error_code': error.code},
+        level=logging.WARNING,
+    )
+    return {
+        'success': False, 'error': message, 'run': run,
+        'workflow_updates': {
+            'status': 'idle', 'active_run_id': '', 'last_run_status': 'failed',
+            'last_run_error': message, 'last_run_at': now,
+        },
+    }
 
 
 def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
+    """Authorize Microsoft 365 before the workflow performs external operations."""
+    with _ensure_execution_context(workflow.get('user_id')):
+        manifests, _fingerprint_workflow = workflow_m365_manifests(workflow)
+        if not manifests:
+            return _run_authorized_workflow_impl(
+                workflow, trigger_source, user_roles, actor_user_id, run_id,
+            )
+        if not str(workflow.get('m365_run_as_user_id') or '').strip():
+            raise M365PolicyError('m365_run_as_required', 'Select a Microsoft 365 Run as account before running this workflow.')
+        conversation = _ensure_workflow_conversation(workflow)
+        execution_workflow = dict(workflow)
+        execution_workflow['conversation_id'] = conversation['id']
+        if workflow.get('conversation_id') != conversation['id']:
+            # Bind the generated destination before computing a revision for user approval.
+            from functions_group_workflows import update_group_workflow_runtime_fields
+            from functions_personal_workflows import update_personal_workflow_runtime_fields
+            if workflow.get('group_id'):
+                update_group_workflow_runtime_fields(
+                    workflow['group_id'], workflow['id'], {'conversation_id': conversation['id']},
+                )
+            else:
+                update_personal_workflow_runtime_fields(
+                    workflow['user_id'], workflow['id'], {'conversation_id': conversation['id']},
+                )
+        try:
+            with workflow_m365_context(
+                execution_workflow, run_id, conversation['id'],
+                actor_user_id=actor_user_id,
+            ):
+                result = _run_authorized_workflow_impl(
+                    execution_workflow, trigger_source, user_roles, actor_user_id, run_id,
+                )
+                if result.get('success'):
+                    complete_m365_request()
+                return result
+        except M365ApprovalRequired as error:
+            run = _get_workflow_run_record(workflow, run_id) or {
+                'id': run_id, 'workflow_id': workflow['id'],
+                'user_id': workflow['user_id'], 'group_id': workflow.get('group_id'),
+                'conversation_id': conversation['id'],
+                'triggered_by': actor_user_id or workflow['user_id'],
+                'started_at': _utc_now_iso(),
+                'trigger_source': trigger_source,
+            }
+            result = build_waiting_workflow_result(workflow, run, error.payload)
+            _save_workflow_run_record(workflow, result['run'])
+            return result
+        except M365PolicyError as error:
+            if error.code not in (M365_AUTH_INTERACTION_CODES | {
+                'm365_connection_required', 'm365_run_as_required',
+                'm365_run_as_invalid', 'm365_interaction_required',
+            }):
+                raise
+            run = _get_workflow_run_record(workflow, run_id) or {
+                'id': run_id, 'workflow_id': workflow['id'],
+                'user_id': workflow['user_id'], 'group_id': workflow.get('group_id'),
+                'conversation_id': conversation['id'],
+                'triggered_by': actor_user_id or workflow['user_id'],
+                'started_at': _utc_now_iso(),
+                'trigger_source': trigger_source,
+            }
+            result = build_waiting_workflow_result(
+                workflow, run, {**error.payload, 'status': 'awaiting_sign_in'},
+            )
+            _save_workflow_run_record(workflow, result['run'])
+            return result
+
+
+def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
@@ -10132,9 +10257,13 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
     started_at = _utc_now_iso()
     settings = get_settings()
 
+    prior_run = _get_workflow_run_record(workflow, run_id) or {}
+    started_at = prior_run.get('started_at') or started_at
     run_record = {
+        **prior_run,
         'id': run_id,
         'workflow_id': workflow_id,
+        'm365_run_as_user_id': workflow.get('m365_run_as_user_id') or '',
         'workflow_name': workflow.get('name'),
         'runner_type': workflow.get('runner_type'),
         'trigger_type': workflow.get('trigger_type'),
@@ -10161,11 +10290,17 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
     file_sync_result = None
     try:
         _raise_if_workflow_run_cancelled(workflow, run_id)
-        file_sync_result = _execute_cancelable_workflow_step(
-            workflow,
-            run_id,
-            lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
-        )
+        if prior_run.get('file_sync_checked'):
+            file_sync_result = prior_run.get('file_sync')
+        else:
+            file_sync_result = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
+            )
+            run_record['file_sync_checked'] = True
+            run_record['file_sync'] = file_sync_result
+            _save_workflow_run_record(workflow, run_record)
         if file_sync_result and file_sync_result.get('enabled'):
             run_record['file_sync'] = file_sync_result
             _save_workflow_run_record(workflow, run_record)
@@ -10219,12 +10354,18 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         conversation = _ensure_workflow_conversation(execution_workflow)
         run_record['conversation_id'] = conversation.get('id')
         _raise_if_workflow_run_cancelled(workflow, run_id)
-        user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
+        if run_record.get('user_message_id'):
+            user_message_doc = cosmos_messages_container.read_item(
+                item=run_record['user_message_id'], partition_key=conversation['id'],
+            )
+        else:
+            user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
         _raise_if_workflow_run_cancelled(workflow, run_id)
         assistant_message_id, thought_tracker = _initialize_workflow_assistant_tracking(
             conversation.get('id'),
             user_id,
             user_message_doc,
+            assistant_message_id=run_record.get('assistant_message_id'),
         )
         run_record['user_message_id'] = user_message_doc.get('id')
         run_record['assistant_message_id'] = assistant_message_id
@@ -10385,6 +10526,8 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
                 'cancellation_requested_by': '',
             },
         }
+    except (M365ApprovalRequired, M365SignInRequired):
+        raise
     except WorkflowRunCancelledError:
         return _finalize_cancelled_workflow_run(
             workflow,

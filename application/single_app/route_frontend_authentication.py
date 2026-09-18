@@ -247,7 +247,7 @@ def register_route_frontend_authentication(bp):
             return redirect(url_for('public_app.index'))
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
-        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
 
         # Get settings from database, with environment variable fallback
         settings = get_settings() or {}
@@ -357,7 +357,7 @@ def register_route_frontend_authentication(bp):
             return "Authorization code not found", 400
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
-        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
 
         # Get settings for redirect URI (same logic as other routes)
         settings = get_settings() or {}

@@ -47,6 +47,7 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import is_vision_capable_model
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -2417,7 +2418,16 @@ def register_route_frontend_admin_settings(bp):
             )
 
             # --- Construct new_settings Dictionary ---
+            try:
+                m365_settings = normalize_m365_transport_settings(
+                    form_data.get('m365_retrieval_provider', settings.get('m365_retrieval_provider', 'auto')),
+                    form_data.get('m365_trusted_download_hosts', settings.get('m365_trusted_download_hosts', [])),
+                )
+            except M365ProviderError as error:
+                flash(error.message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **m365_settings,
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,

@@ -97,6 +97,23 @@ from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
+from route_backend_m365 import configure_m365_routes, register_route_backend_m365
+from functions_m365_approvals import configure_m365_approvals
+from functions_m365_execution import configure_m365_execution
+from functions_m365_file_runtime import configure_m365_file_runtime
+from functions_m365_request_resume import queue_approved_chat
+from functions_m365_runtime import (
+    authorize_m365_conversation_audit,
+    complete_m365_request,
+    configure_m365_history_runtime,
+    configure_m365_pending_delivery_runtime,
+    resolve_m365_action_config,
+    resolve_m365_action_selection,
+    resolve_m365_audit_conversation_id,
+    resolve_m365_workflow_binding,
+    validate_m365_approval_decision,
+    validate_m365_workflow_execution,
+)
 from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_validation_bp
@@ -1296,6 +1313,33 @@ register_route_blueprint('backend_collaboration', register_route_backend_collabo
 
 # ------------------- API MS Graph Pending Action Routes -
 register_route_blueprint('backend_msgraph_pending_actions', register_route_backend_msgraph_pending_actions, user_required_blueprint)
+configure_m365_approvals(decision_validator=validate_m365_approval_decision)
+configure_m365_execution(
+    workflow_validator=validate_m365_workflow_execution,
+    action_config_resolver=resolve_m365_action_config,
+    workflow_binding_resolver=resolve_m365_workflow_binding,
+    action_selection_resolver=resolve_m365_action_selection,
+)
+configure_m365_routes(
+    conversation_authorizer=authorize_m365_conversation_audit,
+    decision_callback=queue_approved_chat,
+    audit_conversation_resolver=resolve_m365_audit_conversation_id,
+)
+configure_m365_history_runtime()
+configure_m365_file_runtime()
+configure_m365_pending_delivery_runtime(app.test_request_context)
+register_route_blueprint('backend_m365', register_route_backend_m365, user_required_blueprint)
+
+
+@app.after_request
+def finalize_m365_json_request(response):
+    if response.is_json:
+        payload = response.get_json()
+        success = response.status_code < 400 and isinstance(payload, dict) and not (
+            payload.get("error") or payload.get("pending") or payload.get("success") is False
+        )
+        complete_m365_request(success=success)
+    return response
 
 # ------------------- API Documents Routes ---------------
 register_route_blueprint('backend_documents', register_route_backend_documents, user_required_blueprint)

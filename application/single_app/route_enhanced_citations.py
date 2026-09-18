@@ -20,6 +20,7 @@ from functions_authentication import login_required, user_required, get_current_
 from functions_appinsights import log_event
 from functions_settings import get_settings, enabled_required
 from functions_documents import create_document, get_document_blob_storage_info, update_document
+from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
 from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
@@ -500,6 +501,8 @@ def register_enhanced_citations_routes(bp):
             blob_container = file_msg.get('blob_container', '')
             blob_path = file_msg.get('blob_path', '')
             filename = file_msg.get('filename', 'download')
+            if is_conversation_memory_blob_path(blob_path):
+                return jsonify({"error": "Use the authorized conversation evidence reader."}), 403
 
             if not blob_container or not blob_path:
                 return jsonify({"error": "Blob reference is incomplete"}), 500

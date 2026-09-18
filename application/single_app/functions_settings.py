@@ -5,6 +5,7 @@ import logging
 import threading
 
 from flask import g, has_request_context, jsonify, request, session
+from azure.core import MatchConditions
 
 from app_settings_store import (
     AppSettingsStore,
@@ -44,6 +45,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+from json_schema_validation import validate_legacy_plugin_settings_update
 import app_settings_cache
 import copy
 import os
@@ -1326,6 +1328,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'debug_logging_turnoff_time': None,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
+        'm365_retrieval_provider': 'auto',
+        'm365_trusted_download_hosts': [],
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
         'enable_math_plugin': True,
@@ -3105,6 +3109,16 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             }
 
 
+        try:
+            validate_legacy_plugin_settings_update(doc['settings'], settings_to_update)
+        except ValueError:
+            log_event(
+                "[USER_SETTINGS] Rejected invalid or retired action settings.",
+                extra={"user_id": user_id},
+                level=logging.WARNING,
+            )
+            return False
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
 
@@ -3208,8 +3222,19 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-        # Upsert the modified document
-        cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
+        if (
+            {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
+            or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
+        ):
+            if doc.get('_etag'):
+                cosmos_user_settings_container.replace_item(
+                    user_id, body=doc, partition_key=user_id,
+                    etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
+                )
+            else:
+                cosmos_user_settings_container.create_item(body=doc)
+        else:
+            cosmos_user_settings_container.upsert_item(body=doc)
         _set_request_cached_user_settings(user_id, doc)
         _delete_user_ui_settings_cache(user_id)
 
@@ -3289,7 +3314,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k == 'support_feedback_recipient_email':
+        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue

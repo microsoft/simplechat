@@ -41,6 +41,9 @@
                         <option value="warn_user">Warn User</option>
                         <option value="suspend_user">Suspend User</option>
                         <option value="block_user">Block User</option>
+                        <option value="m365_source_sharing">Microsoft 365 source sharing</option>
+                        <option value="m365_extended_analysis">Microsoft 365 extended analysis</option>
+                        <option value="m365_workflow_run_as">Microsoft 365 workflow Run as</option>
                     </select>
                 </div>
                 <div class="col-md-2">
@@ -301,9 +304,20 @@
     </div>
 </div>
 {% endif %}
+{% include "_m365_approvals_modal.html" %}
+<div class="card mt-4">
+    <div class="card-body">
+        <h3>Paused Microsoft 365 requests</h3>
+        <p class="text-muted">Resume a conversation after sign-in without opening its chat. Workflow accounts reconnect from Profile.</p>
+        <div id="m365-waiting-requests" role="status">Loading waiting requests...</div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/approvals/m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/approvals/m365-requests.js') }}"></script>
 <script>
 // Toast notification helper
 window.showToast = function(message, type = 'info') {
@@ -475,6 +489,9 @@ window.ApprovalManager = {
     
     // Render a single approval row
     renderApprovalRow: function(approval) {
+        if (window.SimpleChatM365ApprovalList.isM365Approval(approval)) {
+            return window.SimpleChatM365ApprovalList.renderRow(approval, () => this.loadApprovals(this.currentPage));
+        }
         const tr = document.createElement('tr');
         
         // Status badge
@@ -558,6 +575,11 @@ window.ApprovalManager = {
                 throw new Error('Failed to fetch approval details');
             }
             const approval = await response.json();
+            if (window.SimpleChatM365ApprovalList.isM365Approval(approval)) {
+                await window.SimpleChatM365Approvals.openApprovals({ approvals: [approval] });
+                this.loadApprovals(this.currentPage);
+                return;
+            }
             
             // Populate modal with approval details
             this.populateApprovalDetails(approval, action);

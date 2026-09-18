@@ -46,6 +46,18 @@ Profile preferences are for personal comfort and control: font size, navigation 
 
 6. If shown, configure **Desktop Conversation Notifications**, **Fact Memory**, retention settings, microphone permission, or text-to-speech settings.
 
+## Microsoft 365 data preferences
+
+Calendar, Email, OneDrive, and SharePoint have independent sharing preferences,
+so users can control disclosure even when they cannot edit the agent or action.
+OneDrive and SharePoint also have separate fast/deeper-analysis preferences.
+Workflow connections are explicit, revocable opt-ins and are not implied by
+ordinary sign-in.
+
+See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
+for approval duration, retained-evidence sharing, and Run as behavior
+introduced in **0.261.029**.
+
 ## Verify it worked
 
 Each card shows a status message after saving. Reload the app and confirm the preference still applies.
