@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.117**.
+Updated in version: **0.261.118**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -207,8 +207,12 @@ second document or duplicate approval notifications. Existing `queued`,
 `pending_approval`, `approved`, `approval_failed`, and `uncertain` states retain
 their meanings; none is a new promise that indexing has completed.
 
-New processing/index-readiness policies and publication adapters for generic
-aggregates belong to later milestone-4 slices.
+Version **0.261.118** adds an optional
+[publication completion policy](WORKFLOW_PUBLICATION_COMPLETION.md) for existing
+native Analyze artifacts: Submitted, Approved, or Indexed and ready. Unmet
+policies retain the existing receipt and wait or pause rather than creating
+another copy. Omitted policies retain the previous behavior. Publication
+adapters for generic aggregates remain a separate slice.
 
 ## Regression coverage and boundaries
 

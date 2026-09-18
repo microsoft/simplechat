@@ -28,6 +28,7 @@ import {
     findWorkflowAgent,
     newWorkflowDefinition,
     normalizeWorkflowDefinition,
+    isWorkflowPublicationCompletionPolicy,
     preservedWorkflowFieldLabels,
     safeWorkflowAlias,
     sameWorkflowDefinition,
@@ -44,6 +45,7 @@ import {
     WORKFLOW_OUTPUT_KINDS,
     WORKFLOW_SCHEMA_LIMIT,
     WORKFLOW_TASK_INSTRUCTIONS_LIMIT,
+    WORKFLOW_PUBLICATION_COMPLETION_LABELS,
     type WorkflowDefinition,
     type WorkflowDocumentAction,
     type WorkflowEditorOptions,
@@ -1106,7 +1108,8 @@ function TaskCard({
             <details className="rounded-xl border border-edge p-3">
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
                 <div className="mt-4 space-y-5">
-                    {structuredNode ? <TaskPublicationFields task={task} onChange={onChange} /> : null}
+                    {structuredNode ? <TaskPublicationFields task={task} options={options}
+                        durableExecution={durableExecution} onChange={onChange} /> : null}
                     {!task.publication ? <TaskRunnerFields runner={task.runner} options={options}
                         localOnly={task.input_processing === 'saved_record_report' ||
                             Boolean(structuredNode && enclosingFlowLoops(workflow, structuredNode.id).length)}
@@ -1184,16 +1187,29 @@ function TaskCard({
     );
 }
 
-function TaskPublicationFields({ task, onChange }: { task: WorkflowTask; onChange: (task: WorkflowTask) => void }) {
+function TaskPublicationFields({ task, options, durableExecution, onChange }: {
+    task: WorkflowTask;
+    options: WorkflowEditorOptions;
+    durableExecution: boolean;
+    onChange: (task: WorkflowTask) => void;
+}) {
     const publication = task.publication;
+    const supportedPolicies = options.supported_publication_completion_policies ?? [];
     const update = (value: WorkflowPublication) => onChange({ ...task, publication: value });
+    if (publication && Object.hasOwn(publication, 'completion_policy') &&
+        !isWorkflowPublicationCompletionPolicy(publication.completion_policy)) {
+        return <p className="text-xs text-warn">The saved publication completion policy is unsupported. Its original configuration is preserved and read-only.</p>;
+    }
     return (
         <div className="space-y-3">
             <Toggle label="Publish an existing analysis artifact" checked={publication !== undefined}
                 description="Reuse one explicitly bound native Analyze result. No model creates another copy of its content."
                 onChange={(checked) => {
                     if (checked) onChange({
-                        ...task, publication: { artifact_format: 'md', workspace_scope: 'personal' },
+                        ...task, publication: {
+                            artifact_format: 'md', workspace_scope: 'personal',
+                            ...(durableExecution && supportedPolicies.includes('submitted') ? { completion_policy: 'submitted' } : {}),
+                        },
                         runner: { type: 'inherit' }, document_action: { type: 'none' },
                         output_contract: { kind: 'json', require_complete_coverage: false, allow_partial: false },
                     });
@@ -1220,10 +1236,12 @@ function TaskPublicationFields({ task, onChange }: { task: WorkflowTask; onChang
                         <select className={`${inputClass} mt-1`} aria-label={`Publication scope for ${task.name}`}
                             value={publication.workspace_scope} onChange={(event) => {
                                 const scope = event.target.value as WorkflowPublication['workspace_scope'];
-                                update({
-                                    artifact_format: publication.artifact_format, workspace_scope: scope,
-                                    ...(scope === 'group' ? { group_id: '' } : scope === 'public' ? { public_workspace_id: '' } : {}),
-                                });
+                                const next = { ...publication, workspace_scope: scope };
+                                if (scope !== 'group') delete next.group_id;
+                                if (scope !== 'public') delete next.public_workspace_id;
+                                if (scope === 'group') next.group_id ??= '';
+                                if (scope === 'public') next.public_workspace_id ??= '';
+                                update(next);
                             }}>
                             <option value="personal">Personal workspace</option><option value="group">Group workspace</option>
                             <option value="public">Public workspace</option>
@@ -1240,6 +1258,37 @@ function TaskPublicationFields({ task, onChange }: { task: WorkflowTask; onChang
                                 })} />
                         </label>
                     ) : null}
+                    <label className="text-xs text-text-2 sm:col-span-2">
+                        Complete publication when
+                        <select className={`${inputClass} mt-1`} aria-label={`Complete publication when for ${task.name}`}
+                            value={publication.completion_policy ?? ''}
+                            disabled={!durableExecution || !Object.keys(WORKFLOW_PUBLICATION_COMPLETION_LABELS).some((policy) => supportedPolicies.includes(policy))}
+                            onChange={(event) => {
+                                const policy = event.target.value;
+                                const next = { ...publication };
+                                if (policy === '') delete next.completion_policy;
+                                else if (isWorkflowPublicationCompletionPolicy(policy) && supportedPolicies.includes(policy)) {
+                                    next.completion_policy = policy;
+                                } else return;
+                                update(next);
+                            }}>
+                            <option value="">Existing behavior (no completion policy)</option>
+                            {Object.entries(WORKFLOW_PUBLICATION_COMPLETION_LABELS).map(([policy, label]) => (
+                                <option key={policy} value={policy} disabled={!supportedPolicies.includes(policy)}>{label}</option>
+                            ))}
+                        </select>
+                        <span className="mt-1 block text-text-3">
+                            {publication.completion_policy === 'submitted'
+                                ? 'Confirm submission and the required handoff, without waiting for approval or indexing.'
+                                : publication.completion_policy === 'approved'
+                                    ? publication.workspace_scope === 'personal'
+                                        ? 'Personal workspace approval is not required. Complete after confirmed submission.'
+                                        : 'Wait for the existing destination workspace approval, not workflow task approval.'
+                                    : publication.completion_policy === 'indexed_ready'
+                                        ? 'Wait for approval where required, completed processing, screening clearance, and search visibility.'
+                                        : 'Preserve the existing behavior until you explicitly choose a supported completion policy.'}
+                        </span>
+                    </label>
                     <p className="text-xs text-text-3 sm:col-span-2">
                         Bind exactly one earlier native Analyze output below. The destination is explicit, not your active workspace.
                         Group/public approval and processing remain separate; queued does not mean indexed and ready.

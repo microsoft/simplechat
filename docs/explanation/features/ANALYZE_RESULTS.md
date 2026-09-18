@@ -101,6 +101,13 @@ reconstruction. A saved receipt identifies the request, source projection, and
 destination. A retry reconciles an existing document or pending approval; an
 uncertain outcome is not treated as permission to create a second copy.
 
+Version **0.261.118** adds an optional
+[workflow publication completion policy](WORKFLOW_PUBLICATION_COMPLETION.md)
+for existing native Analyze artifacts. A version-3 durable workflow may require
+confirmed submission, approval, or exact destination index readiness before
+continuing. The absent policy retains its previous behavior. This does not
+turn generic saved results or Collect outputs into native Analyze artifacts.
+
 Already published workspace copies have their own destination permissions and
 lifecycle. They do not inherit later access changes to the original sources.
 Previously delivered or downloaded bytes cannot be recalled.

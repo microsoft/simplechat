@@ -2,7 +2,9 @@
 """Non-secret editor choices and trusted loop-runner eligibility."""
 
 from functions_ai_connections import supports_model_capability
-from functions_workflow_definitions import WORKFLOW_DEFINITION_VERSION, WORKFLOW_INPUT_PROCESSING_MODES
+from functions_workflow_definitions import (
+    WORKFLOW_DEFINITION_VERSION, WORKFLOW_INPUT_PROCESSING_MODES, WORKFLOW_PUBLICATION_COMPLETION_POLICIES,
+)
 from functions_workflow_flow import FLOW_LIMITS
 from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
@@ -60,6 +62,7 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
         "supported_query_modes": ["all_matches", "best_n"],
         "supported_binding_sources": ["node_output", "loop_item"],
         "supported_input_processing_modes": sorted(WORKFLOW_INPUT_PROCESSING_MODES),
+        "supported_publication_completion_policies": list(WORKFLOW_PUBLICATION_COMPLETION_POLICIES),
         "flow_limits": {
             **FLOW_LIMITS,
             "max_loop_items": validate_workflow_max_loop_items(max_loop_items),

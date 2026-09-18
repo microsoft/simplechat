@@ -21,6 +21,7 @@ from azure.core import MatchConditions
 from azure.cosmos import exceptions as cosmos_exceptions
 from functions_workflow_journal import WorkflowJournalMixin
 from functions_workflow_identity import workflow_execution_id
+from functions_artifact_publication_readiness import public_publication_status
 
 
 CONTROL_ID = "workflow-runtime:v1"
@@ -77,6 +78,7 @@ GATE_ALLOWED_KEYS = frozenset({
     "provider",
     "retryable",
     "metadata",
+    "publication",
 })
 GATE_KIND_BY_STATE = {
     "waiting_approval": "approval",
@@ -293,6 +295,8 @@ def _validate_gate(gate, state):
     if kind == "output" and choices:
         raise RuntimeConflict("invalid_gate", "Output gates cannot declare human approval choices.")
     normalized = _bounded_json_copy({**gate, "id": gate_id, "kind": kind, "choices": choices}, max_bytes=MAX_GATE_BYTES)
+    if "publication" in normalized:
+        normalized["publication"] = public_publication_status(normalized["publication"])
     return normalized
 
 
@@ -424,6 +428,8 @@ def public_projection(control):
             if key == "references":
                 references = gate[key] if isinstance(gate[key], list) else []
                 safe_gate[key] = {"count": len(references)}
+            elif key == "publication":
+                safe_gate[key] = public_publication_status(gate[key])
             elif key.endswith("_ref"):
                 safe_gate[key] = _safe_ref(gate[key])
             else:

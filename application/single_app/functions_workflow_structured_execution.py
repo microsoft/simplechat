@@ -263,7 +263,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         row = self.store.journal_read("execution", self.execution_id())
         payload = {**(row["payload"] if row else {}), "attempt": attempt, **fields}
         previous = self.store.journal_read("attempt", [self.execution_id(), attempt])
-        if previous and previous["payload"].get("state") not in {"running", "waiting_output", "pending", "waiting_approval", "waiting_recovery"}:
+        if previous and previous["payload"].get("state") not in {"running", "waiting_output", "pending", "waiting_approval", "waiting_recovery", "paused"}:
             if previous["payload"].get("workflow_result") != payload.get("workflow_result"):
                 raise WorkflowRuntimeConflict("immutable_attempt_conflict")
             if fields.get("state") not in {previous["payload"]["state"], "waiting_recovery"}:
@@ -297,6 +297,26 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             "unit_id": key, "input_digest": unit["input_digest"], "attempt": unit["attempt"], "value": value,
         })
         self.store.journal_commit(self.lease.token, "unit", self._key(key), {**unit, "result_ref": reference})
+
+    def wait_for_publication(self, key, *, reference=None, publication=None, reason, retryable=False):
+        control = self.check()
+        unit = self.unit(key)
+        waiting = publication is not None and publication["state"].startswith("waiting_")
+        state = "waiting_output" if waiting else "paused"
+        self.record_execution(state=state, reason_code=(publication or {}).get("reason_code") or "publication_unavailable")
+        gate = {
+            "id": execution_fingerprint([self.execution_id(), unit.get("attempt"), key, state, publication, control["version"]]),
+            "kind": "output" if waiting else "pause", "unit_id": key,
+            "input_digest": unit.get("input_digest") or "", **self.selectors(),
+            "definition_revision": self.workflow.get("definition_revision"),
+            "reason": reason, "choices": [] if waiting else ["resume", "cancel"] if retryable else ["cancel"],
+        }
+        if reference is not None:
+            gate["references"] = [deepcopy(reference)]
+        if publication is not None:
+            gate["publication"] = deepcopy(publication)
+        self.store.wait(self.lease.token, state=state, gate=gate)
+        raise WorkflowSuspended(state)
 
     def wait_for_output(self, key, references):
         unit = self.unit(key)

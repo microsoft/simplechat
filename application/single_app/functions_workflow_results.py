@@ -11,6 +11,7 @@ from functions_analysis_access import (
     analysis_source_snapshot,
     authorize_analysis_sources,
 )
+from functions_artifact_publication_readiness import public_publication_status
 from functions_workflow_result_store import (
     DEFAULT_MAX_RESULT_SIZE_MB,
     _quota_bytes,
@@ -346,6 +347,8 @@ def _build_task_result(result, identity, contract_version):
         )
     if result.get("analysis_consumption"):
         envelope["analysis_consumption"] = _json_copy(result["analysis_consumption"])
+    if isinstance(result.get("publication"), Mapping) and result["publication"].get("version") == 1:
+        envelope["publication"] = public_publication_status(result["publication"])
     if analysis.get("native_result_references"):
         envelope["native_result_references"] = _json_copy(analysis["native_result_references"])
     # Reject unsupported SDK objects/NaN before any output is marked durable.
@@ -942,6 +945,8 @@ def workflow_result_summary(envelope, reference):
     }
     if envelope.get("contract_version") == "workflow-result-v2":
         summary["producer"] = _json_copy(envelope["identity"])
+        if envelope.get("publication"):
+            summary["publication"] = public_publication_status(envelope["publication"])
         if envelope.get("iteration_inputs"):
             summary["iteration_inputs"] = _json_copy(envelope["iteration_inputs"])
         if envelope.get("consumed_inputs_index"):
