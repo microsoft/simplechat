@@ -15,7 +15,6 @@ from azure.core import MatchConditions
 from azure.cosmos import exceptions
 from flask import current_app
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
-from functions_settings import get_user_settings, update_user_settings
 import functions_settings
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_PERSONAL,
@@ -176,6 +175,7 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
                     partition_key=user_id,
                 )
             except exceptions.CosmosResourceNotFoundError:
+                # Absence may create a nonlegacy action; the validator rejects retired types.
                 pass
         validate_legacy_action_update(action_data, existing_action, 'user_id', user_id)
         if legacy_type:
@@ -311,7 +311,7 @@ def migrate_actions_from_user_settings(user_id):
     Each legacy creation and receipt is atomic, so a retry cannot resurrect it.
     """
     try:
-        get_user_settings(user_id)
+        functions_settings.get_user_settings(user_id)
         user_settings = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         plugins = user_settings.get('settings', {}).get('plugins') or []
         if not plugins:
@@ -364,6 +364,7 @@ def _migrate_historical_msgraph_action(user_id, plugin):
         cosmos_personal_actions_container.read_item(item=receipt_id, partition_key=user_id)
         return 0
     except exceptions.CosmosResourceNotFoundError:
+        # No receipt means this historical action has not been migrated yet.
         pass
 
     action_id = plugin.get('id') or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:legacy-action:{source_key}"))
@@ -371,6 +372,7 @@ def _migrate_historical_msgraph_action(user_id, plugin):
     try:
         existing = cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
     except exceptions.CosmosResourceNotFoundError:
+        # Only this trusted migration may create an absent historical action.
         pass
     payload = deepcopy(plugin)
     payload['id'] = action_id

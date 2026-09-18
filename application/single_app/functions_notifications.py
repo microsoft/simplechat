@@ -23,6 +23,7 @@ from functions_appinsights import log_event
 from functions_group import find_group_by_id
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 
 # Constants
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
@@ -495,12 +496,14 @@ def create_m365_approval_notification(approval):
         try:
             cosmos_notifications_container.create_item(body=notification)
         except exceptions.CosmosResourceExistsError:
+            # Deterministic IDs make repeated notification delivery idempotent.
             pass
         if not pending:
             pending_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"m365-approval:{approval_id}:pending"))
             try:
                 cosmos_notifications_container.delete_item(item=pending_id, partition_key=subject_user_id)
             except exceptions.CosmosResourceNotFoundError:
+                # Another worker may already have removed the pending notification.
                 pass
         return notification
     except exceptions.CosmosHttpResponseError as exc:
@@ -802,6 +805,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
         # Filter based on read/dismissed status
         filtered_notifications = []
         for notif in all_notifications:
+            notif = sanitize_workflow_alert_record(notif)
             notif_id = notif.get('id', 'unknown')
             read_by = notif.get('read_by', [])
             dismissed_by = notif.get('dismissed_by', [])
@@ -941,6 +945,7 @@ def get_unread_workflow_priority_notifications(user_id, limit=5):
 
         unread_notifications = []
         for notification in notifications:
+            notification = sanitize_workflow_alert_record(notification)
             if user_id in notification.get('dismissed_by', []):
                 continue
             if user_id in notification.get('read_by', []):

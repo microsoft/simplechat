@@ -38,6 +38,7 @@ from functions_personal_agents import get_personal_agents
 from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
@@ -69,7 +70,8 @@ def _utc_now_iso():
 def _strip_cosmos_metadata(document):
     if not isinstance(document, dict):
         return {}
-    return {key: value for key, value in document.items() if not str(key).startswith('_')}
+    cleaned = {key: value for key, value in document.items() if not str(key).startswith('_')}
+    return sanitize_workflow_alert_record(cleaned)
 
 
 def _normalize_text(value, field_name, required=False):

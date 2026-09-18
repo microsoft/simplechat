@@ -50,7 +50,7 @@ def count_m365_context_tokens(text, context):
     return len(text.encode("utf-8"))
 
 
-def resolve_m365_budget_run(context):
+def resolve_m365_budget_run(context) -> str:
     container = cosmos_m365_execution_runs_container
     try:
         record = container.read_item(context.request_id, partition_key=context.data_user_id)
@@ -95,6 +95,7 @@ def resolve_m365_budget_run(context):
             record = container.read_item(context.request_id, partition_key=context.data_user_id)
             if record.get("memory_budget_run_id") not in (None, run_id):
                 raise M365ProviderError("request_memory_mismatch", "The request budget changed unexpectedly.") from error
+    raise M365ProviderError("request_memory_busy", "The request budget could not be saved. Review the request before retrying.")
 
 
 def configure_m365_file_runtime():

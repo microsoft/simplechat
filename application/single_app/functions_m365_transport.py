@@ -106,7 +106,6 @@ def _https_parts(url: str):
         )
     except (TypeError, ValueError):
         valid = False
-        parts = None
     if not valid:
         raise M365ProviderError("invalid_url", "A valid HTTPS Microsoft 365 URL is required.")
     return parts

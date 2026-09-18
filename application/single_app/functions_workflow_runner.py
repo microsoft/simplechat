@@ -25,6 +25,7 @@ from azure.identity import (
 )
 from flask import Flask, g, has_request_context, session
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_workflow_alert_safety import sanitize_workflow_alert_decision
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
 from functions_m365_runtime import (
     attach_m365_message_provenance, cancel_m365_workflow_requests, complete_m365_request,
@@ -5163,7 +5164,7 @@ def _build_workflow_alert_success_detail(alert_title, action_plan, response_prev
 
 def _build_workflow_alert_trigger_section(decision):
     """Render the "Triggered by" section listing every rule that matched the run."""
-    decision = decision if isinstance(decision, dict) else {}
+    decision = sanitize_workflow_alert_decision(decision if isinstance(decision, dict) else {})
     matched_rules = decision.get('matched_rules') or []
     if not matched_rules:
         return ''
@@ -5318,7 +5319,7 @@ def _record_workflow_alert_decision(workflow, run_record, decision):
     if not isinstance(run_record, dict):
         return
 
-    decision = decision if isinstance(decision, dict) else {}
+    decision = sanitize_workflow_alert_decision(decision if isinstance(decision, dict) else {})
     run_record['alert_decision'] = {
         'should_alert': bool(decision.get('should_alert')),
         'severity': decision.get('severity') or '',
@@ -5333,6 +5334,8 @@ def _record_workflow_alert_decision(workflow, run_record, decision):
                 'severity': match.get('severity'),
                 'condition_type': match.get('condition_type'),
                 'reason': match.get('reason'),
+                **({'source': match['source']} if match.get('source') else {}),
+                **({'reason_code': match['reason_code']} if match.get('reason_code') else {}),
             }
             for match in decision.get('matched_rules') or []
         ],
@@ -5384,7 +5387,9 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
         model_evaluator = None
         if _workflow_alert_rules_need_model_evaluation(alert_config, facts):
             model_evaluator = _build_workflow_alert_model_evaluator(workflow, settings)
-        decision = evaluate_workflow_alert_rules(workflow, facts, model_evaluator=model_evaluator)
+        decision = sanitize_workflow_alert_decision(
+            evaluate_workflow_alert_rules(workflow, facts, model_evaluator=model_evaluator)
+        )
     except Exception as exc:
         log_event(
             f'[WORKFLOW_RUNNER] Failed to evaluate workflow alert rules: {exc}',
@@ -5452,6 +5457,8 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
                     'severity': match.get('severity'),
                     'condition_type': match.get('condition_type'),
                     'reason': match.get('reason'),
+                    **({'source': match['source']} if match.get('source') else {}),
+                    **({'reason_code': match['reason_code']} if match.get('reason_code') else {}),
                 }
                 for match in decision.get('matched_rules') or []
             ],

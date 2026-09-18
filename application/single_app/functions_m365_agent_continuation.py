@@ -279,13 +279,14 @@ class AgentContinuationJournal:
                 raise self.pending
 
     async def finish(self):
-        if self.pending is None:
+        pending = self.pending
+        if pending is None:
             return
         history = ChatHistory()
         async for message in self.thread.get_messages():
             history.add_message(message)
         self._save_history(history)
-        raise self.pending
+        raise pending
 
 
 def _needs_journal(context):

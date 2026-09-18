@@ -1,7 +1,7 @@
 # test_m365_agent_continuation.py
 """
 Real Semantic Kernel filter/thread regression for Microsoft 365 approvals.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Completed calls, including concurrent siblings, are never changed into pending
@@ -30,6 +30,7 @@ from semantic_kernel.functions import KernelArguments, kernel_function  # noqa: 
 import functions_m365_agent_continuation as continuation  # noqa: E402
 from functions_m365_approvals import M365ApprovalRequired  # noqa: E402
 from functions_m365_execution import M365ExecutionContext  # noqa: E402
+from m365_interaction import M365SignInRequired  # noqa: E402
 from test_support.m365 import CosmosContainer  # noqa: E402
 
 
@@ -124,6 +125,43 @@ class AgentContinuationTests(unittest.TestCase):
         self.assertIn("SharePoint Online", kwargs["messages"][0].content)
         self.assertIn("explicitly explain", kwargs["messages"][0].content)
         self.assertIs(kwargs["messages"][1], original[0])
+
+    def test_finish_without_pending_error_does_not_read_or_save_history(self):
+        agent = SimpleNamespace(name="agent", instructions="Use tools", kernel=Kernel())
+        journal = continuation.AgentContinuationJournal(agent, self.context)
+        result = asyncio.run(journal.finish())
+        self.assertIsNone(result)
+        self.assertEqual(self.memory.runs, {})
+        self.assertEqual(self.jobs.items, {})
+
+    def test_finish_raises_the_original_wait_even_if_pending_changes_during_iteration(self):
+        waits = (
+            M365ApprovalRequired({
+                "id": "approval", "request_type": "m365_extended_analysis",
+                "subject_user_id": "user-a", "group_id": "user-a",
+                "approval_scope": "user", "status": "pending", "sources": {"spo": {}},
+                "resume_key": "resume", "execution_status": "awaiting_approval",
+            }),
+            M365SignInRequired("m365_reconnect_required", {"profile_url": "/profile"}),
+        )
+        for pending in waits:
+            with self.subTest(wait=type(pending).__name__):
+                agent = SimpleNamespace(name="agent", instructions="Use tools", kernel=Kernel())
+                journal = continuation.AgentContinuationJournal(agent, self.context)
+                journal.pending = pending
+
+                class ChangingThread:
+                    async def get_messages(self):
+                        journal.pending = None
+                        await asyncio.sleep(0)
+                        yield ChatMessageContent(role=AuthorRole.USER, content="Retain this request")
+
+                journal.thread = ChangingThread()
+                with self.assertRaises(type(pending)) as raised:
+                    asyncio.run(journal.finish())
+                self.assertIs(raised.exception, pending)
+                self.assertIn(journal.run_id, self.memory.checkpoints)
+                self.assertIsNone(journal.pending)
 
     async def exercise_resume(self, concurrent):
         tools = Tools(concurrent)

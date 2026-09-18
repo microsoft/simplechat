@@ -5,6 +5,7 @@
 from datetime import datetime, timezone
 
 from functions_workflow_alerts import describe_alert_condition, resolve_workflow_alert_config
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_m365_workflow_binding import M365_ACTIVE_STATES
 
 
@@ -93,6 +94,7 @@ def _serialize_conversation(conversation):
 def _serialize_run(run_record):
     if not isinstance(run_record, dict):
         return None
+    run_record = sanitize_workflow_alert_record(run_record)
 
     return {
         'id': run_record.get('id'),

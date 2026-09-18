@@ -9,7 +9,6 @@ from azure.cosmos.exceptions import CosmosHttpResponseError
 
 from config import (
     CLIENTS,
-    TENANT_ID,
     build_enhanced_citations_blob_service_client,
     cosmos_conversations_container,
     cosmos_messages_container,
@@ -22,7 +21,6 @@ from functions_conversation_memory import (
     MemoryContext,
     PublicationGrant,
 )
-from functions_m365_approvals import get_m365_approval_service
 from functions_m365_execution import (
     M365ExecutionContext,
     authorize_m365_publication,

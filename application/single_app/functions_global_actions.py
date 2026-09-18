@@ -130,6 +130,7 @@ def save_global_action(action_data, user_id=None):
                 partition_key=action_data['id']
             )
         except exceptions.CosmosResourceNotFoundError:
+            # The validator below permits new nonlegacy actions, not retired types.
             pass
 
         validate_legacy_action_update(action_data, existing_action)

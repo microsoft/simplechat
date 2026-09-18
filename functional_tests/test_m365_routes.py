@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Imports the real route module with scoped authentication/logging I/O seams.
@@ -18,7 +18,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from azure.cosmos import exceptions
 from flask import Blueprint, Flask, jsonify, session
@@ -374,13 +374,14 @@ class M365RouteTests(unittest.TestCase):
 
     def test_real_notification_helper_only_targets_subject_and_deduplicates(self):
         notification_container = CosmosContainer("user_id")
+        logger = Mock()
         spec = importlib.util.spec_from_file_location(
             "m365_test_notifications", APP_DIR / "functions_notifications.py",
         )
         module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {
             "config": module_stub("config", cosmos_notifications_container=notification_container),
-            "functions_appinsights": module_stub("functions_appinsights", log_event=lambda *args, **kwargs: None),
+            "functions_appinsights": module_stub("functions_appinsights", log_event=logger),
             "functions_group": module_stub("functions_group", find_group_by_id=lambda value: None),
             "functions_debug": module_stub("functions_debug", debug_print=lambda *args, **kwargs: None),
             "functions_public_workspaces": module_stub(
@@ -405,6 +406,19 @@ class M365RouteTests(unittest.TestCase):
         self.assertEqual(len(notification_container.items), 1)
         self.assertEqual(updated["metadata"]["status"], "approved")
         self.assertEqual(updated["link_url"], first["link_url"])
+        repeated = module.create_m365_approval_notification({**approval, "status": "approved"})
+        self.assertEqual(repeated["id"], updated["id"])
+        self.assertEqual(len(notification_container.items), 1)
+        logger.assert_not_called()
+        for operation in ("create_item", "delete_item"):
+            for status in (403, 429, 500):
+                with self.subTest(operation=operation, status=status), patch.object(
+                    notification_container, operation,
+                    side_effect=exceptions.CosmosHttpResponseError(status_code=status),
+                ):
+                    failed = module.create_m365_approval_notification({**approval, "status": "approved"})
+                self.assertIsNone(failed)
+        self.assertEqual(logger.call_count, 6)
         cancel_id = self.pending(request_id="cancel-request")
         cancel_record = self.service.get_approval(cancel_id, "user-a")
         module.create_m365_approval_notification(cancel_record)

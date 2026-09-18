@@ -1,7 +1,6 @@
 # functions_m365_runtime.py
 """Web/workflow ownership layer for Microsoft 365 execution and disclosures."""
 
-from dataclasses import replace
 from contextlib import contextmanager, nullcontext
 import hashlib
 import json
@@ -27,12 +26,10 @@ from functions_collaboration import (
 from functions_m365_approvals import (
     M365ApprovalRequired,
     M365PolicyError,
-    M365SourceDenied,
     get_m365_approval_service,
     material_fingerprint,
     strictest_sharing_policy,
 )
-from functions_m365_connections import get_m365_connection_service
 from functions_m365_execution import (
     M365ExecutionContext,
     get_m365_execution_context,

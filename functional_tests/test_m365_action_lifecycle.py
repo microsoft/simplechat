@@ -1,7 +1,7 @@
 # test_m365_action_lifecycle.py
 """
 Functional regressions for Microsoft 365 action lifecycle and capability ceilings.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Real action persistence modules run against scoped in-memory Cosmos/Key Vault
@@ -192,6 +192,37 @@ def test_new_legacy_aliases_are_rejected_before_secrets(lifecycle, scope, alias)
         lifecycle.save(scope, manifest(alias, "invented"))
     assert not lifecycle.secret_writes
     assert not lifecycle.containers[scope].records
+
+
+@pytest.mark.parametrize("scope", ["personal", "global"])
+@pytest.mark.parametrize("status", [403, 429, 500])
+def test_exact_id_lookup_never_treats_storage_failure_as_absence(lifecycle, monkeypatch, scope, status):
+    failure = exceptions.CosmosHttpResponseError(status_code=status, message="Storage unavailable")
+
+    def unavailable(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(lifecycle.containers[scope], "read_item", unavailable)
+    with pytest.raises(exceptions.CosmosHttpResponseError) as raised:
+        lifecycle.save(scope, manifest("m365_email", "action-id"))
+    assert raised.value is failure
+    assert lifecycle.secret_writes == []
+    assert lifecycle.containers[scope].writes == []
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+def test_migration_receipt_lookup_never_treats_storage_failure_as_absence(lifecycle, monkeypatch, status):
+    failure = exceptions.CosmosHttpResponseError(status_code=status, message="Storage unavailable")
+
+    def unavailable(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(lifecycle.containers["personal"], "read_item", unavailable)
+    with pytest.raises(exceptions.CosmosHttpResponseError) as raised:
+        lifecycle.modules["personal"]._migrate_historical_msgraph_action("owner", manifest())
+    assert raised.value is failure
+    assert lifecycle.secret_writes == []
+    assert lifecycle.containers["personal"].writes == []
 
 
 @pytest.mark.parametrize("scope", ["personal", "group", "global"])

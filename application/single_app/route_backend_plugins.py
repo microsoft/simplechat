@@ -1045,6 +1045,7 @@ def set_user_plugins():
                 try:
                     existing = cosmos_personal_actions_container.read_item(item=plugin['id'], partition_key=user_id)
                 except azure_cosmos.exceptions.CosmosResourceNotFoundError:
+                    # Keep the missing record so legacy validation rejects recreation.
                     pass
             try:
                 validate_legacy_action_update(plugin, existing, 'user_id', user_id)
@@ -1799,6 +1800,7 @@ def edit_plugin(plugin_name):
                 try:
                     existing = cosmos_global_actions_container.read_item(item=requested_id, partition_key=requested_id)
                 except azure_cosmos.exceptions.CosmosResourceNotFoundError:
+                    # An absent exact ID must not be recovered through a name lookup.
                     pass
             try:
                 validate_legacy_action_update(updated_plugin, existing)
