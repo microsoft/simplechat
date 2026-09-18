@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.029)**
+
+#### Bug Fixes
+
+*   **Group Chat Uploads Now Recognize Workspace Owners**
+    *   Fixed group-scoped chat uploads incorrectly reporting that no group workspace was available when the signed-in user was the group owner.
+    *   Chat bootstrap data now includes each group's resolved user role, allowing owners, admins, and document managers to use the existing group upload permissions while preserving server-side authorization checks.
+    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+
 ### **(v0.261.028)**
 
 Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
