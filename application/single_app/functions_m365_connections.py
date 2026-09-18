@@ -28,6 +28,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from flask import has_request_context, session
 
+from functions_m365_context import get_m365_execution_context
 from functions_m365_approvals import (
     M365ApprovalRequired,
     M365PolicyError,
@@ -264,28 +265,28 @@ def _scope_names(scopes, config):
 
 def _default_config():
     # These owners are fully initialized before any connection operation.
-    import config
+    import config as app_config
     from functions_authentication import get_graph_authority, get_graph_base_url
     return M365IdentityConfig(
-        client_id=config.CLIENT_ID, tenant_id=config.TENANT_ID,
+        client_id=app_config.CLIENT_ID, tenant_id=app_config.TENANT_ID,
         authority=get_graph_authority(),
         graph_resource=get_graph_base_url().removesuffix("/v1.0"),
-        cloud=config.AZURE_ENVIRONMENT,
+        cloud=app_config.AZURE_ENVIRONMENT,
     )
 
 
 def _default_container():
     # The app/scheduler owner registers this dedicated /user_id container.
-    from config import cosmos_m365_connections_container
-    return cosmos_m365_connections_container
+    import config as app_config
+    return app_config.cosmos_m365_connections_container
 
 
 def _default_msal_factory(cache, config):
     # Credentials remain owned by initialized config. The Graph authority is
     # already pinned by that owner; discovery must not probe a different cloud.
-    from config import CLIENT_SECRET
+    import config as app_config
     return msal.ConfidentialClientApplication(
-        config.client_id, authority=config.authority, client_credential=CLIENT_SECRET,
+        config.client_id, authority=config.authority, client_credential=app_config.CLIENT_SECRET,
         token_cache=cache, instance_discovery=False,
     )
 
@@ -293,7 +294,7 @@ def _default_msal_factory(cache, config):
 def _default_key_provider(version=None, name=None):
     # Key Vault is mandatory; there is deliberately no Flask-secret/plaintext fallback.
     from azure.keyvault.secrets import SecretClient
-    from config import KEY_VAULT_DOMAIN
+    import config as app_config
     from functions_keyvault import get_keyvault_credential
     from functions_settings import get_settings
 
@@ -312,7 +313,7 @@ def _default_key_provider(version=None, name=None):
             "Configure Key Vault and a dedicated workflow encryption-key secret before connecting Microsoft 365.",
         )
     client = SecretClient(
-        vault_url=f"https://{vault_name.strip()}{KEY_VAULT_DOMAIN}",
+        vault_url=f"https://{vault_name.strip()}{app_config.KEY_VAULT_DOMAIN}",
         credential=get_keyvault_credential(settings=settings),
     )
     try:
@@ -356,12 +357,14 @@ class M365ConnectionService:
     def __init__(
         self, container_factory=_default_container, key_provider=_default_key_provider,
         config_provider=_default_config, msal_factory=_default_msal_factory, clock=utc_now,
+        workflow_authorizer=None,
     ):
         self.container_factory = container_factory
         self.key_provider = key_provider
         self.config_provider = config_provider
         self.msal_factory = msal_factory
         self.clock = clock
+        self.workflow_authorizer = workflow_authorizer
 
     @property
     def container(self):
@@ -620,8 +623,7 @@ class M365ConnectionService:
 
     def acquire_workflow_token(self, scopes, context):
         # A storage adapter must not become an alternate path around Run as.
-        from functions_m365_execution import validate_m365_workflow_context
-        binding_approval = validate_m365_workflow_context(context)
+        binding_approval = self._authorize_workflow(context)
         connection, config = self._own_connection(
             context.connection_id, context.data_user_id, context.tenant_id,
         )
@@ -670,8 +672,24 @@ class M365ConnectionService:
         latest, _config = self._own_connection(saved["id"], context.data_user_id, context.tenant_id)
         if latest["generation"] != saved["generation"] or latest["status"] != "connected":
             raise M365ConnectionError("m365_connection_changed", "The Microsoft 365 connection was disconnected.")
-        validate_m365_workflow_context(context)
+        self._authorize_workflow(context)
         return {"access_token": result["access_token"]}
+
+    def _authorize_workflow(self, context):
+        if not callable(self.workflow_authorizer):
+            raise M365ConnectionError(
+                "m365_authorization_unavailable",
+                "Workflow authorization has not been configured. No Microsoft 365 access has been allowed.",
+            )
+        approval = self.workflow_authorizer(context)
+        binding = approval.get("binding") if isinstance(approval, dict) else None
+        sources = binding.get("sources") if isinstance(binding, dict) else None
+        if (
+            not isinstance(sources, list) or not sources
+            or any(not isinstance(source, str) or source not in M365_SOURCES for source in sources)
+        ):
+            raise M365ConnectionError("m365_authorization_unavailable", "The workflow authorization result is invalid.")
+        return approval
 
     def rotate_connection_key(self, connection_id, user_id, tenant_id):
         connection, _config = self._own_connection(connection_id, user_id, tenant_id)
@@ -693,6 +711,13 @@ def configure_m365_connections(**dependencies):
     global _service
     _service = M365ConnectionService(**dependencies)
     return _service
+
+
+def configure_m365_connection_authorization(workflow_authorizer):
+    """The web/scheduler owner supplies the live binding-validation boundary."""
+    if not callable(workflow_authorizer):
+        raise TypeError("A workflow authorization callback is required.")
+    _service.workflow_authorizer = workflow_authorizer
 
 
 def get_m365_connection_service():
@@ -751,8 +776,6 @@ def _direct_access_token(scopes, context):
 
 def get_m365_access_token(scopes, context=None):
     """Never fall back from a workflow binding to a caller, owner, or app token."""
-    # Context imports are deferred to keep the shared identity modules acyclic.
-    from functions_m365_execution import get_m365_execution_context
     context = context or get_m365_execution_context()
     try:
         if context is not None and context.workflow_id:

@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -24,7 +24,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import msal
 from flask import Flask, session
@@ -130,6 +130,7 @@ class M365ConnectionTests(unittest.TestCase):
             container_factory=lambda: self.container,
             key_provider=self.key_provider, config_provider=lambda: self.config,
             msal_factory=self.msal_factory, clock=self.clock,
+            workflow_authorizer=execution.validate_m365_workflow_context,
         )
         self.approvals = approvals.M365ApprovalService(
             container_factory=lambda: self.approval_container,
@@ -324,6 +325,85 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(no_context["error"], "not_logged_in")
         no_run = connections.get_m365_access_token(["Mail.Read"], context=replace(ctx, run_id=None))
         self.assertEqual(no_run["error"], "m365_run_context_required")
+
+    def test_missing_or_malformed_authorizer_fails_before_credentials_or_storage(self):
+        ctx = execution.M365ExecutionContext(
+            "workflow-owner", "user-a", "tenant-a",
+            request_id="request-a", workflow_id="workflow-a", run_id="run-a",
+            workflow_fingerprint="revision-a", connection_id="connection-a", binding_id="binding-a",
+        )
+        invalid_results = (
+            None, True, {}, {"binding": None}, {"binding": {}},
+            {"binding": {"sources": []}}, {"binding": {"sources": "email"}},
+            {"binding": {"sources": ["unknown"]}}, {"binding": {"sources": [{}]}},
+        )
+        callbacks = [None, object(), *(Mock(return_value=value) for value in invalid_results)]
+        for callback in callbacks:
+            with self.subTest(callback=callback):
+                io = Mock(side_effect=AssertionError("Unconfigured authorization reached an I/O dependency."))
+                service = connections.M365ConnectionService(
+                    container_factory=io, key_provider=io, config_provider=io, msal_factory=io,
+                    workflow_authorizer=callback,
+                )
+                with patch.object(connections, "_service", service):
+                    result = connections.get_m365_access_token(["Mail.Read"], context=ctx)
+                self.assertEqual(result["error"], "m365_authorization_unavailable")
+                self.assertNotIn("access_token", result)
+                io.assert_not_called()
+
+    def test_owner_wiring_preserves_service_dependencies_and_rejects_missing_callback(self):
+        with patch.object(self.service, "workflow_authorizer", None):
+            connections.configure_m365_connection_authorization(execution.validate_m365_workflow_context)
+            configured = connections.get_m365_connection_service()
+            self.assertIs(configured, self.service)
+            self.assertIs(configured.workflow_authorizer, execution.validate_m365_workflow_context)
+            with self.assertRaises(TypeError):
+                connections.configure_m365_connection_authorization(None)
+            self.assertIs(configured.workflow_authorizer, execution.validate_m365_workflow_context)
+
+    def test_live_authorization_runs_before_and_after_refresh(self):
+        connected, _started, _query = self.connect()
+        ctx = self.workflow(connected)
+        events = []
+        original_factory = self.service.msal_factory
+
+        def authorize(context):
+            events.append("authorize")
+            return execution.validate_m365_workflow_context(context)
+
+        def refresh(cache, config):
+            events.append("refresh")
+            return original_factory(cache, config)
+
+        self.service.workflow_authorizer = authorize
+        self.service.msal_factory = refresh
+        result = connections.get_m365_access_token(["Mail.Read"], context=ctx)
+        self.assertIn("access_token", result)
+        self.assertEqual(events, ["authorize", "refresh", "authorize"])
+
+    def test_binding_revoked_during_refresh_never_releases_the_acquired_token(self):
+        connected, _started, _query = self.connect()
+        ctx = self.workflow(connected)
+        original_factory = self.service.msal_factory
+
+        def revoke_during_refresh(cache, config):
+            client = original_factory(cache, config)
+            original_acquire = client.acquire_token_silent_with_error
+
+            def acquire(*args, **kwargs):
+                token = original_acquire(*args, **kwargs)
+                self.approvals.revoke_workflow_binding(ctx.binding_id, ctx.data_user_id)
+                return token
+
+            client.acquire_token_silent_with_error = acquire
+            return client
+
+        self.service.msal_factory = revoke_during_refresh
+        result = connections.get_m365_access_token(["Mail.Read"], context=ctx)
+        saved = self.container.read_item(connected["id"], "user-a")
+        self.assertEqual(result["error"], "m365_run_as_invalid")
+        self.assertNotIn("access_token", result)
+        self.assertIsNone(saved["refresh_lease"])
 
     def test_manual_or_scheduled_context_uses_only_approved_data_user(self):
         connected, _started, _query = self.connect()

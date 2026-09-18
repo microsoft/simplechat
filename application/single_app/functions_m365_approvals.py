@@ -7,18 +7,18 @@ partition only and never confers group or administrator authorization.
 """
 
 import copy
-import hashlib
 import json
 import logging
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, time, timedelta, timezone
-from typing import Any, Callable
+from typing import Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from azure.core import MatchConditions
 from azure.cosmos import exceptions as cosmos_exceptions
 
+from functions_m365_context import M365PolicyError, _identifier, approval_context, material_fingerprint
 from functions_m365_operations import (
     M365_ACTION_DEFINITIONS,
     M365_FILE_SOURCES,
@@ -37,15 +37,6 @@ PENDING_APPROVAL_DAYS = 3
 POLICY_RECORD_ID = "m365-user-policy"
 MAX_PAGE_SIZE = 100
 UTC = timezone.utc
-
-
-class M365PolicyError(Exception):
-    """A stable, non-content-bearing policy failure."""
-
-    def __init__(self, code: str, message: str, **details):
-        super().__init__(message)
-        self.code = code
-        self.payload = {"error": code, "message": message, **details}
 
 
 class M365ApprovalRequired(M365PolicyError):
@@ -127,23 +118,6 @@ def strictest_sharing_policy(*values):
     return min(normalized or ["always"], key=SHARING_DURATIONS.index)
 
 
-def _json_value(value):
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    raise ValueError("Microsoft 365 context must contain JSON-compatible values.")
-
-
-def material_fingerprint(value):
-    encoded = json.dumps(
-        _json_value(value), sort_keys=True, separators=(",", ":"), allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def validate_workflow_review(review):
     """Accept only the owner's non-secret, human-readable consent projection."""
     required = {"instructions", "capabilities", "runtime_inputs", "triggers", "destinations"}
@@ -156,41 +130,10 @@ def validate_workflow_review(review):
     return copy.deepcopy(review)
 
 
-def _identifier(value):
-    if (
-        not isinstance(value, str) or not value or len(value) > 256
-        or any(ord(char) < 32 for char in value)
-    ):
-        raise ValueError("A valid Microsoft 365 context identifier is required.")
-    return value
-
-
 def _source(value, file_only=False):
     if not isinstance(value, str) or value not in (M365_FILE_SOURCES if file_only else M365_SOURCES):
         raise ValueError("Invalid Microsoft 365 source.")
     return value
-
-
-def approval_context(context):
-    result = {
-        name: getattr(context, name, None)
-        for name in (
-            "actor_user_id", "data_user_id", "tenant_id", "conversation_id",
-            "request_id", "workflow_id", "run_id", "step_id", "agent_id",
-            "audience_version", "workflow_fingerprint", "connection_id", "binding_id",
-            "group_id",
-        )
-    }
-    for name in ("actor_user_id", "data_user_id", "tenant_id"):
-        _identifier(result[name])
-    for value in result.values():
-        if value is not None:
-            _identifier(value)
-    result["shared"] = bool(context.shared)
-    result["action_ids"] = sorted(_identifier(action_id) for action_id in context.action_configs)[:64]
-    result["action_count"] = len(context.action_configs)
-    result["action_fingerprint"] = material_fingerprint(context.action_configs)
-    return result
 
 
 def request_scope_fingerprint(context):

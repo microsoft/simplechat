@@ -1,6 +1,9 @@
-# Microsoft 365 actions and conversation evidence (v0.261.029)
+# Microsoft 365 actions and conversation evidence (v0.261.030)
 
 Implemented in version: **0.261.029**
+
+Authorization bootstrap and workflow diagnostic handling updated in **0.261.030**.
+See the [CodeQL remediation](../fixes/M365_CODEQL_REMEDIATION_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.
@@ -166,6 +169,12 @@ Source-specific plugin facades use `functions_m365_operations.py`,
 `functions_m365_execution.py` and `functions_m365_approvals.py` provide the
 shared policy boundary. The web/workflow ownership layer supplies canonical
 identity, action, and audience context.
+
+`functions_m365_context.py` holds immutable context and fingerprint primitives
+without importing configuration or storage owners. Web and scheduler bootstrap
+inject the live Run as validator into the connection service. Missing
+authorization wiring fails before credential access; validation still runs
+before and after token refresh.
 
 `functions_conversation_memory.py` and `conversation_memory_storage.py` provide
 storage and checkpoint primitives. `functions_m365_analysis_jobs.py` separates

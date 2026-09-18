@@ -99,7 +99,8 @@ from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_backend_m365 import configure_m365_routes, register_route_backend_m365
 from functions_m365_approvals import configure_m365_approvals
-from functions_m365_execution import configure_m365_execution
+from functions_m365_connections import configure_m365_connection_authorization
+from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
 from functions_m365_file_runtime import configure_m365_file_runtime
 from functions_m365_request_resume import queue_approved_chat
 from functions_m365_runtime import (
@@ -1320,6 +1321,7 @@ configure_m365_execution(
     workflow_binding_resolver=resolve_m365_workflow_binding,
     action_selection_resolver=resolve_m365_action_selection,
 )
+configure_m365_connection_authorization(validate_m365_workflow_context)
 configure_m365_routes(
     conversation_authorizer=authorize_m365_conversation_audit,
     decision_callback=queue_approved_chat,

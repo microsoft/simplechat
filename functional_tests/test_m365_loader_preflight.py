@@ -1,7 +1,7 @@
 # test_m365_loader_preflight.py
 """
 Runtime tests for authoritative Microsoft 365 loader preflight and propagation.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Loads the complete real loader module and real M365 context/capability/policy
@@ -41,6 +41,7 @@ REAL_MODULES = {
 def loader_runtime(monkeypatch):
     monkeypatch.syspath_prepend(str(APP_ROOT))
     import functions_m365_approvals as approvals
+    import functions_m365_context as context_scope
     import functions_m365_execution as execution
     from test_support.m365 import Clock, CosmosContainer, Notifications
 
@@ -48,7 +49,7 @@ def loader_runtime(monkeypatch):
         raise AssertionError("Loader tests must not contact network services.")
 
     monkeypatch.setattr(socket, "create_connection", no_network)
-    monkeypatch.setattr(execution, "_execution_context", ContextVar("test_m365_loader_context", default=None))
+    monkeypatch.setattr(context_scope, "_execution_context", ContextVar("test_m365_loader_context", default=None))
     monkeypatch.setattr(execution, "_action_config_resolver", None)
     monkeypatch.setattr(execution, "_action_selection_resolver", None)
     monkeypatch.setattr(execution, "_workflow_validator", None)

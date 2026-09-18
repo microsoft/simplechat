@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 
-from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
+from config import cosmos_m365_execution_runs_container, cosmos_settings_container
 from functions_appinsights import log_event
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
@@ -58,9 +58,9 @@ from functions_m365_workflow_binding import (
     workflow_result_runtime_status,
 )
 from functions_m365_approvals import get_m365_approval_service
-from functions_m365_connections import get_m365_connection_service
+from functions_m365_connections import configure_m365_connection_authorization, get_m365_connection_service
 from functions_m365_continuations import resume_pending_workflows
-from functions_m365_execution import configure_m365_execution
+from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
 from functions_m365_file_runtime import configure_m365_file_runtime
 from functions_m365_runtime import (
     configure_m365_pending_delivery_runtime,
@@ -556,6 +556,7 @@ def check_m365_workflow_continuations_once():
         workflow_binding_resolver=resolve_m365_workflow_binding,
         action_selection_resolver=resolve_m365_action_selection,
     )
+    configure_m365_connection_authorization(validate_m365_workflow_context)
     configure_m365_file_runtime()
     configure_m365_pending_delivery_runtime(_get_workflow_runner_app().test_request_context)
     dispatch_due_m365_deliveries()
