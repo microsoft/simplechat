@@ -32,6 +32,7 @@ import {
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
+import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
 
 interface PagedState<T> {
     items: T[];
@@ -174,6 +175,7 @@ function historyErrorMessage(cause: unknown, fallback: string): string {
 function usePagedResource<T>(
     loadPage: (cursor: string | null, signal: AbortSignal) => Promise<WorkflowExecutionPage<T>>,
     fallbackError: string,
+    onAccessLost?: (status: number) => void,
 ) {
     const [state, setState] = useState<PagedState<T>>({
         items: [],
@@ -228,8 +230,11 @@ function usePagedResource<T>(
                     loading: false,
                     error: historyErrorMessage(cause, fallbackError),
                 }));
+                if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                    onAccessLost?.(cause.status);
+                }
             });
-    }, [fallbackError, loadPage]);
+    }, [fallbackError, loadPage, onAccessLost]);
 
     useEffect(() => {
         load(null, []);
@@ -392,12 +397,14 @@ function V3ResultExcerpt({
     runId,
     executionId,
     attempt,
+    onAccessLost,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
     executionId: string;
     attempt: number;
+    onAccessLost?: (status: number) => void;
 }) {
     const [page, setPage] = useState<WorkflowRunResultPage | null>(null);
     const [loading, setLoading] = useState(false);
@@ -438,6 +445,9 @@ function V3ResultExcerpt({
                 }
                 setError(historyErrorMessage(cause, 'Could not load the execution result excerpt.'));
                 setPage(null);
+                if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                    onAccessLost?.(cause.status);
+                }
             })
             .finally(() => {
                 if (controller.signal.aborted || token !== tokenRef.current) {
@@ -487,16 +497,18 @@ function AttemptHistory({
     workflowId,
     runId,
     executionId,
+    onAccessLost,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
     executionId: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowExecutionAttemptsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
     [executionId, runId, scope, workflowId]);
-    const page = usePagedResource<WorkflowExecutionAttemptRecord>(loadPage, 'Could not load execution attempts.');
+    const page = usePagedResource<WorkflowExecutionAttemptRecord>(loadPage, 'Could not load execution attempts.', onAccessLost);
 
     return (
         <div className="space-y-3">
@@ -534,10 +546,13 @@ function AttemptHistory({
                             {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
                             {attempt.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(attempt.iteration_path)}</DetailLine> : null}
                             <ConsumedInputs inputs={inputs} />
+                            <WorkflowPublicationDetails publication={attempt.workflow_result?.publication}
+                                label={`Publication for execution ${attempt.execution_id} attempt ${attempt.attempt}`} />
                             <ReportingDiagnostics value={attempt.workflow_result?.reporting} />
                             {attempt.workflow_result?.result_ref && collectionOutputs.length ? <CompleteRecords
                                 key={`records:${attempt.execution_id}:${attempt.attempt}`} scope={scope} workflowId={workflowId}
-                                runId={runId} executionId={attempt.execution_id} attempt={attempt.attempt} outputs={collectionOutputs} /> : null}
+                                runId={runId} executionId={attempt.execution_id} attempt={attempt.attempt} outputs={collectionOutputs}
+                                onAccessLost={onAccessLost} /> : null}
                             {attempt.workflow_result?.result_ref ? <V3ResultExcerpt
                                 key={`${workflowId}:${runId}:${attempt.execution_id}:${attempt.attempt}`}
                                 scope={scope}
@@ -545,6 +560,7 @@ function AttemptHistory({
                                 runId={runId}
                                 executionId={attempt.execution_id}
                                 attempt={attempt.attempt}
+                                onAccessLost={onAccessLost}
                             /> : <p className="text-xs text-text-3">No result was committed for this attempt.</p>}
                         </li>
                     );
@@ -554,13 +570,14 @@ function AttemptHistory({
     );
 }
 
-function RecordPages({ scope, workflowId, runId, executionId, attempt, output }: {
+function RecordPages({ scope, workflowId, runId, executionId, attempt, output, onAccessLost }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number; output: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowExecutionRecordsPage(scope, workflowId, runId, executionId, attempt, output, cursor, 100, signal),
     [attempt, executionId, output, runId, scope, workflowId]);
-    const page = usePagedResource(loadPage, 'Could not read the complete saved records.');
+    const page = usePagedResource(loadPage, 'Could not read the complete saved records.', onAccessLost);
     const summary = validationSummary(page.metadata?.validation);
     const coverage = page.metadata?.coverage;
     return (
@@ -591,8 +608,9 @@ function RecordPages({ scope, workflowId, runId, executionId, attempt, output }:
     );
 }
 
-function CompleteRecords({ scope, workflowId, runId, executionId, attempt, outputs }: {
+function CompleteRecords({ scope, workflowId, runId, executionId, attempt, outputs, onAccessLost }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number; outputs: string[];
+    onAccessLost?: (status: number) => void;
 }) {
     const [output, setOutput] = useState(outputs[0]);
     const [open, setOpen] = useState(false);
@@ -607,21 +625,22 @@ function CompleteRecords({ scope, workflowId, runId, executionId, attempt, outpu
             </label>
             <GlassButton size="sm" onClick={() => setOpen(!open)}>{open ? 'Close complete records' : 'Load complete records'}</GlassButton>
             {open ? <RecordPages key={`${executionId}:${attempt}:${output}`} scope={scope} workflowId={workflowId}
-                runId={runId} executionId={executionId} attempt={attempt} output={output} /> : null}
+                runId={runId} executionId={executionId} attempt={attempt} output={output} onAccessLost={onAccessLost} /> : null}
             <GlassButton size="sm" onClick={() => setProvenanceOpen(!provenanceOpen)}>{provenanceOpen ? 'Close contributors' : 'Inspect contributors'}</GlassButton>
             {provenanceOpen ? <ContributorPages key={`contributors:${executionId}:${attempt}`} scope={scope}
-                workflowId={workflowId} runId={runId} executionId={executionId} attempt={attempt} /> : null}
+                workflowId={workflowId} runId={runId} executionId={executionId} attempt={attempt} onAccessLost={onAccessLost} /> : null}
         </section>
     );
 }
 
-function ContributorPages({ scope, workflowId, runId, executionId, attempt }: {
+function ContributorPages({ scope, workflowId, runId, executionId, attempt, onAccessLost }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string; attempt: number;
+    onAccessLost?: (status: number) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowExecutionProvenancePage(scope, workflowId, runId, executionId, attempt, cursor, 50, signal),
     [attempt, executionId, runId, scope, workflowId]);
-    const page = usePagedResource(loadPage, 'Could not read the saved contributor receipts.');
+    const page = usePagedResource(loadPage, 'Could not read the saved contributor receipts.', onAccessLost);
     return (
         <section aria-label="Paged contributor inspection" className="space-y-3">
             <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
@@ -644,26 +663,29 @@ function ContributorPages({ scope, workflowId, runId, executionId, attempt }: {
     );
 }
 
-function LoopItemExecutions({ item, scope, workflowId, runId }: {
+function LoopItemExecutions({ item, scope, workflowId, runId, onAccessLost }: {
     item: WorkflowLoopItemRecord; scope: WorkflowScope; workflowId: string; runId: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const [selected, setSelected] = useState<string | null>(null);
     return (
         <>
             {item.execution_ids?.map((id) => <GlassButton key={id} size="sm" aria-label={`Inspect item execution ${id}`}
                 onClick={() => setSelected(selected === id ? null : id)}><span className="break-all">Inspect execution {id}</span></GlassButton>)}
-            {selected ? <AttemptHistory key={selected} scope={scope} workflowId={workflowId} runId={runId} executionId={selected} /> : null}
+            {selected ? <AttemptHistory key={selected} scope={scope} workflowId={workflowId} runId={runId}
+                executionId={selected} onAccessLost={onAccessLost} /> : null}
         </>
     );
 }
 
-function LoopItems({ scope, workflowId, runId, executionId }: {
+function LoopItems({ scope, workflowId, runId, executionId, onAccessLost }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowLoopItemsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
     [executionId, runId, scope, workflowId]);
-    const page = usePagedResource(loadPage, 'Could not read the frozen loop items.');
+    const page = usePagedResource(loadPage, 'Could not read the frozen loop items.', onAccessLost);
     return (
         <section className="space-y-3" aria-label="Frozen item inspection">
             <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
@@ -682,7 +704,7 @@ function LoopItems({ scope, workflowId, runId, executionId }: {
                     <DetailLine label="Item ID">{item.item_id}</DetailLine>
                     <DetailLine label="Iteration path">{formatIterationPath(item.iteration_path)}</DetailLine>
                     {item.record_count !== undefined ? <DetailLine label="Output records">{item.record_count}</DetailLine> : null}
-                    <LoopItemExecutions item={item} scope={scope} workflowId={workflowId} runId={runId} />
+                    <LoopItemExecutions item={item} scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
                 </li>)}
             </ul> : null}
         </section>
@@ -693,15 +715,17 @@ function DecisionHistory({
     scope,
     workflowId,
     runId,
+    onAccessLost,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowRuntimeDecisionsPage(scope, workflowId, runId, cursor, 50, signal),
     [runId, scope, workflowId]);
-    const page = usePagedResource<WorkflowRuntimeDecisionRecord>(loadPage, 'Could not load runtime decisions.');
+    const page = usePagedResource<WorkflowRuntimeDecisionRecord>(loadPage, 'Could not load runtime decisions.', onAccessLost);
 
     return (
         <details className="rounded-xl border border-edge p-3" open>
@@ -760,16 +784,18 @@ export function WorkflowExecutionHistory({
     scope,
     workflowId,
     runId,
+    onAccessLost,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
+    onAccessLost?: (status: number) => void;
 }) {
     const [expandedExecutionId, setExpandedExecutionId] = useState<string | null>(null);
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowExecutionsPage(scope, workflowId, runId, cursor, 50, signal),
     [runId, scope, workflowId]);
-    const page = usePagedResource<WorkflowExecutionRecord>(loadPage, 'Could not load workflow executions.');
+    const page = usePagedResource<WorkflowExecutionRecord>(loadPage, 'Could not load workflow executions.', onAccessLost);
 
     return (
         <div className="space-y-3 px-3 pb-3">
@@ -835,13 +861,17 @@ export function WorkflowExecutionHistory({
                                             {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
                                         </div>
                                         <ConsumedInputs inputs={inputs} />
+                                        <WorkflowPublicationDetails publication={execution.workflow_result?.publication}
+                                            label={`Publication for execution ${executionId}`} />
                                         {expanded ? (
                                             execution.node_kind === 'for_each' ? <LoopItems key={executionId}
-                                                scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} /> : <AttemptHistory
+                                                scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                                                onAccessLost={onAccessLost} /> : <AttemptHistory
                                                 scope={scope}
                                                 workflowId={workflowId}
                                                 runId={runId}
                                                 executionId={executionId}
+                                                onAccessLost={onAccessLost}
                                             />
                                         ) : null}
                                     </GlassPanel>
@@ -851,7 +881,7 @@ export function WorkflowExecutionHistory({
                     </ul>
                 ) : null}
             </GlassPanel>
-            <DecisionHistory scope={scope} workflowId={workflowId} runId={runId} />
+            <DecisionHistory scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
         </div>
     );
 }

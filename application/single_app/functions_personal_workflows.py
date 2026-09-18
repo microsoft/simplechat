@@ -41,7 +41,9 @@ from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
-from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_definitions import (
+    normalize_publication_completion_policy, normalize_workflow_definition, workflow_definition_for_editor,
+)
 from functions_workflow_runtime_store import workflow_runtime_store
 
 
@@ -167,7 +169,7 @@ def normalize_workflow_publication(publication):
     if publication is None:
         return None
     if not isinstance(publication, dict) or set(publication) - {
-        'artifact_format', 'workspace_scope', 'group_id', 'public_workspace_id',
+        'artifact_format', 'workspace_scope', 'group_id', 'public_workspace_id', 'completion_policy',
     }:
         raise ValueError('Task publication must specify an artifact format and destination.')
     output_format = _normalize_text(publication.get('artifact_format'), 'Artifact format', required=True).lower()
@@ -179,6 +181,8 @@ def normalize_workflow_publication(publication):
     if scope not in {'personal', 'group', 'public'}:
         raise ValueError('Publication destination must be personal, group, or public.')
     normalized = {'artifact_format': output_format, 'workspace_scope': scope}
+    if 'completion_policy' in publication:
+        normalized['completion_policy'] = normalize_publication_completion_policy(publication['completion_policy'])
     target_field = {'group': 'group_id', 'public': 'public_workspace_id'}.get(scope)
     for field in ('group_id', 'public_workspace_id'):
         value = _normalize_text(publication.get(field), 'Publication workspace id')

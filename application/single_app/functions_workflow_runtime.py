@@ -15,7 +15,9 @@ from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
 
 from functions_appinsights import log_event
-from functions_workflow_definitions import WORKFLOW_DEFINITION_FIELDS, workflow_definition_revision
+from functions_workflow_definitions import (
+    WORKFLOW_DEFINITION_FIELDS, validate_workflow_publication_completion, workflow_definition_revision,
+)
 from functions_workflow_execution import DurableWorkflowExecution, WorkflowSuspended, workflow_execution_scope
 from functions_workflow_structured_execution import StructuredWorkflowExecution
 from functions_workflow_flow import compile_workflow_flow
@@ -70,6 +72,7 @@ def _authorize_execution(workflow, actor_user_id, settings):
     from functions_group_workflows import GROUP_WORKFLOW_MEMBER_ROLES
     from functions_settings import is_group_workflows_enabled_for_group
 
+    validate_workflow_publication_completion(workflow)
     if workflow.get("deleting"):
         raise WorkflowRuntimeConflict("workflow_deleting", "This workflow is being deleted.")
     if workflow.get("group_id"):
@@ -289,7 +292,23 @@ def workflow_runtime_status(workflow, run_id, *, reader_user_id):
     if run.get("workflow_id") != workflow["id"] or run.get("durable_execution") is not True:
         raise LookupError("Durable workflow run not found.")
     authorize_workflow_run_read(workflow, run_id, reader_user_id=reader_user_id)
-    return workflow_runtime_projection(workflow_runtime_store(workflow, run_id).read())
+    store = workflow_runtime_store(workflow, run_id)
+    control = store.read()
+    gate = control.get("gate") or {}
+    if gate.get("publication"):
+        # Polling UI has the same source and destination boundary as exact result inspection.
+        from functions_artifact_publication import authorize_publication_status_read
+        from functions_workflow_execution_history import authorize_execution_payload
+
+        snapshot = store.run_definition()
+        row = store.journal_read("execution", gate.get("execution_id"))
+        if row is None:
+            raise LookupError("Publication execution not found.")
+        authorize_execution_payload(snapshot, run_id, row["payload"], reader_user_id=reader_user_id)
+        authorize_publication_status_read(
+            reader_user_id, gate["publication"], actor_user_id=control["actor_user_id"],
+        )
+    return workflow_runtime_projection(control)
 
 
 def decide_workflow_runtime(workflow, run_id, data, *, actor_user_id, resume=False):

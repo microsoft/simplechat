@@ -13,6 +13,7 @@ from functions_public_workspaces import *
 from functions_documents import *
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
+from functions_artifact_publication import decide_artifact_publication
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PUBLIC,
     build_document_access_scope_key,
@@ -809,6 +810,12 @@ def register_route_backend_public_documents(bp):
             if not document_item:
                 return jsonify({'error': 'Document not found or access denied'}), 404
 
+            if document_item.get('generated_artifact_publication_binding'):
+                result = decide_artifact_publication(user_id, document_item, 'approved')
+                _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+                invalidate_public_workspace_search_cache(active_ws)
+                return jsonify(result), 200
+
             promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
             if promotion_status != 'pending_approval':
                 return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
@@ -915,6 +922,12 @@ def register_route_backend_public_documents(bp):
             if not document_item:
                 return jsonify({'error': 'Document not found or access denied'}), 404
 
+            if document_item.get('generated_artifact_publication_binding'):
+                result = decide_artifact_publication(user_id, document_item, 'rejected')
+                _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+                invalidate_public_workspace_search_cache(active_ws)
+                return jsonify(result), 200
+
             promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
             if promotion_status != 'pending_approval':
                 return jsonify({'error': 'Document is not awaiting generated artifact approval'}), 400
@@ -985,6 +998,12 @@ def register_route_backend_public_documents(bp):
             )
             if not document_item:
                 return jsonify({'error': 'Document not found or access denied'}), 404
+
+            if document_item.get('generated_artifact_publication_binding'):
+                result = decide_artifact_publication(user_id, document_item, 'cancelled')
+                _cleanup_public_generated_artifact_notifications(doc_id, active_ws)
+                invalidate_public_workspace_search_cache(active_ws)
+                return jsonify(result), 200
 
             promotion_status = str(document_item.get('generated_artifact_promotion_status') or '').strip().lower()
             if promotion_status != 'pending_approval':

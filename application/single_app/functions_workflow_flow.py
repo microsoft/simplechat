@@ -9,7 +9,7 @@ from copy import deepcopy
 from functions_workflow_definitions import (
     WORKFLOW_BINDABLE_OUTPUTS, WORKFLOW_OUTPUT_KINDS, WorkflowDefinitionError,
     _boolean, _name, _object, normalize_workflow_input_processing, normalize_workflow_output_contract,
-    workflow_output_kind_matches,
+    validate_workflow_publication_completion, workflow_output_kind_matches,
 )
 from functions_workflow_loop_schema import WORKFLOW_DOCUMENT_ITEM_SCHEMA, normalize_workflow_iterable
 
@@ -192,6 +192,7 @@ def compile_workflow_flow(workflow):
         or workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True
     ):
         raise WorkflowDefinitionError("Structured workflows require definition version 3 and durable execution.")
+    validate_workflow_publication_completion(workflow)
     if isinstance(workflow.get("document_action"), dict) and workflow["document_action"].get("target_mode") == "current_item":
         raise WorkflowDefinitionError("Current-item Analyze must be declared on a task inside a document loop.")
     tasks = workflow.get("tasks")

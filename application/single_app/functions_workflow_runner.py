@@ -220,6 +220,7 @@ from functions_workflow_readiness import (
     WorkflowOutputUnavailable,
     pending_workflow_output_references,
     reconcile_workflow_pending_output,
+    reconcile_workflow_publication_output,
 )
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
@@ -10418,6 +10419,9 @@ def _execute_workflow_task_sequence(
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
+                    publication_completion = 'completion_policy' in task['publication']
+                    if publication_completion and (not structured_definition or durable is None):
+                        raise WorkflowResultNotReadyError('Publication completion requires a version-3 durable workflow.')
                     publication_inputs = flow_runner.resolve(task['inputs'], metadata_only=True) if flow_runner else None
                     task_result, consumed_inputs = workflow_unit(
                         task_unit_key,
@@ -10430,6 +10434,7 @@ def _execute_workflow_task_sequence(
                                 if publication_inputs is not None else
                                 {'task': task, 'producer_task_id': previous_task_id, 'result_ref': previous_result_ref}),
                         approval=task.get('approval'),
+                        replay_safe=publication_completion,
                     )
                     if durable is not None:
                         attempt_count = durable.unit(task_unit_key)['attempt']
@@ -10612,6 +10617,17 @@ def _execute_workflow_task_sequence(
                 break
             except Exception as exc:
                 assert_workflow_execution_owned()
+                if (task.get('publication') or {}).get('completion_policy') and structured_definition and durable is not None:
+                    log_event(
+                        '[WORKFLOW_RUNNER] Publication boundary unavailable',
+                        extra={'run_id': run_id, 'task_id': task_id, 'error_type': type(exc).__name__},
+                        level=logging.WARNING,
+                    )
+                    durable.wait_for_publication(
+                        task_unit_key,
+                        reason='Publication could not be confirmed. Restore current source and destination access, then recheck the same request.',
+                        retryable=True,
+                    )
                 task_result = None
                 blocked_audit = ((attempt_workflow or {}).get('context_budget') or {}).get('blocked_request')
                 safe_error = WorkflowContextBudgetError(blocked_audit) if blocked_audit else exc
@@ -10677,6 +10693,49 @@ def _execute_workflow_task_sequence(
                     task_result, workflow=workflow, run_id=run_id, task=task,
                     attempt_count=attempt_count,
                 )
+                if (task.get('publication') or {}).get('completion_policy'):
+                    try:
+                        task_result = reconcile_workflow_publication_output(
+                            workflow, task_result, execution=durable, actor_user_id=actor_id,
+                        )
+                    except (AzureError, OSError, RuntimeError, ValueError, PermissionError, LookupError) as exc:
+                        log_event(
+                            '[WORKFLOW_RUNNER] Publication reconciliation unavailable',
+                            extra={'run_id': run_id, 'task_id': task_id, 'error_type': type(exc).__name__},
+                            level=logging.WARNING,
+                        )
+                        durable.wait_for_publication(
+                            task_unit_key,
+                            reason='Publication status is unavailable. Restore access or the existing destination, then recheck this receipt.',
+                            retryable=not isinstance(exc, WorkflowOutputUnavailable),
+                        )
+                    durable.replace_unit_result(task_unit_key, (task_result, consumed_inputs))
+                    envelope = build_workflow_task_result(
+                        task_result, workflow=workflow, run_id=run_id, task=task, attempt_count=attempt_count,
+                    )
+                    if not task_result['publication']['policy_satisfied']:
+                        envelope.update(context_budget=context_budget, consumed_inputs=consumed_inputs)
+                        pending_manifest, pending_ref = persist_workflow_task_result(
+                            envelope, workflow=workflow, run_id=run_id, task_id=task_id, settings=settings,
+                        )
+                        pending_summary = workflow_result_summary(pending_manifest, pending_ref)
+                        waiting = task_result['publication']['state'].startswith('waiting_')
+                        pending_state = 'waiting_output' if waiting else 'paused'
+                        _save_workflow_task_run_item(
+                            workflow, run_id, task, pending_state, attempt_count=attempt_count,
+                            created_at=created_at, runner_audit=runner_audit, result_summary=pending_summary,
+                            consumed_inputs=consumed_inputs,
+                        )
+                        durable.record_execution(
+                            state=pending_state, attempt=attempt_count,
+                            workflow_result=pending_summary, consumed_inputs=consumed_inputs,
+                        )
+                        durable._attempt(attempt_count, state=pending_state, workflow_result=pending_summary)
+                        durable.wait_for_publication(
+                            task_unit_key, reference=task_result['_publication_reference'],
+                            publication=task_result['publication'], reason=task_result['reply'],
+                            retryable=task_result['publication']['retryable'],
+                        )
                 if structured_definition and _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
                     if analysis_checkpoints is None:
                         analysis_checkpoints = _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_id, settings)
@@ -11012,6 +11071,18 @@ def _execute_workflow_analysis_publication(
                     f"workflow-publication:v3:{execution.execution_id()}:"
                     f"{producer['execution_id']}:{producer['attempt']}"
                 )
+            output_name = manifest['authoritative_output']
+            native_receipt = {
+                'producer': manifest['identity'], 'output_name': output_name,
+                'result_ref': dict(reference), 'output_ref': manifest['outputs'][output_name]['result_ref'],
+                'analysis_result': True,
+            }
+            completion_options = {}
+            if 'completion_policy' in publication:
+                execution = current_workflow_execution()
+                if workflow.get('definition_version') != 3 or execution is None:
+                    raise WorkflowResultNotReadyError('Publication completion requires the current structured execution.')
+                completion_options = {'source_receipt': native_receipt, 'execution_check': execution.check}
             result = (publish or publish_workflow_analysis_artifact)(
                 actor, publication=publication,
                 artifact_reference={
@@ -11019,18 +11090,19 @@ def _execute_workflow_analysis_publication(
                     'artifact_message_id': artifact.get('artifact_message_id'), 'producer': producer,
                 },
                 request_id=publication_request_id,
+                **completion_options,
             )
             state = (result.get('publication') or {}).get('state')
-            if state == 'pending_approval':
+            if 'completion_policy' in publication:
+                result['_publication_reference'] = {
+                    'kind': 'artifact_publication', 'version': 1, 'execution_id': execution.execution_id(),
+                    'attempt': execution.selectors()['attempt'], 'request_id': publication_request_id,
+                    'receipt_id': result['publication']['id'],
+                }
+            elif state == 'pending_approval':
                 result['execution_status'] = 'pending'
             elif state in {'uncertain', 'approval_failed'}:
                 result['execution_status'] = 'blocked'
-            output_name = manifest['authoritative_output']
-            native_receipt = {
-                'producer': manifest['identity'], 'output_name': output_name,
-                'result_ref': dict(reference), 'output_ref': manifest['outputs'][output_name]['result_ref'],
-                'analysis_result': True,
-            }
             return result, (
                 [*explicit_inputs, native_receipt] if workflow.get('definition_version') == 3
                 and explicit_inputs[0]['producer'] != native_receipt['producer'] else [native_receipt]

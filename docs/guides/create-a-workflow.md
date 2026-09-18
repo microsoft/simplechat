@@ -182,6 +182,20 @@ Group and public copies retain their approval process. An uncertain publication
 shows the existing destination/receipt instead of blindly creating another copy.
 Once explicitly published, the copy follows the destination's access rules.
 
+Starting in **0.261.118**, a version-3 durable publication task can choose
+**Complete publication when**: **Submitted**, **Approved**, or **Indexed and
+ready**. Use Submitted to hand a deliverable into a review queue; use Indexed
+and ready when the next step depends on workspace retrieval. Personal
+workspaces do not have a destination approval gate, so Approved reports
+approval as not required.
+
+New publication tasks default to Submitted. Existing tasks retain their
+previous behavior until you explicitly choose a policy. Queued, approved and
+indexed-ready are different stages; a failed or uncertain explicit policy
+pauses instead of publishing another copy or continuing on error. See
+[Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md)
+for readiness proof, screening and recovery limitations.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

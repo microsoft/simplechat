@@ -111,6 +111,27 @@ See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EAC
 
 ## Troubleshooting
 
+### A publication is waiting
+
+In **0.261.118**, version-3 durable publication tasks can wait for a chosen
+completion level. Inspect the requested level and the separate submission,
+approval, processing, screening and index observations in run details.
+
+**Waiting for destination approval** means the request is in the existing
+workspace review, not that the workflow's task-approval button can approve it.
+If processing or indexing is pending, the run retains its exact receipt and
+does not submit Analyze or another document just to check progress.
+
+For uncertain effects or restored access, use Resume/check again only when
+offered. It rechecks the existing receipt. A rejected request or changed
+original content cannot silently satisfy the policy; cancel and start a new
+authorized request where appropriate. The elapsed deadline still includes
+these waits.
+
+See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
+
+### Other run problems
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A scheduled workflow does not run | It is disabled or still configured for manual trigger | Edit the trigger and confirm the workflow is enabled. |

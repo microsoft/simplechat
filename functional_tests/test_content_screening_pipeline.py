@@ -1,9 +1,10 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.114
+Version: 0.261.118
 Implemented in: 0.261.106
 Enabled-empty upload admission implemented in: 0.261.114
+Publication processing evidence implemented in: 0.261.118
 
 Runs the real durable job, scanner, repository, private storage, TXT extraction,
 and publication services against fake Azure boundaries. No live data is used.
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import pytest
 from azure.core import MatchConditions
-from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 from flask import Flask, session
 
 
@@ -50,6 +51,10 @@ from content_screening.repository import ScreeningRepository
 from content_screening.storage import ScreeningStorage
 import functions_embedding_compatibility as embedding_compatibility
 from functions_embeddings import EmbeddingVector
+from functions_artifact_publication_readiness import (
+    PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
+    inspect_publication_readiness,
+)
 from test_content_screening_persistence import FakeBlob, FakeBlobContainer, FakeBlobService, FakeCosmos, FakeSdkError
 
 
@@ -238,10 +243,14 @@ def pipeline(monkeypatch):
         "os": os, "math": math, "logging": logging,
         "datetime": datetime, "timezone": timezone, "current_extraction": current_extraction,
         "ScreeningError": ScreeningError, "get_settings": lambda: settings,
+        "AzureError": AzureError,
         "get_chunk_size_config": lambda value=None: {"txt": {"value": 3}},
         "get_document_metadata": get_metadata, "update_document": update_document,
         "document_requires_screening": service.document_requires_screening,
         "process_screened_upload": service.process_screened_upload,
+        "PUBLICATION_BINDING": PUBLICATION_BINDING,
+        "begin_publication_processing": begin_publication_processing,
+        "finish_publication_processing": finish_publication_processing,
         "SCREENING_FIELD": SCREENING_FIELD, "DocumentHeldError": DocumentHeldError,
         "is_publication": is_publication, "subject_from_document": service.subject_from_document,
         "cosmos_user_documents_container": containers["personal"],

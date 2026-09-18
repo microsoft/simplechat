@@ -106,6 +106,15 @@ def authorize_workflow_node_result_read(
             current.get("contract_version") != "workflow-result-v2" or current.get("identity") != expected
         ):
             raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        if current.get("publication"):
+            # Result readers own source lineage; publication owns the additional destination boundary.
+            from functions_artifact_publication import authorize_publication_status_read
+            from functions_workflow_runtime_store import workflow_runtime_store
+
+            actor = workflow_runtime_store(workflow, run_id).read()["actor_user_id"]
+            authorize_publication_status_read(
+                reader_user_id or workflow["user_id"], current["publication"], actor_user_id=actor,
+            )
         if producer["iteration_path"]:
             from functions_workflow_iterations import authorize_iteration_path
 
