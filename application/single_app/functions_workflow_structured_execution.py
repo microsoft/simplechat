@@ -16,10 +16,24 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         super().__init__(*args, **kwargs)
         self.node = None
         self.region_id = self.workflow["flow"]["id"]
+        self.iteration_path = []
+        self.iteration_inputs = []
 
-    def set_node(self, node, region_id):
+    def set_node(self, node, region_id, *, iteration_path=None, iteration_inputs=None):
         self.node = node
         self.region_id = region_id
+        if iteration_path is not None:
+            self.iteration_path = deepcopy(iteration_path)
+        if iteration_inputs is not None:
+            self.iteration_inputs = deepcopy(iteration_inputs)
+
+    def cursor(self):
+        return {
+            "region_id": self.region_id,
+            "node_id": self.node["id"] if self.node else None,
+            "execution_id": self.execution_id(),
+            "iteration_path": deepcopy(self.iteration_path),
+        }
 
     def check(self):
         record = self.lease.check()
@@ -64,6 +78,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
     def execution_id(self):
         return workflow_execution_id(
             self.workflow, self.run_id, self.node["id"] if self.node else self.workflow["flow"]["id"],
+            self.iteration_path if self.node else [],
         )
 
     def _key(self, key):
@@ -78,7 +93,8 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         unit = self.unit(f"task:{task_id}") if task_id else {}
         return {
             "execution_id": self.execution_id(), "node_id": self.node["id"] if self.node else self.workflow["flow"]["id"],
-            "iteration_path": [], "attempt": attempt or unit.get("attempt") or 1,
+            "iteration_path": deepcopy(self.iteration_path) if self.node else [],
+            "attempt": attempt or unit.get("attempt") or 1,
         }
 
     def _save_payload(self, key, payload):
@@ -109,6 +125,18 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             "kind": "pause", "unit_id": key, "input_digest": digest, **self.selectors(),
             "definition_revision": self.workflow.get("definition_revision"),
             "reason": "Saved inputs changed. Cancel this run and start a new one.", "choices": ["cancel"],
+        })
+        raise WorkflowSuspended("paused")
+
+    def pause_input(self, reason, *, code="workflow_input_unavailable"):
+        if self.node:
+            self.record_execution(state="paused", reason_code=code)
+        self.store.wait(self.lease.token, state="paused", gate={
+            "id": execution_fingerprint([self.execution_id(), code, reason]),
+            "kind": "pause", "unit_id": self.node["id"] if self.node else "inputs",
+            "input_digest": self.workflow.get("definition_revision") or "",
+            **self.selectors(), "definition_revision": self.workflow.get("definition_revision"),
+            "reason": reason, "choices": ["cancel"],
         })
         raise WorkflowSuspended("paused")
 
@@ -148,7 +176,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 return previous
         payload = previous["payload"] if previous else {
             "execution_id": self.execution_id(), "node_id": self.node["id"], "node_kind": self.node["kind"],
-            "iteration_path": [], "region_id": self.region_id, "attempt": 0,
+            "iteration_path": deepcopy(self.iteration_path), "region_id": self.region_id, "attempt": 0,
             **({"task_id": self.node["task_id"]} if self.node.get("task_id") else {}),
         }
         if previous and fields.get("attempt", payload["attempt"]) != payload["attempt"]:
@@ -156,8 +184,10 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 "workflow_result", "workflow_validation", "consumed_inputs", "completed_at", "started_at", "reason_code",
             }}
         return self.store.journal_commit(
-            self.lease.token, "execution", self.execution_id(), {**payload, **fields},
-            updates={"cursor": {"region_id": self.region_id, "node_id": self.node["id"]}},
+            self.lease.token, "execution", self.execution_id(), {
+                **payload, "iteration_inputs": deepcopy(self.iteration_inputs), **fields,
+            },
+            updates={"cursor": self.cursor()},
         )
 
     def run_unit(self, key, operation, *, inputs, replay_safe=False, approval=None):
@@ -203,7 +233,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 self.lease.token, "admission", [self.execution_id(), attempt],
                 {"execution_id": self.execution_id(), "attempt": attempt, "input_digest": digest},
                 admission=not admitted_by_condition, immutable=True,
-                updates={"cursor": {"region_id": self.region_id, "node_id": self.node["id"]}, "phase": self.node["id"]},
+                updates={"cursor": self.cursor(), "phase": self.node["id"]},
             )
             self.record_execution(state="running", attempt=attempt, started_at=self.store._now().isoformat(),
                                   consumed_inputs=inputs.get("consumed_inputs") or [])

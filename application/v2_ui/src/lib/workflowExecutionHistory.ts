@@ -5,8 +5,11 @@ import { api } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
 import {
     workflowUrl,
+    workflowLoopSelection,
+    validWorkflowIterationPath,
     type WorkflowConsumedInput,
     type WorkflowIterationFrame,
+    type WorkflowLoopSelection,
     type WorkflowResultReference,
     type WorkflowRunResultPage,
     type WorkflowScope,
@@ -46,6 +49,7 @@ export interface WorkflowExecutionRecord {
         outputs?: Record<string, unknown>;
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
+        reporting?: unknown;
     };
     workflow_validation?: WorkflowValidationResult;
     consumed_inputs?: WorkflowConsumedInput[];
@@ -60,6 +64,7 @@ export interface WorkflowExecutionAttemptRecord {
     task_id?: string;
     attempt: number;
     state: string;
+    iteration_path?: WorkflowIterationFrame[];
     started_at?: string;
     completed_at?: string;
     workflow_result?: {
@@ -67,6 +72,7 @@ export interface WorkflowExecutionAttemptRecord {
         outputs?: Record<string, unknown>;
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
+        reporting?: unknown;
     };
     workflow_validation?: WorkflowValidationResult;
     consumed_inputs?: WorkflowConsumedInput[];
@@ -98,6 +104,85 @@ export interface WorkflowExecutionPage<T> {
     items: T[];
     next_cursor: string | null;
     total_count?: number;
+    metadata?: {
+        frozenAt?: string;
+        recordOffset?: number;
+        outputName?: string;
+        validation?: WorkflowValidationResult;
+        coverage?: Record<string, unknown>;
+        admittedLimit?: number;
+        selection?: WorkflowLoopSelection;
+    };
+}
+
+export interface WorkflowLoopItemRecord {
+    item_id: string;
+    index: number;
+    label: string;
+    state: string;
+    iteration_path: WorkflowIterationFrame[];
+    execution_ids?: string[];
+    record_count?: number;
+}
+
+export interface WorkflowContributorRecord extends WorkflowConsumedInput {
+    item_id?: string;
+    item_index?: number;
+    record_offset?: number;
+    record_count?: number;
+    producer_record_offset?: number;
+}
+
+const REPORT_COUNT_FIELDS = [
+    'record_count', 'page_count', 'reduction_levels', 'model_calls', 'checkpoint_replays', 'peak_input_tokens',
+] as const;
+const REPORT_BUDGET_NUMBERS = [
+    'input_tokens', 'input_budget_tokens', 'context_window_tokens', 'max_input_tokens',
+    'max_output_tokens', 'output_reserve_tokens', 'safety_tokens',
+] as const;
+const REPORT_BUDGET_TEXT = ['model_id', 'limit_source', 'limit_status', 'token_estimator', 'decision'] as const;
+
+export type WorkflowReportingBudget =
+    Partial<Record<typeof REPORT_BUDGET_NUMBERS[number], number | null>> &
+    Partial<Record<typeof REPORT_BUDGET_TEXT[number], string | null>>;
+
+export type WorkflowReportingSummary = {
+    mode: 'complete_input' | 'record_pages';
+    original_sources_reanalyzed: false;
+    accepted_subset_only: boolean;
+    context_budget: WorkflowReportingBudget;
+} & Partial<Record<typeof REPORT_COUNT_FIELDS[number], number>>;
+
+export function workflowReportingSummary(value: unknown): WorkflowReportingSummary | null {
+    if (!isRecord(value) || value.mode !== 'complete_input' && value.mode !== 'record_pages' ||
+        value.original_sources_reanalyzed !== false || typeof value.accepted_subset_only !== 'boolean' ||
+        !isRecord(value.context_budget)) return null;
+    const summary: WorkflowReportingSummary = {
+        mode: value.mode,
+        original_sources_reanalyzed: false,
+        accepted_subset_only: value.accepted_subset_only,
+        context_budget: {},
+    };
+    for (const name of REPORT_COUNT_FIELDS) {
+        if (value[name] === undefined) continue;
+        if (typeof value[name] !== 'number' || !Number.isSafeInteger(value[name]) || Number(value[name]) < 0) return null;
+        summary[name] = value[name] as number;
+    }
+    for (const name of REPORT_BUDGET_NUMBERS) {
+        const number = value.context_budget[name];
+        if (number === undefined) continue;
+        if (number !== null && (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 0)) return null;
+        summary.context_budget[name] = number as number | null;
+    }
+    for (const name of REPORT_BUDGET_TEXT) {
+        const text = value.context_budget[name];
+        if (text === undefined) continue;
+        if (text !== null && (typeof text !== 'string' || text.length > 128)) return null;
+        summary.context_budget[name] = text as string | null;
+    }
+    if (summary.context_budget.decision !== undefined && summary.context_budget.decision !== null &&
+        summary.context_budget.decision !== 'full_input') return null;
+    return summary;
 }
 
 function boundedLimit(limit: number, maximum = 100): number {
@@ -112,11 +197,7 @@ function validIdentity(value: unknown): value is string {
 }
 
 function validPath(value: unknown): value is WorkflowIterationFrame[] | undefined {
-    return value === undefined || Array.isArray(value) && value.every((frame) =>
-        isRecord(frame) && validIdentity(frame.loop_id) &&
-        (frame.item_id === undefined || validIdentity(frame.item_id)) &&
-        (frame.index === undefined || typeof frame.index === 'number' && Number.isInteger(frame.index) && frame.index >= 0) &&
-        (frame.iteration === undefined || typeof frame.iteration === 'number' && Number.isInteger(frame.iteration) && frame.iteration >= 1));
+    return value === undefined || validWorkflowIterationPath(value);
 }
 
 function validInputs(value: unknown): boolean {
@@ -140,7 +221,7 @@ function isExecution(value: unknown): value is WorkflowExecutionRecord {
 function isAttempt(value: unknown): value is WorkflowExecutionAttemptRecord {
     return isRecord(value) && validIdentity(value.execution_id) && validIdentity(value.node_id) &&
         validIdentity(value.state) && typeof value.attempt === 'number' &&
-        Number.isInteger(value.attempt) && value.attempt >= 1 && validResultMetadata(value);
+        Number.isInteger(value.attempt) && value.attempt >= 1 && validPath(value.iteration_path) && validResultMetadata(value);
 }
 
 function isDecision(value: unknown): value is WorkflowRuntimeDecisionRecord {
@@ -160,15 +241,16 @@ function pageParams(cursor: string | null, limit: number): URLSearchParams {
 
 function pageFromResponse<T>(
     response: unknown,
-    key: 'executions' | 'attempts' | 'decisions',
+    key: 'executions' | 'attempts' | 'decisions' | 'items' | 'records' | 'contributors',
     isItem: (value: unknown) => value is T,
     identity?: (value: T) => string,
+    limit = 100,
 ): WorkflowExecutionPage<T> {
     if (!isRecord(response)) {
         throw new Error('The workflow execution history returned an unsupported response.');
     }
     const items = response[key];
-    if (!Array.isArray(items) || !items.every(isItem) ||
+    if (!Array.isArray(items) || items.length > limit || !items.every(isItem) ||
         !(response.next_cursor === null || typeof response.next_cursor === 'string' && response.next_cursor.length > 0)) {
         throw new Error('The workflow execution history returned an unsupported response.');
     }
@@ -198,7 +280,7 @@ export async function fetchWorkflowExecutionsPage(
         workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/executions`, pageParams(cursor, limit)),
         signal,
     );
-    return pageFromResponse(response, 'executions', isExecution, (item) => item.execution_id);
+    return pageFromResponse(response, 'executions', isExecution, (item) => item.execution_id, limit);
 }
 
 export async function fetchWorkflowExecutionAttemptsPage(
@@ -221,7 +303,7 @@ export async function fetchWorkflowExecutionAttemptsPage(
     );
     return pageFromResponse(response, 'attempts',
         (value): value is WorkflowExecutionAttemptRecord => isAttempt(value) && value.execution_id === executionId,
-        (item) => `${item.execution_id}:${item.attempt}`);
+        (item) => `${item.execution_id}:${item.attempt}`, limit);
 }
 
 export async function fetchWorkflowExecutionAttemptResult(
@@ -266,5 +348,107 @@ export async function fetchWorkflowRuntimeDecisionsPage(
         workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/decisions`, pageParams(cursor, limit)),
         signal,
     );
-    return pageFromResponse(response, 'decisions', isDecision);
+    return pageFromResponse(response, 'decisions', isDecision, undefined, limit);
+}
+
+export async function fetchWorkflowLoopItemsPage(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    loopExecutionId: string,
+    cursor: string | null,
+    limit = 50,
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionPage<WorkflowLoopItemRecord>> {
+    boundedLimit(limit, 50);
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId,
+        `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(loopExecutionId)}/items`,
+        pageParams(cursor, limit)), signal);
+    if (!isRecord(response) || response.loop_execution_id !== loopExecutionId ||
+        !Number.isInteger(response.total_count) || Number(response.total_count) < 0 ||
+        typeof response.limit !== 'number' || !Number.isInteger(response.limit) || response.limit < 1 || response.limit > 5000 ||
+        response.frozen_at !== null && typeof response.frozen_at !== 'string') {
+        throw new Error('The frozen loop items returned an unsupported response.');
+    }
+    const page = pageFromResponse(response, 'items', (value): value is WorkflowLoopItemRecord => {
+        if (!isRecord(value) || !validIdentity(value.item_id) || typeof value.label !== 'string' ||
+            !validIdentity(value.state) || typeof value.index !== 'number' || !Number.isSafeInteger(value.index) || value.index < 0 ||
+            !validWorkflowIterationPath(value.iteration_path)) return false;
+        const frame = value.iteration_path.at(-1);
+        return frame?.item_id === value.item_id && frame.index === value.index &&
+            (value.execution_ids === undefined || Array.isArray(value.execution_ids) && value.execution_ids.length <= 256 && value.execution_ids.every(validIdentity)) &&
+            (value.record_count === undefined || typeof value.record_count === 'number' && Number.isSafeInteger(value.record_count) && value.record_count >= 0);
+    }, (item) => item.item_id, limit);
+    return { ...page, metadata: {
+        frozenAt: typeof response.frozen_at === 'string' ? response.frozen_at : undefined,
+        admittedLimit: response.limit,
+        selection: workflowLoopSelection(response.selection),
+    } };
+}
+
+export async function fetchWorkflowExecutionRecordsPage(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    executionId: string,
+    attempt: number,
+    output: string,
+    cursor: string | null,
+    limit = 100,
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionPage<unknown>> {
+    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1 || !['records', 'documents'].includes(output)) {
+        throw new Error('The requested execution collection is invalid.');
+    }
+    const params = pageParams(cursor, limit);
+    params.set('output', output);
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId,
+        `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/attempts/${attempt}/records`,
+        params), signal);
+    if (!isRecord(response) || response.output_name !== output ||
+        !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0 ||
+        !Number.isSafeInteger(response.record_offset) || Number(response.record_offset) < 0 ||
+        response.workflow_validation !== undefined && !isRecord(response.workflow_validation) ||
+        response.coverage !== undefined && !isRecord(response.coverage)) {
+        throw new Error('The complete records returned an unsupported response.');
+    }
+    const page = pageFromResponse(response, 'records', (value): value is unknown => value !== undefined, undefined, limit);
+    if (Number(response.record_offset) + page.items.length > Number(response.total_count)) {
+        throw new Error('The complete records returned an invalid ordinal range.');
+    }
+    return { ...page, metadata: {
+        recordOffset: Number(response.record_offset), outputName: output,
+        validation: response.workflow_validation as WorkflowValidationResult | undefined,
+        coverage: response.coverage as Record<string, unknown> | undefined,
+    } };
+}
+
+export async function fetchWorkflowExecutionProvenancePage(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    executionId: string,
+    attempt: number,
+    cursor: string | null,
+    limit = 50,
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionPage<WorkflowContributorRecord>> {
+    boundedLimit(limit, 50);
+    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1) {
+        throw new Error('The requested contributor identity is invalid.');
+    }
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId,
+        `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/attempts/${attempt}/provenance`,
+        pageParams(cursor, limit)), signal);
+    if (!isRecord(response) || !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0) {
+        throw new Error('The contributor page returned an invalid count.');
+    }
+    return pageFromResponse(response, 'contributors', (value): value is WorkflowContributorRecord =>
+        isRecord(value) && isRecord(value.producer) && validIdentity(value.producer.node_id) &&
+        validIdentity(value.producer.execution_id) && Number.isInteger(value.producer.attempt) &&
+        Number(value.producer.attempt) >= 1 && validInputs([value]) &&
+        (value.item_id === undefined || validIdentity(value.item_id)) &&
+        ['item_index', 'record_offset', 'record_count', 'producer_record_offset'].every((key) =>
+            value[key] === undefined || typeof value[key] === 'number' && Number.isSafeInteger(value[key]) && Number(value[key]) >= 0),
+    undefined, limit);
 }

@@ -68,7 +68,7 @@ WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access 
 def _apply_group_document_action_scope(group_id, action_config):
     """Force a normalized document action to stay inside the owning group workspace."""
     action_config = action_config if isinstance(action_config, dict) else {'type': 'none'}
-    if action_config.get('type') == 'none':
+    if action_config.get('type') == 'none' or action_config.get('target_mode') == 'current_item':
         return action_config
 
     action_config['doc_scope'] = 'group'
@@ -488,6 +488,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
                 action_payload,
                 allow_empty_file_sync_targets=allow_empty_file_sync_targets,
                 settings=settings,
+                allow_current_item=workflow_data.get('definition_version') == 3,
             ),
         ),
         default_document_action=document_action,
@@ -658,6 +659,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         workflow['next_run_at'] = None
 
     workflow.update(definition_fields)
+    if workflow.get('definition_version') == 3:
+        from functions_workflow_loop_runners import validate_workflow_loop_runners
+
+        validate_workflow_loop_runners(workflow, actor_user_id=actor_user_id, settings=settings)
     result = save_workflow_definition_record(
         cosmos_group_workflows_container, group_id, workflow, existing_workflow,
     )

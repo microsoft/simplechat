@@ -52,6 +52,7 @@ ALLOWED_UPDATE_KEYS = frozenset({
     "run_record_ref",
     "reference_snapshot_ref",
     "metadata",
+    "loop_progress",
 })
 IDENTITY_KEYS = frozenset({"workflow_id", "user_id", "group_id", "scope_type", "scope_id", "run_id"})
 FORBIDDEN_PAYLOAD_KEY_PARTS = ("token", "secret", "password", "connection")
@@ -439,6 +440,7 @@ def public_projection(control):
         "snapshot_ref": _safe_ref(control.get("snapshot_ref")),
         "phase": control.get("phase"),
         "progress": control.get("progress"),
+        **({"loop_progress": deepcopy(control["loop_progress"])} if control.get("loop_progress") else {}),
         **({
             "limits": {
                 "max_executions": control["max_executions"],
@@ -446,6 +448,7 @@ def public_projection(control):
                 "deadline_at": control["deadline_at"],
                 "deadline_seconds": control["deadline_seconds"],
                 "waits_count": True,
+                **({"max_loop_items": control["loop_policy"]["max_items"]} if control.get("loop_policy") else {}),
             },
         } if control.get("schema_version") == 2 else {}),
         "deleted": bool(control.get("deleted")),
@@ -669,7 +672,7 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
                 raise
         raise RuntimeConflict("etag_conflict", "Workflow runtime changed concurrently. Retry the operation.")
 
-    def initialize(self, *, snapshot_ref, definition_revision, actor_user_id, request_id):
+    def initialize(self, *, snapshot_ref, definition_revision, actor_user_id, request_id, loop_policy=None):
         actor_user_id = _require_id(actor_user_id, "actor_user_id")
         request_id = _require_id(request_id, "request_id")
         timestamp = _iso(self._now())
@@ -708,6 +711,11 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
                 deadline_seconds=compiled["limits"]["deadline_seconds"],
                 deadline_at=_iso(self._now() + timedelta(seconds=compiled["limits"]["deadline_seconds"])),
             )
+            if any(entry["node"]["kind"] == "for_each" for entry in compiled["nodes"].values()):
+                maximum = (loop_policy or {}).get("max_items", 500)
+                if type(maximum) is not int or not 1 <= maximum <= 5000:
+                    raise RuntimeConflict("invalid_loop_policy")
+                control["loop_policy"] = {"version": 1, "max_items": maximum}
         _bounded_json_copy(control)
         try:
             saved = self.container.create_item(body=control)

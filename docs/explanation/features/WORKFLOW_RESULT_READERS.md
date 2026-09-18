@@ -10,6 +10,9 @@ nested access policy is rejected rather than replaced by a different policy,
 and `allow_partial` must be a boolean. Source lineage alone does not label a
 raw-model result as an original Analyze run.
 
+Updated in version: **0.261.117** with execution-scoped complete-record handles
+and incremental collection indexes.
+
 ## Purpose and dependencies
 
 This incremental foundation extends the existing `workflow-result-v1` store.
@@ -93,6 +96,17 @@ semantic record pages.
 Whole-result materialization is bounded and fails explicitly if the result
 needs batching. This first foundation does not include automatic model-facing
 report batching or a general workflow binding/execution engine.
+
+Version **0.261.117** adds `open_workflow_record_input` for exact V3 producer
+identities, frozen item membership, and bounded complete-record reads. The new
+`record_tree` representation keeps its index bounded as well as its payload
+pages; existing inline and `record_pages` outputs remain readable. Manifest
+caches are bounded, and source checks remain independent of storage identity.
+
+[For each and Collect](WORKFLOW_FOR_EACH_COLLECT.md) reuse these readers for
+iteration and aggregate consumption. Explicit saved-record reporting can
+process supported large inputs in batches while retaining originals.
+Inspection-only readers do not grant engine eligibility to invalid results.
 
 ## Validation and integration boundary
 

@@ -13,7 +13,8 @@ from jsonschema.exceptions import SchemaError
 WORKFLOW_DEFINITION_VERSION = 2
 WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
 WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_results"})
-WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval"})
+WORKFLOW_INPUT_PROCESSING_MODES = frozenset({"full", "saved_record_report"})
+WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval", "input_processing"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
@@ -97,6 +98,13 @@ def _unique_identifiers(values, label):
     if len(set(identifiers)) != len(identifiers):
         raise WorkflowDefinitionError(f"{label} must not contain duplicates.")
     return identifiers
+
+
+def normalize_workflow_input_processing(value):
+    """Validate an explicit task policy without supplying an authored default."""
+    if not isinstance(value, str) or value not in WORKFLOW_INPUT_PROCESSING_MODES:
+        raise WorkflowDefinitionError("Task input_processing must be full or saved_record_report.")
+    return value
 
 
 def normalize_workflow_output_schema(schema):
@@ -262,6 +270,11 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     raw_tasks = payload.get("tasks", existing.get("tasks", []))
     if len(raw_tasks) != len(tasks):
         raise WorkflowDefinitionError("Task data does not match the normalized task list.")
+    if version != 3 and any("input_processing" in task for task in raw_tasks):
+        raise WorkflowDefinitionError("Task input_processing requires workflow definition version 3.")
+    actions = [payload.get("document_action"), *(task.get("document_action") for task in raw_tasks)]
+    if version != 3 and any(isinstance(action, dict) and action.get("target_mode") == "current_item" for action in actions):
+        raise WorkflowDefinitionError("Current-item Analyze requires workflow definition version 3.")
     has_flow = "reference_inputs" in payload or "flow" in payload or payload.get("durable_execution") is True or any(
         WORKFLOW_FLOW_TASK_FIELDS.intersection(task) for task in raw_tasks
     )
@@ -279,6 +292,10 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     earlier = {}
     for task, raw in zip(tasks, raw_tasks):
         prepared = dict(task)
+        if "input_processing" in raw:
+            prepared["input_processing"] = normalize_workflow_input_processing(raw["input_processing"])
+        else:
+            prepared.pop("input_processing", None)
         if "output_contract" in raw and raw["output_contract"] is not None:
             prepared["output_contract"] = normalize_workflow_output_contract(raw["output_contract"])
         if version == 3:
@@ -312,7 +329,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         # The compiler shares definition helpers, so import at the normalization boundary.
         from functions_workflow_flow import compile_workflow_flow
 
-        compiled = compile_workflow_flow({**payload, **result})
+        compiled = compile_workflow_flow({**payload, **result, "user_id": str(user_id), "group_id": str(group_id or "")})
         result.update({key: compiled[key] for key in ("flow", "tasks", "limits")})
     elif any(key in payload for key in ("flow", "limits", "max_executions", "deadline_seconds")):
         raise WorkflowDefinitionError("Structured flow and run limits require definition version 3.")

@@ -10,10 +10,21 @@ import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './t
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
 import {
     analyzeWorkflowFlow,
+    enclosingFlowLoops,
+    flowLoops,
+    flowProducers,
+    flowTaskNodeId,
+    flowUnsupportedReason,
     FLOW_ALIAS_PATTERN,
+    FLOW_MAX_DEPTH,
+    MAX_LOOP_ITEMS,
     isFlowBinding,
+    isFlowRegion,
     isLegacyWorkflowBinding,
+    loopSelectionErrors,
+    workflowLoopLimit,
     type WorkflowFlowBinding,
+    type WorkflowLoopIterable,
 } from './workflowFlow';
 
 export type WorkflowScope = { type: 'personal' } | { type: 'group'; groupId: string };
@@ -21,6 +32,7 @@ export type WorkflowRunnerType = 'model' | 'agent';
 export type WorkflowTriggerType = 'manual' | 'interval' | 'file_sync';
 export type WorkflowOutputKind = 'any' | 'text' | 'records' | 'json' | 'document_results';
 export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
+export type WorkflowInputProcessing = 'full' | 'saved_record_report';
 export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
 export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
 export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison';
@@ -38,6 +50,7 @@ export interface WorkflowAgentOption {
     is_global?: boolean;
     is_group?: boolean;
     group_id?: string;
+    loop_eligible?: boolean;
 }
 
 export type WorkflowAgentReference = WorkflowAgentOption;
@@ -47,12 +60,17 @@ export interface WorkflowModelOption {
     model_id: string;
     label: string;
     provider: string;
+    loop_eligible?: boolean;
 }
 
 export interface WorkflowEditorOptions {
     definition_version: 2;
     supported_definition_versions?: number[];
     supported_node_kinds?: string[];
+    supported_iterable_kinds?: string[];
+    supported_query_modes?: string[];
+    supported_binding_sources?: string[];
+    supported_input_processing_modes?: string[];
     flow_limits?: {
         max_nodes: number;
         max_depth: number;
@@ -60,6 +78,7 @@ export interface WorkflowEditorOptions {
         max_predicate_depth: number;
         max_executions: number;
         deadline_seconds: number;
+        max_loop_items?: number;
     };
     can_manage: boolean;
     max_tasks: number;
@@ -68,6 +87,7 @@ export interface WorkflowEditorOptions {
     default_model?: {
         label?: string;
         valid?: boolean;
+        loop_eligible?: boolean;
     };
     scope: { type: 'personal' | 'group'; id?: string };
 }
@@ -122,6 +142,7 @@ export interface WorkflowTask {
     runner: WorkflowTaskRunner;
     document_action?: WorkflowDocumentAction;
     inputs?: (WorkflowInputBinding | WorkflowFlowBinding)[];
+    input_processing?: WorkflowInputProcessing;
     reference_ids?: string[];
     output_contract?: WorkflowOutputContract;
     approval?: WorkflowTaskApproval;
@@ -135,7 +156,8 @@ export interface WorkflowDocumentAction {
     active_group_ids?: string[];
     active_public_workspace_id?: string[];
     document_ids?: string[];
-    target_mode?: 'selected';
+    target_mode?: 'selected' | 'current_item';
+    loop_id?: string;
     analysis_mode?: 'combined' | 'per_document';
     left_document_id?: string;
     right_document_ids?: string[];
@@ -190,9 +212,31 @@ export interface WorkflowRuntimeGate {
 
 export interface WorkflowIterationFrame {
     loop_id: string;
-    item_id?: string;
-    index?: number;
-    iteration?: number;
+    item_id: string;
+    index: number;
+}
+
+export function validWorkflowIterationPath(value: unknown): value is WorkflowIterationFrame[] {
+    return Array.isArray(value) && value.length < FLOW_MAX_DEPTH && value.every((frame) =>
+        isRecord(frame) && Object.keys(frame).every((key) => ['loop_id', 'item_id', 'index'].includes(key)) &&
+        typeof frame.loop_id === 'string' && frame.loop_id === frame.loop_id.trim() &&
+        /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(frame.loop_id) &&
+        typeof frame.item_id === 'string' && frame.item_id.length === 64 && /^[a-f0-9]{64}$/.test(frame.item_id) &&
+        typeof frame.index === 'number' && Number.isSafeInteger(frame.index) && frame.index >= 0 && frame.index < MAX_LOOP_ITEMS) &&
+        new Set(value.map((frame) => frame.loop_id)).size === value.length;
+}
+
+export interface WorkflowLoopProgress {
+    loop_id: string;
+    loop_execution_id: string;
+    total: number;
+    current_index: number | null;
+    completed: number;
+    completed_empty?: number;
+    skipped: number;
+    failed: number;
+    pending: number;
+    limit: number;
 }
 
 export interface WorkflowRuntimeDecision {
@@ -233,6 +277,7 @@ export interface WorkflowRuntimeProjection {
     gate?: WorkflowRuntimeGate;
     memory?: WorkflowRuntimeMemory;
     can_resume?: boolean;
+    loop_progress?: WorkflowLoopProgress;
     limits?: {
         max_executions: number;
         admitted_count: number;
@@ -632,6 +677,12 @@ function normalizeTask(value: unknown, index: number, structured = false): Workf
     const record = isRecord(value) ? value : {};
     const unsupportedInputs = structured && record.inputs !== undefined &&
         (!Array.isArray(record.inputs) || !record.inputs.every(isFlowBinding));
+    const unsupportedConfiguration = structured && (
+        record.type !== undefined && record.type !== 'instructions' ||
+        record.runner !== undefined && (!isRecord(record.runner) || !['inherit', 'model', 'agent'].includes(String(record.runner.type))) ||
+        record.output_contract !== undefined && record.output_contract !== null &&
+            (!isRecord(record.output_contract) || !WORKFLOW_OUTPUT_KINDS.includes(record.output_contract.kind as WorkflowOutputKind))
+    );
     const inputs = structured || (Object.hasOwn(record, 'inputs') && record.inputs !== null)
         ? unsupportedInputs ? [] : normalizeInputs(record.inputs, structured) ?? []
         : undefined;
@@ -649,10 +700,12 @@ function normalizeTask(value: unknown, index: number, structured = false): Workf
         order: index + 1,
         runner: normalizeRunner(record.runner, structured),
         ...(unsupportedInputs ? { unrecognized_inputs: structuredClone(record.inputs) } : {}),
+        ...(unsupportedConfiguration ? { unrecognized_configuration: structuredClone(record) } : {}),
         document_action: isRecord(record.document_action) ? record.document_action as WorkflowDocumentAction : undefined,
         ...(inputs !== undefined ? { inputs } : {}),
         ...(referenceIds !== undefined ? { reference_ids: referenceIds } : {}),
-        ...(outputContract ? { output_contract: outputContract } : {}),
+        ...(outputContract ? { output_contract: structured && isRecord(record.output_contract)
+            ? { ...record.output_contract, ...outputContract } : outputContract } : {}),
         ...(approval ? { approval } : {}),
     };
 }
@@ -789,8 +842,9 @@ export function normalizeWorkflowDefinition(
         },
         tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
         reference_inputs: references,
-        ...(record.definition_version === 3 && tasks.some((task) => Object.hasOwn(task, 'unrecognized_inputs')) ? {
-            editor_readonly_reason: 'This workflow contains input bindings from an unsupported schema. Its original inputs have been retained and editing is disabled.',
+        ...(record.definition_version === 3 && tasks.some((task) =>
+            Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration')) ? {
+            editor_readonly_reason: 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.',
         } : {}),
         ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
@@ -802,7 +856,7 @@ export function workflowForSave(
     original: WorkflowDefinition | null,
     scope: WorkflowScope,
 ): WorkflowDefinition {
-    if (draft.editor_readonly_reason) {
+    if (draft.editor_readonly_reason || flowUnsupportedReason(draft)) {
         throw new Error('This workflow contains unsupported executable fields and cannot be saved by this editor.');
     }
     if (original && original.definition_version >= 3 && draft.definition_version < original.definition_version) {
@@ -882,6 +936,54 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         .sort((left, right) => left.localeCompare(right));
 }
 
+export function workflowTaskHasLocalRunner(
+    workflow: WorkflowDefinition,
+    task: WorkflowTask,
+    options: WorkflowEditorOptions,
+): boolean {
+    const runner = task.runner.type === 'inherit' ? {
+        type: workflow.runner_type, selected_agent: workflow.selected_agent,
+        model_endpoint_id: workflow.model_endpoint_id, model_id: workflow.model_id,
+    } : task.runner;
+    if (runner.type === 'agent') {
+        return options.agents.find((agent) => workflowAgentKey(agent) === workflowAgentKey(runner.selected_agent))?.loop_eligible === true;
+    }
+    const eligible = runner.model_endpoint_id || runner.model_id
+        ? options.models.find((model) => model.endpoint_id === runner.model_endpoint_id && model.model_id === runner.model_id)?.loop_eligible
+        : options.default_model?.loop_eligible;
+    return eligible !== false;
+}
+
+export function workflowInputProcessingErrors(
+    workflow: WorkflowDefinition,
+    task: WorkflowTask,
+    options: WorkflowEditorOptions,
+): string[] {
+    const mode = task.input_processing;
+    if (mode === undefined) return [];
+    const label = task.name || 'Task';
+    if (!['full', 'saved_record_report'].includes(mode)) return [`${label}: this large-input processing mode is not supported.`];
+    const errors: string[] = [];
+    if (workflow.definition_version !== 3) errors.push(`${label}: large saved input processing choices require structured definition v3.`);
+    if (!options.supported_input_processing_modes?.includes(mode)) errors.push(`${label}: this server does not support the selected large-input processing mode.`);
+    if (mode === 'full') return errors;
+    if (task.document_action?.type !== 'none') errors.push(`${label}: saved-record reports require No document action; they explain saved data rather than reanalyzing sources.`);
+    if (task.publication) errors.push(`${label}: saved-record reports cannot publish artifacts. Use a separate publication task.`);
+    if (task.output_contract?.kind !== 'text') errors.push(`${label}: saved-record reports require a text output contract.`);
+    const producers = flowProducers(workflow);
+    const hasCollection = (task.inputs ?? []).some((binding) => {
+        if (!isFlowBinding(binding) || binding.source.kind !== 'node_output') return false;
+        const source = binding.source;
+        return producers.find((producer) => producer.id === source.node_id)?.outputs.some((output) =>
+            output.name === source.output && (output.kinds ?? [output.kind]).every((kind) => ['records', 'document_results'].includes(kind)));
+    });
+    if (!hasCollection) errors.push(`${label}: saved-record reports require at least one saved records or document-results node-output input.`);
+    if (!workflowTaskHasLocalRunner(workflow, task, options)) {
+        errors.push(`${label}: saved-record reports require a locally metered model or local agent; hosted runners are not supported.`);
+    }
+    return errors;
+}
+
 export function workflowValidationErrors(
     draft: WorkflowDefinition,
     options: WorkflowEditorOptions,
@@ -898,6 +1000,35 @@ export function workflowValidationErrors(
     }
     if (draft.definition_version === 3) {
         errors.push(...analyzeWorkflowFlow(draft).errors);
+        const unsupported = flowUnsupportedReason(draft, options);
+        if (unsupported) errors.push(unsupported);
+        flowLoops(draft).forEach(({ node }) => {
+            errors.push(...loopSelectionErrors(node, workflowLoopLimit(options)));
+            const sources = node.iterable.kind === 'documents' ? node.iterable.documents
+                : node.iterable.kind === 'workspace_query' ? node.iterable.scopes : [];
+            if (options.scope.type === 'group' && sources.some((source) =>
+                source.scope_type !== 'group' || source.scope_id !== options.scope.id)) {
+                errors.push('Group workflow loops can select only documents in this explicit group workspace.');
+            }
+        });
+        const checkCollects = (region: typeof draft.flow) => {
+            if (!isFlowRegion(region)) return;
+            region.nodes.forEach((node) => {
+                if (node.kind === 'collect') {
+                    const contract = node.output_contract;
+                    if (contract.schema) errors.push(...workflowSchemaErrors(contract.schema).map((error) => `Collect ${node.id}: ${error}`));
+                    if (contract.expected_count !== undefined && (!Number.isSafeInteger(contract.expected_count) || contract.expected_count < 0)) {
+                        errors.push('Collect expected count must be a nonnegative whole number.');
+                    }
+                    if (contract.identity_field && contract.kind !== 'records') errors.push('Collect business-key uniqueness is available only for records.');
+                } else if (node.kind === 'for_each') checkCollects(node.body);
+                else if (node.kind === 'if') {
+                    checkCollects(node.then);
+                    checkCollects(node.else);
+                }
+            });
+        };
+        checkCollects(draft.flow);
     }
     if (draft.trigger_type === 'interval' && draft.schedule.value < 1) {
         errors.push('Interval workflows need a positive schedule value.');
@@ -926,6 +1057,7 @@ export function workflowValidationErrors(
     }
     const taskIds = new Map(draft.tasks.map((task, index) => [task.id, index]));
     draft.tasks.forEach((task, index) => {
+        errors.push(...workflowInputProcessingErrors(draft, task, options));
         if (!task.name.trim()) {
             errors.push(`Task ${index + 1} needs a name.`);
         }
@@ -954,8 +1086,16 @@ export function workflowValidationErrors(
         if (action && !['none', 'search', 'analyze', 'comparison'].includes(String(action.type))) {
             errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
         }
-        if (action?.type === 'analyze' && (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
+        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for Analyze.`);
+        }
+        if (action?.target_mode === 'current_item' && draft.definition_version !== 3) {
+            errors.push('Current-document Analyze requires structured control flow.');
+        }
+        if (draft.definition_version === 3 && enclosingFlowLoops(draft, flowTaskNodeId(draft, task.id)).length && !task.publication) {
+            if (!workflowTaskHasLocalRunner(draft, task, options)) {
+                errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each.`);
+            }
         }
         if (action?.type === 'search' && action.doc_scope !== 'all' &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
@@ -1081,7 +1221,117 @@ export async function fetchWorkflowEditorOptions(
         !response.scope || !['personal', 'group'].includes(String(response.scope.type))) {
         throw new Error('The workflow editor options returned an invalid response.');
     }
+    const ceiling = response.flow_limits?.max_loop_items;
+    if (ceiling !== undefined && (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > 5000) ||
+        [response.supported_node_kinds, response.supported_iterable_kinds, response.supported_query_modes, response.supported_binding_sources,
+            response.supported_input_processing_modes]
+            .some((values) => values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== 'string'))) ||
+        [...response.agents, ...response.models, response.default_model ?? {}]
+            .some((runner) => !isRecord(runner) || runner.loop_eligible !== undefined && typeof runner.loop_eligible !== 'boolean')) {
+        throw new Error('The workflow editor returned invalid loop capabilities or limits.');
+    }
     return response;
+}
+
+export interface WorkflowLoopSelection {
+    query_mode?: string;
+    exhaustive?: boolean;
+    ranking?: string;
+    candidate_limitations?: string[];
+    candidate_window?: number;
+    semantic_rerank_window?: number;
+    candidate_expansion?: string;
+    candidate_expansion_rounds?: number;
+}
+
+export function workflowLoopSelection(value: unknown): WorkflowLoopSelection | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (!isRecord(value)) throw new Error('The loop selection details returned an unsupported response.');
+    const selection: WorkflowLoopSelection = {};
+    for (const name of ['query_mode', 'ranking', 'candidate_expansion'] as const) {
+        if (value[name] === undefined) continue;
+        if (typeof value[name] !== 'string' || !value[name].trim() || value[name].length > 128) {
+            throw new Error('The loop selection details returned an unsupported response.');
+        }
+        selection[name] = value[name] as string;
+    }
+    for (const name of ['candidate_window', 'semantic_rerank_window', 'candidate_expansion_rounds'] as const) {
+        if (value[name] === undefined) continue;
+        if (typeof value[name] !== 'number' || !Number.isSafeInteger(value[name]) || Number(value[name]) < 0) {
+            throw new Error('The loop selection details returned an unsupported response.');
+        }
+        selection[name] = value[name] as number;
+    }
+    if (value.exhaustive !== undefined) {
+        if (typeof value.exhaustive !== 'boolean') throw new Error('The loop selection details returned an unsupported response.');
+        selection.exhaustive = value.exhaustive;
+    }
+    if (value.candidate_limitations !== undefined) {
+        if (!Array.isArray(value.candidate_limitations) || value.candidate_limitations.length > 100 ||
+            !value.candidate_limitations.every((item) => typeof item === 'string' && item.length <= 2000)) {
+            throw new Error('The loop selection details returned unsupported candidate limitations.');
+        }
+        selection.candidate_limitations = value.candidate_limitations as string[];
+    }
+    return selection;
+}
+
+export interface WorkflowLoopPreview {
+    count: number;
+    count_exact: boolean;
+    limit: number;
+    within_limit: boolean;
+    items: Record<string, unknown>[];
+    error_message?: string;
+    error_code?: string;
+    selection?: WorkflowLoopSelection;
+}
+
+function isWorkflowLoopPreview(response: unknown, maxItems: number): response is WorkflowLoopPreview {
+    return isRecord(response) && typeof response.count === 'number' && Number.isSafeInteger(response.count) && response.count >= 0 &&
+        typeof response.limit === 'number' && Number.isInteger(response.limit) && response.limit >= 1 && response.limit <= MAX_LOOP_ITEMS &&
+        response.limit <= maxItems && typeof response.count_exact === 'boolean' && typeof response.within_limit === 'boolean' &&
+        (!response.within_limit || response.count_exact && response.count <= response.limit) &&
+        (!response.count_exact || response.within_limit === (response.count <= response.limit)) &&
+        Array.isArray(response.items) && response.items.length <= 50 && response.items.every(isRecord);
+}
+
+export async function previewWorkflowLoopInput(
+    scope: WorkflowScope,
+    iterable: WorkflowLoopIterable,
+    maxItems: number,
+    signal?: AbortSignal,
+): Promise<WorkflowLoopPreview> {
+    if (iterable.kind === 'input') throw new Error('Saved collection counts are known only when the loop starts.');
+    try {
+        const response = await api.post<unknown>(workflowUrl(scope, undefined, '/loop-inputs/preview'), {
+            iterable, max_items: maxItems,
+        }, signal);
+        if (!isWorkflowLoopPreview(response, maxItems)) {
+            throw new Error('The loop preview returned an invalid count or item page. No items have been admitted.');
+        }
+        return {
+            count: response.count, count_exact: response.count_exact, limit: response.limit,
+            within_limit: response.within_limit, items: response.items,
+            selection: workflowLoopSelection(response.selection),
+        };
+    } catch (cause: unknown) {
+        if (cause instanceof ApiError && cause.status === 422 && isRecord(cause.payload)) {
+            const payload = cause.payload;
+            const rejected = {
+                count: payload.count, count_exact: payload.count_exact, limit: payload.limit,
+                within_limit: payload.within_limit, items: [],
+            };
+            if (isWorkflowLoopPreview(rejected, maxItems) && !rejected.within_limit && rejected.count > rejected.limit) {
+                return {
+                    ...rejected, error_message: cause.message,
+                    ...(typeof payload.code === 'string' ? { error_code: payload.code } : {}),
+                    selection: workflowLoopSelection(payload.selection),
+                };
+            }
+        }
+        throw cause;
+    }
 }
 
 export async function fetchScopedWorkflows(
@@ -1155,44 +1405,67 @@ export function fetchWorkflowTaskResult(
     return api.get<WorkflowRunResultPage>(withScopeQuery(path, scope, params), signal);
 }
 
-export function fetchWorkflowRuntime(
+function checkedRuntimeResponse(response: WorkflowRuntimeResponse): WorkflowRuntimeResponse {
+    const paths = [
+        response?.runtime?.gate?.iteration_path,
+        ...(response?.runtime?.memory?.decisions ?? []).map((decision) => decision.iteration_path),
+    ];
+    if (!response?.runtime || paths.some((path) => path !== undefined && !validWorkflowIterationPath(path))) {
+        throw new Error('The workflow runtime contains an unsupported iteration identity. Reload before making a decision.');
+    }
+    const progress = response.runtime.loop_progress;
+    if (progress && (
+        typeof progress.loop_id !== 'string' || !progress.loop_id.trim() ||
+        typeof progress.loop_execution_id !== 'string' || !progress.loop_execution_id.trim() ||
+        ['total', 'completed', 'skipped', 'failed', 'pending', 'limit',
+            ...(progress.completed_empty !== undefined ? ['completed_empty'] : [])].some((key) => {
+            const value = progress[key as keyof WorkflowLoopProgress];
+            return typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0;
+        }) || progress.limit < 1 || progress.limit > 5000 ||
+        progress.current_index !== null && (!Number.isSafeInteger(progress.current_index) || progress.current_index < 0))) {
+        throw new Error('The workflow runtime returned invalid frozen loop progress.');
+    }
+    return response;
+}
+
+export async function fetchWorkflowRuntime(
     scope: WorkflowScope,
     workflowId: string,
     runId: string,
     signal?: AbortSignal,
 ) {
-    return api.get<WorkflowRuntimeResponse>(
+    return checkedRuntimeResponse(await api.get<WorkflowRuntimeResponse>(
         workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime`),
         signal,
-    );
+    ));
 }
 
-export function decideWorkflowRuntime(
+export async function decideWorkflowRuntime(
     scope: WorkflowScope,
     workflowId: string,
     runId: string,
     request: WorkflowRuntimeDecisionRequest,
     signal?: AbortSignal,
 ) {
-    return api.post<WorkflowRuntimeResponse>(
+    return checkedRuntimeResponse(await api.post<WorkflowRuntimeResponse>(
         workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/decision`),
         request,
         signal,
-    );
+    ));
 }
 
-export function resumeWorkflowRuntime(
+export async function resumeWorkflowRuntime(
     scope: WorkflowScope,
     workflowId: string,
     runId: string,
     request: WorkflowRuntimeResumeRequest,
     signal?: AbortSignal,
 ) {
-    return api.post<WorkflowRuntimeResponse>(
+    return checkedRuntimeResponse(await api.post<WorkflowRuntimeResponse>(
         workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/resume`),
         request,
         signal,
-    );
+    ));
 }
 
 export function documentId(document: WorkspaceDocument): string {

@@ -2,6 +2,7 @@
 """Versioned workflow task outputs, distinct from chat presentation."""
 
 import json
+from collections import OrderedDict
 import re
 from collections.abc import Mapping
 
@@ -169,10 +170,13 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
         if execution is None or execution.node.get("task_id") != task.get("id"):
             raise ValueError("A v3 task result requires its admitted execution.")
         selectors = execution.selectors(attempt=attempt_count)
-        return _build_task_result(result, workflow_node_identity(
+        envelope = _build_task_result(result, workflow_node_identity(
             workflow, run_id, selectors["node_id"], selectors["execution_id"], attempt_count,
-            task_id=task["id"], iteration_path=[],
+            task_id=task["id"], iteration_path=selectors["iteration_path"],
         ), "workflow-result-v2")
+        if selectors["iteration_path"]:
+            envelope["iteration_inputs"] = _json_copy(execution.iteration_inputs)
+        return envelope
     return _build_task_result(
         result,
         {
@@ -487,13 +491,16 @@ def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result
             ],
             partition_key=run_id,
         )
-    cache = {}
+    cache = OrderedDict()
 
     def cached_load(bound_workflow, bound_run_id, task_id, reference, **selectors):
         key = (bound_run_id, task_id, json.dumps(reference, sort_keys=True), json.dumps(selectors, sort_keys=True))
         if key not in cache:
             loader = load_workflow_node_result if selectors and load_result is load_workflow_task_result else load_result
             cache[key] = loader(bound_workflow, bound_run_id, task_id, reference, **selectors)
+            if len(cache) > 8:
+                cache.popitem(last=False)
+        cache.move_to_end(key)
         return cache[key]
 
     for item in result_items:
@@ -682,11 +689,21 @@ def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
     output = (manifest.get("outputs") or {}).get(name)
     if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence", "document_results"}:
         raise ValueError("The requested output is not a record collection.")
+    if output.get("storage_kind") == "record_tree":
+        from functions_workflow_collections import CollectionSizeError, read_record_tree
+
+        try:
+            return read_record_tree(manifest, name, load_section, offset=offset, limit=limit)
+        except CollectionSizeError as exc:
+            raise WorkflowResultNotReadyError(
+                "The complete saved input requires bounded processing. Its original data is retained; "
+                "use a supported saved-record reporting task or a safely partitioned input.",
+            ) from exc
     if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or limit < 1)):
         raise ValueError("The record range is invalid.")
     reference = output.get("result_ref") or {}
     if reference.get("size_bytes", 0) > ANALYSIS_MATERIALIZATION_BYTES:
-        raise ValueError("This result requires a bounded record reader rather than whole-result materialization.")
+        raise WorkflowResultNotReadyError("This result requires a bounded record reader rather than whole-result materialization. The original data is retained.")
 
     def load_checked(ref, output_name, kind):
         section = load_section(ref)
@@ -733,7 +750,7 @@ def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
     if expected_offset != index["record_count"] or offset > expected_offset:
         raise ValueError("The saved record index count does not match.")
     if limit is None and total_bytes > ANALYSIS_MATERIALIZATION_BYTES:
-        raise ValueError("The complete analysis requires explicit record batches; it was not truncated.")
+        raise WorkflowResultNotReadyError("The complete analysis requires explicit record batches; it was not truncated.")
     end = min(expected_offset, offset + limit) if limit is not None else expected_offset
     records = []
     for page in pages:
@@ -742,7 +759,7 @@ def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
         if page_end <= offset or start >= end:
             continue
         if page["result_ref"]["size_bytes"] > ANALYSIS_MATERIALIZATION_BYTES:
-            raise ValueError("A saved record is too large to materialize safely.")
+            raise WorkflowResultNotReadyError("A saved record is too large to materialize safely. The original data is retained.")
         rows = load_checked(page["result_ref"], page["output_name"], output["kind"])
         if not isinstance(rows, list) or len(rows) != page["count"] or any(not isinstance(row, Mapping) for row in rows):
             raise ValueError("The saved record page count or shape is invalid.")
@@ -884,6 +901,32 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
     return prompt, consumed
 
 
+def _workflow_reporting_summary(consumption):
+    if not isinstance(consumption, Mapping) or consumption.get("input_kind") != "workflow_records":
+        return None
+    result = {
+        "mode": consumption.get("mode"),
+        "original_sources_reanalyzed": False,
+        "accepted_subset_only": (consumption.get("deterministic_values") or {}).get("accepted_subset_only") is True,
+    }
+    for name in ("record_count", "page_count", "reduction_levels", "model_calls", "checkpoint_replays", "peak_input_tokens"):
+        if type(consumption.get(name)) is int and consumption[name] >= 0:
+            result[name] = consumption[name]
+    budgets = consumption.get("context_budgets") or []
+    budget = budgets[-1] if budgets and isinstance(budgets[-1], Mapping) else {}
+    numeric = (
+        "input_tokens", "input_budget_tokens", "context_window_tokens", "max_input_tokens",
+        "max_output_tokens", "output_reserve_tokens", "safety_tokens",
+    )
+    result["context_budget"] = {
+        name: budget[name] for name in numeric if type(budget.get(name)) is int and budget[name] >= 0
+    }
+    for name in ("model_id", "limit_source", "limit_status", "token_estimator", "decision"):
+        if isinstance(budget.get(name), str):
+            result["context_budget"][name] = budget[name][:128]
+    return result
+
+
 def workflow_result_summary(envelope, reference):
     """Small, non-secret history projection; full outputs stay in the result store."""
     summary = {
@@ -899,8 +942,18 @@ def workflow_result_summary(envelope, reference):
     }
     if envelope.get("contract_version") == "workflow-result-v2":
         summary["producer"] = _json_copy(envelope["identity"])
+        if envelope.get("iteration_inputs"):
+            summary["iteration_inputs"] = _json_copy(envelope["iteration_inputs"])
         if envelope.get("consumed_inputs_index"):
             summary["consumed_input_count"] = envelope["consumed_inputs_index"]["record_count"]
+        if envelope.get("coverage"):
+            summary["coverage"] = {
+                key: value for key, value in envelope["coverage"].items()
+                if isinstance(value, (str, int, bool)) or value is None
+            }
+        reporting = _workflow_reporting_summary(envelope.get("analysis_consumption"))
+        if reporting is not None:
+            summary["reporting"] = reporting
     if envelope.get("analysis_access") or any(
         item.get("analysis_result") for item in envelope.get("consumed_inputs") or []
         if isinstance(item, Mapping)

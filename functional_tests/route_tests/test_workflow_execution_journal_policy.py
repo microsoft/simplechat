@@ -1,7 +1,7 @@
 # test_workflow_execution_journal_policy.py
 """
 Structured workflow execution API policy and exact result regression coverage.
-Version: 0.261.116
+Version: 0.261.117
 Implemented in: 0.261.116
 
 Production route helpers and journal readers execute with isolated Flask request
@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 # Production and shared fixtures follow the worktree import setup.
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution_history import workflow_execution_history, workflow_execution_result_page
+from functions_workflow_node_results import WorkflowRecordPageTooLarge
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError
 from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 from test_workflow_structured_flow import runtime, run_flow
@@ -33,7 +34,7 @@ from test_workflow_structured_flow import runtime, run_flow
 ROUTES = ROOT / "application" / "single_app" / "route_backend_workflows.py"
 
 
-def test_all_eight_execution_routes_retain_blueprint_and_swagger_security():
+def test_all_execution_routes_retain_blueprint_and_swagger_security():
     tree = ast.parse(ROUTES.read_text(encoding="utf-8"))
     registrar = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "register_route_backend_workflows")
     routes = []
@@ -52,7 +53,7 @@ def test_all_eight_execution_routes_retain_blueprint_and_swagger_security():
         assert any("enabled_required" in value for value in decorators)
         if "/user/" in path:
             assert "workflow_user_required" in decorators
-    assert len(routes) == 8
+    assert len(routes) == 14
 
 
 @pytest.fixture
@@ -79,6 +80,7 @@ def api(runtime, monkeypatch):
         "WorkflowRuntimeConflict": WorkflowRuntimeConflict, "RuntimeUnavailable": RuntimeUnavailable,
         "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "WorkflowResultStorageUnavailableError": WorkflowResultStorageUnavailableError,
+        "WorkflowRecordPageTooLarge": WorkflowRecordPageTooLarge,
         "AzureError": AzureError, "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "log_event": lambda *args, **kwargs: None,
     }

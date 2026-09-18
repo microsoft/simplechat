@@ -59,6 +59,7 @@ visible to its members. Turning one on does not turn on the other.
 | Assigned Groups | The groups that may use group workflows while assignment is required. Ignored when it is not. | Empty list | `group_workflow_allowed_group_ids` |
 | Workflow Agent Action Limit | Caps the automatic tool and action calls an agent may make in one workflow run, which is what stops a run from looping. Large document sets need a higher cap. Values above 100 are capacity-sensitive: enable Cosmos DB throughput automation and watch Azure OpenAI throttling, App Service CPU and memory, and downstream latency. | 60 | `workflow_max_auto_invoke_attempts` |
 | Workflow Task Limit | Caps the ordered instruction tasks a single workflow may contain. Supported range is 1–100. | 50 | `workflow_max_tasks` |
+| Workflow Loop Item Limit | Bounds the actual per-item body visits in a For each block, not the number of documents that may be searched. A collection above the effective limit must be narrowed before its body can run; it is never silently trimmed. | 500 | `workflow_max_loop_items`; supported range 1-5,000; applies to new runs |
 
 The action and task limits apply to personal and group runs alike, so they stay
 in effect whichever capability is enabled.
@@ -99,6 +100,26 @@ Conditions and joins are deterministic engine operations. Model input limits
 still come from the selected catalog/deployment, not the admission limit.
 See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for the supported If/else, Run when, and forward-routing scope.
+
+### Serial loop inputs
+
+Version **0.261.117** adds serial For each and exact Collect. Users can choose
+documents, complete saved records, or a workspace query frozen when the loop
+starts. Query authoring distinguishes exhaustive metadata/keyword matches from
+an explicit best-N relevance selection.
+
+The loop-item setting is an administrator ceiling; authors can choose a lower
+maximum. Existing runs retain the ceiling captured when admitted, so changing
+the setting does not alter an active run's frozen membership. A larger item
+allowance does not raise the 5,000 execution-admission maximum, and a multi-task
+body may reach that budget before its item allowance.
+
+Loop tasks and explicit saved-record reporting require locally metered runners.
+Per-task context limits still come from the model catalog and deployment. There
+is no cumulative run-token/spend cap in this slice.
+
+See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
+for retained-data behavior, partial coverage, and inspection.
 
 ## Common tasks
 
