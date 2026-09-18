@@ -1,7 +1,7 @@
 // WorkflowRunHistory.tsx
 // Workflow run history and task-result inspection for V2 workflows.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
 import { WorkflowExecutionHistory } from './WorkflowExecutionHistory';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
@@ -309,6 +309,10 @@ export function WorkflowRunHistory({
         'Failed to load run history.',
     );
     const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+    const [unavailableRun, setUnavailableRun] = useState<{ id: string | null; status: number } | null>(null);
+    const onAccessLost = useCallback((status: number) => {
+        setUnavailableRun({ id: expandedRunId, status });
+    }, [expandedRunId]);
     const shown = useMemo(() => items.slice(0, 10), [items]);
 
     useEffect(() => {
@@ -352,7 +356,10 @@ export function WorkflowRunHistory({
                             <RowAction
                                 icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                                 label={expanded ? 'Hide run task results' : 'Show run task results'}
-                                onClick={() => setExpandedRunId(expanded ? null : runId)}
+                                onClick={() => {
+                                    setExpandedRunId(expanded ? null : runId);
+                                    setUnavailableRun(null);
+                                }}
                             />
                             <Pill tone={statusTone(status)}>{status}</Pill>
                             <span className="min-w-0 flex-1 truncate">
@@ -365,7 +372,14 @@ export function WorkflowRunHistory({
                             <Pill tone={validationTone(run.workflow_validation)}>{validation}</Pill>
                         </p> : null}
                         {expanded ? (
-                            unsupportedDefinitionVersion ? (
+                            unavailableRun?.id === runId ? (
+                                <p role="alert" className="px-3 pb-3 text-xs text-danger">
+                                    {unavailableRun.status === 403
+                                        ? 'You no longer have access to this workflow run.'
+                                        : 'This workflow run history is no longer available.'}
+                                    {' '}Cached run details were removed. Reopen this run to check access again.
+                                </p>
+                            ) : unsupportedDefinitionVersion ? (
                                 <p role="alert" className="px-3 pb-3 text-xs text-warn">
                                     This run uses workflow definition v{String(definitionVersion)}, which this inspector does not support yet.
                                 </p>
@@ -377,13 +391,15 @@ export function WorkflowRunHistory({
                                         runId={runId}
                                         durable={run.durable_execution === true}
                                         structuredRun={isStructuredRun}
+                                        onAccessLost={isStructuredRun ? onAccessLost : undefined}
                                         onRuntimeChanged={() => {
                                             void refresh();
                                             onWorkflowRefresh?.();
                                         }}
                                     />
                                     {isStructuredRun ? (
-                                        <WorkflowExecutionHistory key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`} scope={scope} workflowId={workflowId} runId={runId} />
+                                        <WorkflowExecutionHistory key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`}
+                                            scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
                                     ) : (
                                         <RunItems scope={scope} workflowId={workflowId} runId={runId} />
                                     )}

@@ -53,6 +53,7 @@ from functions_workflow_readiness import (
     WorkflowOutputUnavailable,
     pending_workflow_output_references,
     reconcile_workflow_pending_output,
+    reconcile_workflow_publication_output,
 )
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 
@@ -88,6 +89,7 @@ def workflow_result_helpers():
         "WorkflowOutputUnavailable": WorkflowOutputUnavailable,
         "pending_workflow_output_references": pending_workflow_output_references,
         "reconcile_workflow_pending_output": reconcile_workflow_pending_output,
+        "reconcile_workflow_publication_output": reconcile_workflow_publication_output,
         "attach_workflow_reference_sources": attach_workflow_reference_sources,
         "load_workflow_reference": load_workflow_reference,
         "resolve_workflow_task_inputs": resolve_workflow_task_inputs,

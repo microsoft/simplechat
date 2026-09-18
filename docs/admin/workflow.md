@@ -123,6 +123,23 @@ for retained-data behavior, partial coverage, and inspection.
 
 ## Common tasks
 
+### Publication completion
+
+Version **0.261.118** lets authors of version-3 durable workflows choose
+Submitted, Approved, or Indexed and ready for an existing native Analyze
+artifact. This is a task option, not another administrator toggle. Existing
+workflows without a policy retain their prior behavior.
+
+Publication waits use the existing scheduler and lease. They keep the run
+active and count against its existing elapsed deadline. Unmet policies cannot
+be skipped with continue-on-error; neither Resume nor a changed administrator
+limit resets the active run's admitted bounds. Destination approval and content
+screening retain their existing permissions.
+
+See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md).
+
+### Administration examples
+
 1. **Pilot group workflows with one team.** Enable Group Workflows, turn on
    Require Group Assignment to Use Workflow, then assign only the pilot group.
    Outcome to verify: members of the pilot group see the Workflows section in
