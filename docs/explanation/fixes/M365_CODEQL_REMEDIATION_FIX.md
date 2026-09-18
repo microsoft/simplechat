@@ -98,7 +98,28 @@ No query is disabled and no blanket suppression is added. A maintainer may
 individually dismiss these documented false positives; removing the facade
 export or adding an incomplete `__all__` would be an incompatible workaround.
 
+`ConversationMemoryStore` receives a concrete transport; the Protocol methods
+are not storage implementations. `AzureMemoryBlobTransport` supplies the actual
+bounded reads and conditional writes/deletes. The exception export is also used
+by production code: `functions_m365_retrieval.py` imports it through the facade
+to classify unavailable-storage failures.
+
+All four corresponding PR review threads were individually answered and resolved:
+[read](https://github.com/microsoft/simplechat/pull/1497#discussion_r4047670645),
+[put](https://github.com/microsoft/simplechat/pull/1497#discussion_r4047670677),
+[delete](https://github.com/microsoft/simplechat/pull/1497#discussion_r4047670675),
+and [exception export](https://github.com/microsoft/simplechat/pull/1497#discussion_r4047670678).
+Resolving these review threads does not dismiss the underlying scanning alerts;
+the four intentional notes remain visible. No runtime change was needed.
+
 ## Validation
+
+The [CodeQL run for implementation head `c23e32c1`](https://github.com/microsoft/simplechat/actions/runs/35355678535)
+passed for Python, JavaScript/TypeScript, and Actions. The
+[PR check](https://github.com/microsoft/simplechat/runs/105634610665)
+decreased from 31 findings to the four intentional notes above, with no remaining
+PR security or error findings. This confirms the 27 planned remediations without
+changing or suppressing the four public-interface constructs.
 
 Regression coverage includes:
 
@@ -121,6 +142,9 @@ Regression coverage includes:
 The expanded offline run passed **606 tests and 96 subtests**. The focused
 optimized-Python run passed **161 tests and 87 subtests**. Fresh-process import
 checks passed in both modes; route-policy and documentation checks also passed.
+The targeted storage/provider suites were rerun for the remaining review
+comments: **188 tests passed**, preserving the concrete transport behavior and
+the public exception import.
 
 Three unchanged tests in `test_conversation_context_grounding.py` were excluded
 from the final expanded run only after reproducing their same failures against
