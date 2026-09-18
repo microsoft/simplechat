@@ -90,6 +90,25 @@ or deadline limit cannot be cleared by a normal Resume, and changing source
 data cannot silently choose a different branch. See
 [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
 
+## Inspect loop progress
+
+For each runs introduced in **0.261.117** retain their frozen item count, order,
+and keys. Inspect an item and its exact execution/attempt rather than relying on
+the repeated task name. An approval or recovery confirmation for one item does
+not apply to another.
+
+Use the paged item, record, and contributor views to inspect a large run.
+Successful empty results, intentional skips, partial coverage, failures, and
+pending work are different outcomes. Collect retains records exactly; an
+accepted subset remains visibly partial.
+
+Resume reuses successful siblings and the saved item cursor. It does not rerun
+a workspace query or adopt a newly changed administrator ceiling. An
+over-limit selection must be narrowed for a new run; a paused unsafe large-input
+task retains its data rather than receiving a truncated substitute.
+
+See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

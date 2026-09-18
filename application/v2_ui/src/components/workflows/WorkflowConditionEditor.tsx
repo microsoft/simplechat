@@ -7,15 +7,17 @@ import { GlassButton } from '../ui/primitives';
 import {
     analyzeWorkflowFlow,
     defaultFlowPredicate,
+    enclosingFlowLoops,
     flowBinding,
+    flowBindingSchema,
     flowProducers,
+    loopItemBinding,
     FLOW_ALIAS_PATTERN,
     FLOW_COMPARISONS,
     FLOW_MAX_PREDICATE_DEPTH,
     FLOW_OUTPUT_KINDS,
     predicateSummary,
     scalarSchemaFields,
-    type FlowProducer,
     type WorkflowFlowBinding,
     type WorkflowOperand,
     type WorkflowPredicate,
@@ -33,6 +35,7 @@ export function WorkflowFlowInputs({
     onChange,
     label = 'Named inputs',
     availableIds,
+    allowLoopItems = true,
 }: {
     workflow: WorkflowDefinition;
     nodeId: string;
@@ -40,20 +43,22 @@ export function WorkflowFlowInputs({
     onChange: (bindings: WorkflowFlowBinding[]) => void;
     label?: string;
     availableIds?: Set<string>;
+    allowLoopItems?: boolean;
 }) {
     const available = availableIds ?? analyzeWorkflowFlow(workflow).available.get(nodeId) ?? new Set<string>();
     const producers = flowProducers(workflow).filter((producer) => available.has(producer.id));
+    const loops = allowLoopItems ? enclosingFlowLoops(workflow, nodeId) : [];
     const update = (index: number, binding: WorkflowFlowBinding) =>
         onChange(bindings.map((current, position) => position === index ? binding : current));
     const add = () => {
         const producer = producers[0];
-        if (!producer) return;
+        if (!producer && !loops.length) return;
         let number = 1;
         while (bindings.some((binding) => binding.name === `input${number}`)) number++;
-        onChange([...bindings, {
+        onChange([...bindings, producer ? {
             ...flowBinding(`input${number}`, producer.id, producer.outputs[0]?.name ?? 'authoritative'),
             expected_kind: producer.outputs[0]?.kind ?? 'any',
-        }]);
+        } : loopItemBinding(`input${number}`, loops[loops.length - 1].id)]);
     };
     return (
         <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
@@ -62,7 +67,8 @@ export function WorkflowFlowInputs({
                 Only these named final outputs are consumed. A skipped producer never falls back to another task.
             </p>
             {bindings.map((binding, index) => {
-                const producer = producers.find((item) => item.id === binding.source.node_id);
+                const source = binding.source;
+                const producer = source.kind === 'node_output' ? producers.find((item) => item.id === source.node_id) : undefined;
                 return (
                     <div key={index} className="grid min-w-0 gap-3 rounded-lg bg-surface-sunken p-3 sm:grid-cols-2">
                         <label className="min-w-0 text-xs text-text-2">
@@ -71,41 +77,64 @@ export function WorkflowFlowInputs({
                                 value={binding.name} maxLength={64}
                                 onChange={(event) => update(index, { ...binding, name: event.target.value })} />
                         </label>
+                        {loops.length || source.kind === 'loop_item' ? <label className="min-w-0 text-xs text-text-2">
+                            Source
+                            <select className={inputClass} aria-label={`${label} input ${index + 1} source`} value={source.kind}
+                                onChange={(event) => update(index, event.target.value === 'loop_item'
+                                    ? loopItemBinding(binding.name, loops[loops.length - 1]?.id ?? '')
+                                    : { ...flowBinding(binding.name, producers[0]?.id ?? '', producers[0]?.outputs[0]?.name ?? ''),
+                                        expected_kind: producers[0]?.outputs[0]?.kind ?? 'any' })}>
+                                <option value="node_output">Saved node output</option>
+                                <option value="loop_item" disabled={!allowLoopItems}>Current loop item, key and index</option>
+                            </select>
+                        </label> : null}
+                        {source.kind === 'node_output' ? <>
                         <label className="min-w-0 text-xs text-text-2">
                             Producer
                             <select className={inputClass} aria-label={`${label} input ${index + 1} producer`}
-                                value={binding.source.node_id} onChange={(event) => {
+                                value={source.node_id} onChange={(event) => {
                                     const selected = producers.find((item) => item.id === event.target.value);
                                     if (selected) update(index, {
                                         ...binding,
-                                        source: { ...binding.source, node_id: selected.id, output: selected.outputs[0]?.name ?? '' },
+                                        source: { ...source, node_id: selected.id, output: selected.outputs[0]?.name ?? '' },
                                         expected_kind: selected.outputs[0]?.kind ?? 'any',
                                     });
                                 }}>
-                                {!producer ? <option value={binding.source.node_id}>Unavailable: {binding.source.node_id || 'choose a producer'}</option> : null}
+                                {!producer ? <option value={source.node_id}>Unavailable: {source.node_id || 'choose a producer'}</option> : null}
                                 {producers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                             </select>
                         </label>
                         <label className="min-w-0 text-xs text-text-2">
                             Final output
                             <select className={inputClass} aria-label={`${label} input ${index + 1} output`}
-                                value={binding.source.output} onChange={(event) => {
+                                value={source.output} onChange={(event) => {
                                     const output = producer?.outputs.find((item) => item.name === event.target.value);
                                     update(index, {
-                                        ...binding, source: { ...binding.source, output: event.target.value },
+                                        ...binding, source: { ...source, output: event.target.value },
                                         expected_kind: output?.kind ?? binding.expected_kind,
                                     });
                                 }}>
-                                {!producer?.outputs.some((item) => item.name === binding.source.output) ? (
-                                    <option value={binding.source.output}>Unavailable: {binding.source.output || 'choose an output'}</option>
+                                {!producer?.outputs.some((item) => item.name === source.output) ? (
+                                    <option value={source.output}>Unavailable: {source.output || 'choose an output'}</option>
                                 ) : null}
                                 {producer?.outputs.map((output) => <option key={output.name} value={output.name}>{output.name}</option>)}
                             </select>
                         </label>
+                        </> : (
+                            <label className="min-w-0 text-xs text-text-2">
+                                Current item from loop
+                                <select className={inputClass} aria-label={`${label} input ${index + 1} loop`} value={source.loop_id}
+                                    onChange={(event) => update(index, { ...binding, source: { ...source, loop_id: event.target.value } })}>
+                                    {!loops.some((loop) => loop.id === source.loop_id) ? <option value={source.loop_id}>Unavailable: {source.loop_id}</option> : null}
+                                    {loops.map((loop) => <option key={loop.id} value={loop.id}>{loop.id}</option>)}
+                                </select>
+                                <span className="mt-1 block">JSON fields: value, key, index (zero-based). Only this visit or an enclosing loop's current item is available.</span>
+                            </label>
+                        )}
                         <label className="text-xs text-text-2">
                             Expected kind
                             <select className={inputClass} aria-label={`${label} input ${index + 1} kind`}
-                                value={binding.expected_kind}
+                                value={binding.expected_kind} disabled={source.kind === 'loop_item'}
                                 onChange={(event) => update(index, { ...binding, expected_kind: event.target.value as WorkflowOutputKind })}>
                                 {FLOW_OUTPUT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replaceAll('_', ' ')}</option>)}
                             </select>
@@ -117,7 +146,7 @@ export function WorkflowFlowInputs({
                             Required on every reaching path
                         </label>
                         <label className="flex items-center gap-2 text-xs text-text-2">
-                            <input type="checkbox" checked={binding.allow_partial}
+                            <input type="checkbox" checked={binding.allow_partial} disabled={source.kind === 'loop_item'}
                                 aria-label={`${label} input ${index + 1} allow partial`}
                                 onChange={(event) => update(index, { ...binding, allow_partial: event.target.checked })} />
                             Accept eligible completed partial output
@@ -129,11 +158,11 @@ export function WorkflowFlowInputs({
                     </div>
                 );
             })}
-            <GlassButton size="sm" disabled={!producers.length || bindings.length >= 100} onClick={add}
+            <GlassButton size="sm" disabled={(!producers.length && !loops.length) || bindings.length >= 100} onClick={add}
                 aria-label={`Add ${label.toLowerCase()} input`}>
                 <Plus size={14} /> Add input
             </GlassButton>
-            {!producers.length ? <p className="text-xs text-text-3">Add a reachable producer before this node to bind its output.</p> : null}
+            {!producers.length && !loops.length ? <p className="text-xs text-text-3">Add a reachable producer before this node to bind its output.</p> : null}
         </fieldset>
     );
 }
@@ -141,31 +170,28 @@ export function WorkflowFlowInputs({
 function OperandEditor({
     value,
     bindings,
-    producers,
+    workflow,
     onChange,
     label,
     inputOnly = false,
 }: {
     value: WorkflowOperand;
     bindings: WorkflowFlowBinding[];
-    producers: FlowProducer[];
+    workflow: WorkflowDefinition;
     onChange: (value: WorkflowOperand) => void;
     label: string;
     inputOnly?: boolean;
 }) {
     const mode = 'input' in value ? 'input' : 'literal';
     const binding = 'input' in value ? bindings.find((item) => item.name === value.input) : undefined;
-    const schema = producers.find((item) => item.id === binding?.source.node_id)?.outputs
-        .find((item) => item.name === binding?.source.output)?.schema;
+    const schema = flowBindingSchema(workflow, binding);
     const fields = scalarSchemaFields(schema);
     if (inputOnly && schema && !fields.some((field) => field.path === '')) {
         fields.unshift({ path: '', type: String(schema.type ?? 'value') });
     }
     const firstField = (name: string): WorkflowOperand => {
         const selected = bindings.find((item) => item.name === name);
-        const output = producers.find((item) => item.id === selected?.source.node_id)?.outputs
-            .find((item) => item.name === selected?.source.output);
-        return { input: name, path: scalarSchemaFields(output?.schema)[0]?.path ?? '' };
+        return { input: name, path: scalarSchemaFields(flowBindingSchema(workflow, selected))[0]?.path ?? '' };
     };
     const literalType = 'literal' in value ? value.literal === null ? 'null' : typeof value.literal : 'boolean';
     return (
@@ -264,7 +290,6 @@ export function WorkflowConditionEditor({
     label?: string;
     depth?: number;
 }) {
-    const producers = flowProducers(workflow);
     const operation = (op: string) => {
         const left: WorkflowOperand = 'left' in value ? value.left : value.op === 'exists'
             ? value.value : { input: bindings[0]?.name ?? '', path: '' };
@@ -314,13 +339,13 @@ export function WorkflowConditionEditor({
                 <WorkflowConditionEditor value={value.condition} bindings={bindings} workflow={workflow} depth={depth + 1}
                     label={`${label} negated`} onChange={(condition) => onChange({ ...value, condition })} />
             ) : value.op === 'exists' ? (
-                <OperandEditor value={value.value} bindings={bindings} producers={producers} inputOnly
+                <OperandEditor value={value.value} bindings={bindings} workflow={workflow} inputOnly
                     label={`${label} field`} onChange={(field) => onChange({ ...value, value: field })} />
             ) : 'left' in value ? (
                 <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                    <OperandEditor value={value.left} bindings={bindings} producers={producers}
+                    <OperandEditor value={value.left} bindings={bindings} workflow={workflow}
                         label={`${label} left`} onChange={(left) => onChange({ ...value, left })} />
-                    <OperandEditor value={value.right} bindings={bindings} producers={producers}
+                    <OperandEditor value={value.right} bindings={bindings} workflow={workflow}
                         label={`${label} right`} onChange={(right) => onChange({ ...value, right })} />
                 </div>
             ) : null}
@@ -346,8 +371,16 @@ export function WorkflowDecisionFields({
     const [name, setName] = useState('');
     const [type, setType] = useState('boolean');
     const [enumText, setEnumText] = useState('');
-    const schema = contract.schema ?? { type: 'object' };
-    if (contract.kind !== 'json' || (schema.type !== undefined && schema.type !== 'object')) return null;
+    const collection = ['records', 'document_results'].includes(contract.kind);
+    const schema = collection
+        ? isRecord(contract.schema?.items) ? contract.schema.items : { type: 'object' }
+        : contract.schema ?? { type: 'object' };
+    if ((!collection && contract.kind !== 'json') || (schema.type !== undefined && schema.type !== 'object') ||
+        collection && contract.schema?.type !== undefined && contract.schema.type !== 'array') return null;
+    const fieldLabel = collection ? 'Record' : 'Decision';
+    const updateSchema = (next: Record<string, unknown>) => onChange({
+        ...contract, schema: collection ? { ...contract.schema, type: 'array', items: next } : next,
+    });
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === 'string') : [];
     const enumValues = enumText.split('\n').map((item) => item.trim()).filter(Boolean);
@@ -355,38 +388,37 @@ export function WorkflowDecisionFields({
     const validEnum = type !== 'enum' || (enumValues.length > 0 && new Set(enumValues).size === enumValues.length);
     return (
         <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
-            <legend className="px-1 text-sm font-medium text-text-1">Structured decision fields</legend>
+            <legend className="px-1 text-sm font-medium text-text-1">{collection ? 'Record schema fields' : 'Structured decision fields'}</legend>
             <p className="text-xs text-text-3">
-                Declare Boolean, numeric, or enum fields for If/else and Run when. The task must return them inside its final JSON object.
+                {collection ? 'Declare the fields of each record without writing JSON. These validate the complete saved collection and expose typed current-item fields inside a record loop.'
+                    : 'Declare Boolean, numeric, or enum fields for If/else and Run when. The task must return them inside its final JSON object.'}
             </p>
             {Object.entries(properties).map(([fieldName, field]) => (
                 <div key={fieldName} className="flex flex-wrap items-center gap-3 text-xs text-text-2">
                     <span className="min-w-0 flex-1 break-all">{fieldName} ({isRecord(field) ? String(field.type ?? 'custom schema') : 'custom schema'})</span>
                     <label className="flex items-center gap-2">
-                        <input type="checkbox" aria-label={`Require decision field ${fieldName}`} checked={required.includes(fieldName)}
-                            onChange={(event) => onChange({
-                                ...contract, schema: {
-                                    ...schema, required: event.target.checked ? [...required, fieldName] : required.filter((item) => item !== fieldName),
-                                },
+                        <input type="checkbox" aria-label={`Require ${fieldLabel.toLowerCase()} field ${fieldName}`} checked={required.includes(fieldName)}
+                            onChange={(event) => updateSchema({
+                                ...schema, required: event.target.checked ? [...required, fieldName] : required.filter((item) => item !== fieldName),
                             })} />
                         Required
                     </label>
-                    <GlassButton size="sm" variant="danger" aria-label={`Remove decision field ${fieldName}`} onClick={() => {
+                    <GlassButton size="sm" variant="danger" aria-label={`Remove ${fieldLabel.toLowerCase()} field ${fieldName}`} onClick={() => {
                         const next = { ...properties };
                         delete next[fieldName];
-                        onChange({ ...contract, schema: { ...schema, properties: next, required: required.filter((item) => item !== fieldName) } });
+                        updateSchema({ ...schema, properties: next, required: required.filter((item) => item !== fieldName) });
                     }}><Trash2 size={14} /></GlassButton>
                 </div>
             ))}
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <label className="text-xs text-text-2">
                     New field name
-                    <input className={inputClass} aria-label="Decision field name" value={name} maxLength={64}
+                    <input className={inputClass} aria-label={`${fieldLabel} field name`} value={name} maxLength={64}
                         placeholder="pass" onChange={(event) => setName(event.target.value)} />
                 </label>
                 <label className="text-xs text-text-2">
                     Field type
-                    <select className={inputClass} aria-label="Decision field type" value={type} onChange={(event) => setType(event.target.value)}>
+                    <select className={inputClass} aria-label={`${fieldLabel} field type`} value={type} onChange={(event) => setType(event.target.value)}>
                         <option value="boolean">Boolean</option><option value="number">Number</option>
                         <option value="integer">Integer</option><option value="string">Text</option><option value="enum">Enum (text choices)</option>
                     </select>
@@ -395,22 +427,19 @@ export function WorkflowDecisionFields({
             {type === 'enum' ? (
                 <label className="block text-xs text-text-2">
                     Allowed values, one per line
-                    <textarea className={inputClass} aria-label="Decision enum values" value={enumText}
+                    <textarea className={inputClass} aria-label={`${fieldLabel} enum values`} value={enumText}
                         onChange={(event) => setEnumText(event.target.value)} />
                 </label>
             ) : null}
             <GlassButton size="sm" disabled={!validName || !validEnum} onClick={() => {
-                onChange({
-                    ...contract,
-                    schema: {
-                        ...schema, type: 'object',
-                        properties: { ...properties, [name]: type === 'enum' ? { type: 'string', enum: enumValues } : { type } },
-                        required: [...required, name],
-                    },
+                updateSchema({
+                    ...schema, type: 'object',
+                    properties: { ...properties, [name]: type === 'enum' ? { type: 'string', enum: enumValues } : { type } },
+                    required: [...required, name],
                 });
                 setName('');
                 setEnumText('');
-            }}><Plus size={14} /> Add decision field</GlassButton>
+            }}><Plus size={14} /> Add {fieldLabel.toLowerCase()} field</GlassButton>
             {name && !validName ? <p role="status" className="text-xs text-warn">Use a unique field name starting with a letter.</p> : null}
             {!validEnum ? <p role="status" className="text-xs text-warn">Add at least one unique enum value.</p> : null}
         </fieldset>

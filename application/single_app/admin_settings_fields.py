@@ -132,6 +132,13 @@ from functions_terms_of_use import (
     normalize_terms_of_use_redirect_url,
     normalize_terms_of_use_text,
 )
+from functions_workflow_limits import (
+    WORKFLOW_LOOP_ITEMS_DEFAULT,
+    WORKFLOW_LOOP_ITEMS_MAX,
+    WORKFLOW_LOOP_ITEMS_MIN,
+    WorkflowLoopLimitError,
+    validate_workflow_max_loop_items,
+)
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -3987,6 +3994,20 @@ ADMIN_SETTINGS_FIELDS = {
             "max": 100,
             "step": 1,
         },
+        {
+            "key": "workflow_max_loop_items",
+            "type": "number",
+            "label": "Workflow Loop Item Limit",
+            "help": (
+                "Maximum actual items visited by each For each loop in a new personal "
+                "or group workflow run. Authors may choose a lower maximum. Oversized "
+                "inputs are rejected, never truncated. Active runs keep their admitted limit."
+            ),
+            "default": WORKFLOW_LOOP_ITEMS_DEFAULT,
+            "min": WORKFLOW_LOOP_ITEMS_MIN,
+            "max": WORKFLOW_LOOP_ITEMS_MAX,
+            "step": 1,
+        },
     ],
     # --- Agents & Actions -------------------------------------------------
     #
@@ -6554,6 +6575,12 @@ def _normalize_field_value(key, value, field):
             f"{key} is managed by {owner}." if owner
             else f"{key} cannot be changed through this endpoint."
         ), None
+
+    if key == "workflow_max_loop_items":
+        try:
+            return validate_workflow_max_loop_items(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
 
     if field_type == "switch":
         return _coerce_bool(value), None, None

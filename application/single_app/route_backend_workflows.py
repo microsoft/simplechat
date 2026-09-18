@@ -106,6 +106,10 @@ from functions_workflow_runtime import (
 )
 from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 from functions_workflow_execution_history import workflow_execution_history, workflow_execution_result_page
+from functions_workflow_node_results import WorkflowRecordPageTooLarge
+from functions_workflow_loop_history import (
+    workflow_execution_records_page, workflow_execution_provenance_page, workflow_loop_items_page,
+)
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -337,7 +341,7 @@ def _workflow_runtime_response(workflow_id, run_id, *, group=False, action=None)
 
 
 def _workflow_execution_history_response(workflow_id, run_id, *, group=False, kind='execution',
-                                         execution_id=None, attempt=None):
+                                         execution_id=None, attempt=None, representation=None):
     user_id = get_current_user_id()
     try:
         if group:
@@ -349,7 +353,19 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
             run = get_personal_workflow_run(user_id, run_id)
         if not workflow or not run or run.get('workflow_id') != workflow_id:
             return jsonify({'error': 'Workflow run not found.'}), 404
-        if attempt is not None:
+        if kind == 'items':
+            response = workflow_loop_items_page(
+                workflow, run_id, execution_id, reader_user_id=user_id,
+                cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
+            )
+        elif attempt is not None and representation in {'records', 'provenance'}:
+            reader = workflow_execution_records_page if representation == 'records' else workflow_execution_provenance_page
+            response = reader(
+                workflow, run_id, execution_id, attempt, reader_user_id=user_id,
+                cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
+                **({'output': request.args.get('output', 'authoritative')} if representation == 'records' else {}),
+            )
+        elif attempt is not None:
             offset, limit = int(request.args.get('offset', '0')), int(request.args.get('limit', '2000'))
             if offset < 0 or not 1 <= limit <= 65536 or attempt < 1:
                 raise ValueError('Invalid result page.')
@@ -369,6 +385,8 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
         return jsonify({'error': 'Current access to this execution or its contributing sources could not be confirmed.'}), 403
     except (LookupError, CosmosResourceNotFoundError):
         return jsonify({'error': 'Workflow execution or attempt not found.'}), 404
+    except WorkflowRecordPageTooLarge as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code, 'record_offset': exc.record_offset}), 413
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid execution, attempt or page request.'}), 400
     except (AzureError, RuntimeUnavailable, WorkflowResultStorageUnavailableError) as exc:
@@ -376,6 +394,78 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
                   extra={'workflow_id': workflow_id, 'run_id': run_id, 'error_type': type(exc).__name__},
                   level=logging.ERROR)
         return jsonify({'error': 'Workflow execution history is temporarily unavailable.'}), 503
+
+
+def _workflow_loop_preview_response(*, group=False):
+    # Query selection is authorized independently of a saved definition or run.
+    from functions_workflow_limits import get_workflow_loop_item_limit
+    from functions_workflow_loop_schema import normalize_workflow_iterable
+    from functions_workflow_loop_inputs import iter_workflow_loop_documents, WorkflowLoopInputError
+
+    user_id = get_current_user_id()
+    try:
+        if group:
+            group_id, settings = _resolve_active_group_for_workflow_management(user_id)
+            context = {'user_id': user_id, 'group_id': group_id}
+        else:
+            settings = get_settings()
+            _assert_personal_workflow_draft_access(settings)
+            context = {'user_id': user_id}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or data.keys() - {'iterable', 'max_items'}:
+            return jsonify({'error': 'Invalid loop input preview.'}), 400
+        authored_limit = data.get('max_items', get_workflow_loop_item_limit(settings))
+        if type(authored_limit) is not int or not 1 <= authored_limit <= 5000:
+            return jsonify({'error': 'The item maximum must be an integer from 1 to 5,000.'}), 400
+        limit = min(authored_limit, get_workflow_loop_item_limit(settings))
+        iterable = normalize_workflow_iterable(data.get('iterable'), max_items=authored_limit)
+        if iterable['kind'] == 'input':
+            return jsonify({'error': 'Saved collection counts are available when their producer finishes during execution.'}), 400
+        items, count, capture = [], 0, {}
+        for count, entry in enumerate(iter_workflow_loop_documents(
+            context, iterable, actor_user_id=user_id, max_items=limit, settings=settings, capture_metadata=capture,
+        ), start=1):
+            if count > limit:
+                return jsonify({
+                    'error': f'This selection contains at least {count} documents. Select {limit} or fewer before running.',
+                    'code': 'loop_item_limit_exceeded', 'count': count, 'count_exact': False,
+                    'limit': limit, 'within_limit': False,
+                }), 422
+            if len(items) < 50:
+                items.append(entry['document'])
+        if capture.get('complete') is not True or capture.get('count') != count or capture.get('count_exact') is not True:
+            raise WorkflowLoopInputError(
+                'The complete document selection could not be confirmed. Try the preview again.',
+                code='workflow_loop_capture_incomplete',
+            )
+        return jsonify({
+            'count': count, 'count_exact': True, 'limit': limit, 'within_limit': True,
+            'items': items, 'advisory': True,
+            'selection': {
+                key: value for key, value in capture.items()
+                if key in {'query_mode', 'exhaustive', 'ranking', 'candidate_limitations', 'candidate_window',
+                           'semantic_rerank_window', 'candidate_expansion', 'candidate_expansion_rounds'}
+            },
+        })
+    except WorkflowLoopInputError as exc:
+        response = {'error': exc.public_message, 'code': getattr(exc, 'code', 'workflow_loop_input_unavailable')}
+        for name in ('count', 'count_exact', 'limit'):
+            if hasattr(exc, name):
+                response[name] = getattr(exc, name)
+        response['within_limit'] = False
+        return jsonify(response), 422
+    except WorkflowDefinitionError as exc:
+        return jsonify({'error': exc.public_message}), 400
+    except PermissionError:
+        return jsonify({'error': 'Current access to the selected workspace or documents could not be confirmed.'}), 403
+    except ValueError:
+        return jsonify({'error': 'Invalid loop document selection or query.'}), 400
+    except (AzureError, RuntimeUnavailable) as exc:
+        log_event(
+            '[WORKFLOW_ROUTES] Loop input preview failed',
+            extra={'error_type': type(exc).__name__}, level=logging.ERROR,
+        )
+        return jsonify({'error': 'Loop input selection is temporarily unavailable.'}), 503
 
 
 def _queue_workflow_response(workflow, user_id):
@@ -1030,6 +1120,86 @@ def register_route_backend_workflows(bp):
             except LookupError:
                 return jsonify({'error': 'Group not found.'}), 404
         return jsonify({'users': list(users.values())})
+
+    @bp.route('/api/user/workflows/loop-inputs/preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def preview_user_workflow_loop_inputs():
+        return _workflow_loop_preview_response()
+
+    @bp.route('/api/group/workflows/loop-inputs/preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def preview_group_workflow_loop_inputs():
+        return _workflow_loop_preview_response(group=True)
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/items', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_loop_items(workflow_id, run_id, execution_id):
+        return _workflow_execution_history_response(workflow_id, run_id, execution_id=execution_id, kind='items')
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/items', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_loop_items(workflow_id, run_id, execution_id):
+        return _workflow_execution_history_response(workflow_id, run_id, group=True, execution_id=execution_id, kind='items')
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/attempts/<int:attempt>/records', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_execution_records(workflow_id, run_id, execution_id, attempt):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, execution_id=execution_id, attempt=attempt, representation='records',
+        )
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/attempts/<int:attempt>/records', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_execution_records(workflow_id, run_id, execution_id, attempt):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, group=True, execution_id=execution_id, attempt=attempt, representation='records',
+        )
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/attempts/<int:attempt>/provenance', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_execution_provenance(workflow_id, run_id, execution_id, attempt):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, execution_id=execution_id, attempt=attempt, representation='provenance',
+        )
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/attempts/<int:attempt>/provenance', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_execution_provenance(workflow_id, run_id, execution_id, attempt):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, group=True, execution_id=execution_id, attempt=attempt, representation='provenance',
+        )
 
     @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions', methods=['GET'])
     @swagger_route(security=get_auth_security())

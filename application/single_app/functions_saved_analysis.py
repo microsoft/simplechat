@@ -17,6 +17,7 @@ from functions_analysis_access import AnalysisResultUnavailable, authorize_analy
 from functions_appinsights import log_event
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
+from functions_workflow_identity import normalize_workflow_iteration_path
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, _quota_bytes
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
@@ -197,6 +198,10 @@ def _load_authorized_workflow(user_id, binding):
         or item.get("run_id") != binding["run_id"] or item.get("task_id") != binding["task_id"]
     ):
         raise AnalysisResultUnavailable()
+    if binding.get("execution_id") and any(
+        item.get(key) != binding.get(key) for key in ("node_id", "execution_id", "iteration_path")
+    ):
+        raise AnalysisResultUnavailable("analysis_lineage_invalid")
     return workflow
 
 
@@ -362,6 +367,7 @@ def workflow_saved_analysis_descriptor(summary, workflow, *, conversation_id, me
         or not isinstance(reference, Mapping) or not reference.get("sha256")
     ):
         raise ValueError("The workflow analysis reference is incomplete.")
+    binding = analysis_artifact_metadata({**producer, "kind": "workflow"})["analysis_producer"]
     return {
         "version": SAVED_ANALYSIS_VERSION,
         "conversation_id": conversation_id,
@@ -369,11 +375,8 @@ def workflow_saved_analysis_descriptor(summary, workflow, *, conversation_id, me
         "result_sha256": reference["sha256"],
         "result_ref": dict(reference),
         "binding": {
-            "kind": "workflow", "workflow_id": workflow["id"],
-            "run_id": producer["run_id"], "task_id": producer["task_id"],
+            **binding,
             "group_id": workflow.get("group_id"),
-            **({key: producer[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
-               if producer.get("execution_id") else {}),
         },
         "record_count": summary.get("record_count"),
         "source_count": summary.get("source_count"),
@@ -474,15 +477,23 @@ def analysis_artifact_metadata(producer):
         if not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > 1024:
             raise ValueError("The analysis artifact producer is incomplete.")
         normalized[field] = value.strip()
-    if producer["kind"] == "workflow" and producer.get("execution_id"):
+    if producer["kind"] == "workflow" and any(
+        field in producer for field in ("node_id", "execution_id", "iteration_path")
+    ):
         for field in ("node_id", "execution_id"):
             value = producer.get(field)
             if not isinstance(value, str) or not value or len(value) > 128:
                 raise ValueError("The exact analysis execution identity is incomplete.")
             normalized[field] = value
-        if type(producer.get("attempt")) is not int or producer["attempt"] < 1 or producer.get("iteration_path") != []:
+        if (
+            type(producer.get("attempt")) is not int or producer["attempt"] < 1
+            or not isinstance(producer.get("iteration_path"), list)
+        ):
             raise ValueError("The exact analysis attempt identity is incomplete.")
-        normalized.update(attempt=producer["attempt"], iteration_path=[])
+        normalized.update(
+            attempt=producer["attempt"],
+            iteration_path=normalize_workflow_iteration_path(producer["iteration_path"]),
+        )
     return {"analysis_result_required": True, "analysis_producer": normalized}
 
 
@@ -544,10 +555,18 @@ def _workflow_analysis_artifact_manifest(user_id, artifact, producer):
         row = journal.journal_read(
             "attempt", [producer["execution_id"], producer["attempt"]],
         )
-        if row is None or row["payload"].get("task_id") != producer["task_id"] or row["payload"].get("node_id") != producer["node_id"]:
+        if row is None or any(
+            row["payload"].get(key) != producer[key]
+            for key in ("task_id", "node_id", "execution_id", "iteration_path", "attempt")
+        ):
             raise AnalysisResultUnavailable("analysis_artifact_unbound")
         summary = row["payload"].get("workflow_result") or {}
         selectors = {key: producer[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
+        if any(
+            (summary.get("producer") or {}).get(key) != producer[key]
+            for key in ("workflow_id", "run_id", "task_id", "node_id", "execution_id", "iteration_path", "attempt")
+        ):
+            raise AnalysisResultUnavailable("analysis_artifact_unbound")
     reference = summary.get("result_ref")
     if not isinstance(reference, Mapping):
         raise AnalysisResultUnavailable("analysis_artifact_unbound")
@@ -583,7 +602,7 @@ def authorize_analysis_artifact(
         producer = analysis_artifact_metadata(metadata.get("analysis_producer")).get("analysis_producer")
         if not producer:
             raise AnalysisResultUnavailable("analysis_artifact_unbound")
-        if producer["kind"] == "workflow" and not contexts:
+        if producer["kind"] == "workflow" and (not contexts or producer.get("execution_id")):
             manifest = (workflow_manifest_loader or _workflow_analysis_artifact_manifest)(user_id, artifact, producer)
             if for_publication and (
                 (manifest.get("execution") or {}).get("status") != "succeeded"
@@ -657,7 +676,7 @@ def _load_section(manifest, name, load):
     output = (manifest.get("outputs") or {}).get(name)
     if not isinstance(output, Mapping) or not isinstance(output.get("result_ref"), Mapping):
         raise ValueError("The requested analysis representation is unavailable.")
-    if output.get("storage_kind") == "record_pages":
+    if output.get("storage_kind") in {"record_pages", "record_tree"}:
         rows, _ = read_result_records(manifest, name, load)
         return {
             "contract_version": manifest["contract_version"], "producer": manifest["identity"],
@@ -740,17 +759,18 @@ def load_saved_analysis(
             user_id, access.get("sources"), resolver=source_resolver,
         )
     elif binding.get("kind") == "workflow":
-        for field in ("workflow_id", "run_id", "task_id"):
-            if not isinstance(binding.get(field), str) or not binding[field]:
-                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        try:
+            producer = analysis_artifact_metadata(binding)["analysis_producer"]
+        except ValueError as exc:
+            raise AnalysisResultUnavailable("analysis_lineage_invalid") from exc
         workflow = (workflow_getter or _load_authorized_workflow)(user_id, binding)
         selectors = {}
-        if binding.get("execution_id"):
+        if producer.get("execution_id"):
             from functions_workflow_result_store import load_workflow_node_result
             from functions_workflow_runtime_store import workflow_runtime_store
 
             workflow = workflow_runtime_store(workflow, binding["run_id"]).run_definition()
-            selectors = {key: binding[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
+            selectors = {key: producer[key] for key in ("node_id", "execution_id", "iteration_path", "attempt")}
             loader = workflow_loader or load_workflow_node_result
         else:
             loader = workflow_loader or _workflow_load
@@ -1112,6 +1132,11 @@ def format_saved_analysis(
     inputs = list(inputs)
     if not inputs:
         raise ValueError("A saved analysis is required for formatting.")
+    if not all(isinstance(reader, SavedAnalysisInput) for reader in inputs):
+        raise ValueError(
+            "Native saved analysis inputs are required for this formatter. Generic workflow records "
+            "remain saved unchanged; use their complete-record reader instead."
+        )
     if len(inputs) == 1:
         reader = inputs[0]
         reader.recheck()
@@ -1229,6 +1254,14 @@ def explain_saved_analysis(
 ):
     """Consume whole records once per report page; reload original support for cross-page claims."""
     inputs = list(inputs)
+    if inputs and not all(isinstance(item, SavedAnalysisInput) for item in inputs):
+        # The generic adapter reuses the reporting boundary without acquiring an
+        # Analyze origin, export capability or native publication eligibility.
+        from functions_workflow_reporting import explain_workflow_records
+        return explain_workflow_records(
+            inputs, messages, invoke_prompt, model=model, provider=provider, output_tokens=output_tokens,
+            cancel_requested=cancel_requested, budget_messages=budget_messages,
+        )
     if not inputs or not all(isinstance(item, SavedAnalysisInput) for item in inputs):
         raise ValueError("A saved-result report requires authorized record readers.")
     model = model or getattr(invoke_prompt, "model_metadata", None) or ""

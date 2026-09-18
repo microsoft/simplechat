@@ -224,7 +224,7 @@ def _normalize_workflow_tasks(
             raise ValueError(f'Workflow task {index + 1} is invalid.')
         if structured and raw_task.keys() - {
             'id', 'type', 'name', 'instructions', 'order', 'runner', 'document_action', 'inputs',
-            'reference_ids', 'output_contract', 'approval', 'publication',
+            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing',
         }:
             raise ValueError('A structured task contains unsupported executable fields.')
 
@@ -365,7 +365,8 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None, all
     )
 
 
-def _normalize_task_document_action_config(action_payload, allow_empty_file_sync_targets=False, settings=None):
+def _normalize_task_document_action_config(action_payload, allow_empty_file_sync_targets=False, settings=None,
+                                           allow_current_item=False):
     """Normalize a single workflow task's document action payload."""
     source_settings = settings if isinstance(settings, dict) else get_settings()
     action_payload = action_payload if isinstance(action_payload, dict) else {'type': 'none'}
@@ -374,6 +375,21 @@ def _normalize_task_document_action_config(action_payload, allow_empty_file_sync
         settings=source_settings,
     )
     allowed_action_types = get_enabled_document_action_types(settings=source_settings)
+    if action_payload.get('target_mode') == 'current_item':
+        if (
+            not allow_current_item or action_payload.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE
+            or DOCUMENT_ACTION_TYPE_ANALYZE not in allowed_action_types
+        ):
+            raise ValueError('Current-item Analyze requires an enabled structured document loop.')
+        if action_payload.keys() - {'type', 'target_mode', 'loop_id', 'analysis_mode'}:
+            raise ValueError('Current-item Analyze cannot supply another document selection.')
+        if action_payload.get('analysis_mode', 'combined') != 'combined':
+            raise ValueError('Current-item Analyze produces the current document as one analysis.')
+        return {
+            'type': DOCUMENT_ACTION_TYPE_ANALYZE, 'target_mode': 'current_item',
+            'loop_id': _normalize_text(action_payload.get('loop_id'), 'Loop id', required=True),
+            'analysis_mode': 'combined',
+        }
 
     if allow_empty_file_sync_targets:
         action_type = str(action_payload.get('type') or '').strip().lower()
@@ -818,6 +834,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             action_payload,
             allow_empty_file_sync_targets=allow_empty_file_sync_targets,
             settings=settings,
+            allow_current_item=workflow_data.get('definition_version') == 3,
         ),
         default_document_action=document_action,
     )
@@ -982,6 +999,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     workflow.update(definition_fields)
     normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
+    if workflow.get('definition_version') == 3:
+        from functions_workflow_loop_runners import validate_workflow_loop_runners
+
+        validate_workflow_loop_runners(workflow, actor_user_id=modifying_user_id, settings=settings)
     result = save_workflow_definition_record(
         cosmos_personal_workflows_container, user_id, workflow, existing_workflow,
     )

@@ -11,11 +11,11 @@ from functions_workflow_identity import canonical_digest, workflow_execution_id
 
 
 JOURNAL_TYPE = "workflow_runtime_journal"
-JOURNAL_KINDS = frozenset({"execution", "attempt", "unit", "decision", "request", "admission"})
+JOURNAL_KINDS = frozenset({"execution", "attempt", "unit", "decision", "request", "admission", "loop", "iteration"})
 PUBLIC_EXECUTION_FIELDS = (
     "execution_id", "node_id", "node_kind", "task_id", "iteration_path", "region_id",
     "sequence", "state", "attempt", "reason_code", "decision", "workflow_result",
-    "workflow_validation", "consumed_inputs", "started_at", "completed_at",
+    "workflow_validation", "consumed_inputs", "iteration_inputs", "started_at", "completed_at",
 )
 PUBLIC_DECISION_FIELDS = (
     "sequence", "execution_id", "node_id", "iteration_path", "attempt", "gate_id",
@@ -93,7 +93,7 @@ class WorkflowJournalMixin:
                 is_completed = payload.get("state") == "completed"
                 replacement["completed_unit_count"] = int(control.get("completed_unit_count") or 0) + int(is_completed) - int(was_completed)
             if updates:
-                if set(updates) - {"cursor", "progress", "phase", "state", "gate", "lease"}:
+                if set(updates) - {"cursor", "progress", "phase", "state", "gate", "lease", "loop_progress"}:
                     self._journal_conflict("invalid_payload")
                 replacement.update(deepcopy(updates))
             replacement["version"] = control["version"] + 1
@@ -233,6 +233,7 @@ class WorkflowJournalMixin:
             if active:
                 decision["consumed_inputs"] = deepcopy(active["payload"].get("consumed_inputs") or [])
                 decision["reference_sources"] = deepcopy(active["payload"].get("reference_sources") or [])
+                decision["iteration_inputs"] = deepcopy(active["payload"].get("iteration_inputs") or [])
             replacement = self._base_replacement(control)
             sequence = int(control.get("journal_sequence") or 0)
             replacement.update(state=NEXT_STATE_BY_DECISION[pair], gate=None, lease=None,
@@ -308,9 +309,12 @@ class WorkflowJournalMixin:
             ]
             if action == "cancel":
                 node_id = (control.get("cursor") or {}).get("node_id")
-                execution_id = (control.get("gate") or {}).get("execution_id")
+                execution_id = (control.get("gate") or {}).get("execution_id") or (control.get("cursor") or {}).get("execution_id")
                 if not execution_id and node_id:
-                    execution_id = workflow_execution_id(self.workflow, self.identity["run_id"], node_id)
+                    execution_id = workflow_execution_id(
+                        self.workflow, self.identity["run_id"], node_id,
+                        (control.get("cursor") or {}).get("iteration_path") or [],
+                    )
                 active = self.journal_read("execution", execution_id) if execution_id else None
                 if active and active["payload"].get("state") in {"running", "waiting_output", "waiting_approval", "waiting_recovery", "paused"}:
                     attempt = self.journal_read("attempt", [execution_id, active["payload"]["attempt"]])

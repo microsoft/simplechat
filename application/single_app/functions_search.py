@@ -13,6 +13,7 @@ from content_screening.access import (
 from config import *
 from functions_content import *
 from functions_embedding_compatibility import (
+    REMOTE_OPTIONS,
     active_embedding_profile,
     embedding_query_slot,
     embedding_search_filter,
@@ -280,6 +281,119 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     """Build an OData any(...) equality clause with an escaped literal."""
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
+
+
+DOCUMENT_QUERY_CANDIDATE_WINDOW = 1000
+
+
+def iter_document_query_search_pages(
+    query, user_id, *, scope_type, scope_id, mode="keyword",
+    enable_file_sharing=True, exclude_document_ids=(), check=None,
+):
+    """Read protected Search pages without changing ordinary chat ranking or caps.
+
+    Keyword queries have no top/chunk ceiling. Hybrid calls expose one provider
+    candidate window; callers backfill distinct documents with explicit exclusions.
+    Every yielded hit is still a candidate requiring current source authorization
+    and active-representation screening.
+    """
+    if not user_id or not scope_id or scope_type not in {"personal", "group", "public"}:
+        raise ValueError("A document query requires an explicit authorized workspace.")
+    if mode not in {"keyword", "hybrid"} or not isinstance(query, str) or not query.strip():
+        raise ValueError("A document query requires supported content matching.")
+    if scope_type == "personal":
+        if scope_id != user_id:
+            raise PermissionError("Personal queries must use the current user.")
+        scope_filter = (
+            f"({_build_odata_eq('user_id', user_id)} or "
+            f"{_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')})"
+            if enable_file_sharing else _build_odata_eq("user_id", user_id)
+        )
+    elif scope_type == "group":
+        scope_filter = (
+            f"({_build_odata_eq('group_id', scope_id)} or "
+            f"{_build_odata_any_eq('shared_group_ids', 'g', f'{scope_id},approved')})"
+        )
+    else:
+        scope_filter = _build_public_workspace_filter_clause([scope_id])
+
+    exclusions = tuple(dict.fromkeys(exclude_document_ids))
+    exclusion_filter = ""
+    if exclusions:
+        delimiter = next(
+            (value for value in ("|", ",", "\u241e") if all(value not in item for item in exclusions)),
+            None,
+        )
+        if delimiter is None:
+            exclusion_filter = f"not ({' or '.join(_build_odata_eq('document_id', item) for item in exclusions)})"
+        else:
+            values = _escape_odata_literal(delimiter.join(exclusions))
+            exclusion_filter = f"not search.in(document_id, '{values}', '{delimiter}')"
+
+    if check is not None:
+        check()
+    embedding_settings = read_embedding_settings()
+    profile = active_embedding_profile(embedding_settings)
+    client = CLIENTS[{
+        "personal": "search_client_user",
+        "group": "search_client_group",
+        "public": "search_client_public",
+    }[scope_type]]
+    arguments = {
+        **REMOTE_OPTIONS,
+        "search_text": query,
+        "search_fields": ["chunk_text"],
+        "select": get_search_select_fields(scope_type),
+        "filter": _combine_odata_filters(
+            scope_filter, exclusion_filter,
+            embedding_search_filter(client, profile, embedding_settings),
+        ),
+    }
+    if mode == "hybrid":
+        embedding = generate_embedding(query, purpose="query", profile=profile)
+        if isinstance(embedding, tuple):
+            embedding = embedding[0]
+        if embedding is None:
+            raise RuntimeError("The document query embedding is unavailable.")
+        arguments.update({
+            "top": DOCUMENT_QUERY_CANDIDATE_WINDOW,
+            "vector_queries": [VectorizedQuery(
+                vector=embedding, k_nearest_neighbors=DOCUMENT_QUERY_CANDIDATE_WINDOW,
+                fields="embedding",
+            )],
+            "query_type": "semantic",
+            "semantic_error_mode": "fail",
+            "semantic_configuration_name": {
+                "personal": "nexus-user-index-semantic-configuration",
+                "group": "nexus-group-index-semantic-configuration",
+                "public": "nexus-public-index-semantic-configuration",
+            }[scope_type],
+        })
+    else:
+        arguments["query_type"] = "simple"
+
+    try:
+        if check is not None:
+            check()
+        pages = iter(client.search(**arguments).by_page())
+        while True:
+            if check is not None:
+                check()
+            with embedding_query_slot(profile.profile_id):
+                page = next(pages, None)
+                if page is None:
+                    if getattr(pages, "continuation_token", None):
+                        raise RuntimeError("The document query continuation is incomplete.")
+                    return
+                rows = list(page)
+            if not all(isinstance(row, dict) and row.get("document_id") for row in rows):
+                raise RuntimeError("The document query returned invalid candidates.")
+            yield rows
+    except Exception as error:
+        if is_semantic_search_quota_error(error):
+            raise SemanticSearchQuotaExceededError() from error
+        raise
+
 
 def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
     """

@@ -1,13 +1,19 @@
 # functions_workflow_editor.py
-"""Non-secret editor choices for the existing workflow APIs."""
+"""Non-secret editor choices and trusted loop-runner eligibility."""
 
 from functions_ai_connections import supports_model_capability
-from functions_workflow_definitions import WORKFLOW_DEFINITION_VERSION
+from functions_workflow_definitions import WORKFLOW_DEFINITION_VERSION, WORKFLOW_INPUT_PROCESSING_MODES
 from functions_workflow_flow import FLOW_LIMITS
+from functions_workflow_limits import (
+    WORKFLOW_LOOP_ITEMS_DEFAULT,
+    get_workflow_max_loop_items,
+    validate_workflow_max_loop_items,
+)
 
 
 def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks,
-                                  agents, endpoints, default_model=None):
+                                  agents, endpoints, default_model=None,
+                                  max_loop_items=WORKFLOW_LOOP_ITEMS_DEFAULT):
     if scope_type not in {"personal", "group"}:
         raise ValueError("Unsupported workflow editor scope.")
     agent_options = [
@@ -18,6 +24,7 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
             "is_global": bool(agent.get("is_global")),
             "is_group": bool(agent.get("is_group")),
             "group_id": str(agent.get("group_id") or ""),
+            "loop_eligible": agent.get("agent_type") == "local",
         }
         for agent in agents
         if agent.get("is_enabled", True) and agent.get("name") and agent.get("id")
@@ -40,13 +47,23 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
                 "model_id": str(model["id"]),
                 "label": f"{endpoint.get('name') or endpoint_id} / {model.get('displayName') or model.get('modelName') or model['id']}",
                 "provider": provider,
+                # Catalog models use the locally metered model path, not hosted-agent execution.
+                "loop_eligible": True,
             })
     default_model = default_model or {}
+    default_model_valid = bool(default_model.get("valid"))
     return {
         "definition_version": WORKFLOW_DEFINITION_VERSION,
         "supported_definition_versions": [1, 2, 3],
-        "supported_node_kinds": ["task", "if", "route"],
-        "flow_limits": dict(FLOW_LIMITS),
+        "supported_node_kinds": ["task", "if", "route", "for_each", "collect"],
+        "supported_iterable_kinds": ["input", "documents", "workspace_query"],
+        "supported_query_modes": ["all_matches", "best_n"],
+        "supported_binding_sources": ["node_output", "loop_item"],
+        "supported_input_processing_modes": sorted(WORKFLOW_INPUT_PROCESSING_MODES),
+        "flow_limits": {
+            **FLOW_LIMITS,
+            "max_loop_items": validate_workflow_max_loop_items(max_loop_items),
+        },
         "scope": {"type": scope_type, "id": str(scope_id)},
         "can_manage": bool(can_manage),
         "max_tasks": max_tasks,
@@ -54,7 +71,8 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
         "models": models,
         "default_model": {
             "label": str(default_model.get("label") or "Default app model"),
-            "valid": bool(default_model.get("valid")),
+            "valid": default_model_valid,
+            "loop_eligible": default_model_valid,
         },
     }
 
@@ -95,4 +113,5 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         scope_type="group" if group_id else "personal", scope_id=group_id or user_id,
         can_manage=can_manage, max_tasks=get_workflow_max_tasks(settings),
         agents=agents, endpoints=endpoints, default_model=_build_default_model_summary(settings),
+        max_loop_items=get_workflow_max_loop_items(settings),
     )

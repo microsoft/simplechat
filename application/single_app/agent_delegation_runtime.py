@@ -246,6 +246,9 @@ async def _target_messages(target, task, context, frame, settings):
 async def execute_target(target, task, context, frame):
     """Invoke precisely this canonical target; never select a default or by name."""
     from functions_settings import get_settings
+    from functions_workflow_loop_runners import assert_workflow_loop_agent_type
+
+    assert_workflow_loop_agent_type(target.get("agent_type", "local"))
 
     bridge = frame.identity.bridge(target) if frame.identity.bridge else nullcontext()
     kernel = None
@@ -514,6 +517,9 @@ class AgentExecution:
 
 def prepare_agent_execution(agent, reference, *, user_id, settings, conversation_id=None,
                             cancel_requested=None, budget=None, identity=None, prevent_replay=False):
+    from functions_workflow_loop_runners import assert_workflow_loop_agent_type
+
+    assert_workflow_loop_agent_type(getattr(agent, "agent_type", "local"))
     if str(getattr(agent, "agent_type", "local") or "local").lower() != "local":
         return agent
     identity = identity or capture_execution_identity(user_id, conversation_id)

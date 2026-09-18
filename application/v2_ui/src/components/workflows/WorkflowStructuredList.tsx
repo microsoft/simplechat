@@ -6,10 +6,12 @@ import { ArrowDown, ArrowUp, GitBranch, Plus, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowConditionEditor, WorkflowFlowInputs } from './WorkflowConditionEditor';
+import { WorkflowCollectFields, WorkflowForEachFields } from './WorkflowLoopFields';
 import {
     analyzeWorkflowFlow,
     DEFAULT_FLOW_LIMITS,
     defaultFlowPredicate,
+    enclosingFlowLoops,
     flowProducers,
     flowRegions,
     flowTaskIds,
@@ -17,6 +19,7 @@ import {
     FLOW_OUTPUT_KINDS,
     isFlowRegion,
     updateFlowRegion,
+    workflowLoopLimit,
     type FlowProducer,
     type WorkflowFlowNode,
     type WorkflowFlowRegion,
@@ -24,7 +27,7 @@ import {
     type WorkflowJoinSource,
     type WorkflowTaskNode,
 } from '../../lib/workflowFlow';
-import { createWorkflowTask, type WorkflowDefinition, type WorkflowEditorOptions, type WorkflowOutputKind, type WorkflowTask } from '../../lib/workflowEditor';
+import { createWorkflowTask, type WorkflowDefinition, type WorkflowEditorOptions, type WorkflowOutputKind, type WorkflowScope, type WorkflowTask } from '../../lib/workflowEditor';
 import { isRecord } from '../../lib/workspaceAuthoring';
 
 const inputClass = 'mt-1 w-full min-w-0 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none';
@@ -129,10 +132,11 @@ function JoinEditor({
 }
 
 export function WorkflowStructuredList({
-    workflow, options, onChange, renderTask,
+    workflow, options, scope, onChange, renderTask,
 }: {
     workflow: WorkflowDefinition;
     options: WorkflowEditorOptions;
+    scope: WorkflowScope;
     onChange: (workflow: WorkflowDefinition) => void;
     renderTask: (task: WorkflowTask, node: WorkflowTaskNode, onNodeChange: (node: WorkflowTaskNode) => void) => ReactNode;
 }) {
@@ -154,6 +158,14 @@ export function WorkflowStructuredList({
         let node: WorkflowFlowNode;
         if (kind === 'task') node = { id, kind, task_id: task.id };
         else if (kind === 'route') node = { id, kind, inputs: [], condition: defaultFlowPredicate(), target: { node_id: '' } };
+        else if (kind === 'for_each') node = {
+            id, kind, inputs: [], iterable: { kind: 'documents', documents: [] }, item_key: 'source_identity',
+            max_items: workflowLoopLimit(options), body: { id: `body-${task.id}`, nodes: [], outputs: [] },
+        };
+        else if (kind === 'collect') node = {
+            id, kind, source: { loop_id: '', output: '' },
+            output_contract: { kind: 'records', require_complete_coverage: true, allow_partial: false },
+        };
         else node = {
             id, kind, inputs: [], condition: defaultFlowPredicate(),
             then: { id: `then-${task.id}`, nodes: [] }, else: { id: `else-${task.id}`, nodes: [] },
@@ -173,16 +185,18 @@ export function WorkflowStructuredList({
         const removed = updateFlowRegion(flow, regionId, (region) => ({ ...region, nodes: region.nodes.filter((item) => item.id !== node.id) }));
         setFlow(updateFlowRegion(removed, targetId, (region) => ({ ...region, nodes: [...region.nodes, node] })));
     };
-    const renderRegion = (region: WorkflowFlowRegion, label: string, depth: number): ReactNode => (
+    const renderRegion = (region: WorkflowFlowRegion, label: string, depth: number, branch = false): ReactNode => (
         <fieldset className={`min-w-0 space-y-3 ${depth ? 'rounded-xl border-l-2 border-edge p-2 sm:p-3' : ''}`} key={region.id} aria-label={`${label} region`}>
             <legend className="px-1 text-sm font-semibold text-text-1">{label}</legend>
             {region.nodes.map((node, index) => {
-                const descendants = node.kind === 'if' ? new Set([
-                    ...flowRegions(node.then).map((item) => item.id), ...flowRegions(node.else).map((item) => item.id),
-                ]) : new Set<string>();
-                const destinations = regions.filter((item) => item.id !== region.id && !descendants.has(item.id));
+                const childRegions = node.kind === 'if' ? [...flowRegions(node.then), ...flowRegions(node.else)]
+                    : node.kind === 'for_each' ? flowRegions(node.body) : [];
+                const descendants = new Set(childRegions.map((item) => item.id));
+                const subtreeDepth = childRegions.length ? Math.max(...childRegions.map((item) => item.depth)) + 1 : 0;
+                const destinations = regions.filter((item) => item.id !== region.id && !descendants.has(item.id) && item.depth + subtreeDepth < FLOW_MAX_DEPTH);
                 const task = node.kind === 'task' ? workflow.tasks.find((item) => item.id === node.task_id) : undefined;
-                const title = node.kind === 'task' ? task?.name || 'Task' : node.kind === 'if' ? 'If / else' : 'Forward route';
+                const title = node.kind === 'task' ? task?.name || 'Task' : node.kind === 'if' ? 'If / else'
+                    : node.kind === 'for_each' ? 'For each' : node.kind === 'collect' ? 'Collect' : 'Forward route';
                 const routeTargetId = node.kind === 'route' && 'node_id' in node.target ? node.target.node_id : undefined;
                 return (
                     <section key={node.id} className="min-w-0 space-y-3 rounded-xl border border-edge bg-surface-1 p-3" aria-label={`${title} block`}>
@@ -210,6 +224,20 @@ export function WorkflowStructuredList({
                         ) : null}
                         {node.kind === 'task' ? (
                             task ? renderTask(task, node, (next) => setNode(region.id, next)) : <p role="alert" className="text-xs text-danger">The referenced task is missing.</p>
+                        ) : node.kind === 'for_each' ? (
+                            <>
+                                <WorkflowForEachFields node={node} workflow={workflow} scope={scope} options={options}
+                                    onChange={(next) => setNode(region.id, next)} />
+                                {renderRegion(node.body, 'Body', depth + 1)}
+                                <WorkflowFlowInputs workflow={workflow} nodeId={node.body.id} bindings={node.body.outputs} label="Body outputs"
+                                    allowLoopItems={false}
+                                    availableIds={new Set([...(analyzeWorkflowFlow(workflow).available.get(node.body.id) ?? [])].filter((id) =>
+                                        enclosingFlowLoops(workflow, id).at(-1)?.id === node.id))}
+                                    onChange={(outputs) => setNode(region.id, { ...node, body: { ...node.body, outputs } })} />
+                                <p className="text-xs text-text-3">Body outputs are per-item receipts. Add a following Collect to expose a complete collection outside this loop.</p>
+                            </>
+                        ) : node.kind === 'collect' ? (
+                            <WorkflowCollectFields node={node} workflow={workflow} onChange={(next) => setNode(region.id, next)} />
                         ) : (
                             <>
                                 <WorkflowFlowInputs workflow={workflow} nodeId={node.id} bindings={node.inputs} label={`${title} inputs`}
@@ -219,8 +247,8 @@ export function WorkflowStructuredList({
                                 {node.kind === 'if' ? (
                                     <>
                                         <p className="text-xs text-text-3">True selects Then; false selects Else. The choice is saved before either path starts.</p>
-                                        {renderRegion(node.then, 'Then', depth + 1)}
-                                        {renderRegion(node.else, 'Else', depth + 1)}
+                                        {renderRegion(node.then, 'Then', depth + 1, true)}
+                                        {renderRegion(node.else, 'Else', depth + 1, true)}
                                         <JoinEditor node={node} workflow={workflow} onChange={(next) => setNode(region.id, next)} />
                                     </>
                                 ) : (
@@ -237,7 +265,7 @@ export function WorkflowStructuredList({
                                             {region.nodes.slice(index + 1).map((item) => <option key={item.id} value={`node:${item.id}`}>
                                                 {item.kind === 'task' ? workflow.tasks.find((task) => task.id === item.task_id)?.name || item.id : `${item.kind} (${item.id})`}
                                             </option>)}
-                                            {depth > 0 ? <option value={`exit:${region.id}`}>Exit this branch to its join</option> : null}
+                                            {branch ? <option value={`exit:${region.id}`}>Exit this branch to its join</option> : null}
                                         </select>
                                         <span className="mt-1 block text-xs text-text-3">False continues to the next node. Routing cannot bypass required inputs.</span>
                                     </label>
@@ -247,7 +275,7 @@ export function WorkflowStructuredList({
                     </section>
                 );
             })}
-            {!region.nodes.length ? <p className="text-xs text-text-3">This path is empty and rejoins without producing an output.</p> : null}
+            {!region.nodes.length ? <p className="text-xs text-text-3">This region is empty and invokes no tasks.</p> : null}
             <div className="flex flex-wrap gap-2">
                 <GlassButton size="sm" disabled={workflow.tasks.length >= options.max_tasks} onClick={() => add(region.id, 'task')}
                     aria-label={`Add task to ${label}`}><Plus size={14} /> Add task</GlassButton>
@@ -255,6 +283,10 @@ export function WorkflowStructuredList({
                     aria-label={`Add If/else to ${label}`}><GitBranch size={14} /> Add If/else</GlassButton>
                 <GlassButton size="sm" onClick={() => add(region.id, 'route')}
                     aria-label={`Add forward route to ${label}`}><Plus size={14} /> Add forward route</GlassButton>
+                {options.supported_node_kinds?.includes('for_each') ? <GlassButton size="sm" disabled={depth + 1 >= FLOW_MAX_DEPTH}
+                    onClick={() => add(region.id, 'for_each')} aria-label={`Add For each to ${label}`}><Plus size={14} /> Add For each</GlassButton> : null}
+                {options.supported_node_kinds?.includes('collect') ? <GlassButton size="sm" onClick={() => add(region.id, 'collect')}
+                    aria-label={`Add Collect to ${label}`}><Plus size={14} /> Add Collect</GlassButton> : null}
             </div>
         </fieldset>
     );
