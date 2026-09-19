@@ -286,6 +286,10 @@ export interface FlowProducer {
     outputs: { name: string; kind: WorkflowOutputKind; kinds?: WorkflowOutputKind[]; required: boolean; schema?: Record<string, unknown> }[];
 }
 
+export function isRecordsFlowOutput(output: FlowProducer['outputs'][number]): boolean {
+    return output.kind === 'records' && (output.kinds ?? [output.kind]).every((kind) => kind === 'records');
+}
+
 export function flowProducers(workflow: WorkflowDefinition): FlowProducer[] {
     if (!isFlowRegion(workflow.flow)) return [];
     const tasks = new Map(workflow.tasks.map((task) => [task.id, task]));
@@ -569,7 +573,30 @@ export function flowUnsupportedReason(workflow: WorkflowDefinition, options?: Wo
     if (workflow.editor_readonly_reason) return workflow.editor_readonly_reason;
     for (const task of workflow.tasks) {
         const publication = task.publication;
-        if (!isRecord(publication) || !Object.hasOwn(publication, 'completion_policy')) continue;
+        if (publication === undefined) continue;
+        if (!isRecord(publication) || Object.keys(publication).some((key) => ![
+            'source_kind', 'artifact_format', 'workspace_scope', 'group_id', 'public_workspace_id', 'completion_policy',
+        ].includes(key))) {
+            return 'This publication contains unsupported fields. Its original configuration is preserved and read-only.';
+        }
+        if (Object.hasOwn(publication, 'source_kind') &&
+            publication.source_kind !== 'native_analysis' && publication.source_kind !== 'saved_output') {
+            return 'This publication contains an unsupported source kind. Its original configuration is preserved and read-only.';
+        }
+        const savedOutput = publication.source_kind === 'saved_output';
+        if (savedOutput && (workflow.definition_version !== 3 || workflow.durable_execution !== true)) {
+            return 'Saved workflow output publication requires a durable definition-v3 workflow. The saved definition is preserved and read-only.';
+        }
+        if (savedOutput ? publication.artifact_format !== 'json'
+            : !['md', 'csv', 'json'].includes(publication.artifact_format)) {
+            return 'This publication contains an unsupported source/format combination. Its original configuration is preserved and read-only.';
+        }
+        if (savedOutput && options && !options.publication_source_capabilities?.some((capability) =>
+            capability.source_kind === 'saved_output' && capability.output_kinds.includes('records') &&
+            capability.artifact_formats.includes('json'))) {
+            return 'This server does not support the saved workflow output publication source/format. Its original configuration is preserved and read-only.';
+        }
+        if (!Object.hasOwn(publication, 'completion_policy')) continue;
         const policy = publication.completion_policy;
         if (typeof policy !== 'string' || !['submitted', 'approved', 'indexed_ready'].includes(policy)) {
             return 'This publication contains an unsupported completion policy. Its original configuration is preserved and read-only.';
@@ -876,7 +903,19 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
                     }
                 }
                 if (task.publication) {
-                    if (bindings.length !== 1) errors.push(`${task.name} publication requires exactly one explicit native Analyze input.`);
+                    const savedOutput = task.publication.source_kind === 'saved_output';
+                    if (savedOutput) {
+                        const binding = bindings[0];
+                        const source = binding?.source;
+                        const output = source?.kind === 'node_output'
+                            ? producers.get(source.node_id)?.outputs.find((item) => item.name === source.output) : undefined;
+                        if (bindings.length !== 1 || !binding.required || binding.expected_kind !== 'records' ||
+                            source?.kind !== 'node_output' || !output || !isRecordsFlowOutput(output)) {
+                            errors.push(`${task.name} publication requires exactly one required saved records node output from a task, Collect, or explicit join. Text, scalar JSON, document results, and current loop items cannot be exported.`);
+                        }
+                    } else if (bindings.length !== 1) {
+                        errors.push(`${task.name} publication requires exactly one explicit native Analyze input.`);
+                    }
                     if (!['md', 'csv', 'json'].includes(task.publication.artifact_format) ||
                         !['personal', 'group', 'public'].includes(task.publication.workspace_scope)) {
                         errors.push(`${task.name} publication needs a supported format and explicit destination.`);

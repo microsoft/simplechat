@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.117**
 
+Updated in version: **0.261.119**.
+
 Application version source: `application\single_app\config.py`.
 
 ## Purpose and dependencies
@@ -232,11 +234,28 @@ Key tests include `test_workflow_for_each_execution.py`,
 `route_tests\test_workflow_loop_policy.py`, and
 `ui_tests\test_v2_workflow_loops.py`.
 
-Repeat until, parallel iteration, hosted-agent loops, generic aggregate
-publication, publication/index-readiness continuation, cumulative spending
-caps, and the visual Flow editor are not included. Original native Analyze
-artifacts still use the existing publication service and destination ledger;
-Collect is not relabeled as native Analyze to bypass that boundary.
+Since **0.261.119**, a later Publish task can explicitly select **Saved workflow
+output** and bind Collect's eligible `records` output, directly or through an
+explicit join. The shared Generated File Export Framework writes every selected
+saved record object as exact JSON and submits the file to the chosen workspace.
+It preserves order, duplicates, nested values and retained provenance without
+rerunning the loop. This does not enable generic file export of
+`document_results` bundles. Partial publication requires explicit Collect and
+publishing-input acceptance; invalid uniqueness remains invalid.
+
+The [publication completion policies](WORKFLOW_PUBLICATION_COMPLETION.md)
+introduced in **0.261.118** also apply to this saved-record file. A downloadable
+JSON file, including a valid empty array, is not proof of destination approval
+or index readiness. The existing publication service and sole destination
+ledger remain in use; Collect is never relabeled as native Analyze. See
+[Saved workflow output publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md) for
+the source contract, authorization, recovery and validation commands.
+
+Generic CSV, Markdown, Word/DOCX, PDF, PowerPoint/PPTX and XML mappings remain
+future extensions of that same shared framework; existing native formats keep
+their behavior. Repeat until, M5 read-only Flow and accessible visual authoring
+remain separate future slices. Parallel iteration and hosted-agent loops remain
+unsupported; cumulative run-token/spending caps remain deferred.
 
 Validation uses fictional data and isolated services. It is not evidence of a
 live deployment or permission change.

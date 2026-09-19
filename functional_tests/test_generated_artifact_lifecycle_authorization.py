@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for generated artifact lifecycle authorization.
-Version: 0.250.180
+Version: 0.261.119
 Implemented in: 0.250.180
 
 This test ensures staged artifact-set members are not directly downloadable or
@@ -16,6 +16,9 @@ from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 from test_support.versioning import assert_app_version_at_least
+from test_support.app_stubs import import_app_module
+
+artifact_sources = import_app_module("functions_generated_artifact_sources")
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +84,8 @@ def load_operation_helpers(conversation_item, message_item, run_item=None):
         elif isinstance(node, ast.FunctionDef) and node.name in helper_names:
             selected_nodes.append(node)
     namespace = {
+        "has_generated_artifact_source": artifact_sources.has_generated_artifact_source,
+        "authorize_generated_artifact_source": artifact_sources.authorize_generated_artifact_source,
         "Any": Any,
         "Dict": Dict,
         "Optional": Optional,

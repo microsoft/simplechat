@@ -15,6 +15,7 @@ WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json
 WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_results"})
 WORKFLOW_INPUT_PROCESSING_MODES = frozenset({"full", "saved_record_report"})
 WORKFLOW_PUBLICATION_COMPLETION_POLICIES = ("submitted", "approved", "indexed_ready")
+WORKFLOW_PUBLICATION_SOURCE_KINDS = ("native_analysis", "saved_output")
 WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval", "input_processing"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
@@ -52,12 +53,27 @@ def normalize_publication_completion_policy(value):
     return value
 
 
+def normalize_publication_source_kind(value):
+    if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_SOURCE_KINDS:
+        raise WorkflowDefinitionError("Publication source must be native_analysis or saved_output.")
+    return value
+
+
 def validate_workflow_publication_completion(workflow):
     for task in workflow.get("tasks") or []:
         if not isinstance(task, dict):
             raise WorkflowDefinitionError("A workflow task must be an object.")
         publication = task.get("publication")
-        if isinstance(publication, dict) and "completion_policy" in publication:
+        if not isinstance(publication, dict):
+            continue
+        if "source_kind" in publication:
+            normalize_publication_source_kind(publication["source_kind"])
+        if publication.get("source_kind") == "saved_output":
+            if workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True:
+                raise WorkflowDefinitionError("Saved-output publication requires a version-3 durable workflow.")
+            if publication.get("artifact_format") != "json":
+                raise WorkflowDefinitionError("Saved-output publication currently supports exact JSON records only.")
+        if "completion_policy" in publication:
             normalize_publication_completion_policy(publication["completion_policy"])
             if workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True:
                 raise WorkflowDefinitionError("Publication completion policies require a version-3 durable workflow.")

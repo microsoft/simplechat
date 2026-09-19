@@ -72,6 +72,7 @@ export interface WorkflowEditorOptions {
     supported_binding_sources?: string[];
     supported_input_processing_modes?: string[];
     supported_publication_completion_policies?: string[];
+    publication_source_capabilities?: WorkflowPublicationSourceCapability[];
     flow_limits?: {
         max_nodes: number;
         max_depth: number;
@@ -127,12 +128,32 @@ export interface WorkflowTaskApproval {
     message?: string;
 }
 
+export type WorkflowPublicationSourceKind = 'native_analysis' | 'saved_output';
+
+export interface WorkflowPublicationSourceCapability {
+    source_kind: string;
+    output_kinds: string[];
+    artifact_formats: string[];
+}
+
 export interface WorkflowPublication {
+    source_kind?: WorkflowPublicationSourceKind;
     artifact_format: 'md' | 'csv' | 'json';
     workspace_scope: 'personal' | 'group' | 'public';
     group_id?: string;
     public_workspace_id?: string;
     completion_policy?: WorkflowPublicationCompletionPolicy;
+}
+
+export function isWorkflowPublicationSourceKind(value: unknown): value is WorkflowPublicationSourceKind {
+    return value === 'native_analysis' || value === 'saved_output';
+}
+
+export function savedOutputPublicationFormats(options: WorkflowEditorOptions): 'json'[] {
+    const capability = options.publication_source_capabilities?.find((item) => item.source_kind === 'saved_output');
+    return capability?.output_kinds.includes('records')
+        ? [...new Set(capability.artifact_formats.filter((format): format is 'json' => format === 'json'))]
+        : [];
 }
 
 export const WORKFLOW_PUBLICATION_COMPLETION_LABELS = {
@@ -1315,6 +1336,16 @@ export async function fetchWorkflowEditorOptions(
         [...response.agents, ...response.models, response.default_model ?? {}]
             .some((runner) => !isRecord(runner) || runner.loop_eligible !== undefined && typeof runner.loop_eligible !== 'boolean')) {
         throw new Error('The workflow editor returned invalid loop capabilities or limits.');
+    }
+    const publicationSources = response.publication_source_capabilities;
+    if (publicationSources !== undefined && (
+        !Array.isArray(publicationSources) || publicationSources.some((capability) =>
+            !isRecord(capability) || typeof capability.source_kind !== 'string' || !capability.source_kind.trim() ||
+            !Array.isArray(capability.output_kinds) || capability.output_kinds.some((kind) => typeof kind !== 'string') ||
+            !Array.isArray(capability.artifact_formats) || capability.artifact_formats.some((format) => typeof format !== 'string')) ||
+        new Set(publicationSources.map((capability) => capability.source_kind)).size !== publicationSources.length
+    )) {
+        throw new Error('The workflow editor returned invalid publication source capabilities.');
     }
     return response;
 }

@@ -651,7 +651,11 @@ def public_history_messages(messages, user_id=None):
         try:
             refreshed = refresh_workspace_attachment(message, user_id)
             assert_evidence_available(refreshed, user_id, cached=True)
-            safe_messages.append(deepcopy(refreshed))
+            # The shared generated-file source dispatcher keeps private saved-output
+            # cards from bypassing the same boundary used by their downloads.
+            from functions_generated_artifact_sources import sanitize_generated_artifact_history
+
+            safe_messages.append(deepcopy(sanitize_generated_artifact_history(refreshed, user_id)))
         except (ScreeningError, LookupError, PermissionError):
             if request_context:
                 flask.g.content_screening_error = previous_error

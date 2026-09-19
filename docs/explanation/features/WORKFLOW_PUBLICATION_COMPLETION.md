@@ -2,30 +2,39 @@
 
 Implemented in version: **0.261.118**.
 
+Saved-output integration implemented in version: **0.261.119**.
+
 Application version tracking: `application/single_app/config.py`.
 
 ## Purpose and scope
 
-A workflow can submit an existing Analyze artifact without waiting for it to
-be searchable, or require approval and index readiness before continuing.
+A workflow can submit an existing Analyze artifact, or explicitly render and
+submit saved records, without waiting for the destination to be searchable.
+It can instead require approval and index readiness before continuing.
 The completion policy makes that choice explicit. Closing the browser or
 restarting a worker does not create a new publication request.
 
 This feature applies to **definition-version-3 durable workflows** in personal
-and group workspaces. It reuses native Analyze artifacts, the existing
-publication receipt ledger, workspace approval routes, native document
-processing, screening, and the existing workflow runner. It adds no scheduler,
-Cosmos container, administrator setting, or model call.
+and group workspaces. Both source paths use the existing publication receipt
+ledger, workspace approval routes, native document processing, screening, and
+workflow runner. It adds no scheduler, Cosmos container, administrator setting,
+or model call.
 
-Generic saved results and Collect outputs cannot be relabeled as native
-Analyze artifacts. Publishing those representations is outside this feature.
+Since **0.261.119**, **Saved workflow output** creates exact JSON through the
+shared Generated File Export Framework before entering this same completion
+service. It requires one eligible, explicitly bound records output from a task,
+Collect, or explicit join. Generic records are never relabeled as native
+Analyze artifacts. See
+[Saved workflow output publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md)
+for source eligibility, partial acceptance and file materialization.
 
 ## Choose the completion level
 
-In the V2 List editor, configure a task to **Publish an existing analysis
-artifact**. Bind exactly one eligible native Analyze output, choose an existing
-artifact format and an explicit destination, then select **Complete publication
-when**.
+In the V2 List editor, enable **Publish a workflow file** and choose **Existing
+Analyze file** or **Saved workflow output**. Bind exactly one eligible output,
+choose a supported format and explicit destination, then select **Complete
+publication when**. Servers without the new source capability retain **Publish
+an existing analysis artifact** and native behavior.
 
 | Level | When the workflow can continue | What remains outside the promise |
 | --- | --- | --- |
@@ -67,11 +76,25 @@ unknown values are rejected. Version-1/2 definitions do not support this
 field. Editor options advertise `supported_publication_completion_policies`;
 unsupported saved definitions remain intact and read-only.
 
-The existing receipt binds the artifact, immutable byte digest, exact native
-producer execution/attempt, selected saved output, destination, actor and
-policy. The publishing execution includes the run, definition revision and
-loop path. Retrying that publishing execution does not create a new document
-merely because its publishing attempt changed.
+The example intentionally omits `source_kind`, preserving native Analyze
+publication. Generic records require `source_kind: "saved_output"`,
+`artifact_format: "json"` and one required `node_output` records binding.
+Source options are advertised separately in `publication_source_capabilities`;
+they do not change the meaning or omission behavior of completion policies.
+
+For native artifacts, the existing receipt binds the artifact, immutable byte
+digest, exact native producer execution/attempt, selected saved output,
+destination, actor and policy. The publishing execution includes the run,
+definition revision and loop path. Retrying that publishing execution does
+not create a new document merely because its publishing attempt changed.
+
+Native receipt identities are unchanged. For saved-output files, the same
+ledger binds the validated generic source instead of a native
+`analysis_producer`. The version-3 request remains
+`workflow-publication:v3:{publishing_execution_id}:{producer_execution_id}:{producer_attempt}`.
+File materialization has its own deterministic source/representation key,
+independent of publishing attempt and destination; its existing journal units
+do not replace destination receipts.
 
 A private `artifact_publication` continuation points back to this receipt.
 It is persisted with the existing task checkpoint, not in a second job
@@ -134,6 +157,10 @@ search representation rather than an individual search chunk for every row.
 This policy does not replace the native indexing contract with a promise of
 exhaustive semantic retrieval.
 
+A valid exact JSON file, including an empty array, therefore does not prove
+index readiness. Saved-output publication uses the same native worker and
+original-content evidence, not a new saved-record indexer.
+
 If complete native proof is unavailable, the workflow reports that limitation;
 it does not reconstruct an artifact with a model or infer success from prose.
 
@@ -173,6 +200,8 @@ when a workflow or its private run results are deleted.
 
 | Component | Responsibility |
 | --- | --- |
+| `functions_workflow_artifacts.py` and `functions_generated_file_exports.py` | Authorized saved-record materialization before entering the existing publication service. |
+| `functions_generated_artifact_sources.py` | Source-specific authorization without weakening native Analyze provenance. |
 | `functions_artifact_publication.py` | Existing receipt stages, policy evaluation, authorization and shared destination decisions. |
 | `functions_artifact_publication_readiness.py` | Compact native ingestion evidence and read-only index/availability observations. |
 | `functions_workflow_readiness.py` and existing runner/runtime | Exact typed continuation, wait/requeue and same-receipt recovery. |
@@ -191,3 +220,11 @@ and `ui_tests/test_v2_workflow_publication_completion.py`. They use closed
 fictional service boundaries and the actual local V2 bundle. They do not
 constitute live deployment acceptance or publish test documents to real
 workspaces.
+
+Saved-output integration is targeted by
+`functional_tests\test_workflow_collect_publication.py`,
+`functional_tests\test_workflow_saved_output_artifacts.py` and
+`ui_tests\test_v2_workflow_saved_output_publication.py`, alongside those native
+regressions. Coverage includes both result backends, exact source retry
+identity and unchanged completion levels; see the
+[validation commands](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md#testing-and-validation).
