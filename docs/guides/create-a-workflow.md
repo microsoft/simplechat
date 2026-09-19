@@ -73,7 +73,8 @@ Declare promised deliverables under **Final outputs**. This prevents a run from
 reporting completion when a selected path did not produce the required result.
 Structured definitions require durable execution and preserve their choices
 across waits and restarts. For each and Collect are added in **0.261.117** below.
-Repeat until and the visual Flow editor remain separate.
+Repeat until is added in **0.261.120** below. M5A read-only Flow and M5B visual
+authoring remain separate later milestones.
 
 See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for condition semantics, execution identity, limits, and compatibility.
@@ -104,6 +105,46 @@ their full input cannot safely fit; they do not silently become summary tasks.
 
 See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
 for local-runner requirements, partial coverage, nested scopes, and limitations.
+
+## Refine saved state with Repeat until
+
+In **0.261.120**, use **Repeat until** when each round should work on saved
+state from the preceding round, such as a report draft and a structured review
+decision. It is a serial, post-body loop: the body always runs at least once.
+Select an eligible model or local agent; hosted non-loop workflows are
+unchanged, but hosted loop execution is unavailable.
+
+1. Produce the initial data in earlier tasks, then add **Repeat until**.
+   Declare named state with explicit `text`, `json`, `records`, or
+   `document_results` contracts. Select each initial saved output; entering
+   starting literals is not supported.
+2. Choose **Maximum rounds before manual continuation** explicitly. The field
+   starts unset. The administrator ceiling defaults to 25 and can be 1-1,000;
+   this is separate from For each's 500-item default and the global run budgets.
+3. Bind body tasks to **Current Repeat state**, declare their body outputs, and
+   select a next body output for every state slot. To keep data unchanged,
+   explicitly pass through its current-state receipt rather than asking a
+   model to echo it.
+4. Under **Stop after a round when**, select typed next-state fields. Use a
+   schema-validated Boolean such as `review.ready`, not a sentence saying the
+   work is complete. Configure explicit final exports for later tasks.
+5. Save and reopen the workflow to review those exact bindings. An invalid
+   removal or move keeps the binding and reports the problem rather than
+   silently choosing another producer.
+
+The final exports become available only when the condition is true, including
+when it first becomes true on the last allowed round. Otherwise the workflow
+pauses at the batch limit with prior outputs and next state retained. See
+[manual continuation](trigger-a-workflow.md#continue-a-repeat-batch) before
+granting another batch.
+
+Partial state is rejected unless the producer, state slot, and relevant
+consumers explicitly accept it. Accepted coverage limitations remain visible
+through later rounds and final results. Approval cannot repair failed,
+invalid, pending, missing, or unauthorized data.
+
+See [Repeat until with saved typed state](../explanation/features/WORKFLOW_REPEAT_UNTIL.md)
+for state contracts, frozen policy, mixed nesting, and exact result identity.
 
 ## Durable execution and task approval
 
@@ -211,6 +252,12 @@ In **0.261.119**, a version-3 durable workflow can publish records from a real
 task, **Collect**, or an explicit **Join outputs** selection. Use this when you
 need the complete collected dataset as a file, rather than an explanation of
 the dataset or a copy of one native Analyze artifact.
+
+In **0.261.120**, a satisfied **Repeat until** boundary can also supply a named
+eligible records export, directly or through a join. An exhausted batch does
+not expose a final export; current-state metadata is not a publication source.
+The same exact JSON renderer, immutable file identity, and destination receipt
+remain in use.
 
 1. Produce an eligible records output. For example, Analyze each document in a
    frozen For each selection, then Collect the records outside the loop.

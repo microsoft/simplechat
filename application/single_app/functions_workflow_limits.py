@@ -8,6 +8,11 @@ WORKFLOW_LOOP_ITEMS_DEFAULT = 500
 WORKFLOW_LOOP_ITEMS_MIN = 1
 WORKFLOW_LOOP_ITEMS_MAX = 5000
 WORKFLOW_LOOP_LIMIT_SETTING = "workflow_max_loop_items"
+WORKFLOW_MAX_EXECUTION_ADMISSIONS = 5000
+WORKFLOW_REPEAT_ITERATIONS_DEFAULT = 25
+WORKFLOW_REPEAT_ITERATIONS_MIN = 1
+WORKFLOW_REPEAT_ITERATIONS_MAX = 1000
+WORKFLOW_REPEAT_LIMIT_SETTING = "workflow_max_repeat_iterations"
 
 
 class WorkflowLoopInputError(ValueError):
@@ -70,6 +75,44 @@ def get_workflow_max_loop_items(settings=None):
 def get_workflow_loop_item_limit(settings=None):
     """Return the validated administrator ceiling to snapshot at new-run admission."""
     return get_workflow_max_loop_items(settings)
+
+
+def validate_workflow_max_repeat_iterations(value):
+    """Validate the separate ceiling for one automatically executed Repeat batch."""
+    candidate = value
+    if isinstance(value, str):
+        text = value.strip()
+        candidate = (
+            int(text)
+            if text.isascii() and text.isdecimal() and len(text) <= 10
+            else None
+        )
+    if (
+        type(candidate) is not int
+        or not WORKFLOW_REPEAT_ITERATIONS_MIN <= candidate <= WORKFLOW_REPEAT_ITERATIONS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflow Repeat Iteration Limit must be a whole number from 1 to 1,000.",
+            code="workflow_repeat_limit_invalid",
+        )
+    return candidate
+
+
+def get_workflow_max_repeat_iterations(settings=None):
+    """Read new-run policy without changing an admitted run's frozen allowance."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The workflow Repeat limit is temporarily unavailable.",
+            code="workflow_repeat_limit_unavailable",
+        )
+    return validate_workflow_max_repeat_iterations(
+        settings.get(WORKFLOW_REPEAT_LIMIT_SETTING, WORKFLOW_REPEAT_ITERATIONS_DEFAULT)
+    )
 
 
 def effective_workflow_loop_limit(max_items=None, *, settings=None, policy=None):

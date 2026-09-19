@@ -30,6 +30,7 @@ from functions_workflow_runtime_store import (
     RuntimeUnavailable,
     workflow_runtime_projection,
     workflow_runtime_store,
+    validate_repeat_admission_policy,
 )
 
 
@@ -133,8 +134,9 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
     _authorize_execution(current, actor_user_id, settings)
     if type(current.get("definition_version", 1)) is not int or current.get("definition_version", 1) not in {1, 2, 3}:
         raise ValueError("This workflow definition requires a newer execution engine.")
+    compiled = None
     if current.get("definition_version") == 3:
-        compile_workflow_flow(current)
+        compiled = compile_workflow_flow(current)
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 
         validate_workflow_loop_runners(current, actor_user_id=actor_user_id, settings=settings)
@@ -157,21 +159,30 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
             raise WorkflowRuntimeConflict("tombstoned", "This workflow run was deleted.")
         snapshot_ref = existing_control["snapshot_ref"]
         snapshot = store.run_definition() if existing_control.get("schema_version") == 2 else load_workflow_task_result(current, run_id, "runtime:definition", snapshot_ref)
-    else:
+    loop_policy, repeat_policy = None, None
+    if snapshot.get("definition_version") == 3:
+        from functions_workflow_limits import get_workflow_loop_item_limit, get_workflow_max_repeat_iterations
+
+        loop_policy = existing_control.get("loop_policy") if existing_control is not None else {"max_items": get_workflow_loop_item_limit(settings)}
+        repeat_policy = (
+            existing_control.get("repeat_policy") if existing_control is not None
+            else {"max_iterations": get_workflow_max_repeat_iterations(settings)}
+            if any(entry["node"]["kind"] == "repeat_until" for entry in compiled["nodes"].values())
+            else None
+        )
+        if existing_control is None:
+            repeat_policy = validate_repeat_admission_policy(compiled, repeat_policy)
+    if existing_control is None:
         snapshot_ref = (
             save_workflow_runtime_result(snapshot, run_id, snapshot, settings=settings)
             if snapshot.get("definition_version") == 3 else
             save_workflow_task_result(current, run_id, "runtime:definition", snapshot, settings=settings)
         )
-    loop_policy = None
-    if snapshot.get("definition_version") == 3:
-        from functions_workflow_limits import get_workflow_loop_item_limit
-
-        loop_policy = {"max_items": get_workflow_loop_item_limit(settings)}
     control = store.initialize(
         snapshot_ref=snapshot_ref, definition_revision=snapshot["definition_revision"],
         actor_user_id=actor_user_id, request_id=request_id,
         **({"loop_policy": loop_policy} if loop_policy is not None else {}),
+        **({"repeat_policy": repeat_policy} if repeat_policy is not None else {}),
     )
     if control["state"] in RUNTIME_TERMINAL_STATES:
         run = services["runs"].read_item(item=run_id, partition_key=services["partition"])

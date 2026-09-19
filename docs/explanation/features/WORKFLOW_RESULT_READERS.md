@@ -13,6 +13,9 @@ raw-model result as an original Analyze run.
 Updated in version: **0.261.117** with execution-scoped complete-record handles
 and incremental collection indexes.
 
+Updated in version: **0.261.120** for exact Repeat state receipts and mixed
+iteration paths.
+
 ## Purpose and dependencies
 
 This incremental foundation extends the existing `workflow-result-v1` store.
@@ -107,6 +110,36 @@ caches are bounded, and source checks remain independent of storage identity.
 iteration and aggregate consumption. Explicit saved-record reporting can
 process supported large inputs in batches while retaining originals.
 Inspection-only readers do not grant engine eligibility to invalid results.
+
+## Repeat state and exact historical reads
+
+[Repeat until](WORKFLOW_REPEAT_UNTIL.md) reuses the same typed result store for
+`text`, `json`, `records`, and `document_results`. `repeat_state` is a binding
+source, not a new public result kind or a request to convert typed data into
+a downloaded file. Each slot selects an exact saved producer receipt; earlier
+state versions and original values remain retained.
+
+A read must prove every frame of a mixed iteration path: frozen item membership
+for For each and sealed round admission with its before-state receipt for
+Repeat. `{loop_id, iteration}` uses a zero-based lifetime index, which does not
+reset on manual continuation. A current Repeat head or a well-formed path is
+not permission to invent a historical round.
+
+State and producer lineage use shared bounded, cycle-detecting authorization
+traversal. Reusing an exact receipt does not cache authority indefinitely:
+current workflow/group, contributor, source revision, producer attempt, and
+lifecycle checks still apply at their existing boundaries.
+
+Before/after inspection is paged. Uncommitted after-state is unavailable, not
+an eligible empty value. Partial state requires explicit acceptance and
+retains coverage and limitations through later state and final exports.
+Invalid, failed, pending, missing-required, or unauthorized state cannot become
+usable through manual continuation.
+
+Only a satisfied Repeat boundary exposes its declared final outputs through
+ordinary `node_output` readers. This preserves the selected body producer,
+attempt, and representation for later tasks and exact saved-record publication
+without a latest-task lookup or a fabricated native Analyze producer.
 
 ## Validation and integration boundary
 

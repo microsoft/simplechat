@@ -8,11 +8,13 @@ import {
     analyzeWorkflowFlow,
     defaultFlowPredicate,
     enclosingFlowLoops,
+    enclosingFlowRepeats,
     flowBinding,
     flowBindingSchema,
     flowProducers,
     isRecordsFlowOutput,
     loopItemBinding,
+    repeatStateBinding,
     FLOW_ALIAS_PATTERN,
     FLOW_COMPARISONS,
     FLOW_MAX_PREDICATE_DEPTH,
@@ -20,6 +22,10 @@ import {
     predicateSummary,
     scalarSchemaFields,
     type WorkflowFlowBinding,
+    type WorkflowFlowSource,
+    type WorkflowForEachNode,
+    type WorkflowRepeatUntilNode,
+    type FlowProducer,
     type WorkflowOperand,
     type WorkflowPredicate,
     type WorkflowScalar,
@@ -29,6 +35,92 @@ import { isRecord } from '../../lib/workspaceAuthoring';
 
 const inputClass = 'mt-1 w-full min-w-0 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none';
 
+export function WorkflowFlowSourcePicker({ source, producers, loops = [], repeats = [], label, recordsOnly = false, onChange }: {
+    source: WorkflowFlowSource;
+    producers: FlowProducer[];
+    loops?: WorkflowForEachNode[];
+    repeats?: WorkflowRepeatUntilNode[];
+    label: string;
+    recordsOnly?: boolean;
+    onChange: (source: WorkflowFlowSource, kind: WorkflowOutputKind) => void;
+}) {
+    const producer = source.kind === 'node_output' ? producers.find((item) => item.id === source.node_id) : undefined;
+    const repeat = source.kind === 'repeat_state' ? repeats.find((item) => item.id === source.loop_id) : undefined;
+    const setRepeat = (loop: WorkflowRepeatUntilNode | undefined, stateName?: string) => {
+        const slot = stateName === undefined ? loop?.state[0] : loop?.state.find((item) => item.name === stateName);
+        onChange({ kind: 'repeat_state', loop_id: loop?.id ?? '', state_name: stateName ?? slot?.name ?? '', scope: 'current' },
+            slot?.output_contract.kind ?? 'any');
+    };
+    return <>
+        {loops.length || repeats.length || source.kind !== 'node_output' ? <label className="min-w-0 text-xs text-text-2">
+            Source
+            <select className={inputClass} aria-label={`${label} source`} value={source.kind}
+                onChange={(event) => {
+                    if (event.target.value === 'loop_item') onChange({
+                        kind: 'loop_item', loop_id: loops.at(-1)?.id ?? '', scope: 'current',
+                    }, 'json');
+                    else if (event.target.value === 'repeat_state') setRepeat(repeats.at(-1));
+                    else onChange({
+                        kind: 'node_output', node_id: producers[0]?.id ?? '', output: producers[0]?.outputs[0]?.name ?? '', scope: 'current',
+                    }, producers[0]?.outputs[0]?.kind ?? 'any');
+                }}>
+                <option value="node_output">Saved node output</option>
+                {loops.length || source.kind === 'loop_item' ? <option value="loop_item" disabled={!loops.length || recordsOnly}>Current loop item, key and index</option> : null}
+                {repeats.length || source.kind === 'repeat_state' ? <option value="repeat_state" disabled={!repeats.length || recordsOnly}>Current Repeat state</option> : null}
+            </select>
+        </label> : null}
+        {source.kind === 'node_output' ? <>
+            <label className="min-w-0 text-xs text-text-2">
+                Producer
+                <select className={inputClass} aria-label={`${label} producer`} value={source.node_id}
+                    onChange={(event) => {
+                        const selected = producers.find((item) => item.id === event.target.value);
+                        if (selected) onChange({ ...source, node_id: selected.id, output: selected.outputs[0]?.name ?? '' },
+                            selected.outputs[0]?.kind ?? 'any');
+                    }}>
+                    {!producer ? <option value={source.node_id} disabled={recordsOnly}>Unavailable: {source.node_id || 'choose a producer'}</option> : null}
+                    {producers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+            </label>
+            <label className="min-w-0 text-xs text-text-2">
+                Final output
+                <select className={inputClass} aria-label={`${label} output`} value={source.output}
+                    onChange={(event) => onChange({ ...source, output: event.target.value },
+                        producer?.outputs.find((item) => item.name === event.target.value)?.kind ?? 'any')}>
+                    {!producer?.outputs.some((item) => item.name === source.output) ? <option value={source.output} disabled={recordsOnly}>Unavailable: {source.output || 'choose an output'}</option> : null}
+                    {producer?.outputs.map((output) => <option key={output.name} value={output.name}>{output.name}</option>)}
+                </select>
+            </label>
+        </> : source.kind === 'loop_item' ? <label className="min-w-0 text-xs text-text-2">
+            Current item from loop
+            <select className={inputClass} aria-label={`${label} loop`} value={source.loop_id}
+                onChange={(event) => onChange({ ...source, loop_id: event.target.value }, 'json')}>
+                {!loops.some((loop) => loop.id === source.loop_id) ? <option value={source.loop_id}>Unavailable: {source.loop_id}</option> : null}
+                {loops.map((loop) => <option key={loop.id} value={loop.id}>{loop.id}</option>)}
+            </select>
+            <span className="mt-1 block">JSON fields: value, key, index (zero-based). Only this visit or an enclosing loop's current item is available.</span>
+        </label> : <>
+            <label className="min-w-0 text-xs text-text-2">
+                Enclosing Repeat
+                <select className={inputClass} aria-label={`${label} Repeat`} value={source.loop_id}
+                    onChange={(event) => setRepeat(repeats.find((item) => item.id === event.target.value))}>
+                    {!repeat ? <option value={source.loop_id}>Unavailable: {source.loop_id || 'choose a Repeat'}</option> : null}
+                    {repeats.map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}
+                </select>
+            </label>
+            <label className="min-w-0 text-xs text-text-2">
+                Current state slot
+                <select className={inputClass} aria-label={`${label} state`} value={source.state_name}
+                    onChange={(event) => setRepeat(repeat, event.target.value)}>
+                    {!repeat?.state.some((slot) => slot.name === source.state_name) ? <option value={source.state_name}>Unavailable: {source.state_name || 'choose a state slot'}</option> : null}
+                    {repeat?.state.map((slot, index) => <option key={index} value={slot.name}>{slot.name || '(name required)'} ({slot.output_contract.kind})</option>)}
+                </select>
+                <span className="mt-1 block">The saved state at the start of this round. It stays unchanged for the whole body, including nested blocks.</span>
+            </label>
+        </>}
+    </>;
+}
+
 export function WorkflowFlowInputs({
     workflow,
     nodeId,
@@ -37,6 +129,7 @@ export function WorkflowFlowInputs({
     label = 'Named inputs',
     availableIds,
     allowLoopItems = true,
+    allowRepeatState = true,
     recordsOnly = false,
 }: {
     workflow: WorkflowDefinition;
@@ -46,6 +139,7 @@ export function WorkflowFlowInputs({
     label?: string;
     availableIds?: Set<string>;
     allowLoopItems?: boolean;
+    allowRepeatState?: boolean;
     recordsOnly?: boolean;
 }) {
     const available = availableIds ?? analyzeWorkflowFlow(workflow).available.get(nodeId) ?? new Set<string>();
@@ -53,28 +147,31 @@ export function WorkflowFlowInputs({
         .map((producer) => recordsOnly ? { ...producer, outputs: producer.outputs.filter(isRecordsFlowOutput) } : producer)
         .filter((producer) => !recordsOnly || producer.outputs.length > 0);
     const loops = allowLoopItems && !recordsOnly ? enclosingFlowLoops(workflow, nodeId) : [];
+    const repeats = allowRepeatState && !recordsOnly ? enclosingFlowRepeats(workflow, nodeId).filter((node) => node.state.length) : [];
     const update = (index: number, binding: WorkflowFlowBinding) =>
         onChange(bindings.map((current, position) => position === index ? binding : current));
     const add = () => {
         const producer = producers[0];
-        if (!producer && !loops.length) return;
+        const repeat = repeats.at(-1);
+        if (!producer && !loops.length && !repeat) return;
         let number = 1;
         while (bindings.some((binding) => binding.name === `input${number}`)) number++;
-        onChange([...bindings, producer ? {
+        const next = producer ? {
             ...flowBinding(`input${number}`, producer.id, producer.outputs[0]?.name ?? 'authoritative'),
             expected_kind: producer.outputs[0]?.kind ?? 'any',
-        } : loopItemBinding(`input${number}`, loops[loops.length - 1].id)]);
+        } : loops.length ? loopItemBinding(`input${number}`, loops[loops.length - 1].id)
+            : repeat ? repeatStateBinding(`input${number}`, repeat.id, repeat.state[0]) : undefined;
+        if (next) onChange([...bindings, next]);
     };
     return (
         <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
             <legend className="px-1 text-sm font-medium text-text-1">{label}</legend>
             <p className="text-xs text-text-3">
-                Only these named final outputs are consumed. A skipped producer never falls back to another task.
+                Only these named saved values are consumed. A skipped producer never falls back to another task.
                 {recordsOnly ? ' File export requires exactly one required records output. Partial output still needs this binding’s explicit acceptance and an eligible producer.' : ''}
             </p>
             {bindings.map((binding, index) => {
                 const source = binding.source;
-                const producer = source.kind === 'node_output' ? producers.find((item) => item.id === source.node_id) : undefined;
                 return (
                     <div key={index} className="grid min-w-0 gap-3 rounded-lg bg-surface-sunken p-3 sm:grid-cols-2">
                         <label className="min-w-0 text-xs text-text-2">
@@ -83,60 +180,12 @@ export function WorkflowFlowInputs({
                                 value={binding.name} maxLength={64}
                                 onChange={(event) => update(index, { ...binding, name: event.target.value })} />
                         </label>
-                        {loops.length || source.kind === 'loop_item' ? <label className="min-w-0 text-xs text-text-2">
-                            Source
-                            <select className={inputClass} aria-label={`${label} input ${index + 1} source`} value={source.kind}
-                                onChange={(event) => update(index, event.target.value === 'loop_item'
-                                    ? loopItemBinding(binding.name, loops[loops.length - 1]?.id ?? '')
-                                    : { ...flowBinding(binding.name, producers[0]?.id ?? '', producers[0]?.outputs[0]?.name ?? ''),
-                                        expected_kind: producers[0]?.outputs[0]?.kind ?? 'any' })}>
-                                <option value="node_output">Saved node output</option>
-                                <option value="loop_item" disabled={!allowLoopItems || recordsOnly}>Current loop item, key and index</option>
-                            </select>
-                        </label> : null}
-                        {source.kind === 'node_output' ? <>
-                        <label className="min-w-0 text-xs text-text-2">
-                            Producer
-                            <select className={inputClass} aria-label={`${label} input ${index + 1} producer`}
-                                value={source.node_id} onChange={(event) => {
-                                    const selected = producers.find((item) => item.id === event.target.value);
-                                    if (selected) update(index, {
-                                        ...binding,
-                                        source: { ...source, node_id: selected.id, output: selected.outputs[0]?.name ?? '' },
-                                        expected_kind: selected.outputs[0]?.kind ?? 'any',
-                                    });
-                                }}>
-                                {!producer ? <option value={source.node_id} disabled={recordsOnly}>Unavailable: {source.node_id || 'choose a producer'}</option> : null}
-                                {producers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                            </select>
-                        </label>
-                        <label className="min-w-0 text-xs text-text-2">
-                            Final output
-                            <select className={inputClass} aria-label={`${label} input ${index + 1} output`}
-                                value={source.output} onChange={(event) => {
-                                    const output = producer?.outputs.find((item) => item.name === event.target.value);
-                                    update(index, {
-                                        ...binding, source: { ...source, output: event.target.value },
-                                        expected_kind: output?.kind ?? binding.expected_kind,
-                                    });
-                                }}>
-                                {!producer?.outputs.some((item) => item.name === source.output) ? (
-                                    <option value={source.output} disabled={recordsOnly}>Unavailable: {source.output || 'choose an output'}</option>
-                                ) : null}
-                                {producer?.outputs.map((output) => <option key={output.name} value={output.name}>{output.name}</option>)}
-                            </select>
-                        </label>
-                        </> : (
-                            <label className="min-w-0 text-xs text-text-2">
-                                Current item from loop
-                                <select className={inputClass} aria-label={`${label} input ${index + 1} loop`} value={source.loop_id}
-                                    onChange={(event) => update(index, { ...binding, source: { ...source, loop_id: event.target.value } })}>
-                                    {!loops.some((loop) => loop.id === source.loop_id) ? <option value={source.loop_id}>Unavailable: {source.loop_id}</option> : null}
-                                    {loops.map((loop) => <option key={loop.id} value={loop.id}>{loop.id}</option>)}
-                                </select>
-                                <span className="mt-1 block">JSON fields: value, key, index (zero-based). Only this visit or an enclosing loop's current item is available.</span>
-                            </label>
-                        )}
+                        <WorkflowFlowSourcePicker source={source} producers={producers} loops={loops} repeats={repeats}
+                            label={`${label} input ${index + 1}`} recordsOnly={recordsOnly}
+                            onChange={(nextSource, kind) => update(index, {
+                                ...binding, source: nextSource, expected_kind: kind,
+                                allow_partial: nextSource.kind === 'loop_item' ? false : binding.allow_partial,
+                            })} />
                         <label className="text-xs text-text-2">
                             Expected kind
                             <select className={inputClass} aria-label={`${label} input ${index + 1} kind`}
@@ -165,11 +214,11 @@ export function WorkflowFlowInputs({
                     </div>
                 );
             })}
-            <GlassButton size="sm" disabled={(!producers.length && !loops.length) || bindings.length >= (recordsOnly ? 1 : 100)} onClick={add}
+            <GlassButton size="sm" disabled={(!producers.length && !loops.length && !repeats.length) || bindings.length >= (recordsOnly ? 1 : 100)} onClick={add}
                 aria-label={`Add ${label.toLowerCase()} input`}>
                 <Plus size={14} /> Add input
             </GlassButton>
-            {!producers.length && !loops.length ? <p className="text-xs text-text-3">
+            {!producers.length && !loops.length && !repeats.length ? <p className="text-xs text-text-3">
                 {recordsOnly
                     ? 'No reachable saved records output is available. Declare records on an earlier task, Collect, or explicit join; text, scalar JSON, and document results are not file-export sources.'
                     : 'Add a reachable producer before this node to bind its output.'}
@@ -402,7 +451,7 @@ export function WorkflowDecisionFields({
             <legend className="px-1 text-sm font-medium text-text-1">{collection ? 'Record schema fields' : 'Structured decision fields'}</legend>
             <p className="text-xs text-text-3">
                 {collection ? 'Declare the fields of each record without writing JSON. These validate the complete saved collection and expose typed current-item fields inside a record loop.'
-                    : 'Declare Boolean, numeric, or enum fields for If/else and Run when. The task must return them inside its final JSON object.'}
+                    : 'Declare Boolean, numeric, or enum fields for If/else, Run when, and Repeat stop conditions. The saved JSON value must contain these fields.'}
             </p>
             {Object.entries(properties).map(([fieldName, field]) => (
                 <div key={fieldName} className="flex flex-wrap items-center gap-3 text-xs text-text-2">

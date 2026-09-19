@@ -6,7 +6,9 @@ import json
 from copy import deepcopy
 
 from functions_analysis_access import AnalysisResultUnavailable
-from functions_workflow_identity import canonical_digest, workflow_execution_id, workflow_node_identity
+from functions_workflow_identity import (
+    canonical_digest, normalize_workflow_iteration_path, workflow_execution_id, workflow_node_identity,
+)
 from functions_workflow_result_store import load_workflow_node_result, _quota_bytes
 from functions_workflow_runtime_store import workflow_runtime_store
 
@@ -171,7 +173,7 @@ def load_frozen_loop(workflow, run_id, identity, *, store=None, load_result=load
         if candidate["id"] == identity["node_id"] and candidate["kind"] == "for_each":
             node = candidate
             break
-        if candidate["kind"] == "for_each":
+        if candidate["kind"] in {"for_each", "repeat_until"}:
             pending.extend(candidate["body"]["nodes"])
         elif candidate["kind"] == "if":
             pending.extend(candidate["then"]["nodes"])
@@ -191,12 +193,20 @@ def load_frozen_loop(workflow, run_id, identity, *, store=None, load_result=load
         binding = next((value for value in node["inputs"] if value["name"] == node["iterable"]["name"]), None)
         source = manifest.get("source_receipt") or {}
         producer = source.get("producer") or {}
-        if (
-            binding is None or producer.get("node_id") != binding["source"]["node_id"]
+        if binding is None or manifest.get("source_allow_partial") != binding["allow_partial"]:
+            raise AnalysisResultUnavailable("workflow_loop_source_receipt_invalid")
+        if binding["source"]["kind"] == "repeat_state":
+            from functions_workflow_repeat_state import validate_repeat_source_receipt
+
+            validate_repeat_source_receipt(
+                workflow, run_id, binding["source"], source, identity["iteration_path"],
+                store=store, load_result=load_result,
+            )
+        elif (
+            producer.get("node_id") != binding["source"]["node_id"]
             or producer.get("workflow_id") != workflow["id"] or producer.get("run_id") != run_id
             or len(producer.get("iteration_path") or []) > len(identity["iteration_path"])
             or (producer.get("iteration_path") or []) != identity["iteration_path"][:len(producer.get("iteration_path") or [])]
-            or manifest.get("source_allow_partial") != binding["allow_partial"]
         ):
             raise AnalysisResultUnavailable("workflow_loop_source_receipt_invalid")
     elif manifest.get("source_receipt") is not None:
@@ -257,6 +267,8 @@ def load_frozen_item_value(workflow, run_id, manifest, item, *, reader_user_id,
             allow_partial=manifest.get("source_allow_partial", False),
             load_result=load_result, source_resolver=source_resolver,
         )
+        if receipt.get("repeat_state"):
+            reader.receipt["repeat_state"] = deepcopy(receipt["repeat_state"])
         rows, _ = reader.read_records(offset=item["source_ordinal"], limit=1)
         if len(rows) != 1 or canonical_digest(rows[0]) != item["record_sha256"]:
             raise AnalysisResultUnavailable("workflow_loop_item_changed")
@@ -269,66 +281,68 @@ def load_frozen_item_value(workflow, run_id, manifest, item, *, reader_user_id,
 
 def authorize_frozen_loop(workflow, run_id, binding, *, reader_user_id,
                           load_result=load_workflow_node_result, source_resolver=None, store=None, source_callback=None):
-    from functions_workflow_node_results import authorize_workflow_node_result_read
+    from functions_workflow_node_results import WorkflowLineageAuthorization
 
-    if not isinstance(binding, dict) or not isinstance(binding.get("producer"), dict):
-        raise AnalysisResultUnavailable("workflow_loop_identity_invalid")
-    manifest, reference, _ = load_frozen_loop(
-        workflow, run_id, binding["producer"], store=store, load_result=load_result,
+    authorization = WorkflowLineageAuthorization(
+        workflow, run_id, reader_user_id=reader_user_id, load_result=load_result, source_resolver=source_resolver,
+        include_sources=source_callback is None, source_callback=source_callback,
+        store=store or workflow_runtime_store(workflow, run_id),
     )
-    if reference != binding.get("manifest_ref"):
-        raise AnalysisResultUnavailable("workflow_loop_manifest_invalid")
-    sources, changed = {}, False
-    source_ids = set()
+    authorization.walk([("frozen", binding)])
+    return authorization.access()
 
-    def source_seen(source):
-        key = canonical_digest(source)
-        if key in source_ids:
-            return
-        source_ids.add(key)
-        if source_callback is not None:
-            source_callback(source)
+
+def iteration_path_proofs(workflow, run_id, identity, *, receipts=None, store=None,
+                          load_result=load_workflow_node_result):
+    try:
+        path = normalize_workflow_iteration_path(identity.get("iteration_path") or [])
+        if identity.get("node_id") and identity.get("execution_id") != workflow_execution_id(
+            workflow, run_id, identity["node_id"], path,
+        ):
+            raise ValueError("Mismatched execution path.")
+    except ValueError as exc:
+        raise AnalysisResultUnavailable("workflow_iteration_receipt_invalid") from exc
+    if receipts is not None and (not isinstance(receipts, list) or len(receipts) != len(path)):
+        raise AnalysisResultUnavailable("workflow_iteration_receipt_invalid")
+    store = store or workflow_runtime_store(workflow, run_id)
+    verified, dependencies = [], []
+    for index, frame in enumerate(path):
+        producer = loop_execution_identity(workflow, run_id, frame["loop_id"], path[:index])
+        if "iteration" in frame:
+            from functions_workflow_repeat_state import load_repeat_admission
+
+            _, expected = load_repeat_admission(workflow, run_id, producer, frame["iteration"], store=store)
+            dependencies.append(("admission", producer, frame["iteration"]))
         else:
-            sources[key] = source
-
-    for receipt in manifest.get("consumed_inputs") or []:
-        _, access = authorize_workflow_node_result_read(
-            workflow, run_id, receipt["producer"], receipt["result_ref"],
-            reader_user_id=reader_user_id, load_result=load_result, source_resolver=source_resolver,
-            include_sources=False, source_callback=source_seen,
-        )
-        changed |= access["source_snapshot_changed"]
-    if manifest["selection"]["kind"] != "input":
-        for index in range(manifest["count"]):
-            item = read_frozen_item(workflow, run_id, manifest, index, load_result=load_result)
-            _authorize_frozen_document(workflow, item, reader_user_id)
-            source_seen(item["source"])
-    return {
-        "sources": list(sources.values()) if source_callback is None else None,
-        "source_count": len(source_ids), "source_snapshot_changed": changed,
-    }
+            manifest, reference, _ = load_frozen_loop(
+                workflow, run_id, producer, store=store, load_result=load_result,
+            )
+            item = read_frozen_item(workflow, run_id, manifest, frame["index"], load_result=load_result)
+            if frame["item_id"] != item["item_id"]:
+                raise AnalysisResultUnavailable("workflow_loop_item_invalid")
+            expected = frozen_item_receipt(manifest, reference, item)
+            dependencies.append((
+                "frozen_item", {"producer": producer, "manifest_ref": reference}, frame["index"], frame["item_id"],
+            ))
+        if receipts is not None and receipts[index] != expected:
+            raise AnalysisResultUnavailable("workflow_iteration_receipt_invalid")
+        verified.append(expected)
+    return verified, dependencies
 
 
 def authorize_iteration_path(workflow, run_id, identity, *, reader_user_id, receipts=None,
                              load_result=load_workflow_node_result, source_resolver=None, store=None):
-    path = identity.get("iteration_path") or []
-    if receipts is not None and (not isinstance(receipts, list) or len(receipts) != len(path)):
-        raise AnalysisResultUnavailable("workflow_iteration_receipt_invalid")
-    verified = []
-    for index, frame in enumerate(path):
-        producer = loop_execution_identity(workflow, run_id, frame["loop_id"], path[:index])
-        manifest, reference, _ = load_frozen_loop(
-            workflow, run_id, producer, store=store, load_result=load_result,
-        )
-        item = read_frozen_item(workflow, run_id, manifest, frame["index"], load_result=load_result)
-        if frame["item_id"] != item["item_id"]:
-            raise AnalysisResultUnavailable("workflow_loop_item_invalid")
-        expected = frozen_item_receipt(manifest, reference, item)
-        if receipts is not None and receipts[index] != expected:
-            raise AnalysisResultUnavailable("workflow_iteration_receipt_invalid")
-        load_frozen_item_value(
-            workflow, run_id, manifest, item, reader_user_id=reader_user_id,
-            load_result=load_result, source_resolver=source_resolver,
-        )
-        verified.append(expected)
+    from functions_workflow_node_results import WorkflowLineageAuthorization
+
+    store = store or workflow_runtime_store(workflow, run_id)
+    verified, dependencies = iteration_path_proofs(
+        workflow, run_id, identity, receipts=receipts, store=store, load_result=load_result,
+    )
+    authorization = WorkflowLineageAuthorization(
+        workflow, run_id, reader_user_id=reader_user_id, load_result=load_result,
+        source_resolver=source_resolver, store=store,
+    )
+    authorization.walk(dependencies)
+    if authorization.access()["source_snapshot_changed"]:
+        raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
     return verified

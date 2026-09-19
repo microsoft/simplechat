@@ -4,6 +4,8 @@ Implemented in version: **0.261.118**.
 
 Saved-output integration implemented in version: **0.261.119**.
 
+Updated in version: **0.261.120** for Repeat final records.
+
 Application version tracking: `application/single_app/config.py`.
 
 ## Purpose and scope
@@ -27,6 +29,13 @@ Collect, or explicit join. Generic records are never relabeled as native
 Analyze artifacts. See
 [Saved workflow output publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md)
 for source eligibility, partial acceptance and file materialization.
+
+In **0.261.120**, a satisfied Repeat boundary can supply an eligible final
+records export to that same source path. An exhausted automatic batch does
+not complete Repeat or expose its final exports. A manual continuation grants
+neither task approval nor destination approval, and cannot clear a publication
+wait or reset the run's original deadline. The shared renderer, source-bound
+immutable file, sole destination ledger, and completion proof remain unchanged.
 
 ## Choose the completion level
 

@@ -136,8 +136,12 @@ from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_MAX,
     WORKFLOW_LOOP_ITEMS_MIN,
+    WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+    WORKFLOW_REPEAT_ITERATIONS_MAX,
+    WORKFLOW_REPEAT_ITERATIONS_MIN,
     WorkflowLoopLimitError,
     validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
 )
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -4008,6 +4012,22 @@ ADMIN_SETTINGS_FIELDS = {
             "max": WORKFLOW_LOOP_ITEMS_MAX,
             "step": 1,
         },
+        {
+            "key": "workflow_max_repeat_iterations",
+            "type": "number",
+            "label": "Workflow Repeat Iteration Limit",
+            "help": (
+                "Maximum rounds allowed in one automatic Repeat until batch in a new "
+                "personal or group workflow run. Authors must choose a per-block maximum; "
+                "new runs above this ceiling are rejected, never shortened. Active runs "
+                "and manual continuation keep their admitted limit. Another batch does "
+                "not reset the run's execution-admission budget or elapsed deadline."
+            ),
+            "default": WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+            "min": WORKFLOW_REPEAT_ITERATIONS_MIN,
+            "max": WORKFLOW_REPEAT_ITERATIONS_MAX,
+            "step": 1,
+        },
     ],
     # --- Agents & Actions -------------------------------------------------
     #
@@ -6579,6 +6599,12 @@ def _normalize_field_value(key, value, field):
     if key == "workflow_max_loop_items":
         try:
             return validate_workflow_max_loop_items(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "workflow_max_repeat_iterations":
+        try:
+            return validate_workflow_max_repeat_iterations(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

@@ -13,6 +13,7 @@ import { WorkflowStructuredList } from './WorkflowStructuredList';
 import {
     convertToStructuredWorkflow,
     defaultFlowPredicate,
+    enclosingFlowLoopControls,
     enclosingFlowLoops,
     flowTaskNodeId,
     flowUnsupportedReason,
@@ -1115,7 +1116,7 @@ function TaskCard({
                         durableExecution={durableExecution} onChange={onChange} /> : null}
                     {!task.publication ? <TaskRunnerFields runner={task.runner} options={options}
                         localOnly={task.input_processing === 'saved_record_report' ||
-                            Boolean(structuredNode && enclosingFlowLoops(workflow, structuredNode.id).length)}
+                            Boolean(structuredNode && enclosingFlowLoopControls(workflow, structuredNode.id).length)}
                         onChange={(runner) => onChange({ ...task, runner })} /> : null}
                     <TaskApprovalFields
                         task={task}
@@ -1387,7 +1388,7 @@ export function WorkflowEditorDialog({
     const readOnly = unsupported || !options.can_manage;
     const localRunner = draft.definition_version === 3 && draft.tasks.some((task) =>
         task.runner.type === 'inherit' && !task.publication &&
-        (task.input_processing === 'saved_record_report' || enclosingFlowLoops(draft, flowTaskNodeId(draft, task.id)).length > 0));
+        (task.input_processing === 'saved_record_report' || enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length > 0));
     const dirty = !sameWorkflowDefinition(baseline, draft) ||
         draft.tasks.some((task) => Boolean(schemaFieldErrors[task.id]));
     const preserved = preservedWorkflowFieldLabels(original);

@@ -2,7 +2,7 @@
 # test_v2_admin_workflow_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Workflow group.
-Version: 0.261.059
+Version: 0.261.120
 Implemented in: 0.261.059
 
 The Workflow group rendered completely empty in the V2 React admin surface. The
@@ -19,7 +19,7 @@ rendering to notice. These checks make it a test failure:
   - every form field the V1 pane submits is claimed by the schema;
   - the schema invents no workflow field that V1 does not have;
   - the section is not empty, which is the specific regression;
-  - the two numeric limits share identical bounds with the V1 inputs, since a V2
+  - the numeric limits share identical bounds with the V1 inputs, since a V2
     control offering a wider range would save a value V1 refuses to show; and
   - the gating chain matches the capability each sub-setting belongs to.
 """
@@ -49,7 +49,7 @@ JINJA_RE = re.compile(r"\{\{|\{%")
 NUMBER_BLOCK_RE = re.compile(r'<input[^>]*type="number"(?P<attrs>[^>]*)>', re.DOTALL)
 ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 
-# Which capability each sub-setting belongs to. The two run limits are absent on
+# Which capability each sub-setting belongs to. The run limits are absent on
 # purpose: they bound personal *and* group runs, and `depends_on` names a single
 # key, so gating either one on a single capability would hide a live limit from
 # an administrator who only uses the other.
@@ -59,7 +59,12 @@ EXPECTED_DEPENDENCIES = {
     "group_workflow_allowed_group_ids": "require_group_assignment_for_group_workflows",
 }
 
-UNGATED_KEYS = ("workflow_max_auto_invoke_attempts", "workflow_max_tasks")
+UNGATED_KEYS = (
+    "workflow_max_auto_invoke_attempts",
+    "workflow_max_tasks",
+    "workflow_max_loop_items",
+    "workflow_max_repeat_iterations",
+)
 
 fields_module = import_app_module("admin_settings_fields")
 

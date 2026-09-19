@@ -1,8 +1,10 @@
 # functions_workflow_structured_execution.py
 """Schema-2 operation boundaries using paged units rather than a growing control map."""
 
+from collections import OrderedDict
 from copy import deepcopy
 
+from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution import DurableWorkflowExecution, WorkflowSuspended, execution_fingerprint
 from functions_workflow_identity import workflow_execution_id
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
@@ -18,6 +20,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         self.region_id = self.workflow["flow"]["id"]
         self.iteration_path = []
         self.iteration_inputs = []
+        self.lineage_proof_cache = {"entries": OrderedDict(), "bytes": 0}
 
     def set_node(self, node, region_id, *, iteration_path=None, iteration_inputs=None):
         self.node = node
@@ -192,6 +195,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
 
     def run_unit(self, key, operation, *, inputs, replay_safe=False, approval=None):
         self.check()
+        self.authorize_iteration()
         digest = execution_fingerprint(inputs)
         unit = self.unit(key)
         if unit and unit.get("input_digest") != digest:
@@ -239,10 +243,12 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                                   consumed_inputs=inputs.get("consumed_inputs") or [])
             self._attempt(attempt, state="running")
         self.store.journal_commit(self.lease.token, "unit", self._key(key), unit)
+        self.authorize_iteration()
         try:
             result = operation()
         except Exception:
             self.check()
+            self.authorize_iteration()
             self.store.journal_commit(self.lease.token, "unit", self._key(key), {**unit, "state": "failed"})
             if task_operation:
                 self.record_execution(state="failed", attempt=attempt)
@@ -258,6 +264,22 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             **unit, "state": "completed", "result_ref": reference,
         })
         return result
+
+    def authorize_iteration(self):
+        if any("iteration" in frame for frame in self.iteration_path):
+            from functions_workflow_iterations import authorize_iteration_path
+
+            try:
+                authorize_iteration_path(
+                    self.workflow, self.run_id, self.selectors(),
+                    reader_user_id=self.store.read()["actor_user_id"], receipts=self.iteration_inputs,
+                    store=self.store, load_result=self.load_result,
+                )
+            except AnalysisResultUnavailable:
+                self.pause_input(
+                    "The Repeat state's original sources are no longer available. Saved originals are retained.",
+                    code="workflow_repeat_source_unavailable",
+                )
 
     def _attempt(self, attempt, **fields):
         row = self.store.journal_read("execution", self.execution_id())
