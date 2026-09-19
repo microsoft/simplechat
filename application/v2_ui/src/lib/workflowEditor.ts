@@ -10,19 +10,24 @@ import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './t
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
 import {
     analyzeWorkflowFlow,
-    enclosingFlowLoops,
+    DEFAULT_FLOW_LIMITS,
+    enclosingFlowLoopControls,
     flowLoops,
-    flowProducers,
+    flowRepeats,
+    flowSourceOutput,
     flowTaskNodeId,
     flowUnsupportedReason,
     FLOW_ALIAS_PATTERN,
     FLOW_MAX_DEPTH,
     MAX_LOOP_ITEMS,
+    MAX_REPEAT_ITERATIONS,
     isFlowBinding,
     isFlowRegion,
     isLegacyWorkflowBinding,
     loopSelectionErrors,
+    repeatIterationErrors,
     workflowLoopLimit,
+    workflowRepeatLimit,
     type WorkflowFlowBinding,
     type WorkflowLoopIterable,
 } from './workflowFlow';
@@ -41,7 +46,7 @@ export type WorkflowRuntimeState =
     'paused' | 'cancelling' | 'cancelled' | 'failed' | 'invalid' | 'incomplete' |
     'completed' | 'completed_partial' | 'skipped';
 export type WorkflowRuntimeGateKind = 'approval' | 'output' | 'recovery' | 'pause';
-export type WorkflowRuntimeDecisionChoice = 'approve' | 'reject' | 'retry' | 'cancel' | 'resume';
+export type WorkflowRuntimeDecisionChoice = 'approve' | 'reject' | 'retry' | 'cancel' | 'resume' | 'continue_repeat';
 
 export interface WorkflowAgentOption {
     id: string;
@@ -81,6 +86,8 @@ export interface WorkflowEditorOptions {
         max_executions: number;
         deadline_seconds: number;
         max_loop_items?: number;
+        max_repeat_iterations?: number;
+        hard_repeat_iterations?: number;
     };
     can_manage: boolean;
     max_tasks: number;
@@ -309,28 +316,85 @@ export interface WorkflowRuntimeGate {
     unit_id?: string;
     input_digest?: string;
     reason?: string;
+    reason_code?: string;
     choices: string[];
     execution_id?: string;
     node_id?: string;
     attempt?: number;
     iteration_path?: WorkflowIterationFrame[];
     publication?: WorkflowPublicationStatus;
+    repeat?: WorkflowRepeatProgress;
 }
 
-export interface WorkflowIterationFrame {
+export interface WorkflowForEachFrame {
     loop_id: string;
     item_id: string;
     index: number;
 }
 
+export interface WorkflowRepeatFrame {
+    loop_id: string;
+    iteration: number;
+}
+
+export type WorkflowIterationFrame = WorkflowForEachFrame | WorkflowRepeatFrame;
+
 export function validWorkflowIterationPath(value: unknown): value is WorkflowIterationFrame[] {
     return Array.isArray(value) && value.length < FLOW_MAX_DEPTH && value.every((frame) =>
-        isRecord(frame) && Object.keys(frame).every((key) => ['loop_id', 'item_id', 'index'].includes(key)) &&
+        isRecord(frame) &&
         typeof frame.loop_id === 'string' && frame.loop_id === frame.loop_id.trim() &&
         /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(frame.loop_id) &&
-        typeof frame.item_id === 'string' && frame.item_id.length === 64 && /^[a-f0-9]{64}$/.test(frame.item_id) &&
-        typeof frame.index === 'number' && Number.isSafeInteger(frame.index) && frame.index >= 0 && frame.index < MAX_LOOP_ITEMS) &&
+        ('iteration' in frame
+            ? Object.keys(frame).length === 2 && typeof frame.iteration === 'number' &&
+                Number.isSafeInteger(frame.iteration) && frame.iteration >= 0 && frame.iteration < DEFAULT_FLOW_LIMITS.max_executions
+            : Object.keys(frame).every((key) => ['loop_id', 'item_id', 'index'].includes(key)) &&
+                typeof frame.item_id === 'string' && /^[a-f0-9]{64}$/.test(frame.item_id) &&
+                typeof frame.index === 'number' && Number.isSafeInteger(frame.index) && frame.index >= 0 && frame.index < MAX_LOOP_ITEMS)) &&
         new Set(value.map((frame) => frame.loop_id)).size === value.length;
+}
+
+export function formatWorkflowIterationPath(path?: WorkflowIterationFrame[]): string {
+    return (path ?? []).map((frame) => 'iteration' in frame
+        ? `${frame.loop_id} (round ${frame.iteration + 1})`
+        : `${frame.loop_id} (item ${frame.item_id}, index ${frame.index})`).join(' / ');
+}
+
+export interface WorkflowRepeatProgress {
+    execution_id: string;
+    node_id: string;
+    completed_iteration: number;
+    next_iteration: number;
+    batch_number: number;
+    batch_size: number;
+    batch_usage: number;
+    completed_count: number;
+    exhaustion_count: number;
+    continuation_count: number;
+    state: 'running' | 'waiting_manual_continue' | 'completed' | 'cancelled';
+    partial: boolean;
+}
+
+export function isWorkflowRepeatProgress(value: unknown): value is WorkflowRepeatProgress {
+    const counts = ['next_iteration', 'batch_number', 'batch_size', 'batch_usage', 'completed_count',
+        'exhaustion_count', 'continuation_count'];
+    if (!isRecord(value) || Object.keys(value).some((key) => ![
+        'execution_id', 'node_id', 'completed_iteration', 'state', 'partial', ...counts,
+    ].includes(key)) || typeof value.execution_id !== 'string' || !value.execution_id.trim() || value.execution_id.length > 256 ||
+        typeof value.node_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value.node_id) ||
+        !['running', 'waiting_manual_continue', 'completed', 'cancelled'].includes(String(value.state)) ||
+        typeof value.partial !== 'boolean' || counts.some((key) =>
+            typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || Number(value[key]) < 0 ||
+            Number(value[key]) > DEFAULT_FLOW_LIMITS.max_executions) ||
+        typeof value.completed_iteration !== 'number' || !Number.isSafeInteger(value.completed_iteration)) return false;
+    const admittedRounds = Number(value.batch_number) * Number(value.batch_size) + Number(value.batch_usage);
+    const completedRounds = Number(value.completed_count);
+    return Number(value.batch_size) >= 1 && Number(value.batch_size) <= MAX_REPEAT_ITERATIONS &&
+        Number(value.batch_usage) <= Number(value.batch_size) &&
+        admittedRounds >= completedRounds && admittedRounds <= completedRounds + 1 &&
+        (!['completed', 'waiting_manual_continue'].includes(String(value.state)) || admittedRounds === completedRounds) &&
+        value.next_iteration === value.completed_count && value.completed_iteration === Number(value.completed_count) - 1 &&
+        value.batch_number === value.continuation_count &&
+        (value.state !== 'waiting_manual_continue' || value.batch_usage === value.batch_size && Number(value.completed_count) > 0);
 }
 
 export interface WorkflowLoopProgress {
@@ -385,12 +449,16 @@ export interface WorkflowRuntimeProjection {
     memory?: WorkflowRuntimeMemory;
     can_resume?: boolean;
     loop_progress?: WorkflowLoopProgress;
+    repeat_progress?: WorkflowRepeatProgress;
+    repeat_counts?: { exhaustion_count?: number; continuation_count?: number };
     limits?: {
         max_executions: number;
         admitted_count: number;
         deadline_at: string;
         deadline_seconds: number;
         waits_count: boolean;
+        max_loop_items?: number;
+        max_repeat_iterations?: number;
     };
 }
 
@@ -1077,14 +1145,12 @@ export function workflowInputProcessingErrors(
     if (task.document_action?.type !== 'none') errors.push(`${label}: saved-record reports require No document action; they explain saved data rather than reanalyzing sources.`);
     if (task.publication) errors.push(`${label}: saved-record reports cannot publish artifacts. Use a separate publication task.`);
     if (task.output_contract?.kind !== 'text') errors.push(`${label}: saved-record reports require a text output contract.`);
-    const producers = flowProducers(workflow);
     const hasCollection = (task.inputs ?? []).some((binding) => {
-        if (!isFlowBinding(binding) || binding.source.kind !== 'node_output') return false;
-        const source = binding.source;
-        return producers.find((producer) => producer.id === source.node_id)?.outputs.some((output) =>
-            output.name === source.output && (output.kinds ?? [output.kind]).every((kind) => ['records', 'document_results'].includes(kind)));
+        if (!isFlowBinding(binding)) return false;
+        const output = flowSourceOutput(workflow, binding.source);
+        return output && (output.kinds ?? [output.kind]).every((kind) => ['records', 'document_results'].includes(kind));
     });
-    if (!hasCollection) errors.push(`${label}: saved-record reports require at least one saved records or document-results node-output input.`);
+    if (!hasCollection) errors.push(`${label}: saved-record reports require at least one saved records or document-results node-output input or current Repeat state.`);
     if (!workflowTaskHasLocalRunner(workflow, task, options)) {
         errors.push(`${label}: saved-record reports require a locally metered model or local agent; hosted runners are not supported.`);
     }
@@ -1116,6 +1182,21 @@ export function workflowValidationErrors(
                 errors.push('Group workflow loops can select only documents in this explicit group workspace.');
             }
         });
+        flowRepeats(draft).forEach(({ node }) => {
+            errors.push(...repeatIterationErrors(node, workflowRepeatLimit(options)));
+            node.state.forEach((slot) => {
+                const contract = slot.output_contract;
+                if (contract.schema) errors.push(...workflowSchemaErrors(contract.schema).map((error) =>
+                    `Repeat ${node.id} state ${slot.name}: ${error}`));
+                if (contract.expected_count !== undefined &&
+                    (!Number.isSafeInteger(contract.expected_count) || contract.expected_count < 0 || contract.kind === 'text')) {
+                    errors.push(`Repeat ${node.id} state ${slot.name}: expected count needs a nonnegative whole number for structured data.`);
+                }
+                if (contract.identity_field && contract.kind !== 'records') {
+                    errors.push(`Repeat ${node.id} state ${slot.name}: identity fields apply only to records.`);
+                }
+            });
+        });
         const checkCollects = (region: typeof draft.flow) => {
             if (!isFlowRegion(region)) return;
             region.nodes.forEach((node) => {
@@ -1126,7 +1207,7 @@ export function workflowValidationErrors(
                         errors.push('Collect expected count must be a nonnegative whole number.');
                     }
                     if (contract.identity_field && contract.kind !== 'records') errors.push('Collect business-key uniqueness is available only for records.');
-                } else if (node.kind === 'for_each') checkCollects(node.body);
+                } else if (node.kind === 'for_each' || node.kind === 'repeat_until') checkCollects(node.body);
                 else if (node.kind === 'if') {
                     checkCollects(node.then);
                     checkCollects(node.else);
@@ -1199,9 +1280,9 @@ export function workflowValidationErrors(
         if (action?.target_mode === 'current_item' && draft.definition_version !== 3) {
             errors.push('Current-document Analyze requires structured control flow.');
         }
-        if (draft.definition_version === 3 && enclosingFlowLoops(draft, flowTaskNodeId(draft, task.id)).length && !task.publication) {
+        if (draft.definition_version === 3 && enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length && !task.publication) {
             if (!workflowTaskHasLocalRunner(draft, task, options)) {
-                errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each.`);
+                errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each or Repeat.`);
             }
         }
         if (action?.type === 'search' && action.doc_scope !== 'all' &&
@@ -1329,7 +1410,11 @@ export async function fetchWorkflowEditorOptions(
         throw new Error('The workflow editor options returned an invalid response.');
     }
     const ceiling = response.flow_limits?.max_loop_items;
+    const repeatCeiling = response.flow_limits?.max_repeat_iterations;
+    const repeatHardCeiling = response.flow_limits?.hard_repeat_iterations;
     if (ceiling !== undefined && (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > 5000) ||
+        repeatCeiling !== undefined && (!Number.isInteger(repeatCeiling) || repeatCeiling < 1 || repeatCeiling > MAX_REPEAT_ITERATIONS) ||
+        repeatHardCeiling !== undefined && repeatHardCeiling !== MAX_REPEAT_ITERATIONS ||
         [response.supported_node_kinds, response.supported_iterable_kinds, response.supported_query_modes, response.supported_binding_sources,
             response.supported_input_processing_modes, response.supported_publication_completion_policies]
             .some((values) => values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== 'string'))) ||
@@ -1533,6 +1618,43 @@ function checkedRuntimeResponse(response: WorkflowRuntimeResponse): WorkflowRunt
     const publication = response.runtime.gate?.publication;
     if (publication !== undefined && !isWorkflowPublicationStatus(publication)) {
         throw new Error('The workflow runtime returned an unsupported publication status. Reload before making a decision.');
+    }
+    const gate = response.runtime.gate;
+    const repeat = response.runtime.repeat_progress;
+    const repeatGate = gate?.reason_code === 'repeat_iteration_limit';
+    if (repeat !== undefined && !isWorkflowRepeatProgress(repeat) ||
+        gate?.repeat !== undefined && (!repeatGate || !isWorkflowRepeatProgress(gate.repeat)) ||
+        repeatGate && (response.runtime.state !== 'paused' || gate?.kind !== 'pause' ||
+            typeof gate.id !== 'string' || !gate.id.trim() || gate.id.length > 256 ||
+            !Number.isSafeInteger(gate.attempt) || Number(gate.attempt) < 1 ||
+            !validWorkflowIterationPath(gate.iteration_path) ||
+            !gate.repeat || gate.repeat.state !== 'waiting_manual_continue' ||
+            gate.execution_id !== gate.repeat.execution_id || gate.node_id !== gate.repeat.node_id ||
+            !sameEditorValue(gate.choices, ['continue_repeat', 'cancel'])) ||
+        !repeatGate && gate?.choices.includes('continue_repeat')) {
+        throw new Error('The workflow runtime returned an unsupported Repeat continuation gate or progress. Reload before making a decision.');
+    }
+    if (repeat !== undefined || repeatGate) {
+        const limits = response.runtime.limits;
+        if (!Number.isSafeInteger(response.runtime.version) || response.runtime.version < 0 ||
+            !limits || !Number.isSafeInteger(limits.max_executions) || limits.max_executions < 1 ||
+            limits.max_executions > DEFAULT_FLOW_LIMITS.max_executions ||
+            !Number.isSafeInteger(limits.admitted_count) || limits.admitted_count < 0 ||
+            !Number.isSafeInteger(limits.deadline_seconds) || limits.deadline_seconds < 1 ||
+            limits.deadline_seconds > DEFAULT_FLOW_LIMITS.deadline_seconds || limits.waits_count !== true ||
+            typeof limits.deadline_at !== 'string' || !Number.isFinite(Date.parse(limits.deadline_at)) ||
+            typeof limits.max_repeat_iterations !== 'number' || !Number.isInteger(limits.max_repeat_iterations) ||
+            limits.max_repeat_iterations < 1 || limits.max_repeat_iterations > MAX_REPEAT_ITERATIONS ||
+            repeat && repeat.batch_size > limits.max_repeat_iterations ||
+            gate?.repeat && gate.repeat.batch_size > limits.max_repeat_iterations) {
+            throw new Error('The workflow runtime returned invalid frozen Repeat limits. Reload before making a decision.');
+        }
+    }
+    const repeatCounts = response.runtime.repeat_counts;
+    if (repeatCounts !== undefined && (!isRecord(repeatCounts) || Object.entries(repeatCounts).some(([key, value]) =>
+        !['exhaustion_count', 'continuation_count'].includes(key) || typeof value !== 'number' ||
+        !Number.isSafeInteger(value) || value < 0 || value > DEFAULT_FLOW_LIMITS.max_executions))) {
+        throw new Error('The workflow runtime returned invalid Repeat audit counters.');
     }
     const progress = response.runtime.loop_progress;
     if (progress && (

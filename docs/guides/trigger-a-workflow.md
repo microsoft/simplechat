@@ -109,12 +109,48 @@ task retains its data rather than receiving a truncated substitute.
 
 See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md).
 
+## Continue a Repeat batch
+
+In **0.261.120**, **Repeat until** saves the state admitted for each round and
+its validated next state. Inspect lifetime round, current automatic batch,
+batch usage/limit, condition outcome, exact producer attempts, partial coverage,
+and remaining global budgets. Paged inspection avoids loading every round or
+record at once; an uncommitted after-state is unavailable, not an empty result.
+
+If the condition is still false at the authored maximum, the workflow pauses.
+Review the retained state before choosing **Continue Repeat for up to another
+N rounds** and confirming the grant. Only users with the current workflow
+decision permission may do this. A stale or already-used gate must refresh
+rather than create another grant.
+
+This grants the same frozen batch size, even if an administrator has since
+changed the Repeat setting. Only batch usage resets; lifetime round numbers,
+cumulative execution admissions, and the original elapsed deadline do not.
+Waiting for a person consumes elapsed time. The shared limits remain at most
+5,000 admissions and 86,400 seconds, and can block further continuation.
+
+Ordinary Resume, polling, scheduled triggers, retries, and a model's response
+cannot grant another batch. The grant does not approve body tasks or workspace
+publication, and cannot make failed, invalid, pending, or unauthorized state
+usable. If a separate budget or access gate is the blocker, address that exact
+gate rather than treating it as a Repeat-limit pause.
+
+A true condition completes Repeat, including on the last allowed round.
+Only then are its declared final exports eligible for downstream tasks.
+Earlier saved state and accepted partial limitations remain retained.
+See [Repeat until](../explanation/features/WORKFLOW_REPEAT_UNTIL.md).
+
 ## Inspect a saved-output publication
 
 In **0.261.119**, a task explicitly configured with **Saved workflow output**
 renders its selected saved records as JSON and submits that file to its chosen
 destination. Run inspection identifies the exact producer, output and attempt;
 a repeated task name or latest chat reply is not the source identity.
+
+Repeat final records in **0.261.120** retain that same source-bound identity.
+A new round with a genuinely new producer is distinct from retrying a
+publication of one already saved output. Continuation never redirects an
+existing immutable file to a newer source.
 
 Use the existing generated-file card to download the full JSON, not a preview
 of the first records. Record order, duplicates, nested values and retained

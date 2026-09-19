@@ -104,6 +104,7 @@ from functions_workflow_node_results import WorkflowRecordPageTooLarge
 from functions_workflow_loop_history import (
     workflow_execution_records_page, workflow_execution_provenance_page, workflow_loop_items_page,
 )
+from functions_workflow_repeat_history import workflow_repeat_iterations_page, workflow_repeat_state_page
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -319,7 +320,7 @@ def _workflow_runtime_response(workflow_id, run_id, *, group=False, action=None)
 
 
 def _workflow_execution_history_response(workflow_id, run_id, *, group=False, kind='execution',
-                                         execution_id=None, attempt=None, representation=None):
+                                         execution_id=None, attempt=None, representation=None, iteration=None):
     user_id = get_current_user_id()
     try:
         if group:
@@ -331,7 +332,18 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
             run = get_personal_workflow_run(user_id, run_id)
         if not workflow or not run or run.get('workflow_id') != workflow_id:
             return jsonify({'error': 'Workflow run not found.'}), 404
-        if kind == 'items':
+        if kind == 'iterations':
+            response = workflow_repeat_iterations_page(
+                workflow, run_id, execution_id, reader_user_id=user_id,
+                cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
+            )
+        elif kind == 'states':
+            response = workflow_repeat_state_page(
+                workflow, run_id, execution_id, iteration, reader_user_id=user_id,
+                phase=request.args.get('phase', 'before'),
+                cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
+            )
+        elif kind == 'items':
             response = workflow_loop_items_page(
                 workflow, run_id, execution_id, reader_user_id=user_id,
                 cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
@@ -1040,6 +1052,48 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
 
 
 def register_route_backend_workflows(bp):
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/iterations', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_repeat_iterations(workflow_id, run_id, execution_id):
+        return _workflow_execution_history_response(workflow_id, run_id, execution_id=execution_id, kind='iterations')
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/iterations', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_repeat_iterations(workflow_id, run_id, execution_id):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, group=True, execution_id=execution_id, kind='iterations',
+        )
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/iterations/<int:iteration>/state', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_repeat_state(workflow_id, run_id, execution_id, iteration):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, execution_id=execution_id, iteration=iteration, kind='states',
+        )
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/iterations/<int:iteration>/state', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_repeat_state(workflow_id, run_id, execution_id, iteration):
+        return _workflow_execution_history_response(
+            workflow_id, run_id, group=True, execution_id=execution_id, iteration=iteration, kind='states',
+        )
+
     @bp.route('/api/user/workflows/loop-inputs/preview', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

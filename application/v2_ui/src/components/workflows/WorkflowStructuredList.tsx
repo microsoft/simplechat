@@ -7,17 +7,20 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowConditionEditor, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { WorkflowCollectFields, WorkflowForEachFields } from './WorkflowLoopFields';
+import { WorkflowRepeatFields, WorkflowRepeatExports } from './WorkflowRepeatFields';
 import {
     analyzeWorkflowFlow,
     DEFAULT_FLOW_LIMITS,
     defaultFlowPredicate,
-    enclosingFlowLoops,
+    enclosingFlowLoopControls,
     flowProducers,
     flowRegions,
     flowTaskIds,
     FLOW_MAX_DEPTH,
     FLOW_OUTPUT_KINDS,
     isFlowRegion,
+    repeatUntilBindings,
+    supportsWorkflowRepeat,
     updateFlowRegion,
     workflowLoopLimit,
     type FlowProducer,
@@ -166,6 +169,11 @@ export function WorkflowStructuredList({
             id, kind, source: { loop_id: '', output: '' },
             output_contract: { kind: 'records', require_complete_coverage: true, allow_partial: false },
         };
+        else if (kind === 'repeat_until') node = {
+            id, kind, max_iterations: Number.NaN, state: [],
+            body: { id: `body-${task.id}`, nodes: [], outputs: [] },
+            until: defaultFlowPredicate(), exports: [],
+        };
         else node = {
             id, kind, inputs: [], condition: defaultFlowPredicate(),
             then: { id: `then-${task.id}`, nodes: [] }, else: { id: `else-${task.id}`, nodes: [] },
@@ -190,13 +198,13 @@ export function WorkflowStructuredList({
             <legend className="px-1 text-sm font-semibold text-text-1">{label}</legend>
             {region.nodes.map((node, index) => {
                 const childRegions = node.kind === 'if' ? [...flowRegions(node.then), ...flowRegions(node.else)]
-                    : node.kind === 'for_each' ? flowRegions(node.body) : [];
+                    : node.kind === 'for_each' || node.kind === 'repeat_until' ? flowRegions(node.body) : [];
                 const descendants = new Set(childRegions.map((item) => item.id));
                 const subtreeDepth = childRegions.length ? Math.max(...childRegions.map((item) => item.depth)) + 1 : 0;
                 const destinations = regions.filter((item) => item.id !== region.id && !descendants.has(item.id) && item.depth + subtreeDepth < FLOW_MAX_DEPTH);
                 const task = node.kind === 'task' ? workflow.tasks.find((item) => item.id === node.task_id) : undefined;
                 const title = node.kind === 'task' ? task?.name || 'Task' : node.kind === 'if' ? 'If / else'
-                    : node.kind === 'for_each' ? 'For each' : node.kind === 'collect' ? 'Collect' : 'Forward route';
+                    : node.kind === 'for_each' ? 'For each' : node.kind === 'repeat_until' ? 'Repeat until' : node.kind === 'collect' ? 'Collect' : 'Forward route';
                 const routeTargetId = node.kind === 'route' && 'node_id' in node.target ? node.target.node_id : undefined;
                 return (
                     <section key={node.id} className="min-w-0 space-y-3 rounded-xl border border-edge bg-surface-1 p-3" aria-label={`${title} block`}>
@@ -230,11 +238,26 @@ export function WorkflowStructuredList({
                                     onChange={(next) => setNode(region.id, next)} />
                                 {renderRegion(node.body, 'Body', depth + 1)}
                                 <WorkflowFlowInputs workflow={workflow} nodeId={node.body.id} bindings={node.body.outputs} label="Body outputs"
-                                    allowLoopItems={false}
+                                    allowLoopItems={false} allowRepeatState={false}
                                     availableIds={new Set([...(analyzeWorkflowFlow(workflow).available.get(node.body.id) ?? [])].filter((id) =>
-                                        enclosingFlowLoops(workflow, id).at(-1)?.id === node.id))}
+                                        enclosingFlowLoopControls(workflow, id).at(-1)?.id === node.id))}
                                     onChange={(outputs) => setNode(region.id, { ...node, body: { ...node.body, outputs } })} />
                                 <p className="text-xs text-text-3">Body outputs are per-item receipts. Add a following Collect to expose a complete collection outside this loop.</p>
+                            </>
+                        ) : node.kind === 'repeat_until' ? (
+                            <>
+                                <WorkflowRepeatFields node={node} workflow={workflow} options={options}
+                                    onChange={(next) => setNode(region.id, next)} />
+                                {renderRegion(node.body, 'Repeat body', depth + 1)}
+                                <WorkflowFlowInputs workflow={workflow} nodeId={node.body.id} bindings={node.body.outputs} label="Repeat body outputs"
+                                    allowLoopItems={false}
+                                    availableIds={new Set([...(analyzeWorkflowFlow(workflow).available.get(node.body.id) ?? [])].filter((id) =>
+                                        enclosingFlowLoopControls(workflow, id).at(-1)?.id === node.id))}
+                                    onChange={(outputs) => setNode(region.id, { ...node, body: { ...node.body, outputs } })} />
+                                <p className="text-xs text-text-3">The stop condition reads the validated NEXT state, after every named slot is saved atomically. Body bindings always read CURRENT state.</p>
+                                <WorkflowConditionEditor workflow={workflow} bindings={repeatUntilBindings(node)} value={node.until}
+                                    label="Stop after a round when" onChange={(until) => setNode(region.id, { ...node, until })} />
+                                <WorkflowRepeatExports node={node} onChange={(next) => setNode(region.id, next)} />
                             </>
                         ) : node.kind === 'collect' ? (
                             <WorkflowCollectFields node={node} workflow={workflow} onChange={(next) => setNode(region.id, next)} />
@@ -285,6 +308,8 @@ export function WorkflowStructuredList({
                     aria-label={`Add forward route to ${label}`}><Plus size={14} /> Add forward route</GlassButton>
                 {options.supported_node_kinds?.includes('for_each') ? <GlassButton size="sm" disabled={depth + 1 >= FLOW_MAX_DEPTH}
                     onClick={() => add(region.id, 'for_each')} aria-label={`Add For each to ${label}`}><Plus size={14} /> Add For each</GlassButton> : null}
+                {supportsWorkflowRepeat(options) ? <GlassButton size="sm" disabled={depth + 1 >= FLOW_MAX_DEPTH}
+                    onClick={() => add(region.id, 'repeat_until')} aria-label={`Add Repeat until to ${label}`}><Plus size={14} /> Add Repeat until</GlassButton> : null}
                 {options.supported_node_kinds?.includes('collect') ? <GlassButton size="sm" onClick={() => add(region.id, 'collect')}
                     aria-label={`Add Collect to ${label}`}><Plus size={14} /> Add Collect</GlassButton> : null}
             </div>

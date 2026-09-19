@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.119**.
+Updated in version: **0.261.120**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -21,8 +21,10 @@ This page describes the M4A foundation. Version **0.261.117** adds
 [serial For each and exact Collect](WORKFLOW_FOR_EACH_COLLECT.md) to the same
 definition version and journal. Version **0.261.119** adds
 [saved-record JSON publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md).
-Repeat until, M5 read-only Flow and accessible visual authoring remain separate
-future slices. M4A itself did not admit loops.
+Version **0.261.120** adds [Repeat until](WORKFLOW_REPEAT_UNTIL.md), with saved
+typed state and explicit manual grants after finite automatic batches. M5A
+read-only Flow and M5B accessible visual authoring remain separate subsequent
+milestones. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 
@@ -103,6 +105,7 @@ indexes are not a second stored graph.
 | Join | Stable `id` and named `exports`, each selecting a Then and Else producer/output |
 | Forward route | `id`, `kind: "route"`, `inputs`, `condition`, `target` |
 | Route target | A later sibling `node_id`, or the current branch's `exit_region_id` |
+| Repeat until node (0.261.120) | `id`, `kind: "repeat_until"`, required `max_iterations`, typed `state`, `body`, post-body `until`, and explicit final `exports` |
 
 A version-3 binding is explicit:
 
@@ -125,6 +128,13 @@ Missing inputs normalize to an empty list; `null` is not a version-3 automatic
 input mode. Version-1 and version-2 omitted/null predecessor behavior remains
 unchanged. Definitions cannot supply result-store references or choose another
 run's execution.
+
+Inside Repeat, an explicit `repeat_state` source names an enclosing `loop_id`,
+`state_name`, and `scope: "current"`. It selects the saved state admitted for
+that exact round, not another iteration's latest task output. Until reads
+validated next-state slots, and downstream consumers use the Repeat node's
+named final exports only after the condition succeeds. See
+[Repeat's state contract](WORKFLOW_REPEAT_UNTIL.md#definition-contract).
 
 The server validates versions, executable fields, node kinds, unique IDs,
 region depth, routing, and producer availability. Advanced saves retain the
@@ -164,6 +174,12 @@ workflow, run, logical node, server-derived `execution_id`, `iteration_path`,
 and attempt. Real task results also retain `task_id`; engine results do not
 invent task IDs. M4A iteration paths are empty.
 
+For each adds unchanged `{loop_id, item_id, index}` frames. Repeat adds the
+distinct `{loop_id, iteration}` shape in **0.261.120**, with a zero-based
+lifetime round index that survives manual continuation. Mixed paths must prove
+their ordered ancestry and exact frozen/admitted membership. Engine-boundary
+results retain their actual selected-producer receipts.
+
 Retries retain the execution ID and advance the attempt. Approval and recovery
 decisions bind the exact execution, attempt, gate, definition, and input
 digest. Receipts retain the actual producer and representation. Branch-control
@@ -177,7 +193,7 @@ history items, and deletion preserves lifecycle tombstones.
 
 ## Limits and inspection
 
-| Limit | M4A policy |
+| Limit | Structured policy |
 | --- | --- |
 | Authored tasks | Existing administrator setting: default 50, supported range 1-100 |
 | Structural IDs | At most 256 |
@@ -185,7 +201,13 @@ history items, and deletion preserves lifecycle tombstones.
 | Predicate size | At most 100 nodes, depth 8, and 16 KiB |
 | Execution admissions | Default/maximum 5,000; includes retries, not result-chunk writes |
 | Elapsed deadline | Default/maximum 86,400 seconds, including waits |
+| Repeat automatic batch (0.261.120) | Required authored maximum; administrator default 25, range 1-1,000; new runs above policy are rejected, not clamped |
 | Model input | Existing effective catalog/deployment budget; complete required input is never clipped |
+
+At an unmet Repeat batch maximum, an authorized manual decision can grant the
+same frozen batch again. Only batch usage resets; lifetime round identity,
+execution admissions, and elapsed deadline do not. Ordinary Resume cannot make
+this grant or clear the global limits.
 
 Run history distinguishes selected paths, intentionally skipped nodes, output
 validation, attempts, and exact consumed-result receipts. Large execution and
@@ -222,6 +244,12 @@ through the shared Generated File Export Framework. The Publish task creates
 the downloadable file and submits it to the chosen destination using the same
 completion policies. It is not a download-only task or a native Analyze
 artifact. Omitting the source choice preserves existing native publication.
+
+In **0.261.120**, a satisfied Repeat boundary can expose a final records export
+to the same required records binding. The selected body producer remains real,
+with its exact path/attempt and retained partial coverage. An exhausted batch
+has no eligible final export, and Repeat does not add a different renderer,
+file format, or destination ledger.
 
 Saved-record serialization rechecks current scope and the exact source attempt
 every 100 records. Reusing a materialized file still verifies its exact ready

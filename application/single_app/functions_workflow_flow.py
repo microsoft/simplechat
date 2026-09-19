@@ -12,11 +12,12 @@ from functions_workflow_definitions import (
     validate_workflow_publication_completion, workflow_output_kind_matches,
 )
 from functions_workflow_loop_schema import WORKFLOW_DOCUMENT_ITEM_SCHEMA, normalize_workflow_iterable
+from functions_workflow_limits import WORKFLOW_MAX_EXECUTION_ADMISSIONS, WORKFLOW_REPEAT_ITERATIONS_MAX
 
 
 FLOW_LIMITS = {
     "max_nodes": 256, "max_depth": 4, "max_predicate_nodes": 100,
-    "max_predicate_depth": 8, "max_executions": 5000, "deadline_seconds": 86400,
+    "max_predicate_depth": 8, "max_executions": WORKFLOW_MAX_EXECUTION_ADMISSIONS, "deadline_seconds": 86400,
 }
 MISSING = object()
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
@@ -41,7 +42,7 @@ def normalize_flow_bindings(values):
         names.add(name)
         source = binding.get("source")
         if not isinstance(source, dict) or source.get("scope", "current") != "current":
-            raise WorkflowDefinitionError("Bindings require a node_output or enclosing loop_item in the current scope.")
+            raise WorkflowDefinitionError("Bindings require a node_output, enclosing loop_item or repeat_state in the current scope.")
         if source.get("kind") == "node_output":
             _object(source, {"kind", "node_id", "output", "scope"}, "Binding source")
             output = source.get("output", "authoritative")
@@ -53,8 +54,14 @@ def normalize_flow_bindings(values):
         elif source.get("kind") == "loop_item":
             _object(source, {"kind", "loop_id", "scope"}, "Loop item source")
             normalized_source = {"kind": "loop_item", "loop_id": _id(source.get("loop_id")), "scope": "current"}
+        elif source.get("kind") == "repeat_state":
+            _object(source, {"kind", "loop_id", "state_name", "scope"}, "Repeat state source")
+            normalized_source = {
+                "kind": "repeat_state", "loop_id": _id(source.get("loop_id")),
+                "state_name": _name(source.get("state_name"), "Repeat state name"), "scope": "current",
+            }
         else:
-            raise WorkflowDefinitionError("Bindings require a node_output or enclosing loop_item in the current scope.")
+            raise WorkflowDefinitionError("Bindings require a node_output, enclosing loop_item or repeat_state in the current scope.")
         kind = binding.get("expected_kind", "json" if source["kind"] == "loop_item" else "any")
         if not isinstance(kind, str) or kind not in WORKFLOW_OUTPUT_KINDS:
             raise WorkflowDefinitionError("Unsupported binding output kind.")
@@ -275,9 +282,10 @@ def compile_workflow_flow(workflow):
                 "route": {"id", "kind", "inputs", "condition", "target"},
                 "for_each": {"id", "kind", "inputs", "iterable", "item_key", "max_items", "body"},
                 "collect": {"id", "kind", "source", "output_contract"},
+                "repeat_until": {"id", "kind", "max_iterations", "state", "body", "until", "exports"},
             }
             if not isinstance(kind, str) or kind not in allowed:
-                raise WorkflowDefinitionError("Only task, if, route, for_each and collect nodes are executable.")
+                raise WorkflowDefinitionError("Only task, if, route, for_each, collect and repeat_until nodes are executable.")
             _object(child, allowed[kind], "Flow node")
             node = {"id": register(child.get("id")), "kind": kind}
             nodes[node["id"]] = {"node": node, "region_id": result["id"]}
@@ -306,6 +314,54 @@ def compile_workflow_flow(workflow):
                 node["body"] = region(
                     child.get("body"), depth + 1, body=True, parent=node["id"], loop_ids=(*loop_ids, node["id"]),
                 )
+            elif kind == "repeat_until":
+                maximum = child.get("max_iterations")
+                if type(maximum) is not int or not 1 <= maximum <= WORKFLOW_REPEAT_ITERATIONS_MAX:
+                    raise WorkflowDefinitionError(
+                        f"Repeat max_iterations must be an explicit integer from 1 to {WORKFLOW_REPEAT_ITERATIONS_MAX:,} per automatic batch."
+                    )
+                node["max_iterations"] = maximum
+                state = child.get("state")
+                if not isinstance(state, list) or not 1 <= len(state) <= 100:
+                    raise WorkflowDefinitionError("Repeat requires one to 100 named state slots.")
+                node["state"], names = [], set()
+                for slot in state:
+                    _object(slot, {"name", "initial", "next", "output_contract"}, "Repeat state slot")
+                    name = _name(slot.get("name"), "Repeat state name")
+                    if name in names:
+                        raise WorkflowDefinitionError("Repeat state names must be unique.")
+                    names.add(name)
+                    contract = normalize_workflow_output_contract(slot.get("output_contract"))
+                    if contract["kind"] == "any":
+                        raise WorkflowDefinitionError("Repeat state requires an explicit text, json, records or document_results kind.")
+                    initial = normalize_flow_bindings([{
+                        "name": name, "source": slot.get("initial"),
+                        "expected_kind": contract["kind"], "allow_partial": contract["allow_partial"],
+                    }])[0]["source"]
+                    if initial["kind"] not in {"node_output", "repeat_state"}:
+                        raise WorkflowDefinitionError("Initial Repeat state must select a saved node output or enclosing Repeat state.")
+                    node["state"].append({
+                        "name": name, "initial": initial,
+                        "next": _name(slot.get("next"), "Next Repeat body output"),
+                        "output_contract": contract,
+                    })
+                node["until"] = normalize_predicate(child.get("until"), node["state"])
+                node["body"] = region(
+                    child.get("body"), depth + 1, body=True, parent=node["id"], loop_ids=(*loop_ids, node["id"]),
+                )
+                exports = child.get("exports")
+                if not isinstance(exports, list) or len(exports) > 100:
+                    raise WorkflowDefinitionError("Repeat requires an explicit exports list of at most 100 entries.")
+                node["exports"], names = [], set()
+                for export in exports:
+                    _object(export, {"name", "output"}, "Repeat export")
+                    name = _name(export.get("name"), "Repeat export name")
+                    if name in names:
+                        raise WorkflowDefinitionError("Repeat export names must be unique.")
+                    names.add(name)
+                    node["exports"].append({
+                        "name": name, "output": _name(export.get("output"), "Repeat body output"),
+                    })
             elif kind == "collect":
                 source = _object(child.get("source"), {"loop_id", "output"}, "Collect source")
                 node["source"] = {
@@ -371,7 +427,28 @@ def compile_workflow_flow(workflow):
         kind = node["output_contract"]["kind"]
         return {(node["id"], "authoritative"), (node["id"], "records" if kind == "records" else "documents")}
 
-    def descriptor(node_id, output):
+    def state_slot(source):
+        loop = nodes.get(source.get("loop_id"), {}).get("node", {})
+        if loop.get("kind") != "repeat_until":
+            raise WorkflowDefinitionError("A repeat_state input must select an enclosing Repeat until block.")
+        slot = next((entry for entry in loop["state"] if entry["name"] == source.get("state_name")), None)
+        if slot is None:
+            raise WorkflowDefinitionError("The selected Repeat state slot is not declared.")
+        return slot
+
+    def repeat_export_binding(node, output):
+        export = next((entry for entry in node["exports"] if entry["name"] == output), None)
+        if export is None:
+            raise WorkflowDefinitionError("The selected Repeat output is not declared.")
+        binding = next((entry for entry in node["body"]["outputs"] if entry["name"] == export["output"]), None)
+        if binding is None:
+            raise WorkflowDefinitionError("Repeat exports must select declared body outputs.")
+        return binding
+
+    def descriptor(node_id, output, active=()):
+        key = (node_id, output)
+        if key in active:
+            raise WorkflowDefinitionError("Producer exports must not contain cycles.")
         entry = nodes.get(node_id)
         if not entry:
             raise WorkflowDefinitionError("A binding references a missing producer node.")
@@ -385,8 +462,15 @@ def compile_workflow_flow(workflow):
             if (node_id, output) not in collection_keys(node):
                 raise WorkflowDefinitionError("Collect exposes only its exact collection kind and authoritative output.")
             return node["output_contract"]["kind"]
+        if node["kind"] == "repeat_until":
+            source = repeat_export_binding(node, output)["source"]
+            if source["kind"] == "repeat_state":
+                return state_slot(source)["output_contract"]["kind"]
+            if source["kind"] != "node_output":
+                raise WorkflowDefinitionError("Repeat exports require saved outputs or explicitly retained state.")
+            return descriptor(source["node_id"], source["output"], (*active, key))
         if node["kind"] != "task" or output not in WORKFLOW_BINDABLE_OUTPUTS:
-            raise WorkflowDefinitionError("Only task final representations, Collect outputs and declared join exports can supply inputs.")
+            raise WorkflowDefinitionError("Only task final representations, Collect outputs and declared join or Repeat exports can supply inputs.")
         contract = catalogue[node["task_id"]].get("output_contract") or {}
         declared = contract.get("kind", "any")
         if output not in {"authoritative", "text"} and declared not in {
@@ -404,11 +488,19 @@ def compile_workflow_flow(workflow):
             source = binding["source"]
             if source.get("kind") == "loop_item":
                 loop_id = source["loop_id"]
-                if loop_id not in node_loop_ids[consumer]:
+                if loop_id not in node_loop_ids[consumer] or nodes[loop_id]["node"]["kind"] != "for_each":
                     raise WorkflowDefinitionError("A loop_item binding must select an enclosing For each loop.")
                 if not workflow_output_kind_matches("json", binding["expected_kind"]):
                     raise WorkflowDefinitionError("A loop_item binding supplies a JSON object with value, key and index.")
                 dependencies[consumer].append((loop_id, "loop_item"))
+                continue
+            if source.get("kind") == "repeat_state":
+                if source["loop_id"] not in node_loop_ids[consumer]:
+                    raise WorkflowDefinitionError("A repeat_state binding must select a declared enclosing Repeat until block.")
+                slot = state_slot(source)
+                if not workflow_output_kind_matches(slot["output_contract"]["kind"], binding["expected_kind"]):
+                    raise WorkflowDefinitionError("The selected Repeat state does not match the declared input kind.")
+                dependencies[consumer].append((source["loop_id"], f"state:{slot['name']}"))
                 continue
             key = (source["node_id"], source["output"])
             kind = descriptor(*key)
@@ -426,32 +518,54 @@ def compile_workflow_flow(workflow):
         selectors.update({"json": {"json"}, "records": {"records"}, "document_results": {"documents"}}.get(declared, set()))
         return {(node["id"], output) for output in selectors}
 
-    leaf_cache = {}
+    # Deduplicate by source identity so shared join chains cannot expand exponentially.
+    contract_cache = {}
 
-    def output_leaves(node_id, output, active=()):
+    def output_contracts(node_id, output, active=()):
         key = (node_id, output)
-        if key in leaf_cache:
-            return leaf_cache[key]
+        if key in contract_cache:
+            return contract_cache[key]
         if key in active:
             raise WorkflowDefinitionError("Producer exports must not contain cycles.")
-        node = nodes[node_id]["node"]
+        entry = nodes.get(node_id)
+        if entry is None:
+            raise WorkflowDefinitionError("A binding references a missing producer node.")
+        node = entry["node"]
         if node["kind"] == "join":
-            export = next(item for item in node["exports"] if item["name"] == output)
-            leaves = tuple(dict.fromkeys(
-                leaf for branch in ("then", "else")
-                for leaf in output_leaves(export[branch]["node_id"], export[branch]["output"], (*active, key))
-            ))
+            export = next((item for item in node["exports"] if item["name"] == output), None)
+            if export is None:
+                raise WorkflowDefinitionError("The selected join output is not declared.")
+            contracts = {}
+            for branch in ("then", "else"):
+                contracts.update(output_contracts(
+                    export[branch]["node_id"], export[branch]["output"], (*active, key),
+                ))
+        elif node["kind"] == "repeat_until":
+            contracts = source_contracts(repeat_export_binding(node, output)["source"], (*active, key))
+        elif node["kind"] in {"task", "collect"}:
+            descriptor(node_id, output)
+            contracts = {("node_output", node_id, output): (output_contract(node), output)}
         else:
-            leaves = (key,)
-        leaf_cache[key] = leaves
-        return leaves
+            raise WorkflowDefinitionError("The selected engine node does not declare final data.")
+        contract_cache[key] = contracts
+        return contracts
+
+    def source_contracts(source, active=()):
+        if source.get("kind") == "repeat_state":
+            contract = state_slot(source)["output_contract"]
+            selector = {"document_results": "documents"}.get(contract["kind"], contract["kind"])
+            return {("repeat_state", source["loop_id"], source["state_name"]): (contract, selector)}
+        if source.get("kind", "node_output") != "node_output":
+            raise WorkflowDefinitionError("This operation requires a saved output or declared Repeat state.")
+        return output_contracts(source["node_id"], source["output"], active)
+
+    def contract_kind(contract, selector):
+        return {"text": "text", "json": "json", "records": "records", "documents": "document_results"}.get(
+            selector, contract.get("kind", "any"),
+        )
 
     def structured_output(node_id, output):
-        for producer_id, selector in output_leaves(node_id, output):
-            node = nodes[producer_id]["node"]
-            if node["kind"] not in {"task", "collect"}:
-                return False
-            contract = output_contract(node)
+        for contract, selector in output_contracts(node_id, output).values():
             schema = contract.get("schema") or {}
             root_types = schema.get("type")
             root_types = {root_types} if isinstance(root_types, str) else set(root_types or [])
@@ -464,13 +578,10 @@ def compile_workflow_flow(workflow):
         return True
 
     def output_schemas(node_id, output):
-        return [output_contract(nodes[producer_id]["node"]).get("schema") or {}
-                for producer_id, _ in output_leaves(node_id, output)]
+        return [contract.get("schema") or {} for contract, _ in output_contracts(node_id, output).values()]
 
     def collection_kind(source):
-        selected = {descriptor(node_id, output) for node_id, output in output_leaves(
-            source["node_id"], source["output"],
-        )}
+        selected = {contract_kind(contract, selector) for contract, selector in source_contracts(source).values()}
         if len(selected) != 1 or not selected <= {"records", "document_results"}:
             raise WorkflowDefinitionError("Loop collections require one exact records or document_results kind on every producer.")
         return next(iter(selected))
@@ -489,12 +600,14 @@ def compile_workflow_flow(workflow):
         iterable = node["iterable"]
         if iterable["kind"] == "input":
             binding = next((item for item in node["inputs"] if item["name"] == iterable["name"]), None)
-            if binding is None or binding["source"]["kind"] != "node_output" or not binding["required"] or binding["allow_partial"]:
-                raise WorkflowDefinitionError("A saved iterable must select a required, nonpartial node-output input.")
+            if (
+                binding is None or binding["source"]["kind"] not in {"node_output", "repeat_state"}
+                or not binding["required"] or binding["allow_partial"]
+            ):
+                raise WorkflowDefinitionError("A saved iterable must select a required, nonpartial node-output or Repeat-state input.")
             collection_kind(binding["source"])
-            values = [collection_item_schema(schema) for schema in output_schemas(
-                binding["source"]["node_id"], binding["source"]["output"],
-            )]
+            values = [collection_item_schema(contract.get("schema") or {})
+                      for contract, _ in source_contracts(binding["source"]).values()]
         else:
             values = [WORKFLOW_DOCUMENT_ITEM_SCHEMA]
         loop_item_schemas[node["id"]] = [{
@@ -540,7 +653,7 @@ def compile_workflow_flow(workflow):
         if action.get("type") != "analyze" or action.get("target_mode") != "current_item" or action.get("analysis_mode") != "combined":
             raise WorkflowDefinitionError("Current-item Analyze requires combined analysis of one enclosing document item.")
         loop_id = _id(action.get("loop_id"))
-        if loop_id not in node_loop_ids[node["id"]]:
+        if loop_id not in node_loop_ids[node["id"]] or nodes[loop_id]["node"]["kind"] != "for_each":
             raise WorkflowDefinitionError("Current-item Analyze must select an enclosing document loop.")
         if nodes[loop_id]["node"]["iterable"]["kind"] not in {"documents", "workspace_query"}:
             raise WorkflowDefinitionError("Current-item Analyze requires a document iterable, not saved records or document results.")
@@ -559,12 +672,14 @@ def compile_workflow_flow(workflow):
             )
         for binding in task["inputs"]:
             source = binding["source"]
-            if source["kind"] == "node_output" and all(
-                descriptor(producer_id, output) in {"records", "document_results"}
-                for producer_id, output in output_leaves(source["node_id"], source["output"])
+            if source["kind"] in {"node_output", "repeat_state"} and all(
+                contract_kind(contract, selector) in {"records", "document_results"}
+                for contract, selector in source_contracts(source).values()
             ):
                 return
-        raise WorkflowDefinitionError("saved_record_report requires at least one node-output records or document_results input.")
+        raise WorkflowDefinitionError(
+            "saved_record_report requires at least one node-output records or document_results input, or equivalent Repeat state."
+        )
 
     def check_predicate(predicate, bindings):
         used = {binding["name"]: binding for binding in bindings}
@@ -577,6 +692,17 @@ def compile_workflow_flow(workflow):
             source = used[operand["input"]]["source"]
             if source["kind"] == "loop_item":
                 schemas = loop_item_schemas[source["loop_id"]]
+            elif source["kind"] == "repeat_state":
+                contract = state_slot(source)["output_contract"]
+                schema = contract.get("schema") or {}
+                root = schema.get("type")
+                root_types = {root} if isinstance(root, str) else set(root or [])
+                if (
+                    contract["kind"] not in {"json", "records", "document_results"}
+                    or not root_types or not root_types <= {"object", "array"}
+                ):
+                    raise WorkflowDefinitionError("Repeat conditions require explicitly schema-validated JSON or record fields.")
+                schemas = [schema]
             else:
                 if not structured_output(source["node_id"], source["output"]):
                     raise WorkflowDefinitionError("Conditions require JSON or record fields with an explicit schema on every possible producer.")
@@ -675,6 +801,53 @@ def compile_workflow_flow(workflow):
                 check_bindings(node["body"]["outputs"], *ends, node["body"]["id"])
                 after_possible.add((node["id"], "loop_complete"))
                 after_definite.add((node["id"], "loop_complete"))
+            elif kind == "repeat_until":
+                initial = [{
+                    "name": slot["name"], "source": slot["initial"], "required": True,
+                    "expected_kind": slot["output_contract"]["kind"],
+                    "allow_partial": slot["output_contract"]["allow_partial"],
+                } for slot in node["state"]]
+                check_bindings(initial, definite, possible, node["id"])
+                for slot in node["state"]:
+                    if any(
+                        contract_kind(contract, selector) not in {"any", slot["output_contract"]["kind"]}
+                        for contract, selector in source_contracts(slot["initial"]).values()
+                    ):
+                        raise WorkflowDefinitionError("Initial Repeat state must preserve its exact declared output kind.")
+                ends = analyze(node["body"], (set(definite), set(possible)))
+                body_outputs = {binding["name"]: binding for binding in node["body"]["outputs"]}
+                for binding in body_outputs.values():
+                    source = binding["source"]
+                    if source["kind"] == "node_output":
+                        if node_loop_ids.get(source.get("node_id")) != [*node_loop_ids[node["id"]], node["id"]]:
+                            raise WorkflowDefinitionError("A Repeat body export must select a producer in its own body scope.")
+                    elif source["kind"] != "repeat_state":
+                        raise WorkflowDefinitionError("Repeat body exports require saved outputs or explicitly retained state.")
+                check_bindings(node["body"]["outputs"], *ends, node["body"]["id"])
+                for slot in node["state"]:
+                    binding = body_outputs.get(slot["next"])
+                    if binding is None or not binding["required"]:
+                        raise WorkflowDefinitionError("Every next-state slot must select a required declared Repeat body output.")
+                    contract = slot["output_contract"]
+                    if any(
+                        contract_kind(source_contract, selector) not in {"any", contract["kind"]}
+                        for source_contract, selector in source_contracts(binding["source"]).values()
+                    ):
+                        raise WorkflowDefinitionError("Next Repeat state must preserve its exact declared output kind.")
+                    if binding["allow_partial"] and not contract["allow_partial"]:
+                        raise WorkflowDefinitionError("Partial next-state outputs require explicit acceptance by the Repeat state slot.")
+                next_bindings = [{
+                    "name": slot["name"], "source": {
+                        "kind": "repeat_state", "loop_id": node["id"], "state_name": slot["name"], "scope": "current",
+                    },
+                } for slot in node["state"]]
+                check_predicate(node["until"], next_bindings)
+                for export in node["exports"]:
+                    binding = repeat_export_binding(node, export["name"])
+                    key = (node["id"], export["name"])
+                    after_possible.add(key)
+                    if binding["required"]:
+                        after_definite.add(key)
             elif kind == "collect":
                 check_collect(node, definite, possible)
                 keys = collection_keys(node)

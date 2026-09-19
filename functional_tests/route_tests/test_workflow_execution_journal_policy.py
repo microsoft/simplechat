@@ -1,7 +1,7 @@
 # test_workflow_execution_journal_policy.py
 """
 Structured workflow execution API policy and exact result regression coverage.
-Version: 0.261.117
+Version: 0.261.120
 Implemented in: 0.261.116
 
 Production route helpers and journal readers execute with isolated Flask request
@@ -53,7 +53,7 @@ def test_all_execution_routes_retain_blueprint_and_swagger_security():
         assert any("enabled_required" in value for value in decorators)
         if "/user/" in path:
             assert "workflow_user_required" in decorators
-    assert len(routes) == 14
+    assert len(routes) == 18
 
 
 @pytest.fixture
