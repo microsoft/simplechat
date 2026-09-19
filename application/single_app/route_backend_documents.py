@@ -444,7 +444,8 @@ def register_route_backend_documents(bp):
                     file_ext = os.path.splitext(filename)[1].lower()
                     if file_ext == '.csv':
                         import pandas
-                        df = pandas.read_csv(io.BytesIO(blob_data))
+                        from functions_tabular_csv_query import read_tabular_csv
+                        df = read_tabular_csv(io.BytesIO(blob_data))
                         combined_content = df.to_csv(index=False)
                     elif file_ext in ['.xlsx', '.xlsm']:
                         import pandas

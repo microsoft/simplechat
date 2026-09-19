@@ -929,7 +929,8 @@ def register_enhanced_citations_routes(bp):
             selected_sheet = None
             sheet_names = []
             if ext == 'csv':
-                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
+                from functions_tabular_csv_query import read_tabular_csv
+                df = read_tabular_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
             elif ext in ('xlsx', 'xlsm'):
                 excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
                 sheet_names = list(excel_file.sheet_names)
