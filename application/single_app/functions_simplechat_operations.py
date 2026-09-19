@@ -9,12 +9,14 @@ import os
 import re
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core.exceptions import ResourceExistsError
+from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
 from collaboration_models import normalize_collaboration_user
@@ -67,6 +69,13 @@ from functions_generated_file_approvals import (
     list_expired_pending_generated_file_artifacts,
     requires_generated_file_approval,
     user_can_approve_generated_file,
+)
+from functions_generated_artifact_sources import (
+    authorize_generated_artifact_preparation,
+    authorize_generated_artifact_source,
+    generated_artifact_source_metadata,
+    generated_chat_artifact_address,
+    has_generated_artifact_source,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import (
@@ -1450,6 +1459,30 @@ def upload_generated_analysis_artifact_stream_for_user(
     artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
     analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Compatibility entry point for real native Analyze producers."""
+    return upload_generated_file_artifact_stream_for_user(
+        current_user_id, conversation_id, file_name, file_stream, file_size,
+        capability=capability, output_format=output_format, summary=summary,
+        artifact_idempotency_key=artifact_idempotency_key,
+        artifact_lifecycle_metadata=artifact_lifecycle_metadata, analysis_producer=analysis_producer,
+    )
+
+
+def upload_generated_file_artifact_stream_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    file_name: str,
+    file_stream: Any,
+    file_size: int,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+    artifact_idempotency_key: str = "",
+    artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
+    generated_artifact_source: Optional[Dict[str, Any]] = None,
+    execution_check=None,
+) -> Dict[str, Any]:
     """Upload a bounded-memory generated artifact stream for an authorized user."""
     normalized_user_id = str(current_user_id or "").strip()
     normalized_conversation_id = str(conversation_id or "").strip()
@@ -1466,6 +1499,8 @@ def upload_generated_analysis_artifact_stream_for_user(
         raise ValueError("file_stream must be seekable and readable")
     if not allowed_file(normalized_file_name):
         raise ValueError("Generated file type is not supported")
+    if generated_artifact_source is not None and analysis_producer is not None:
+        raise ValueError("A generated artifact must have exactly one producer binding.")
 
     normalized_file_size = max(0, int(file_size or 0))
     if normalized_file_size <= 0:
@@ -1496,8 +1531,11 @@ def upload_generated_analysis_artifact_stream_for_user(
             "summary": normalized_summary,
             **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
             **analysis_artifact_metadata(analysis_producer),
+            **(generated_artifact_source_metadata(generated_artifact_source)
+               if generated_artifact_source is not None else {}),
         },
         artifact_idempotency_key=artifact_idempotency_key,
+        execution_check=execution_check,
     )
 
 
@@ -2373,12 +2411,29 @@ def _write_temp_markdown_file(markdown_content: str) -> str:
         return temp_file.name
 
 
-def _write_temp_generated_file(file_content_bytes: bytes, suffix: str) -> str:
+def _write_temp_generated_file(file_content_bytes: Any, suffix: str) -> str:
     sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
     normalized_suffix = suffix if suffix.startswith('.') else f'.{suffix}' if suffix else '.json'
     with tempfile.NamedTemporaryFile(delete=False, suffix=normalized_suffix, dir=sc_temp_files_dir) as temp_file:
-        temp_file.write(file_content_bytes)
-        return temp_file.name
+        path = temp_file.name
+        complete = False
+        try:
+            if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+                file_content_bytes.seek(0)
+                for chunk in iter(lambda: file_content_bytes.read(1024 * 1024), b""):
+                    if not isinstance(chunk, bytes):
+                        raise ValueError("A generated file stream must contain bytes.")
+                    temp_file.write(chunk)
+            else:
+                temp_file.write(file_content_bytes)
+            if temp_file.tell() == 0:
+                raise ValueError("Generated file content is empty.")
+            complete = True
+            return path
+        finally:
+            if not complete:
+                temp_file.close()
+                os.remove(path)
 
 
 def _queue_document_upload_background_task(
@@ -2443,12 +2498,14 @@ def queue_generated_document_processing(
     if not normalized_name:
         raise ValueError("normalized_file_name is required")
 
-    if isinstance(file_content_bytes, bytes):
+    if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+        normalized_file_content_bytes = file_content_bytes
+    elif isinstance(file_content_bytes, bytes):
         normalized_file_content_bytes = file_content_bytes
     else:
         normalized_file_content_bytes = str(file_content_bytes or "").encode("utf-8")
 
-    if not normalized_file_content_bytes.strip():
+    if isinstance(normalized_file_content_bytes, bytes) and not normalized_file_content_bytes.strip():
         raise ValueError("file_content_bytes is required")
 
     file_extension = os.path.splitext(normalized_name)[1].lower() or ".json"
@@ -3008,6 +3065,51 @@ def auto_deny_expired_generated_file_approvals() -> int:
     return denied_count
 
 
+def _verify_generated_artifact_blob(blob_client, expected_digest, expected_size, *, check=None):
+    digest, size = hashlib.sha256(), 0
+    for chunk in blob_client.download_blob().chunks():
+        digest.update(chunk)
+        size += len(chunk)
+        if size > expected_size:
+            raise ValueError("The existing generated artifact contains different bytes.")
+        if check is not None:
+            check()
+    if size != expected_size or digest.hexdigest() != expected_digest:
+        raise ValueError("The existing generated artifact contains different bytes.")
+
+
+@contextmanager
+def open_generated_chat_artifact_stream(artifact, *, check=None):
+    """Verify an entire bound file before a caller hands off or returns its bytes."""
+    metadata = artifact.get("metadata") or {}
+    expected_size = metadata.get("generated_artifact_size_bytes")
+    expected_digest = metadata.get("generated_artifact_content_sha256")
+    if type(expected_size) is not int or expected_size < 1 or not expected_digest:
+        raise ValueError("The generated artifact byte binding is unavailable.")
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise RuntimeError("Blob storage client not available")
+    blob_client = blob_service_client.get_blob_client(container=artifact["blob_container"], blob=artifact["blob_path"])
+    with tempfile.TemporaryFile(mode="w+b") as content:
+        digest, size = hashlib.sha256(), 0
+        if check is not None:
+            check()
+        for chunk in blob_client.download_blob().chunks():
+            size += len(chunk)
+            if size > expected_size:
+                raise ValueError("The generated artifact bytes changed.")
+            content.write(chunk)
+            digest.update(chunk)
+            if check is not None:
+                check()
+        if size != expected_size or digest.hexdigest() != expected_digest:
+            raise ValueError("The generated artifact bytes changed.")
+        if check is not None:
+            check()
+        content.seek(0)
+        yield content
+
+
 def _upload_generated_chat_artifact_for_current_user(
     current_user_id: str,
     conversation_id: str,
@@ -3015,6 +3117,7 @@ def _upload_generated_chat_artifact_for_current_user(
     file_content_bytes: bytes,
     artifact_metadata: Optional[Dict[str, Any]] = None,
     artifact_idempotency_key: str = "",
+    execution_check=None,
 ) -> Dict[str, Any]:
     try:
         conversation_item = cosmos_conversations_container.read_item(
@@ -3034,15 +3137,32 @@ def _upload_generated_chat_artifact_for_current_user(
     analysis_metadata = analysis_artifact_metadata(artifact_metadata.get("analysis_producer"))
     if artifact_metadata.get("analysis_result_required") and not analysis_metadata:
         raise ValueError("The analysis artifact has no producer binding.")
+    source_context = (
+        authorize_generated_artifact_preparation(current_user_id, artifact_metadata)
+        if has_generated_artifact_source(artifact_metadata) else None
+    )
+    source_metadata = (
+        generated_artifact_source_metadata(source_context["binding"]) if source_context else {}
+    )
     content_digest = hashlib.sha256()
+    content_size = 0
     if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
         file_content_bytes.seek(0)
         for block in iter(lambda: file_content_bytes.read(1024 * 1024), b""):
             content_digest.update(block)
+            content_size += len(block)
+            if execution_check is not None:
+                execution_check()
         file_content_bytes.seek(0)
     else:
         content_digest.update(file_content_bytes)
+        content_size = len(file_content_bytes)
     content_sha256 = content_digest.hexdigest()
+    if source_context and (
+        content_sha256 != source_context["descriptor"]["content_sha256"]
+        or content_size != source_context["descriptor"]["size_bytes"]
+    ):
+        raise ValueError("The prepared generated artifact contains different bytes.")
     approval_metadata = {}
     if requires_generated_file_approval(
         access_context,
@@ -3059,22 +3179,49 @@ def _upload_generated_chat_artifact_for_current_user(
         raise RuntimeError("Blob storage client not available")
 
     normalized_idempotency_key = str(artifact_idempotency_key or "").strip()
-    if normalized_idempotency_key:
-        artifact_suffix = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"simplechat-generated-artifact:{conversation_id}:{normalized_idempotency_key}",
-        ).hex
-    else:
-        artifact_suffix = uuid.uuid4().hex
-    artifact_message_id = f"{conversation_id}_generated_file_{artifact_suffix}"
-    blob_path = (
-        f"{current_user_id}/{conversation_id}/generated/"
-        f"{artifact_message_id}/{normalized_file_name}"
+    address = source_context["descriptor"]["artifact"] if source_context else generated_chat_artifact_address(
+        current_user_id, conversation_id, normalized_file_name, normalized_idempotency_key,
+        storage_account_personal_chat_container_name,
     )
+    if source_context and (
+        address["conversation_id"] != conversation_id or address["file_name"] != normalized_file_name
+        or normalized_idempotency_key != f"generated-export:v1:{source_context['binding']['export_key']}"
+        or artifact_metadata.get("output_format") != "json"
+    ):
+        raise ValueError("The generated artifact does not match its prepared address.")
+    artifact_message_id, blob_path = address["artifact_message_id"], address["blob_path"]
+    blob_container = address["blob_container"]
     blob_client = blob_service_client.get_blob_client(
-        container=storage_account_personal_chat_container_name,
+        container=blob_container,
         blob=blob_path,
     )
+
+    def reauthorize_write():
+        if execution_check is not None:
+            execution_check()
+        if source_context:
+            current_conversation = cosmos_conversations_container.read_item(
+                item=conversation_id, partition_key=conversation_id,
+            )
+            build_conversation_participation_context(current_user_id, current_conversation)
+            authorize_generated_artifact_preparation(current_user_id, artifact_metadata)
+
+    def check_existing(existing):
+        metadata = existing.get("metadata") or {}
+        if (
+            existing.get("role") != "file" or existing.get("conversation_id") != conversation_id
+            or existing.get("filename") != normalized_file_name or existing.get("blob_path") != blob_path
+            or existing.get("blob_container") != blob_container or existing.get("file_content_source") != "blob"
+            or any(metadata.get(key) != value for key, value in source_metadata.items())
+            or metadata.get("generated_artifact_content_sha256") != content_sha256
+            or metadata.get("generated_artifact_size_bytes") != content_size
+            or metadata.get("generated_artifact_idempotency_key") != normalized_idempotency_key
+            or metadata.get("generated_artifact_output_format") != "json"
+        ):
+            raise ValueError("The existing generated artifact has a different immutable binding.")
+        _verify_generated_artifact_blob(blob_client, content_sha256, content_size, check=execution_check)
+        reauthorize_write()
+
     if normalized_idempotency_key:
         try:
             existing_message = cosmos_messages_container.read_item(
@@ -3083,6 +3230,8 @@ def _upload_generated_chat_artifact_for_current_user(
             )
         except CosmosResourceNotFoundError:
             existing_message = None
+        if source_context and existing_message is not None:
+            check_existing(existing_message)
         if (
             isinstance(existing_message, dict)
             and existing_message.get("role") == "file"
@@ -3099,23 +3248,27 @@ def _upload_generated_chat_artifact_for_current_user(
                 "message": {
                     "id": artifact_message_id,
                     "file_name": normalized_file_name,
-                    "blob_container": storage_account_personal_chat_container_name,
+                    "blob_container": blob_container,
                     "blob_path": blob_path,
                     "capability": existing_metadata.get("generated_artifact_capability") or "analysis",
                     "output_format": existing_metadata.get("generated_artifact_output_format") or "",
                 },
                 "conversation_id": conversation_id,
             }
-    blob_client.upload_blob(
-        file_content_bytes,
-        overwrite=True,
-        metadata={
-            "conversation_id": conversation_id,
-            "user_id": current_user_id,
-            "generated_artifact": "true",
-            "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
-        },
-    )
+    reauthorize_write()
+    try:
+        blob_client.upload_blob(
+            file_content_bytes, overwrite=not bool(source_context),
+            metadata={
+                "conversation_id": conversation_id, "user_id": current_user_id,
+                "generated_artifact": "true",
+                "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
+            },
+        )
+    except ResourceExistsError:
+        if not source_context:
+            raise
+        _verify_generated_artifact_blob(blob_client, content_sha256, content_size, check=execution_check)
 
     timestamp = datetime.now(timezone.utc).isoformat()
     current_thread_id = str(uuid.uuid4())
@@ -3137,7 +3290,7 @@ def _upload_generated_chat_artifact_for_current_user(
         "filename": normalized_file_name,
         "is_table": file_extension in TABULAR_EXTENSIONS,
         "file_content_source": "blob",
-        "blob_container": storage_account_personal_chat_container_name,
+        "blob_container": blob_container,
         "blob_path": blob_path,
         "timestamp": timestamp,
         "model_deployment_name": None,
@@ -3150,6 +3303,8 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_idempotency_key": normalized_idempotency_key or None,
             "generated_artifact_content_sha256": content_sha256,
             **analysis_metadata,
+            **source_metadata,
+            **({"generated_artifact_size_bytes": content_size} if source_context else {}),
             **lifecycle_metadata,
             **approval_metadata,
             "thread_info": {
@@ -3160,9 +3315,19 @@ def _upload_generated_chat_artifact_for_current_user(
             },
         },
     }
-    cosmos_messages_container.upsert_item(message_doc)
+    reauthorize_write()
+    created = True
+    if source_context:
+        try:
+            cosmos_messages_container.create_item(message_doc)
+        except CosmosResourceExistsError:
+            message_doc = cosmos_messages_container.read_item(item=artifact_message_id, partition_key=conversation_id)
+            check_existing(message_doc)
+            created = False
+    else:
+        cosmos_messages_container.upsert_item(message_doc)
 
-    if approval_metadata:
+    if approval_metadata and created:
         _notify_generated_file_approval_requested(message_doc, access_context)
 
     log_event(
@@ -3184,7 +3349,7 @@ def _upload_generated_chat_artifact_for_current_user(
         "message": {
             "id": artifact_message_id,
             "file_name": normalized_file_name,
-            "blob_container": storage_account_personal_chat_container_name,
+            "blob_container": blob_container,
             "blob_path": blob_path,
             "capability": artifact_capability,
             "output_format": artifact_output_format,
@@ -3272,8 +3437,8 @@ def _generated_artifact_has_lifecycle_contract(metadata: Dict[str, Any]) -> bool
 def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, message_item: Dict[str, Any]) -> None:
     """Reauthorize a generated artifact against its committed artifact-set manifest."""
     metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
-    if metadata.get("analysis_result_required") or metadata.get("analysis_result_contexts"):
-        authorize_analysis_artifact(current_user_id, message_item)
+    if has_generated_artifact_source(metadata) or metadata.get("analysis_result_required") or metadata.get("analysis_result_contexts"):
+        authorize_generated_artifact_source(current_user_id, message_item, native_authorizer=authorize_analysis_artifact)
     if not _generated_artifact_has_lifecycle_contract(metadata):
         return
 

@@ -1,7 +1,7 @@
 # test_chat_artifact_download_bytes.py
 """
 Functional regressions for authorized generated artifact download bytes.
-Version: 0.261.115
+Version: 0.261.119
 Implemented in: 0.261.115
 
 Production route, message/lifecycle authorization, internal blob reader, saved
@@ -11,6 +11,7 @@ artifact must not be misidentified as an ID-less workspace source.
 """
 
 import ast
+from contextlib import ExitStack
 import hashlib
 import logging
 import mimetypes
@@ -33,6 +34,7 @@ from test_generated_artifact_lifecycle_authorization import (
 from test_saved_analysis_service import read_options, saved, saved_chat  # noqa: F401
 from test_content_screening_access import ScreeningAccessFixture, access as screening_access
 from content_screening.contracts import DocumentHeldError, ScreeningError
+from functions_generated_artifact_sources import has_generated_artifact_source
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -116,6 +118,7 @@ def artifact_download(saved_chat):
         return SimpleNamespace(download_blob=lambda: SimpleNamespace(readall=readall))
 
     namespace = {
+        "ExitStack": ExitStack, "has_generated_artifact_source": has_generated_artifact_source,
         "hashlib": hashlib, "logging": logging, "mimetypes": mimetypes, "os": os,
         "quote": quote, "secure_filename": secure_filename,
         "Response": Response, "jsonify": jsonify, "request": request,

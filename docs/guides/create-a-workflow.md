@@ -86,10 +86,10 @@ query, choose exhaustive metadata/keyword matches or an explicit **Best N**
 relevance selection. A preview is advisory; the loop freezes its actual
 membership when it starts and does not reselect documents on Resume.
 
-The default administrator ceiling is 500 items, and the editor shows the
-effective limit. This counts actual loop visits, not the searchable workspace.
-If the selection is too large, narrow it before running; no first-500 subset is
-silently substituted.
+The default administrator ceiling is 500 items, configurable from 1-5,000 for
+new runs only, and the editor shows the effective limit. This counts actual
+loop visits, not the searchable workspace. If the selection is too large,
+narrow it before running; no first-500 subset is silently substituted.
 
 Bind the current item to body tasks and choose current-document Analyze when
 appropriate. Keep shared criteria in shared references. Declare the body's
@@ -167,32 +167,78 @@ coverage, accepted findings, and validation.
 
 ## Publish an existing analysis artifact
 
-In a later task, select **Publish an existing analysis artifact**, choose an
-**Existing artifact format**, and select a **Publication destination**. A group
-or public destination also requires its **Destination workspace ID**. That
-destination is saved with the task; changing your active workspace later does
-not redirect the publication.
+In the V2 List editor, enable **Publish a workflow file** on a later task and
+choose **Existing Analyze file** as its **Publication source**. Servers without
+the new source options retain **Publish an existing analysis artifact**.
+Choose an **Existing artifact format** and **Destination scope**. A group or
+public destination also requires its **Destination workspace ID**. That
+destination is saved with the task; changing your active workspace later
+does not redirect the publication.
 
 This task copies an existing artifact rather than calling a model to recreate
 it. Ensure the analysis produced the selected format. Passing validation alone
 does not publish anything: this explicit task or a manual workspace-save action
-is required. Partial or invalid results cannot be published as final outputs.
+is required. This native-artifact path does not publish partial or invalid
+results as final outputs. Existing definitions with no explicit publication
+source keep native Analyze behavior.
 
 Group and public copies retain their approval process. An uncertain publication
 shows the existing destination/receipt instead of blindly creating another copy.
 Once explicitly published, the copy follows the destination's access rules.
+
+## Publish saved workflow records
+
+In **0.261.119**, a version-3 durable workflow can publish records from a real
+task, **Collect**, or an explicit **Join outputs** selection. Use this when you
+need the complete collected dataset as a file, rather than an explanation of
+the dataset or a copy of one native Analyze artifact.
+
+1. Produce an eligible records output. For example, Analyze each document in a
+   frozen For each selection, then Collect the records outside the loop.
+2. In a later task, enable **Publish a workflow file** and explicitly select
+   **Saved workflow output**. Bind exactly one required records output from
+   the chosen producer. Do not select the current loop item, diagnostics,
+   text, an arbitrary JSON value, or a per-document results bundle.
+3. Choose **JSON - exact saved records**, an explicit destination, and the
+   completion level described below.
+
+The JSON array contains every selected saved record object, including nested
+values and retained provenance, in the saved order. Repeated records stay
+repeated. It is not a preview or a model reconstruction; serialization preserves
+JSON values rather than an uploaded document's original formatting. The
+original records remain available to later tasks through their typed bindings.
+
+Partial coverage is usable only when both the producer/Collect policy and the
+publishing input explicitly accept it. It stays visibly partial. Invalid
+uniqueness, failed or pending results, unavailable sources, and files exceeding
+the configured limit fail rather than being silently repaired or truncated.
+
+This Publish task creates a downloadable file through the shared Generated
+File Export Framework **and submits it to the selected workspace**; it is not
+a new download-only mode. Generic CSV, Markdown, Word/DOCX, PDF, PowerPoint/PPTX
+and XML mappings are not enabled. Those are future extensions of the same
+framework; existing native formats keep their behavior.
+
+If the server does not advertise saved-output publication, the option is
+unavailable rather than silently falling back to native Analyze. Unsupported
+saved source/format configurations remain intact and read-only.
+
+## Choose when publication completes
 
 Starting in **0.261.118**, a version-3 durable publication task can choose
 **Complete publication when**: **Submitted**, **Approved**, or **Indexed and
 ready**. Use Submitted to hand a deliverable into a review queue; use Indexed
 and ready when the next step depends on workspace retrieval. Personal
 workspaces do not have a destination approval gate, so Approved reports
-approval as not required.
+approval as not required. These same levels apply to Saved workflow output
+in **0.261.119**.
 
-New publication tasks default to Submitted. Existing tasks retain their
-previous behavior until you explicitly choose a policy. Queued, approved and
-indexed-ready are different stages; a failed or uncertain explicit policy
-pauses instead of publishing another copy or continuing on error. See
+New publication tasks default to Submitted when the server advertises support.
+Existing tasks retain their previous behavior until you explicitly choose a
+policy. Queued, approved and indexed-ready are different stages; a failed or
+uncertain explicit policy pauses instead of publishing another copy or
+continuing on error. A valid JSON download, including an empty array, does not
+prove that its destination has searchable content. See
 [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md)
 for readiness proof, screening and recovery limitations.
 

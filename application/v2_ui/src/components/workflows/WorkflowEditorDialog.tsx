@@ -29,10 +29,12 @@ import {
     newWorkflowDefinition,
     normalizeWorkflowDefinition,
     isWorkflowPublicationCompletionPolicy,
+    isWorkflowPublicationSourceKind,
     preservedWorkflowFieldLabels,
     safeWorkflowAlias,
     sameWorkflowDefinition,
     saveWorkflowDefinition,
+    savedOutputPublicationFormats,
     workflowErrorMessage,
     workflowInputProcessingErrors,
     workflowForSave,
@@ -60,6 +62,7 @@ import {
     type WorkflowReferenceInput,
     type WorkflowPublication,
 } from '../../lib/workflowEditor';
+import { isRecord } from '../../lib/workspaceAuthoring';
 
 const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 const textareaClass = `${inputClass} min-h-24`;
@@ -1125,6 +1128,7 @@ function TaskCard({
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
                             bindings={(task.inputs ?? []).filter(isFlowBinding)} label={`${task.name} inputs`}
+                            recordsOnly={task.publication?.source_kind === 'saved_output'}
                             onChange={(inputs) => onChange({ ...task, inputs })} />
                     ) : <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />}
                     {structuredNode && Boolean(options.supported_input_processing_modes?.length) || task.input_processing !== undefined ? <TaskInputProcessingFields task={task}
@@ -1195,15 +1199,26 @@ function TaskPublicationFields({ task, options, durableExecution, onChange }: {
 }) {
     const publication = task.publication;
     const supportedPolicies = options.supported_publication_completion_policies ?? [];
+    const savedFormats = savedOutputPublicationFormats(options);
+    const savedOutputAvailable = durableExecution && savedFormats.length > 0;
+    const savedOutput = publication?.source_kind === 'saved_output';
     const update = (value: WorkflowPublication) => onChange({ ...task, publication: value });
+    if (publication !== undefined && (!isRecord(publication) ||
+        Object.hasOwn(publication, 'source_kind') && !isWorkflowPublicationSourceKind(publication.source_kind) ||
+        (savedOutput ? publication.artifact_format !== 'json' : !['md', 'csv', 'json'].includes(publication.artifact_format)))) {
+        return <p className="text-xs text-warn">The saved publication source or format is unsupported. Its original configuration is preserved and read-only.</p>;
+    }
     if (publication && Object.hasOwn(publication, 'completion_policy') &&
         !isWorkflowPublicationCompletionPolicy(publication.completion_policy)) {
         return <p className="text-xs text-warn">The saved publication completion policy is unsupported. Its original configuration is preserved and read-only.</p>;
     }
     return (
         <div className="space-y-3">
-            <Toggle label="Publish an existing analysis artifact" checked={publication !== undefined}
-                description="Reuse one explicitly bound native Analyze result. No model creates another copy of its content."
+            <Toggle label={savedFormats.length || savedOutput ? 'Publish a workflow file' : 'Publish an existing analysis artifact'}
+                checked={publication !== undefined}
+                description={savedFormats.length || savedOutput
+                    ? 'Choose an existing Analyze file or export one explicitly bound saved records output. No model reruns the analysis.'
+                    : 'Reuse one explicitly bound native Analyze result. No model creates another copy of its content.'}
                 onChange={(checked) => {
                     if (checked) onChange({
                         ...task, publication: {
@@ -1221,15 +1236,53 @@ function TaskPublicationFields({ task, options, durableExecution, onChange }: {
                 }} />
             {publication ? (
                 <fieldset className="grid min-w-0 gap-3 rounded-xl border border-edge p-3 sm:grid-cols-2">
-                    <legend className="px-1 text-sm text-text-1">Publication destination</legend>
-                    <label className="text-xs text-text-2">
-                        Existing artifact format
-                        <select className={`${inputClass} mt-1`} aria-label={`Publication format for ${task.name}`}
-                            value={publication.artifact_format} onChange={(event) => update({
-                                ...publication, artifact_format: event.target.value as WorkflowPublication['artifact_format'],
-                            })}>
-                            <option value="md">Markdown</option><option value="csv">CSV</option><option value="json">JSON</option>
+                    <legend className="px-1 text-sm text-text-1">Publication source and destination</legend>
+                    <label className="min-w-0 text-xs text-text-2 sm:col-span-2">
+                        Publication source
+                        <select className={`${inputClass} mt-1`} aria-label={`Publication source for ${task.name}`}
+                            value={publication.source_kind ?? 'native_analysis'}
+                            onChange={(event) => {
+                                const sourceKind = event.target.value;
+                                if (!isWorkflowPublicationSourceKind(sourceKind) ||
+                                    sourceKind === 'saved_output' && !savedOutputAvailable) return;
+                                update({
+                                    ...publication, source_kind: sourceKind,
+                                    artifact_format: sourceKind === 'saved_output' ? 'json' : publication.artifact_format,
+                                });
+                            }}>
+                            <option value="native_analysis">Existing Analyze file</option>
+                            <option value="saved_output" disabled={!savedOutputAvailable}>Saved workflow output</option>
                         </select>
+                        <span className="mt-1 block text-text-3">
+                            {savedOutput
+                                ? 'Create a file export of every saved record object, including nested values and provenance, without rerunning analysis. This is not a qualitative report or a task-data handoff.'
+                                : 'Publish the existing file from one explicitly bound native Analyze result.'}
+                            {!savedFormats.length
+                                ? ' This server does not advertise saved workflow output publication. Existing Analyze files remain available.'
+                                : !durableExecution ? ' Saved workflow output requires durable execution.' : ''}
+                        </span>
+                    </label>
+                    <label className="text-xs text-text-2">
+                        {savedOutput ? 'File export format' : 'Existing artifact format'}
+                        <select className={`${inputClass} mt-1`} aria-label={`Publication format for ${task.name}`}
+                            value={publication.artifact_format} onChange={(event) => {
+                                const format = event.target.value;
+                                if (!['md', 'csv', 'json'].includes(format) ||
+                                    savedOutput && !savedFormats.some((supported) => supported === format)) return;
+                                update({ ...publication, artifact_format: format as WorkflowPublication['artifact_format'] });
+                            }}>
+                            <option value="md" disabled={savedOutput}>Markdown</option>
+                            <option value="csv" disabled={savedOutput}>CSV</option>
+                            {savedOutput ? savedFormats.map((format) => (
+                                <option key={format} value={format}>JSON - exact saved records</option>
+                            )) : <option value="json">JSON</option>}
+                            {savedOutput && !savedFormats.length ? (
+                                <option value="json" disabled>JSON - exact saved records (not advertised)</option>
+                            ) : null}
+                        </select>
+                        {savedOutput ? <span className="mt-1 block text-text-3">
+                            Only JSON exact saved records is available for this source. No format fallback or content reconstruction.
+                        </span> : null}
                     </label>
                     <label className="text-xs text-text-2">
                         Destination scope
@@ -1290,7 +1343,10 @@ function TaskPublicationFields({ task, options, durableExecution, onChange }: {
                         </span>
                     </label>
                     <p className="text-xs text-text-3 sm:col-span-2">
-                        Bind exactly one earlier native Analyze output below. The destination is explicit, not your active workspace.
+                        {savedOutput
+                            ? 'Bind exactly one required records output from an earlier task, Collect, or explicit join below. '
+                            : 'Bind exactly one earlier native Analyze output below. '}
+                        The destination is explicit, not your active workspace.
                         Group/public approval and processing remain separate; queued does not mean indexed and ready.
                     </p>
                 </fieldset>

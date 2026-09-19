@@ -2,6 +2,7 @@
 """Non-secret editor choices and trusted loop-runner eligibility."""
 
 from functions_ai_connections import supports_model_capability
+from functions_generated_file_exports import GENERATED_RECORD_EXPORT_FORMATS
 from functions_workflow_definitions import (
     WORKFLOW_DEFINITION_VERSION, WORKFLOW_INPUT_PROCESSING_MODES, WORKFLOW_PUBLICATION_COMPLETION_POLICIES,
 )
@@ -63,6 +64,12 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
         "supported_binding_sources": ["node_output", "loop_item"],
         "supported_input_processing_modes": sorted(WORKFLOW_INPUT_PROCESSING_MODES),
         "supported_publication_completion_policies": list(WORKFLOW_PUBLICATION_COMPLETION_POLICIES),
+        "publication_source_capabilities": [
+            {"source_kind": "native_analysis", "output_kinds": ["records", "json", "text", "document_results"],
+             "artifact_formats": ["md", "csv", "json"]},
+            {"source_kind": "saved_output", "output_kinds": ["records"],
+             "artifact_formats": list(GENERATED_RECORD_EXPORT_FORMATS["exact_records_v1"])},
+        ],
         "flow_limits": {
             **FLOW_LIMITS,
             "max_loop_items": validate_workflow_max_loop_items(max_loop_items),

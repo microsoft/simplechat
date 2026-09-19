@@ -109,6 +109,30 @@ task retains its data rather than receiving a truncated substitute.
 
 See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md).
 
+## Inspect a saved-output publication
+
+In **0.261.119**, a task explicitly configured with **Saved workflow output**
+renders its selected saved records as JSON and submits that file to its chosen
+destination. Run inspection identifies the exact producer, output and attempt;
+a repeated task name or latest chat reply is not the source identity.
+
+Use the existing generated-file card to download the full JSON, not a preview
+of the first records. Record order, duplicates, nested values and retained
+provenance are preserved. Accepted partial output remains visibly partial;
+a file never supplies records that its producer did not save.
+
+Reloading or resuming retains the same source representation and publication
+receipt. It does not rerun Analyze or select a newer producer attempt merely
+to obtain a file. A downloadable file is not proof that the destination is
+approved or indexed-ready: inspect the separate completion observations.
+An empty JSON array may be a valid file without searchable content.
+
+Private downloads still require current conversation, workflow and source
+access. Already-published workspace copies follow their own destination
+permissions. See
+[Publish saved workflow records]({{ '/guides/create-a-workflow/' | relative_url }}#publish-saved-workflow-records)
+for source choices and requirements.
+
 ## Troubleshooting
 
 ### A publication is waiting
@@ -120,7 +144,7 @@ approval, processing, screening and index observations in run details.
 **Waiting for destination approval** means the request is in the existing
 workspace review, not that the workflow's task-approval button can approve it.
 If processing or indexing is pending, the run retains its exact receipt and
-does not submit Analyze or another document just to check progress.
+does not rerun Analyze or create another document just to check progress.
 
 For uncertain effects or restored access, use Resume/check again only when
 offered. It rechecks the existing receipt. A rejected request or changed
