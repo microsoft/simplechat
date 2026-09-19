@@ -268,10 +268,10 @@ class AgentContinuationJournal:
     async def prepare(self, args, kwargs):
         if isinstance(self.model_budget, ModelTokenBudget):
             arguments = self.agent._merge_arguments(kwargs.get("arguments"))
-            _service, settings = await self.agent._get_chat_completion_service_and_settings(
+            _, settings = await self.agent._get_chat_completion_service_and_settings(
                 kernel=self.agent.kernel, arguments=arguments,
             )
-            _settings, self.model_budget = prepare_model_execution_settings(settings, self.model_budget)
+            _, self.model_budget = prepare_model_execution_settings(settings, self.model_budget)
             self.model_instructions = await self.agent.format_instructions(self.agent.kernel, arguments)
             self.fingerprint = hashlib.sha256(json.dumps({
                 "agent": self.fingerprint, "budget": asdict(self.model_budget),

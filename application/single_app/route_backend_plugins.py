@@ -1152,7 +1152,7 @@ def set_user_plugins():
                 try:
                     existing = cosmos_personal_actions_container.read_item(item=submitted_id, partition_key=user_id)
                 except azure_cosmos.exceptions.CosmosResourceNotFoundError:
-                    pass
+                    existing = None
             try:
                 validate_legacy_action_update(plugin, existing, 'user_id', user_id)
             except LegacyActionCreationError:

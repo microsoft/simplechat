@@ -1,8 +1,9 @@
 # test_m365_agent_continuation.py
 """
 Real Semantic Kernel filter/thread regression for Microsoft 365 approvals.
-Version: 0.261.034
+Version: 0.261.037
 Implemented in: 0.261.029
+Updated in: 0.261.037 for explicit discard of unused preparation results.
 
 Completed calls, including concurrent siblings, are never changed into pending
 calls or replayed when a saved thread resumes after approval.
@@ -13,6 +14,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 from flask import Flask, g
@@ -23,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Resolve repository modules only after the standalone test path is configured.
 from semantic_kernel import Kernel  # noqa: E402
 from semantic_kernel.agents import ChatHistoryAgentThread  # noqa: E402
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings  # noqa: E402
 from semantic_kernel.contents import (  # noqa: E402
     AuthorRole, ChatHistory, ChatMessageContent, FunctionCallContent, FunctionResultContent,
 )
@@ -31,6 +34,7 @@ import functions_m365_agent_continuation as continuation  # noqa: E402
 from functions_m365_approvals import M365ApprovalRequired  # noqa: E402
 from functions_m365_execution import M365ExecutionContext  # noqa: E402
 from m365_interaction import M365SignInRequired  # noqa: E402
+from functions_model_capabilities import ModelTokenBudget  # noqa: E402
 from test_support.m365 import CosmosContainer  # noqa: E402
 
 
@@ -133,6 +137,44 @@ class AgentContinuationTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(self.memory.runs, {})
         self.assertEqual(self.jobs.items, {})
+
+    def test_prepare_keeps_effective_budget_when_unused_results_are_discarded(self):
+        original_budget = ModelTokenBudget(
+            model_id="gpt-5.6-terra", provider="openai",
+            context_window=10000, output_limit=5000,
+            request_output_limit=2048, output_accounting="total_generation",
+        )
+        get_settings = AsyncMock(return_value=(
+            object(), OpenAIChatPromptExecutionSettings(max_completion_tokens=512),
+        ))
+        render_instructions = AsyncMock(return_value="Rendered instructions")
+        capture_context = Mock()
+        continuation._dependencies["model_context_setter"] = capture_context
+        agent = SimpleNamespace(
+            name="bounded_agent", instructions="Instruction template", kernel=Kernel(),
+            deployment_name="gpt-5.6-terra", model_token_budget=original_budget,
+            _merge_arguments=lambda arguments: arguments if arguments is not None else KernelArguments(),
+            _get_chat_completion_service_and_settings=get_settings,
+            format_instructions=render_instructions,
+        )
+
+        async def prepare():
+            journal = continuation.AgentContinuationJournal(agent, self.context)
+            try:
+                await journal.prepare((), {"messages": "Use my files"})
+                return journal.model_budget
+            finally:
+                journal.close()
+
+        effective_budget = asyncio.run(prepare())
+        captured_budget = capture_context.call_args.args[0]
+        captured_instructions = capture_context.call_args.kwargs["instructions"]
+        get_settings.assert_awaited_once()
+        render_instructions.assert_awaited_once()
+        self.assertEqual(effective_budget.request_output_limit, 512)
+        self.assertEqual(captured_budget, effective_budget)
+        self.assertEqual(captured_instructions, "Rendered instructions")
+        self.assertEqual(original_budget.request_output_limit, 2048)
 
     def test_finish_raises_the_original_wait_even_if_pending_changes_during_iteration(self):
         waits = (

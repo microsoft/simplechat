@@ -1,4 +1,4 @@
-# Microsoft 365 CodeQL remediation (v0.261.030)
+# Microsoft 365 CodeQL remediation (v0.261.037)
 
 Fixed in version: **0.261.030**
 
@@ -6,6 +6,30 @@ Application version: `application/single_app/config.py`, updated from
 `0.261.029` to `0.261.030`. No deployment logic or deployer version changed.
 Related work: [PR #1497](https://github.com/microsoft/simplechat/pull/1497)
 and [issue #1493](https://github.com/microsoft/simplechat/issues/1493).
+
+## Review follow-up in 0.261.037
+
+Fixed/Implemented in version: **0.261.037**. This follow-up updates
+`application/single_app/config.py` from `0.261.036` to `0.261.037`.
+
+Two quality notes on the merged PR are addressed without query suppressions:
+
+- [2781: unused local variable](https://github.com/microsoft/simplechat/security/code-scanning/2781):
+  `AgentContinuationJournal.prepare()` uses `_` for unused tuple elements.
+  Both preparation calls still execute, and the effective request budget and
+  rendered instructions continue into the journal.
+- [2748: empty except](https://github.com/microsoft/simplechat/security/code-scanning/2748):
+  the legacy Graph exact-ID lookup explicitly assigns `existing = None` when
+  Cosmos reports a missing record. The following validator still rejects
+  creation or resurrection; authorization, throttling, and other storage
+  failures are not swallowed.
+
+`test_m365_agent_continuation.py` covers preservation of the effective generation
+allowance despite unused returned values. `test_user_plugin_bulk_save_id_preservation.py`
+covers missing-ID rejection before mutations and propagation of non-404 errors.
+The earlier Protocol and public-re-export dispositions below remain unchanged.
+The historical CodeQL run results below describe the original remediation,
+not a new scan of this follow-up.
 
 ## Issue and root cause
 
