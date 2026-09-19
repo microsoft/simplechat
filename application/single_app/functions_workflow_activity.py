@@ -5,6 +5,8 @@
 from datetime import datetime, timezone
 
 from functions_workflow_alerts import describe_alert_condition, resolve_workflow_alert_config
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
+from functions_m365_workflow_binding import M365_ACTIVE_STATES
 
 
 def _normalize_text(value):
@@ -34,7 +36,7 @@ def _normalize_duration_ms(value):
 
 def _normalize_status(value):
     normalized_value = _normalize_text(value).lower()
-    if normalized_value in {'running', 'pending', 'in_progress', 'in-progress'}:
+    if normalized_value in ({'running', 'pending', 'in_progress', 'in-progress'} | M365_ACTIVE_STATES):
         return 'running'
     if normalized_value in {'cancelled', 'canceled'}:
         return 'cancelled'
@@ -92,6 +94,7 @@ def _serialize_conversation(conversation):
 def _serialize_run(run_record):
     if not isinstance(run_record, dict):
         return None
+    run_record = sanitize_workflow_alert_record(run_record)
 
     return {
         'id': run_record.get('id'),
@@ -228,11 +231,11 @@ def _build_fallback_activity(run_record, workflow):
 
 def _normalize_pending_action_activity_status(action_status):
     normalized_status = _normalize_text(action_status).lower()
-    if normalized_status in {'pending', 'scheduled'}:
+    if normalized_status in {'pending', 'scheduled', 'sending'}:
         return 'running'
     if normalized_status in {'sent'}:
         return 'completed'
-    if normalized_status in {'cancelled', 'canceled', 'failed'}:
+    if normalized_status in {'cancelled', 'canceled', 'failed', 'recovery_required'}:
         return 'failed'
     return _normalize_status(normalized_status)
 
@@ -365,5 +368,8 @@ def build_workflow_activity_snapshot(run_record=None, workflow=None, conversatio
         'run': _serialize_run(run_record),
         'activities': activities,
         'lane_count': max(1, len(lane_order) or 1),
-        'live': _normalize_text((run_record or {}).get('status')).lower() in {'running', 'cancelling'},
+        'live': (
+            _normalize_text((run_record or {}).get('status')).lower() in ({'running', 'cancelling'} | M365_ACTIVE_STATES)
+            or any(action.get('status') in {'pending', 'scheduled', 'sending'} for action in pending_actions)
+        ),
     }

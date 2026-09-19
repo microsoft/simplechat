@@ -46,7 +46,8 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -1732,8 +1733,17 @@ def register_route_frontend_admin_settings(bp):
                 migrated_at = datetime.now(timezone.utc).isoformat()
                 migration_notice['created_at'] = migrated_at
 
-            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
-            parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            try:
+                parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+                parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            except ModelTokenBudgetError as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Model token-budget validation failed",
+                    extra={"exception_type": type(exc).__name__, "code": exc.code},
+                    level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             custom_endpoint_validation_settings = dict(settings)
             custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
                 form_data.get('allow_private_custom_model_endpoints') == 'on'
@@ -2417,7 +2427,16 @@ def register_route_frontend_admin_settings(bp):
             )
 
             # --- Construct new_settings Dictionary ---
+            try:
+                m365_settings = normalize_m365_transport_settings(
+                    form_data.get('m365_retrieval_provider', settings.get('m365_retrieval_provider', 'auto')),
+                    form_data.get('m365_trusted_download_hosts', settings.get('m365_trusted_download_hosts', [])),
+                )
+            except M365ProviderError as error:
+                flash(error.message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **m365_settings,
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,

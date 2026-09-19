@@ -59,6 +59,8 @@ from functions_message_masking import (
 )
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
+from functions_m365_runtime import read_pending_m365_chat_request
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_simplechat_operations import (
     attach_generated_file_approval_state,
     list_pending_generated_file_approvals_for_user,
@@ -357,6 +359,8 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'prompt_info': data.get('prompt_info'),
         'agent_info': data.get('agent_info'),
         'reasoning_effort': data.get('reasoning_effort'),
+        'm365_request_id': data.get('m365_request_id'),
+        'retry_user_message_id': data.get('retry_user_message_id'),
     }
 
 
@@ -876,6 +880,10 @@ def register_route_backend_collaboration(bp):
                 'created': created_new,
                 'source_conversation_id': conversation_id,
             }), 201 if created_new else 200
+        except M365ApprovalRequired as error:
+            return jsonify({**error.payload, 'type': 'm365_approval_required'}), 409
+        except M365PolicyError as error:
+            return jsonify(error.payload), 409
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation not found'}), 404
         except PermissionError as exc:
@@ -956,6 +964,10 @@ def register_route_backend_collaboration(bp):
                 'created': created_new,
                 'source_conversation_id': conversation_id,
             }), 201 if created_new else 200
+        except M365ApprovalRequired as error:
+            return jsonify({**error.payload, 'type': 'm365_approval_required'}), 409
+        except M365PolicyError as error:
+            return jsonify(error.payload), 409
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation not found'}), 404
         except PermissionError as exc:
@@ -1520,19 +1532,36 @@ def register_route_backend_collaboration(bp):
             if invocation_target:
                 extra_metadata['ai_invocation_target'] = invocation_target
 
-            user_message_doc, updated_conversation_doc = persist_collaboration_message(
-                conversation_doc,
-                current_user,
-                message_content,
-                reply_to_message_id=reply_to_message_id,
-                mentioned_participants=mentioned_participants,
-                message_kind=MESSAGE_KIND_AI_REQUEST,
-                extra_metadata=extra_metadata,
-            )
-            user_message_doc.setdefault('metadata', {})['source_conversation_id'] = source_conversation_id
-            cosmos_collaboration_messages_container.upsert_item(user_message_doc)
-
-            create_collaboration_message_notifications(updated_conversation_doc, user_message_doc)
+            m365_resume_id = str(data.get('m365_request_id') or '').strip()
+            if m365_resume_id:
+                pending_request = read_pending_m365_chat_request(
+                    current_user['user_id'], m365_resume_id, source_conversation_id,
+                )
+                prior_message_id = (pending_request.get('payload') or {}).get('m365_collaboration_message_id')
+                if not prior_message_id:
+                    return jsonify({'error': 'The shared continuation is unavailable.'}), 409
+                user_message_doc = get_collaboration_message(prior_message_id)
+                if (
+                    not user_message_doc
+                    or user_message_doc.get('conversation_id') != conversation_id
+                    or user_message_doc.get('content') != message_content
+                ):
+                    return jsonify({'error': 'The shared continuation no longer matches this request.'}), 409
+                updated_conversation_doc = conversation_doc
+                data['retry_user_message_id'] = pending_request.get('user_message_id')
+            else:
+                user_message_doc, updated_conversation_doc = persist_collaboration_message(
+                    conversation_doc,
+                    current_user,
+                    message_content,
+                    reply_to_message_id=reply_to_message_id,
+                    mentioned_participants=mentioned_participants,
+                    message_kind=MESSAGE_KIND_AI_REQUEST,
+                    extra_metadata=extra_metadata,
+                )
+                user_message_doc.setdefault('metadata', {})['source_conversation_id'] = source_conversation_id
+                cosmos_collaboration_messages_container.upsert_item(user_message_doc)
+                create_collaboration_message_notifications(updated_conversation_doc, user_message_doc)
             serialized_user_message = serialize_collaboration_message(user_message_doc)
             serialized_user_conversation = serialize_collaboration_conversation(
                 updated_conversation_doc,
@@ -1561,6 +1590,7 @@ def register_route_backend_collaboration(bp):
                 source_conversation_id,
                 message_content,
             )
+            stream_request_payload['m365_collaboration_message_id'] = user_message_doc['id']
 
             def collaboration_stream_error(error_message, **extra_fields):
                 """Serialize a stream error that stays attributed to this shared conversation.
@@ -1634,6 +1664,16 @@ def register_route_backend_collaboration(bp):
                                 stream_payload = json.loads(json_text)
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
+
+                            if stream_payload.get('type') in {'m365_approval_required', 'm365_sign_in_required'}:
+                                pending_payload = {
+                                    **stream_payload,
+                                    'conversation_id': conversation_id,
+                                    'm365_source_user_message_id': stream_payload.get('user_message_id'),
+                                    'user_message_id': user_message_doc['id'],
+                                    'message_persisted': True,
+                                }
+                                return f"data: {json.dumps(pending_payload)}\n\n"
 
                             if (
                                 stream_payload.get('error')

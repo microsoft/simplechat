@@ -1476,7 +1476,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results)
+            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1578,7 +1578,7 @@ def register_route_backend_conversations(bp):
                 ))
 
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages)
+                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:

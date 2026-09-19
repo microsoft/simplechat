@@ -409,7 +409,7 @@ def _delete_standard_conversation_for_retention(
     ))
 
     if not archiving_enabled:
-        delete_blob_backed_chat_message_files(messages, raise_on_error=True)
+        delete_blob_backed_chat_message_files(messages, raise_on_error=True, conversation=conversation_item)
 
     for message_item in messages:
         if archiving_enabled:

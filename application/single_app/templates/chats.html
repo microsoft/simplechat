@@ -1579,6 +1579,9 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_m365_approvals_modal.html" %}
+<script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
 <script>
     // Ensure global variables are still accessible if needed by older scripts
     window.enableUserFeedback = {{ enable_user_feedback|tojson }};

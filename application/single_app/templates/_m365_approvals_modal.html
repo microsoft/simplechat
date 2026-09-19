@@ -1,0 +1,29 @@
+<div class="modal fade" id="m365ApprovalsModal" tabindex="-1" aria-labelledby="m365-approvals-title" aria-describedby="m365-approvals-help" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title fs-5" id="m365-approvals-title" tabindex="-1">Microsoft 365 approval</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Leave this approval pending"></button>
+            </div>
+            <div class="modal-body">
+                <p id="m365-approvals-help">Only the data user can decide. These are the same saved requests shown in Approvals and notifications. Leaving this window does not approve or deny anything.</p>
+                <div class="alert alert-warning d-none" id="m365-sharing-warning">
+                    <p><strong>You are publishing Microsoft 365 information to other conversation participants.</strong> Email and Calendar may contain personal information. OneDrive and SharePoint Online (SPO) may contain material participants cannot access at its source.</p>
+                    <p class="mb-0">Allowing sharing publishes the <strong>entire retained source-evidence snapshot, as well as generated answers</strong>, with the conversation's history. Participants can reuse that published snapshot without their own source access. Fresh searches and reads still require the data user's Microsoft 365 permissions. Revoking permission later does not retract already-published history or evidence.</p>
+                </div>
+                <div class="alert alert-danger d-none" id="m365-approvals-error" role="alert" tabindex="-1"></div>
+                <div id="m365-approvals-status" class="small text-muted mb-3" role="status" aria-live="polite"></div>
+                <div class="mb-3 d-none" id="m365-approval-timezone-group">
+                    <label for="m365-approval-timezone" class="form-label">Confirm your timezone</label>
+                    <input type="text" class="form-control" id="m365-approval-timezone" autocomplete="off" placeholder="America/New_York" aria-describedby="m365-approval-timezone-help" />
+                    <div class="form-text" id="m365-approval-timezone-help">Today ends at your next local midnight. The server records this timezone and calculates expiry, including daylight-saving changes. A stricter action can require a new acknowledgement sooner.</div>
+                </div>
+                <div id="m365-approval-records" class="d-grid gap-3"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Leave pending / close</button>
+                <button type="button" class="btn btn-primary" id="m365-approvals-apply" disabled>Apply choices</button>
+            </div>
+        </div>
+    </div>
+</div>

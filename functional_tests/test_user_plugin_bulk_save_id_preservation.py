@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for personal action bulk-save identity and preflight safety.
-Version: 0.261.029
+Version: 0.261.036
 Implemented in: 0.240.019
-Updated in: 0.261.029
+Updated in: 0.261.036
 
 Runs the real bulk route body with Flask request dispatch and isolated storage.
 Preserves rename coverage and verifies invalid batches cause no writes/deletes.
@@ -73,6 +73,7 @@ class UserPluginBulkSaveTests(unittest.TestCase):
             return saved
 
         self.namespace = {
+            **vars(schema_validation),
             **vars(manifests),
             **vars(operations),
             **vars(legacy),

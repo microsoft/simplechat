@@ -9,6 +9,7 @@ import logging
 import builtins
 import os
 from openai import AsyncOpenAI
+from azure.core.exceptions import AzureError
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
@@ -32,6 +33,12 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_capabilities import (
+    ModelTokenBudgetError,
+    project_model_budget_metadata,
+    resolve_model_token_budget,
+)
+from functions_model_budget_runtime import build_model_budget_arguments
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -115,6 +122,13 @@ from functions_msgraph_operations import (
     get_msgraph_enabled_function_names,
     resolve_msgraph_action_capabilities,
 )
+from functions_m365_operations import (
+    M365_PLUGIN_TYPES,
+    get_m365_default_capabilities,
+    get_m365_enabled_function_names,
+)
+from functions_m365_approvals import M365PolicyError
+import functions_m365_execution as m365_execution
 from functions_simplechat_operations import (
     SIMPLECHAT_PLUGIN_TYPE,
     get_simplechat_enabled_function_names,
@@ -175,6 +189,45 @@ def get_agent_prompt_settings_config(agent_config, settings=None):
     if (settings or {}).get("max_auto_invoke_attempts") is not None:
         prompt_settings_config["max_auto_invoke_attempts"] = (settings or {}).get("max_auto_invoke_attempts")
     return prompt_settings_config
+
+
+def build_agent_model_budget(agent_config, settings=None):
+    """Bind token metadata to the same authorized endpoint/model used by the service."""
+    model = agent_config.get("model_budget_model")
+    endpoint = agent_config.get("model_budget_endpoint") or {
+        "provider": agent_config.get("model_provider") or "aoai",
+    }
+    if model is None:
+        model = {"deploymentName": agent_config.get("deployment")}
+        global_endpoint = (settings or {}).get("azure_openai_gpt_endpoint")
+        for candidate in ((settings or {}).get("gpt_model") or {}).get("selected") or ():
+            if (
+                candidate.get("deploymentName") == agent_config.get("deployment")
+                and (candidate.get("endpoint") or global_endpoint) == agent_config.get("endpoint")
+            ):
+                model = project_model_budget_metadata(candidate)
+                break
+    request_limit = agent_config.get("max_completion_tokens")
+    if request_limit in (None, "", -1, 0):
+        request_limit = model.get("responseLength")
+    runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
+    protocol = "messages" if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else "chat_completions"
+    provider = endpoint.get("provider")
+    if agent_config.get("api_type") == "azure_openai":
+        provider = "azure"
+    return resolve_model_token_budget(
+        model, endpoint, provider=provider, protocol=protocol,
+        request_output_limit=request_limit,
+    )
+
+
+def build_agent_budget_arguments(chat_service, agent_config, budget):
+    model = agent_config.get("model_budget_model") or {}
+    reasoning_effort = (
+        agent_config.get("reasoning_effort")
+        or model.get("reasoning_effort") or model.get("reasoningEffort")
+    )
+    return build_model_budget_arguments(chat_service, budget, reasoning_effort=reasoning_effort)
 
 
 def resolve_agent_endpoint_protocol(agent_config):
@@ -627,6 +680,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "deployment": deployment,
             "auth": auth,
             "model": model_cfg,
+            "model_budget_model": project_model_budget_metadata(model_cfg),
+            "model_budget_endpoint": project_model_budget_metadata(endpoint_cfg),
         }
 
     def resolve_multi_endpoint_agent_config():
@@ -887,6 +942,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     "model_id": agent.get("model_id", ""),
                     "model_provider": provider,
                     "auth": auth,
+                    "model_budget_model": multi_endpoint_config["model_budget_model"],
+                    "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
+                    "reasoning_effort": agent.get("reasoning_effort"),
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -918,6 +976,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 "other_settings": other_settings,
                 "token_provider": token_provider,
             }
+        except ModelTokenBudgetError:
+            raise
         except Exception as e:
             log_event(f"[SK_LOADER] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
 
@@ -968,6 +1028,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "model_id": agent.get("model_id", ""),
             "model_provider": provider,
             "auth": auth,
+            "model_budget_model": multi_endpoint_config["model_budget_model"],
+            "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
+            "reasoning_effort": agent.get("reasoning_effort"),
         }
         return result
 
@@ -1359,6 +1422,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         else:
             print(f"[SK_LOADER] Logged plugin loader completed successfully: {successful_count}/{total_count}")
         
+    except (M365PolicyError, ImportError):
+        raise
     except Exception as e:
         log_event(
             f"[SK_LOADER][Error] Error in agent-specific plugin loading: {e}",
@@ -1399,6 +1464,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             )
             plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
+        except (M365PolicyError, ImportError):
+            raise
         except Exception as fallback_error:
             log_event(
                 f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}",
@@ -1407,6 +1474,31 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 exceptionTraceback=True
             )
             print(f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}")
+
+
+def _preflight_m365_plugin_manifests(plugin_manifests):
+    if (
+        m365_execution.get_m365_execution_context() is None
+        or not any(manifest.get('type') in (*M365_PLUGIN_TYPES, MSGRAPH_PLUGIN_TYPE) for manifest in plugin_manifests)
+    ):
+        return plugin_manifests
+    try:
+        permitted = m365_execution.preflight_m365_manifests(plugin_manifests)
+        if not isinstance(permitted, list) or any(not isinstance(manifest, dict) for manifest in permitted):
+            raise TypeError("Microsoft 365 preflight must return effective manifests.")
+        return permitted
+    except M365PolicyError:
+        raise
+    except (AttributeError, TypeError, ValueError, RuntimeError, LookupError, PermissionError, AzureError) as exc:
+        log_event(
+            "[SK_LOADER] Microsoft 365 authorization preflight is unavailable.",
+            extra={"error_type": type(exc).__name__},
+            level=logging.ERROR,
+        )
+        raise M365PolicyError(
+            "m365_preflight_unavailable",
+            "Microsoft 365 authorization could not be verified. No source access has been allowed.",
+        ) from exc
 
 
 def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):
@@ -1455,11 +1547,11 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
             manifest_copy['enabled_chart_types'] = get_enabled_chart_type_keys(capabilities)
 
         if manifest_copy.get('type') == MSGRAPH_PLUGIN_TYPE:
-            action_defaults = manifest_copy.get('msgraph_capabilities')
+            additional_fields = manifest_copy.get('additionalFields')
+            action_defaults = additional_fields.get('msgraph_capabilities') if isinstance(additional_fields, dict) else None
+            runtime_limits = manifest_copy.get('msgraph_capabilities')
             if action_defaults is None:
-                additional_fields = manifest_copy.get('additionalFields')
-                if isinstance(additional_fields, dict):
-                    action_defaults = additional_fields.get('msgraph_capabilities')
+                action_defaults = runtime_limits
 
             capabilities = resolve_msgraph_action_capabilities(
                 action_capabilities,
@@ -1467,8 +1559,51 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
                 action_id=manifest_copy.get('id'),
                 action_name=manifest_copy.get('name'),
             )
+            source_capabilities = resolve_msgraph_action_capabilities({}, action_defaults=action_defaults)
+            if runtime_limits is not None:
+                runtime_capabilities = resolve_msgraph_action_capabilities({}, action_defaults=runtime_limits)
+                source_capabilities = {
+                    key: enabled and runtime_capabilities.get(key, False)
+                    for key, enabled in source_capabilities.items()
+                }
+            explicit_functions = manifest_copy.get('enabled_functions')
+            capabilities = {
+                key: bool(value and source_capabilities.get(key))
+                and (explicit_functions is None or key in explicit_functions)
+                for key, value in capabilities.items()
+            }
             manifest_copy['msgraph_capabilities'] = capabilities
             manifest_copy['enabled_functions'] = get_msgraph_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') in M365_PLUGIN_TYPES:
+            action_type = manifest_copy['type']
+            additional_fields = manifest_copy.get('additionalFields') or {}
+            if not isinstance(additional_fields, dict):
+                raise ValueError("Microsoft 365 additionalFields must be an object.")
+            agent_limits = None
+            for key in (manifest_copy.get('id'), manifest_copy.get('name')):
+                if key and key in action_capabilities:
+                    agent_limits = action_capabilities[key]
+                    break
+            action_defaults = additional_fields.get('m365_capabilities')
+            runtime_limits = manifest_copy.get('m365_capabilities')
+            if action_defaults is None:
+                action_defaults = runtime_limits
+            enabled = get_m365_enabled_function_names(
+                action_type,
+                action_defaults,
+                enabled_functions=manifest_copy.get('enabled_functions'),
+                agent_capabilities=agent_limits,
+            )
+            if runtime_limits is not None:
+                enabled = get_m365_enabled_function_names(
+                    action_type, action_defaults,
+                    enabled_functions=enabled, agent_capabilities=runtime_limits,
+                )
+            manifest_copy['m365_capabilities'] = {
+                key: key in enabled for key in get_m365_default_capabilities(action_type)
+            }
+            manifest_copy['enabled_functions'] = enabled
 
         if manifest_copy.get('type') == BLOB_STORAGE_PLUGIN_TYPE:
             action_defaults = manifest_copy.get('blob_storage_capabilities')
@@ -1488,13 +1623,14 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
 
         overlaid_manifests.append(manifest_copy)
 
-    return overlaid_manifests
+    return _preflight_m365_plugin_manifests(overlaid_manifests)
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
     """
     Original agent plugin loading method as fallback.
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     try:
         # Load the filtered plugins using original method
         discovered_plugins = discover_plugins()
@@ -1577,6 +1713,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     log_event(f"[SK_LOADER] Successfully loaded agent plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                             
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     print(f"[SK_LOADER] Failed to load agent plugin {name}: {e}")
                     log_event(f"[SK_LOADER] Failed to load agent plugin: {name}: {e}",
@@ -1587,6 +1725,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 log_event(f"[SK_LOADER] No matching plugin class found for: {name} (type: {plugin_type})",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
                         
+    except M365PolicyError:
+        raise
     except Exception as e:
         print(f"[SK_LOADER] Error loading agent-specific plugins: {e}")
         log_event(f"[SK_LOADER] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -1842,6 +1982,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         context_obj.redis_client = redis_client
     agent_objs = {}
     agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id)
+    agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
     agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
@@ -2044,6 +2185,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 )
 
         try:
+            model_budget = build_agent_model_budget(agent_config, settings)
             kwargs = {
                 "name": agent_config["name"],
                 "instructions": agent_config["instructions"],
@@ -2056,6 +2198,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
+                "model_token_budget": model_budget,
+                "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
                 "function_choice_behavior": FunctionChoiceBehavior.Auto(
                     maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
                 )
@@ -2077,6 +2221,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
+        except M365PolicyError:
+            raise
         except Exception as e:
             print(f"[SK_LOADER] EXCEPTION creating agent {agent_config['name']}: {e}")
             log_event(
@@ -2349,6 +2495,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
@@ -2461,6 +2608,8 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             level=logging.INFO
         )
         
+    except M365PolicyError:
+        raise
     except Exception as e:
         log_event(
             f"[SK_LOADER] Error loading plugins with logged loader for {mode_label} mode: {e}",
@@ -2478,6 +2627,7 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     """
     Original plugin loading method as fallback.
     """
+    plugin_manifests = _apply_agent_plugin_runtime_overlays(plugin_manifests)
     try:
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
@@ -2546,6 +2696,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                             log_event(f"[SK_LOADER] Plugin {name} exposes {len(functions) if functions else 0} functions",
                                     {"plugin_name": name, "plugin_type": plugin_type, "function_count": len(functions) if functions else 0}, 
                                     level=logging.DEBUG)
+                        except M365PolicyError:
+                            raise
                         except Exception as e:
                             log_event(f"[SK_LOADER] Warning: Plugin {name} get_functions() failed: {e}",
                                     {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.WARNING)
@@ -2556,6 +2708,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
                     log_event(f"[SK_LOADER] Successfully loaded plugin: {name} (type: {plugin_type}) [{mode_label}]",
                             {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to instantiate plugin: {name}: {e}",
                             {"plugin_name": name, "plugin_type": plugin_type, "error": str(e), "error_type": type(e).__name__}, 
@@ -2565,6 +2719,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
             else:
                 log_event(f"[SK_LOADER] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]",
                         {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+    except M365PolicyError:
+        raise
     except Exception as e:
         log_event(f"[SK_LOADER] Error discovering plugin types for {mode_label} mode: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
 
@@ -3054,6 +3210,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 orchestrator_cfg = agent_cfg
                 continue
             agent_config = resolve_agent_config(agent_cfg, settings)
+            agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
             chat_service = None
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
             agent_has_auth = bool(agent_config.get("key")) or bool(agent_config.get("token_provider"))
@@ -3076,10 +3233,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id, settings)
-                        if should_apply_prompt_settings(orchestrator_config, settings):
-                            if orchestrator_config.get('max_completion_tokens', -1) > 0:
-                                print(f"[SK_LOADER] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(orchestrator_config, settings))
+                        if should_apply_prompt_settings(agent_config, settings):
+                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                         if chat_service:
                             kernel.add_service(chat_service)
                 except Exception as e:
@@ -3090,6 +3245,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         if agent_config.get('max_completion_tokens', -1) > 0:
                             print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
                         chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+                    model_budget = build_agent_model_budget(agent_config, settings)
                     kwargs = {
                         "name": agent_config["name"],
                         "instructions": agent_config["instructions"],
@@ -3102,6 +3258,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
                         "api_version": agent_config["api_version"],
+                        "model_token_budget": model_budget,
+                        "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
                         "function_choice_behavior": FunctionChoiceBehavior.Auto(
                             maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
                         )
@@ -3128,6 +3286,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         },
                         level=logging.INFO
                     )
+                except M365PolicyError:
+                    raise
                 except Exception as e:
                     log_event(
                         f"[SK_LOADER] Failed to initialize ChatCompletionAgent for agent: {agent_config['name']}: {e}",
@@ -3174,10 +3334,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id, settings)
-                        if should_apply_prompt_settings(agent_config, settings):
-                            if agent_config.get('max_completion_tokens', -1) > 0:
-                                print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+                        if should_apply_prompt_settings(orchestrator_config, settings):
+                            chat_service = set_prompt_settings_for_agent(
+                                chat_service, get_agent_prompt_settings_config(orchestrator_config, settings),
+                            )
                         if chat_service:
                             kernel.add_service(chat_service)
                 if not chat_service:
@@ -3243,6 +3403,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                     },
                     level=logging.INFO
                 )
+            except M365PolicyError:
+                raise
             except Exception as e:
                 log_event(f"[SK_LOADER] Failed to initialize OrchestratorAgent: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
 # region Single-agent orchestration

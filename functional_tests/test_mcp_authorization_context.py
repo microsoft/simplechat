@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Offline functional tests for trusted outbound MCP execution context.
-Version: 0.261.029
+Version: 0.261.036
 Implemented in: 0.261.029
 
 Exercise real normalization, destination/preconfiguration policy, descriptors,
@@ -258,8 +258,10 @@ class McpAuthorizationContextTests(unittest.TestCase):
             "functions_mcp_preconfigurations", "semantic_kernel_plugins.base_plugin",
             "semantic_kernel_plugins.mcp_plugin", "semantic_kernel_plugins.mcp_plugin_factory",
             "semantic_kernel_plugins.logged_plugin_loader",
+            "functions_m365_context", "functions_m365_approvals",
+            "functions_m365_execution", "functions_m365_operations",
         }
-        standard_modules = {"typing", "datetime", "flask"}
+        standard_modules = {"typing", "datetime", "flask", "azure.core.exceptions"}
         paths = [
             APP_DIR / "semantic_kernel_loader.py",
             APP_DIR / "semantic_kernel_plugins" / "logged_plugin_loader.py",

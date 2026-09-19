@@ -5,12 +5,26 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
-import requests
-from flask import g, has_request_context
-from requests import RequestException
-
-from functions_authentication import get_current_user_info, get_valid_access_token_for_plugins
-from functions_debug import debug_print
+from functions_authentication import get_current_user_info
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_operations import (
+    M365_INTERNAL_OPERATION_FUNCTIONS,
+    M365_SELECTED_RESOURCE_SOURCES,
+    get_m365_action_definition,
+    get_m365_enabled_function_names,
+    get_m365_operation_source,
+    guarded_m365_operation,
+    is_m365_action_type,
+    normalize_m365_action_config,
+)
+from functions_m365_transport import (
+    M365ProviderError,
+    M365Transport,
+    authorize_m365_capability,
+    authorize_m365_source,
+    get_m365_context,
+    log_m365_failure,
+)
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from functions_group import assert_group_role, find_group_by_id, require_active_group
@@ -49,6 +63,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_log
 
 
 class MSGraphPlugin(BasePlugin):
+    ACTION_TYPE = MSGRAPH_PLUGIN_TYPE
     DEFAULT_ENDPOINT = MSGRAPH_DEFAULT_ENDPOINT
     DEFAULT_TIMEOUT_SECONDS = 30
     MAX_ITEMS_PER_RESULT = 25
@@ -57,15 +72,26 @@ class MSGraphPlugin(BasePlugin):
 
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         super().__init__(manifest)
-        self.manifest = manifest or {}
-        self._metadata = self.manifest.get("metadata", {})
-        self._endpoint = str(self.manifest.get("endpoint") or self.DEFAULT_ENDPOINT).rstrip("/")
-        additional_fields = self.manifest.get("additionalFields") if isinstance(self.manifest.get("additionalFields"), dict) else {}
-        scope_overrides = self.manifest.get("scopes") or self._metadata.get("scopes") or {}
-        self._scope_overrides = scope_overrides if isinstance(scope_overrides, dict) else {}
-        self._capabilities = normalize_msgraph_capabilities(
-            self.manifest.get("msgraph_capabilities")
+        self._action_type = self.ACTION_TYPE
+        if self._action_type == MSGRAPH_PLUGIN_TYPE and is_m365_action_type((manifest or {}).get("type")):
+            self._action_type = manifest["type"]
+        self.manifest = (
+            normalize_m365_action_config(self._action_type, manifest)
+            if is_m365_action_type(self._action_type)
+            else manifest or {}
         )
+        self._metadata = self.manifest.get("metadata", {})
+        self._transports = {}
+        additional_fields = self.manifest.get("additionalFields") if isinstance(self.manifest.get("additionalFields"), dict) else {}
+        if is_m365_action_type(self._action_type):
+            self._capabilities = {
+                definition["function_name"]: self.manifest["m365_capabilities"].get(definition["function_name"], False)
+                for definition in MSGRAPH_CAPABILITY_DEFINITIONS
+            }
+        else:
+            self._capabilities = normalize_msgraph_capabilities(
+                self.manifest.get("msgraph_capabilities", additional_fields.get("msgraph_capabilities"))
+            )
         mail_send_options = normalize_msgraph_mail_send_options({
             **additional_fields,
             "msgraph_mail_send_mode": self.manifest.get(
@@ -92,17 +118,123 @@ class MSGraphPlugin(BasePlugin):
         })
         self._calendar_send_mode = calendar_send_options["msgraph_calendar_send_mode"]
         self._calendar_delay_seconds = calendar_send_options["msgraph_calendar_delay_seconds"]
-        self._enabled_function_names = set(
-            self.manifest.get("enabled_functions")
-            or get_msgraph_enabled_function_names(self._capabilities)
-        )
+        if is_m365_action_type(self._action_type):
+            self._enabled_function_names = set(get_m365_enabled_function_names(self._action_type, self.manifest))
+        else:
+            allowed_functions = set(get_msgraph_enabled_function_names(self._capabilities))
+            configured_functions = self.manifest.get("enabled_functions")
+            self._enabled_function_names = (
+                allowed_functions.intersection(configured_functions)
+                if isinstance(configured_functions, (list, tuple, set))
+                else allowed_functions
+            )
         self._default_group_id = str(
             self.manifest.get("group_id") or self.manifest.get("default_group_id") or ""
         ).strip()
 
     @property
     def display_name(self) -> str:
+        if is_m365_action_type(self._action_type):
+            return get_m365_action_definition(self._action_type)["display_name"]
         return "Microsoft Graph"
+
+    @property
+    def _endpoint(self) -> str:
+        return self._transport_for_operation("").cloud.resource_url
+
+    def _transport_for_operation(self, operation_name):
+        source = get_m365_operation_source(operation_name, self._action_type)
+        return self._transport_for_source(source)
+
+    def _transport_for_source(self, source):
+        if source not in self._transports:
+            additional = self.manifest.get("additionalFields") or {}
+            self._transports[source] = M365Transport(
+                source,
+                self.manifest.get("id") or self.manifest.get("name") or "",
+                {
+                    "maximum_sharing_acknowledgement": self.manifest.get(
+                        "maximum_sharing_acknowledgement",
+                        additional.get("maximum_sharing_acknowledgement", "always"),
+                    ),
+                },
+                action_type=self._action_type,
+            )
+        return self._transports[source]
+
+    def _operation_context(self, operation_name):
+        return self._transport_for_operation(operation_name).operation_context(operation_name)
+
+    def _authorize_operation(self, operation_name, select_fields=""):
+        function_name = M365_INTERNAL_OPERATION_FUNCTIONS.get(operation_name, operation_name)
+        if function_name not in self._enabled_function_names or not self._capabilities.get(function_name, False):
+            return {
+                "error": "function_not_enabled",
+                "message": "This function is not enabled for this Microsoft 365 action.",
+                "operation": operation_name,
+            }
+        source = get_m365_operation_source(operation_name, self._action_type)
+        if is_m365_action_type(self._action_type) and source is None:
+            return {
+                "error": "source_not_allowed",
+                "message": "This function belongs to a different Microsoft 365 source.",
+                "operation": operation_name,
+            }
+        sources = {source} if source else set()
+        if isinstance(select_fields, str):
+            selected_resources = {
+                segment.strip().lower()
+                for field in select_fields.split(",") for segment in field.split("/")
+            }
+            for resource in selected_resources.intersection(M365_SELECTED_RESOURCE_SOURCES):
+                selected_source, selected_function = M365_SELECTED_RESOURCE_SOURCES[resource]
+                if (
+                    selected_source != source
+                    or selected_function not in self._enabled_function_names
+                    or not self._capabilities.get(selected_function, False)
+                ):
+                    return {
+                        "error": "source_not_allowed",
+                        "message": "These selected fields belong to a source or capability unavailable to this action.",
+                        "operation": operation_name,
+                    }
+                sources.add(selected_source)
+        if not sources:
+            try:
+                authorize_m365_capability(
+                    self.manifest.get("id") or self.manifest.get("name") or "",
+                    function_name, self._action_type,
+                )
+            except M365ApprovalRequired:
+                raise
+            except M365PolicyError as exc:
+                return self._policy_error_result(exc, operation_name)
+            except M365ProviderError as exc:
+                log_m365_failure(exc.code, operation=operation_name)
+                return {"error": exc.code, "message": exc.message, "operation": operation_name}
+        for required_source in sorted(sources):
+            transport = self._transport_for_source(required_source)
+            try:
+                authorize_m365_source(
+                    required_source, transport.action_id, transport.action_policy,
+                    operation_name=function_name, action_type=self._action_type,
+                )
+            except M365ApprovalRequired:
+                raise
+            except M365PolicyError as exc:
+                return self._policy_error_result(exc, operation_name, required_source)
+            except M365ProviderError as exc:
+                log_m365_failure(exc.code, source=required_source, operation=operation_name)
+                return {
+                    "error": exc.code, "message": exc.message,
+                    "operation": operation_name, "source": required_source,
+                    **exc.details,
+                }
+        return None
+
+    def _policy_error_result(self, error, operation_name, source=None):
+        log_m365_failure(error.code, source=source or "", operation=operation_name)
+        return {**error.payload, "operation": operation_name, "source": source, "provider": "graph"}
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -294,9 +426,12 @@ class MSGraphPlugin(BasePlugin):
         }
 
         return {
-            "name": self.manifest.get("name", "msgraph_plugin"),
-            "type": MSGRAPH_PLUGIN_TYPE,
-            "description": (
+            "name": self.manifest.get(
+                "name", self._action_type if is_m365_action_type(self._action_type) else "msgraph_plugin",
+            ),
+            "type": self._action_type,
+            "source": get_m365_action_definition(self._action_type)["source"] if is_m365_action_type(self._action_type) else None,
+            "description": get_m365_action_definition(self._action_type)["description"] if is_m365_action_type(self._action_type) else (
                 "Plugin for interacting with Microsoft Graph API. Supports user profile, "
                 "calendar reads and invite creation, mailbox timezone settings, mail, directory, "
                 "drive, and security alert operations."
@@ -309,10 +444,17 @@ class MSGraphPlugin(BasePlugin):
         }
 
     def get_functions(self) -> List[str]:
+        type_functions = (
+            {definition["function_name"] for definition in get_m365_action_definition(self._action_type)["capabilities"]}
+            if is_m365_action_type(self._action_type)
+            else {definition["function_name"] for definition in MSGRAPH_CAPABILITY_DEFINITIONS}
+        )
         return [
             definition["function_name"]
             for definition in MSGRAPH_CAPABILITY_DEFINITIONS
             if definition["function_name"] in self._enabled_function_names
+            and definition["function_name"] in type_functions
+            and self._capabilities.get(definition["function_name"], False)
         ]
 
     def get_kernel_plugin(self, plugin_name: str = "msgraph") -> KernelPlugin:
@@ -329,28 +471,28 @@ class MSGraphPlugin(BasePlugin):
         )
 
     def _get_scopes(self, operation_name: str, default_scopes: List[str]) -> List[str]:
-        configured_scopes = self._scope_overrides.get(operation_name)
-        if isinstance(configured_scopes, str) and configured_scopes.strip():
-            return [configured_scopes.strip()]
-        if isinstance(configured_scopes, list):
-            normalized_scopes = [scope.strip() for scope in configured_scopes if isinstance(scope, str) and scope.strip()]
-            if normalized_scopes:
-                return normalized_scopes
         return default_scopes
 
     def _get_token(self, operation_name: str, default_scopes: List[str]) -> Tuple[Optional[str], List[str], Optional[Dict[str, Any]]]:
-        scopes = self._get_scopes(operation_name, default_scopes)
-        token_result = get_valid_access_token_for_plugins(scopes=scopes)
-        if isinstance(token_result, dict) and token_result.get("access_token"):
-            return token_result["access_token"], scopes, None
-
-        error_payload = token_result if isinstance(token_result, dict) else {
-            "error": "token_acquisition_failed",
-            "message": "Failed to acquire Microsoft Graph access token.",
-        }
-        error_payload.setdefault("operation", operation_name)
-        error_payload.setdefault("scopes", scopes)
-        return None, scopes, error_payload
+        denial = self._authorize_operation(operation_name)
+        if denial:
+            return None, default_scopes, denial
+        try:
+            token, scopes = self._transport_for_operation(operation_name).get_token(default_scopes)
+            return token, scopes, None
+        except M365ApprovalRequired:
+            raise
+        except M365PolicyError as exc:
+            return None, default_scopes, self._policy_error_result(
+                exc, operation_name, get_m365_operation_source(operation_name, self._action_type),
+            )
+        except M365ProviderError as exc:
+            log_m365_failure(exc.code, operation=operation_name)
+            return None, default_scopes, {
+                "error": exc.code, "message": exc.message,
+                "operation": operation_name, "scopes": default_scopes,
+                **exc.details,
+            }
 
     def _invalid_parameter_error(self, operation_name: str, message: str) -> Dict[str, Any]:
         return {
@@ -394,6 +536,11 @@ class MSGraphPlugin(BasePlugin):
             "/v1.0/me/mailboxSettings",
             ["MailboxSettings.Read"],
         )
+        if isinstance(mailbox_settings, dict) and mailbox_settings.get("error"):
+            raise M365ProviderError(
+                str(mailbox_settings["error"]),
+                "The mailbox timezone could not be read. Resolve Microsoft 365 access or supply an explicit timezone.",
+            )
         if isinstance(mailbox_settings, dict) and not mailbox_settings.get("error"):
             mailbox_timezone = str(mailbox_settings.get("timeZone") or "").strip()
             if mailbox_timezone:
@@ -536,24 +683,13 @@ class MSGraphPlugin(BasePlugin):
         return scheduled_time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def _get_execution_context(self) -> Dict[str, str]:
-        context = {
-            "user_id": "",
-            "conversation_id": "",
-            "workflow_id": "",
-            "run_id": "",
+        context = get_m365_context()
+        return {
+            "user_id": context.data_user_id,
+            "conversation_id": context.conversation_id or "",
+            "workflow_id": context.workflow_id or "",
+            "run_id": context.run_id or "",
         }
-        current_user = get_current_user_info() or {}
-        context["user_id"] = str(
-            current_user.get("userId")
-            or current_user.get("oid")
-            or current_user.get("id")
-            or ""
-        ).strip()
-        if has_request_context():
-            context["conversation_id"] = str(getattr(g, "conversation_id", "") or "").strip()
-            context["workflow_id"] = str(getattr(g, "workflow_id", "") or "").strip()
-            context["run_id"] = str(getattr(g, "workflow_run_id", "") or "").strip()
-        return context
 
     def _build_pending_action_tool_result(
         self,
@@ -580,6 +716,9 @@ class MSGraphPlugin(BasePlugin):
         auto_send_at_utc: str = "",
         delay_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
+        denial = self._authorize_operation("send_mail")
+        if denial:
+            return denial
         execution_context = self._get_execution_context()
         user_id = execution_context.get("user_id")
         if not user_id:
@@ -600,6 +739,7 @@ class MSGraphPlugin(BasePlugin):
             delay_seconds=delay_seconds,
             graph_endpoint=self._endpoint,
             web_link=draft_result.get("webLink") or "",
+            m365_action_id=self.manifest.get("id") or self.manifest.get("name"),
         )
         return pending_action
 
@@ -610,6 +750,9 @@ class MSGraphPlugin(BasePlugin):
         auto_send_at_utc: str = "",
         delay_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
+        denial = self._authorize_operation("create_calendar_invite")
+        if denial:
+            return denial
         execution_context = self._get_execution_context()
         user_id = execution_context.get("user_id")
         if not user_id:
@@ -622,6 +765,7 @@ class MSGraphPlugin(BasePlugin):
             action_mode=action_mode,
             status=MSGRAPH_PENDING_STATUS_SCHEDULED if action_mode == MSGRAPH_PENDING_ACTION_DELAYED else MSGRAPH_PENDING_STATUS_PENDING,
             graph_payload=event_payload,
+            m365_action_id=self.manifest.get("id") or self.manifest.get("name"),
             summary=build_calendar_pending_action_summary(event_payload),
             conversation_id=execution_context.get("conversation_id", ""),
             workflow_id=execution_context.get("workflow_id", ""),
@@ -638,12 +782,12 @@ class MSGraphPlugin(BasePlugin):
         attendees_by_email: Dict[str, Dict[str, Any]],
         current_user_email: str = "",
     ) -> Tuple[str, int]:
-        current_user = get_current_user_info() or {}
-        current_user_id = str(current_user.get("userId") or "").strip()
+        context = get_m365_context()
+        current_user_id = context.actor_user_id
         if not current_user_id:
             raise PermissionError("Signed-in user context is required to include group members.")
 
-        normalized_group_id = str(group_id or "").strip() or self._default_group_id
+        normalized_group_id = str(group_id or "").strip() or self._default_group_id or context.group_id
         if not normalized_group_id:
             normalized_group_id = require_active_group(current_user_id)
 
@@ -742,51 +886,6 @@ class MSGraphPlugin(BasePlugin):
 
         return params, headers
 
-    def _build_graph_error(
-        self,
-        operation_name: str,
-        scopes: List[str],
-        response: Optional[requests.Response] = None,
-        exception: Optional[Exception] = None,
-        fallback_message: str = "Microsoft Graph request failed.",
-    ) -> Dict[str, Any]:
-        error_payload: Dict[str, Any] = {
-            "error": "graph_request_failed",
-            "message": fallback_message,
-            "operation": operation_name,
-            "scopes": scopes,
-        }
-
-        if response is not None:
-            error_payload["status_code"] = response.status_code
-            try:
-                graph_body = response.json()
-            except ValueError:
-                graph_body = None
-
-            graph_error = graph_body.get("error", {}) if isinstance(graph_body, dict) else {}
-            graph_message = graph_error.get("message") or response.text.strip() or fallback_message
-            graph_code = graph_error.get("code") or error_payload["error"]
-
-            error_payload["error"] = graph_code
-            error_payload["message"] = graph_message
-
-            if response.status_code == 429:
-                error_payload["error"] = "throttled"
-                error_payload["retry_after_seconds"] = response.headers.get("Retry-After")
-            elif response.status_code == 401:
-                error_payload["error"] = "unauthorized"
-            elif response.status_code == 403:
-                error_payload["error"] = "forbidden"
-            elif response.status_code == 404:
-                error_payload["error"] = "not_found"
-
-        if exception is not None:
-            error_payload["details"] = str(exception)
-
-        debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} failed: {error_payload}")
-        return error_payload
-
     def _shape_graph_result(self, operation_name: str, payload: Any, max_items: int) -> Dict[str, Any]:
         if isinstance(payload, dict) and isinstance(payload.get("value"), list):
             items = payload.get("value", [])
@@ -823,83 +922,54 @@ class MSGraphPlugin(BasePlugin):
         additional_headers: Optional[Dict[str, str]] = None,
         expect_json_response: bool = True,
     ) -> Dict[str, Any]:
-        token, scopes, token_error = self._get_token(operation_name, default_scopes)
-        if token_error:
-            debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} token acquisition failed: {token_error}")
-            return token_error
-
-        url = path if path.startswith("http") else f"{self._endpoint}{path}"
+        denial = self._authorize_operation(operation_name, (params or {}).get("$select", ""))
+        if denial:
+            return denial
+        transport = self._transport_for_operation(operation_name)
         normalized_max_items = self._normalize_top(max_items)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-        }
-        if additional_headers:
-            headers.update(additional_headers)
-
         collected_items: List[Any] = []
-        next_url = url
+        next_url = path
         next_params = dict(params or {})
         pages_fetched = 0
         last_next_link = None
 
         while next_url and pages_fetched < self.MAX_PAGES_PER_REQUEST:
-            request_params = next_params if next_url == url else None
+            denial = self._authorize_operation(operation_name, (params or {}).get("$select", ""))
+            if denial:
+                return denial
             try:
-                debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} requesting {next_url} params={request_params}")
-                response = requests.request(
+                payload = transport.request_json(
                     method.upper(),
                     next_url,
-                    headers=headers,
-                    params=request_params,
-                    json=json_body,
-                    timeout=self.DEFAULT_TIMEOUT_SECONDS,
+                    default_scopes,
+                    params=next_params,
+                    json_body=json_body,
+                    additional_headers=additional_headers,
+                    expect_json=expect_json_response,
                 )
-            except requests.Timeout as ex:
-                return self._build_graph_error(
-                    operation_name,
-                    scopes,
-                    exception=ex,
-                    fallback_message="Microsoft Graph request timed out.",
-                )
-            except RequestException as ex:
-                return self._build_graph_error(
-                    operation_name,
-                    scopes,
-                    exception=ex,
-                    fallback_message="Microsoft Graph request could not be completed.",
-                )
+            except M365ApprovalRequired:
+                raise
+            except M365PolicyError as exc:
+                return self._policy_error_result(exc, operation_name, transport.source)
+            except M365ProviderError as exc:
+                log_m365_failure(exc.code, source=transport.source or "", operation=operation_name)
+                result = {
+                    "error": exc.code, "message": exc.message,
+                    "operation": operation_name, "scopes": default_scopes,
+                    "source": transport.source, "provider": "graph",
+                    **exc.details,
+                }
+                if exc.status_code is not None:
+                    result["status_code"] = exc.status_code
+                if exc.retry_after_seconds is not None:
+                    result["retry_after_seconds"] = exc.retry_after_seconds
+                if collected_items:
+                    result.update({"value": collected_items, "count": len(collected_items), "truncated": True})
+                return result
 
             pages_fetched += 1
-            if response.status_code >= 400:
-                return self._build_graph_error(operation_name, scopes, response=response)
-
             if not expect_json_response:
-                response_payload = None
-                try:
-                    response_payload = response.json()
-                except ValueError:
-                    response_payload = None
-
-                result_payload: Dict[str, Any] = {
-                    "operation": operation_name,
-                    "status_code": response.status_code,
-                    "accepted": response.status_code in {200, 201, 202, 204},
-                }
-                if response_payload is not None:
-                    result_payload["value"] = response_payload
-                return result_payload
-
-            try:
-                payload = response.json()
-            except ValueError as ex:
-                return self._build_graph_error(
-                    operation_name,
-                    scopes,
-                    response=response,
-                    exception=ex,
-                    fallback_message="Microsoft Graph returned a non-JSON response.",
-                )
+                return {**payload, "operation": operation_name, "source": transport.source, "provider": "graph"}
 
             if paginate and isinstance(payload, dict) and isinstance(payload.get("value"), list):
                 remaining_capacity = max(0, normalized_max_items - len(collected_items))
@@ -913,12 +983,16 @@ class MSGraphPlugin(BasePlugin):
                         "value": collected_items,
                         "next_link": last_next_link,
                         "truncated": bool(last_next_link) or len(page_items) > remaining_capacity,
+                        "source": transport.source,
+                        "provider": "graph",
                     }
                 next_url = last_next_link
-                next_params = {}
+                next_params = None
                 continue
 
-            return self._shape_graph_result(operation_name, payload, normalized_max_items)
+            result = self._shape_graph_result(operation_name, payload, normalized_max_items)
+            result.update({"source": transport.source, "provider": "graph"})
+            return result
 
         return {
             "operation": operation_name,
@@ -926,10 +1000,13 @@ class MSGraphPlugin(BasePlugin):
             "value": collected_items,
             "next_link": last_next_link,
             "truncated": bool(last_next_link),
+            "source": transport.source,
+            "provider": "graph",
         }
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get information about the signed-in user.")
+    @guarded_m365_operation
     def get_my_profile(self, select_fields: str = "") -> dict:
         params, headers = self._build_odata_params(
             top=1,
@@ -947,6 +1024,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get the signed-in user's Microsoft 365 mailbox timezone settings. Use this before answering timezone-sensitive date and time questions.")
+    @guarded_m365_operation
     def get_my_timezone(self) -> dict:
         result = self._perform_graph_request(
             "get_my_timezone",
@@ -973,6 +1051,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get upcoming calendar events for the signed-in user.")
+    @guarded_m365_operation
     def get_my_events(
         self,
         top: int = 5,
@@ -1012,6 +1091,7 @@ class MSGraphPlugin(BasePlugin):
     @plugin_function_logger("MSGraphPlugin")
     # bac-check: ignore - _resolve_group_attendees validates group_id with require_active_group/assert_group_role.
     @kernel_function(description="Create a calendar invite for the signed-in user and optionally turn it into a Microsoft Teams meeting.")
+    @guarded_m365_operation
     def create_calendar_invite(
         self,
         subject: str,
@@ -1064,6 +1144,15 @@ class MSGraphPlugin(BasePlugin):
 
         current_user = get_current_user_info() or {}
         current_user_email = str(current_user.get("email") or "").strip()
+        execution_context = get_m365_context()
+        if execution_context.workflow_id:
+            profile = self._perform_graph_request(
+                "resolve_calendar_identity", "GET", "/v1.0/me", ["User.Read"],
+                params={"$select": "mail,userPrincipalName"},
+            )
+            if profile.get("error"):
+                return profile
+            current_user_email = str(profile.get("mail") or profile.get("userPrincipalName") or "").strip()
         attendees_by_email: Dict[str, Dict[str, Any]] = {}
         invalid_entries: List[str] = []
         self._collect_attendees(
@@ -1104,7 +1193,11 @@ class MSGraphPlugin(BasePlugin):
                     "operation": operation_name,
                 }
 
-        normalized_timezone = self._resolve_event_timezone(timezone)
+        try:
+            normalized_timezone = self._resolve_event_timezone(timezone)
+        except M365ProviderError as exc:
+            log_m365_failure(exc.code, source="calendar", operation=operation_name)
+            return {"error": exc.code, "message": exc.message, "operation": operation_name}
         attendees = list(attendees_by_email.values())
         event_payload: Dict[str, Any] = {
             "subject": normalized_subject,
@@ -1209,6 +1302,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get recent mail messages for the signed-in user.")
+    @guarded_m365_operation
     def get_my_messages(
         self,
         top: int = 5,
@@ -1241,6 +1335,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Mark a mail message as read or unread for the signed-in user.")
+    @guarded_m365_operation
     def mark_message_as_read(self, message_id: str, is_read: bool = True) -> dict:
         normalized_message_id = (message_id or "").strip()
         if not normalized_message_id:
@@ -1274,6 +1369,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Create or send an email from the signed-in user's mailbox using this action's configured delivery mode.")
+    @guarded_m365_operation
     def send_mail(
         self,
         to_recipients: Any,
@@ -1434,6 +1530,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Search directory users by name or email prefix.")
+    @guarded_m365_operation
     def search_users(self, query: str, top: int = 5, select_fields: str = "") -> dict:
         normalized_query = (query or "").strip()
         if not normalized_query:
@@ -1470,6 +1567,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get a directory user by exact email address or user principal name.")
+    @guarded_m365_operation
     def get_user_by_email(self, email: str, select_fields: str = "") -> dict:
         normalized_email = (email or "").strip()
         if not normalized_email:
@@ -1503,6 +1601,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="List OneDrive items from the drive root or a child path for the signed-in user.")
+    @guarded_m365_operation
     def list_drive_items(self, path: str = "", top: int = 10, select_fields: str = "") -> dict:
         normalized_path = (path or "").strip().strip("/")
         params, headers = self._build_odata_params(
@@ -1527,6 +1626,7 @@ class MSGraphPlugin(BasePlugin):
 
     @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get recent security alerts for the signed-in user.")
+    @guarded_m365_operation
     def get_my_security_alerts(self, top: int = 5) -> dict:
         params, headers = self._build_odata_params(
             top=top,

@@ -17,8 +17,12 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
 from collaboration_models import normalize_collaboration_user
+from conversation_memory_lifecycle import clone_owned_memory, delete_referenced_conversation_memory, remap_memory_references
+from functions_conversation_memory import ConversationMemoryStore, MemoryContext, is_conversation_memory_blob_path
 from config import (
     CLIENTS,
+    TENANT_ID,
+    build_enhanced_citations_blob_service_client,
     cosmos_activity_logs_container,
     cosmos_conversations_container,
     cosmos_groups_container,
@@ -667,6 +671,8 @@ def _copy_fork_blob_files(
     for source_document, fork_document in zip(source_documents, fork_documents):
         blob_container = str(source_document.get("blob_container") or "").strip()
         source_blob_path = str(source_document.get("blob_path") or "").strip()
+        if is_conversation_memory_blob_path(source_blob_path):
+            raise PermissionError("Internal conversation evidence cannot be copied as an ordinary attachment.")
         if not blob_container or not source_blob_path:
             continue
         if not blob_service_client:
@@ -839,6 +845,7 @@ def fork_personal_conversation_for_user(
     )
     written_message_ids = []
     created_blob_targets: List[Tuple[str, str]] = []
+    memory_cleanup = None
 
     try:
         _copy_fork_blob_files(
@@ -848,11 +855,58 @@ def fork_personal_conversation_for_user(
             fork_conversation_id,
             created_blob_targets,
         )
+        selected_at = _message_fork_sort_key(selected_document)
+        memory_records = [
+            item for item in all_documents
+            if item.get("artifact_kind") == "conversation_memory"
+            and _message_fork_sort_key(item) <= selected_at
+            and str((item.get("metadata") or {}).get("memory_purpose") or "").startswith(("m365_file_", "m365_search_"))
+        ]
+        if memory_records:
+            from functions_settings import get_settings
+            client = CLIENTS.get("storage_account_office_docs_client")
+            if client is None:
+                client = build_enhanced_citations_blob_service_client(get_settings())
+            source_context = MemoryContext(TENANT_ID, normalized_user_id, source_conversation_id, normalized_user_id)
+            target_context = MemoryContext(TENANT_ID, normalized_user_id, fork_conversation_id, normalized_user_id)
+            store = ConversationMemoryStore(
+                client,
+                authorize_access=lambda candidate, operation: candidate in (source_context, target_context),
+                log_event=log_event,
+            )
+            memory_cleanup = (store, target_context)
+            run_map = {}
+            try:
+                for record in memory_records:
+                    old_id = record["metadata"]["memory_run_id"]
+                    cloned = clone_owned_memory(store, source_context, target_context, old_id)
+                    run_map.update(cloned["reference_map"])
+                    fork_documents.append({
+                        "id": f"memory-{cloned['run_id']}", "conversation_id": fork_conversation_id,
+                        "user_id": normalized_user_id, "role": "assistant_artifact",
+                        "artifact_kind": "conversation_memory", "timestamp": record.get("timestamp"),
+                        "metadata": {
+                            "memory_run_id": cloned["run_id"], "memory_purpose": cloned["purpose"],
+                            "memory_context": {
+                                "tenant_id": TENANT_ID, "principal_id": normalized_user_id,
+                                "conversation_id": fork_conversation_id,
+                                "storage_owner": normalized_user_id, "container": "personal-chat",
+                            },
+                            "publication": None,
+                        },
+                    })
+                fork_documents = [remap_memory_references(document, run_map) for document in fork_documents]
+            except Exception:
+                store.delete_conversation_memory(target_context)
+                memory_cleanup = None
+                raise
         for fork_document in fork_documents:
             cosmos_messages_container.upsert_item(fork_document)
             written_message_ids.append(fork_document["id"])
         cosmos_conversations_container.upsert_item(fork_conversation)
     except Exception:
+        if memory_cleanup is not None:
+            memory_cleanup[0].delete_conversation_memory(memory_cleanup[1])
         _cleanup_failed_fork(
             fork_conversation_id,
             written_message_ids,
@@ -1501,15 +1555,42 @@ def upload_generated_analysis_artifact_stream_for_user(
 def delete_blob_backed_chat_message_files(
     messages: Iterable[Dict[str, Any]],
     raise_on_error: bool = False,
+    conversation: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
+    messages = list(messages or [])
+    memory_context = None
+    if conversation and conversation.get("m365_working_memory"):
+        memory_context = MemoryContext(
+            TENANT_ID, conversation["user_id"], conversation["id"], conversation["user_id"],
+        )
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    has_memory = memory_context is not None or any(
+        isinstance(message, dict) and message.get("artifact_kind") == "conversation_memory"
+        for message in messages
+    )
+    if blob_service_client is None and has_memory:
+        # Cleanup uses the same configured account even when citation display is disabled.
+        from functions_settings import get_settings
+        blob_service_client = build_enhanced_citations_blob_service_client(get_settings())
     if not blob_service_client:
-        if raise_on_error:
+        if raise_on_error or memory_context is not None or any(
+            message.get("artifact_kind") == "conversation_memory"
+            for message in messages if isinstance(message, dict)
+        ):
             raise RuntimeError("Blob storage client is unavailable for chat file cleanup")
         return 0
 
-    deleted_count = 0
+    deleted_count = delete_referenced_conversation_memory(
+        messages,
+        blob_service_client,
+        tenant_id=TENANT_ID,
+        read_conversation=lambda conversation_id: cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id,
+        ),
+        log_event=log_event,
+        conversation_context=memory_context,
+    )
     deleted_targets = set()
 
     for message in messages or []:
@@ -1563,6 +1644,8 @@ def download_blob_content(blob_container: str, blob_path: str) -> bytes:
 
     if not normalized_blob_container or not normalized_blob_path:
         raise ValueError("blob_container and blob_path are required")
+    if is_conversation_memory_blob_path(normalized_blob_path):
+        raise PermissionError("Use the authorized evidence reader for conversation working memory.")
 
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:

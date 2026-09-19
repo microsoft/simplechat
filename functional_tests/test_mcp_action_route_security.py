@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.029
+Version: 0.261.036
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.
@@ -35,6 +35,7 @@ from functions_legacy_action_management import (
     LegacyActionSourceUpdateError,
 )
 import functions_mcp_operations as operations
+import json_schema_validation as validation
 from test_mcp_legacy_stdio_management import GROUP, OWNER, action_services, remote
 
 
@@ -91,6 +92,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
         self.probe = AsyncMock(return_value={"tools": [], "warnings": []})
         self.get_personal = Mock(return_value=None)
         self.namespace = {
+            **vars(validation),
             **vars(manifests),
             **vars(operations),
             "asyncio": asyncio,

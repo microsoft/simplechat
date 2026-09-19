@@ -24,6 +24,23 @@ let currentStreamContext = null;
 const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
 const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
 
+window.addEventListener('m365-chat-resumed', event => {
+    const conversationId = event.detail?.conversationId;
+    if (!isConversationCurrentlyActive(conversationId)) {
+        return;
+    }
+    const reload = window.chatCollaboration?.isCollaborationConversation?.(conversationId)
+        ? window.chatCollaboration.activateConversation(conversationId)
+        : loadMessages(conversationId).then(() => {
+            if (isConversationCurrentlyActive(conversationId)) {
+                return reattachStreamingConversation(conversationId);
+            }
+        });
+    void reload.catch(() => {
+        showToast('Microsoft 365 is connected, but the conversation could not be refreshed. Open the original conversation to check its progress.', 'warning');
+    });
+});
+
 function normalizeLegacyEscapedSseDelimiters(chunk) {
     return String(chunk || '').replace(/(\})\\n\\n(?=(?:data:|event:|id:|retry:|:|$))/g, '$1\n\n');
 }
@@ -259,6 +276,12 @@ function getStreamAuthUrl(errorDetails) {
     return normalizeStreamHttpUrl(errorPayload.auth_url || errorPayload.consent_url || '');
 }
 
+function isM365SignInRequired(errorDetails) {
+    const payload = getStreamErrorPayload(errorDetails);
+    return payload.type === 'm365_sign_in_required'
+        || (payload.auth_required === true && typeof payload.m365_request_id === 'string');
+}
+
 function buildStreamingRequestError(errorData, status) {
     const streamErrorData = errorData && typeof errorData === 'object' ? errorData : {};
     const errorMessage = String(streamErrorData.error || `HTTP error! status: ${status}`).trim();
@@ -297,6 +320,11 @@ function appendRateLimitMessage(errorBanner, markdownText) {
 
 function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
     const errorPayload = getStreamErrorPayload(errorDetails);
+    const m365SignInRequired = isM365SignInRequired(errorPayload);
+    if (m365SignInRequired && window.SimpleChatM365Connect) {
+        window.SimpleChatM365Connect.renderPrompt(contentElement, errorPayload);
+        return;
+    }
     const authRequired = errorPayload.auth_required === true;
     const rateLimited = errorPayload.rate_limited === true;
     const authUrl = getStreamAuthUrl(errorPayload);
@@ -316,6 +344,8 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     const title = document.createElement('strong');
     if (rateLimited) {
         title.textContent = 'Rate limited:';
+    } else if (m365SignInRequired) {
+        title.textContent = 'Microsoft 365 connection required:';
     } else if (authRequired) {
         title.textContent = 'Foundry access required:';
     } else {
@@ -333,7 +363,7 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
         errorBanner.appendChild(document.createTextNode(` ${displayMessage}`));
     }
 
-    if (authRequired && authUrl) {
+    if (authRequired && !m365SignInRequired && authUrl) {
         const actionRow = document.createElement('div');
         actionRow.className = 'mt-2';
 
@@ -353,6 +383,8 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     const detailText = document.createElement('small');
     if (rateLimited) {
         detailText.textContent = 'Wait a moment before sending the message again. Any partial content above has been saved.';
+    } else if (m365SignInRequired) {
+        detailText.textContent = 'Refresh the page to restore Microsoft 365 connection controls.';
     } else if (authRequired) {
         detailText.textContent = 'After access is granted, send the message again.';
     } else {
@@ -642,6 +674,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         reconnectStatusLabel = 'Reconnecting...',
         fallbackAgentInfo = null,
         initialPersistedUserMessageId = null,
+        onM365Resume = null,
     } = options;
 
     if (currentStreamController) {
@@ -701,6 +734,30 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         }
     }
 
+    function pauseForMicrosoft365SignIn(data) {
+        if (!isM365SignInRequired(data)) {
+            return false;
+        }
+        streamCompleted = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        clearCurrentStreamController(abortController);
+        if (data.user_message_id && data.message_persisted === true) {
+            persistedUserMessageId = String(data.user_message_id);
+        }
+        finalizePendingUserMessageMetadata();
+        enablePersistedUserMessageActions();
+        handleStreamError(
+            tempAiMessageId, data.partial_content || accumulatedContent,
+            data.message || data.error, data,
+        );
+        if (typeof onFinally === 'function') {
+            onFinally();
+        }
+        return true;
+    }
+
     requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
             if (response.status === 404) {
@@ -708,6 +765,13 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
             return response.json().then(errData => {
                 throw buildStreamingRequestError(errData, response.status);
+            });
+        }
+        if (response.headers?.get('Content-Type')?.includes('application/json')) {
+            return response.json().then(data => {
+                if (!pauseForMicrosoft365SignIn(data)) {
+                    throw buildStreamingRequestError(data, response.status);
+                }
             });
         }
 
@@ -730,6 +794,50 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+
+            if (pauseForMicrosoft365SignIn(data)) {
+                return true;
+            }
+
+            if (data.type === 'm365_approval_required') {
+                streamCompleted = true;
+                stopThoughtPolling();
+                clearStreamingThoughtSession(tempAiMessageId);
+                removeStreamingStopButton(tempAiMessageId);
+                clearCurrentStreamController(abortController);
+                if (data.user_message_id) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
+                handleStreamError(
+                    tempAiMessageId, accumulatedContent,
+                    'Microsoft 365 approval is required. You can also respond from Approvals.',
+                    data,
+                );
+                const approvals = window.SimpleChatM365Approvals;
+                if (approvals) {
+                    void approvals.openApprovals(data, {
+                        onResume: async result => {
+                            if (result.approvals?.some(approval => approval.resume_scheduled === true)) {
+                                const visibleConversationId = recoveryConversationId || data.conversation_id;
+                                await loadMessages(visibleConversationId);
+                                void reattachStreamingConversation(visibleConversationId);
+                                return;
+                            }
+                            if (result.status === 'decided' && typeof onM365Resume === 'function') {
+                                onM365Resume(data);
+                            }
+                        },
+                    }).catch(error => {
+                        handleStreamError(tempAiMessageId, accumulatedContent, error.message, data);
+                    });
+                }
+                if (typeof onFinally === 'function') {
+                    onFinally();
+                }
+                return true;
+            }
 
             if (data.error) {
                 if (data.user_message_id && data.message_persisted === true) {
@@ -1068,6 +1176,10 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             return;
         }
 
+        if (pauseForMicrosoft365SignIn(getStreamErrorPayload(error))) {
+            return;
+        }
+
         stopThoughtPolling();
         console.error('Streaming request error:', error);
         void reportClientStreamEvent('stream_request_error', {
@@ -1135,6 +1247,26 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         {
             ...options,
             recoveryConversationId,
+            onM365Resume: approvalData => {
+                const resumedPayload = {
+                    ...messageData,
+                    m365_request_id: approvalData.m365_request_id,
+                    conversation_id: approvalData.conversation_id || currentConversationId,
+                };
+                const sourceMessageId = approvalData.m365_source_user_message_id
+                    || approvalData.user_message_id;
+                if (sourceMessageId) {
+                    resumedPayload.retry_user_message_id = sourceMessageId;
+                }
+                const oldPlaceholder = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
+                if (oldPlaceholder) {
+                    oldPlaceholder.remove();
+                }
+                sendMessageWithStreaming(
+                    resumedPayload, tempUserMessageId,
+                    approvalData.conversation_id || currentConversationId, options,
+                );
+            },
         },
     );
 }
@@ -1414,6 +1546,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
     if (!messageElement) return;
 
     const errorPayload = getStreamErrorPayload(errorDetails);
+    const m365SignInRequired = isM365SignInRequired(errorPayload);
     const displayMessage = String(
         errorMessage || errorPayload.error || errorPayload.message || 'An unknown streaming error occurred.'
     ).trim();
@@ -1427,19 +1560,22 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         if (cursor) cursor.remove();
         
         // Show partial content with error banner
-        let finalContent = partialContent || 'Stream interrupted before any content was received.';
+        const finalContent = partialContent || (m365SignInRequired ? '' : 'Stream interrupted before any content was received.');
         
         // Parse markdown for partial content
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            finalContent = renderAiMessageContent(finalContent).htmlContent;
+            contentElement.innerHTML = renderAiMessageContent(finalContent).htmlContent;
+        } else {
+            contentElement.textContent = finalContent;
         }
-        
-        contentElement.innerHTML = finalContent;
         hydrateInlineCharts(messageElement);
 
         appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
     }
 
+    if (m365SignInRequired) {
+        return;
+    }
     if (errorPayload.rate_limited === true) {
         // The banner carries the rendered Markdown, so the toast only needs a
         // short plain-text summary of it.

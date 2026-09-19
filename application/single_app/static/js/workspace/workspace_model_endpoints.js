@@ -2,6 +2,11 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
+import {
+    ModelBudgetValidationError,
+    collectModelBudgetOverrides,
+    createModelBudgetEditor
+} from "../model_budget_editor.js";
 
 const enableMultiEndpointToggle = document.getElementById("enable_multi_model_endpoints");
 const endpointsWrapper = document.getElementById("model-endpoints-wrapper");
@@ -63,6 +68,7 @@ const fetchBtn = document.getElementById("model-endpoint-fetch-btn");
 const saveBtn = document.getElementById("model-endpoint-save-btn");
 const modelsListEl = document.getElementById("model-endpoint-models-list");
 const addModelBtn = document.getElementById("model-endpoint-add-model-btn");
+const endpointBudgetContainer = document.getElementById("model-endpoint-budget-editor");
 
 const scope = window.modelEndpointScope || "user";
 const endpointsContainerId = scope === "group" ? "group-multi-endpoint-configuration" : "workspace-multi-endpoint-configuration";
@@ -73,6 +79,8 @@ const modelsTestApi = scope === "group" ? "/api/group/models/test-model" : "/api
 
 let workspaceEndpoints = Array.isArray(window.workspaceModelEndpoints) ? [...window.workspaceModelEndpoints] : [];
 let modalModels = [];
+let modalEndpoint = {};
+let endpointBudgetEditor = null;
 
 const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
@@ -461,6 +469,8 @@ function updateAuthVisibility() {
 }
 
 function resetModal() {
+    modalEndpoint = {};
+    renderEndpointBudgetEditor();
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
@@ -499,6 +509,17 @@ function resetModal() {
     updateAuthVisibility();
 }
 
+function renderEndpointBudgetEditor() {
+    if (!endpointBudgetContainer) {
+        return;
+    }
+    endpointBudgetEditor = createModelBudgetEditor(modalEndpoint, {
+        scope: "endpoint",
+        idPrefix: "model-endpoint-budget"
+    });
+    endpointBudgetContainer.replaceChildren(endpointBudgetEditor);
+}
+
 function openModalForEndpoint(endpoint) {
     if (!endpointModal) {
         return;
@@ -507,6 +528,8 @@ function openModalForEndpoint(endpoint) {
     resetModal();
 
     if (endpoint) {
+        modalEndpoint = JSON.parse(JSON.stringify(endpoint));
+        renderEndpointBudgetEditor();
         if (endpointIdInput) endpointIdInput.value = endpoint.id || "";
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
@@ -551,7 +574,7 @@ function openModalForEndpoint(endpoint) {
                 apiKeyInput.placeholder = "Stored";
             }
         }
-        modalModels = Array.isArray(endpoint.models) ? [...endpoint.models] : [];
+        modalModels = Array.isArray(modalEndpoint.models) ? [...modalEndpoint.models] : [];
         renderModalModels(modalModels);
     }
 
@@ -764,7 +787,7 @@ function renderModalModels(models) {
     }
 
     const fragment = document.createDocumentFragment();
-    models.forEach((model) => {
+    models.forEach((model, modelIndex) => {
         const wrapper = document.createElement("div");
         wrapper.className = "border rounded p-2 mb-2";
         const requestName = getModelRequestName(model);
@@ -777,6 +800,7 @@ function renderModalModels(models) {
             : "Deployment Name";
         const modelId = model.id || generateId();
         model.id = modelId;
+        wrapper.dataset.modelRowId = modelId;
 
         const checkWrapper = createElement("div", "form-check");
         const checkbox = document.createElement("input");
@@ -803,7 +827,7 @@ function renderModalModels(models) {
         responseLengthCol.appendChild(createModelResponseLengthInput(modelId, responseLength));
         const responseLengthHelp = createElement("div", "form-text");
         responseLengthHelp.id = getModelIconDomId(modelId, "response-length-help");
-        responseLengthHelp.textContent = "Optional output token ceiling for standard chat responses.";
+        responseLengthHelp.textContent = "Optional per-request generation allowance for standard chat, not model capacity.";
         responseLengthCol.appendChild(responseLengthHelp);
         fieldsRow.appendChild(deploymentCol);
         fieldsRow.appendChild(displayCol);
@@ -848,6 +872,9 @@ function renderModalModels(models) {
         wrapper.appendChild(fieldsRow);
         wrapper.appendChild(descriptionWrapper);
         wrapper.appendChild(iconWrapper);
+        wrapper.appendChild(createModelBudgetEditor(model, {
+            idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`)
+        }));
         wrapper.appendChild(actions);
 
         fragment.appendChild(wrapper);
@@ -864,11 +891,13 @@ function collectModalModels() {
 
     const updated = modalModels.map((model) => ({ ...model }));
     updated.forEach((model) => {
-        const checkbox = modelsListEl.querySelector(`input[data-model-id="${model.id}"]`);
-        const requestModelInput = modelsListEl.querySelector(`input[data-request-model-for="${model.id}"]`);
-        const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
-        const descriptionInput = modelsListEl.querySelector(`textarea[data-description-for="${model.id}"]`);
-        const responseLengthInput = modelsListEl.querySelector(`input[data-response-length-for="${model.id}"]`);
+        const row = Array.from(modelsListEl.querySelectorAll("[data-model-row-id]"))
+            .find((element) => element.dataset.modelRowId === String(model.id));
+        const checkbox = row?.querySelector("input[data-model-id]");
+        const requestModelInput = row?.querySelector("input[data-request-model-for]");
+        const displayInput = row?.querySelector("input[data-display-name-for]");
+        const descriptionInput = row?.querySelector("textarea[data-description-for]");
+        const responseLengthInput = row?.querySelector("input[data-response-length-for]");
         const iconEditor = findModelEditor(model.id);
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
@@ -884,6 +913,7 @@ function collectModalModels() {
         } else {
             delete model.responseLength;
         }
+        Object.assign(model, collectModelBudgetOverrides(row?.querySelector("[data-model-budget-editor]"), model));
     });
     return updated;
 }
@@ -938,9 +968,8 @@ async function fetchModels() {
         return;
     }
 
-    modalModels = collectModalModels();
-
     try {
+        modalModels = collectModalModels();
         const response = await fetch(modelsFetchApi, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -971,6 +1000,7 @@ async function fetchModels() {
                 return;
             }
             modalModels.push({
+                ...model,
                 id: generateId(),
                 deploymentName,
                 modelName: model.modelName || model.name || "",
@@ -985,7 +1015,9 @@ async function fetchModels() {
         renderModalModels(modalModels);
         showToast(`Fetched ${models.length} models. Added ${addedCount} new.`, "success");
     } catch (error) {
-        console.error("Model fetch failed", error);
+        if (!(error instanceof ModelBudgetValidationError)) {
+            console.error("Model fetch failed", error);
+        }
         showToast(error.message || "Failed to fetch models.", "danger");
     }
 }
@@ -1142,6 +1174,8 @@ async function saveEndpoint() {
         const hasClientSecret = authType === "service_principal" && (Boolean(payload.auth?.client_secret) || Boolean(existingEndpoint?.has_client_secret));
 
         const endpointData = {
+            ...modalEndpoint,
+            ...collectModelBudgetOverrides(endpointBudgetEditor, modalEndpoint),
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
@@ -1168,7 +1202,9 @@ async function saveEndpoint() {
         showToast("Endpoint saved successfully.", "success");
     } catch (error) {
         workspaceEndpoints = previousEndpoints;
-        console.error("Error saving endpoint", error);
+        if (!(error instanceof ModelBudgetValidationError)) {
+            console.error("Error saving endpoint", error);
+        }
         showToast(error.message || "Failed to save endpoint.", "danger");
     }
 }
@@ -1244,7 +1280,12 @@ function handleTableClick(event) {
 }
 
 function addManualModel() {
-    modalModels = collectModalModels();
+    try {
+        modalModels = collectModalModels();
+    } catch (error) {
+        showToast(error?.message || "Unable to add a model.", "danger");
+        return;
+    }
     const model = {
         id: generateId(),
         displayName: "",
