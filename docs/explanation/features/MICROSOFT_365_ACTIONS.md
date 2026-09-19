@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.032)
+# Microsoft 365 actions and conversation evidence (v0.261.033)
 
 Implemented in version: **0.261.029**
 
@@ -10,6 +10,11 @@ in **0.261.031**. See the [agent streaming fix](../fixes/M365_AGENT_STREAMING_FI
 
 In-chat connection, source permission bundles, and early agent binding were
 corrected in **0.261.032**. See the [connection onboarding fix](../fixes/M365_CHAT_CONNECTION_ONBOARDING_FIX.md).
+
+Consent callbacks were corrected in **0.261.033** to accept token responses
+containing additional previously granted permissions without widening the
+selected action or workflow authorization. See the
+[consent scope-response fix](../fixes/M365_CONSENT_SCOPE_RESPONSE_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.

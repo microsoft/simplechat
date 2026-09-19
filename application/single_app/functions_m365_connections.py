@@ -51,7 +51,6 @@ CONNECTION_CALLBACK_PATH = "/api/m365/connections/callback"
 CHAT_CALLBACK_PATH = "/getAToken"
 CHAT_AUTH_SESSION_KEY = "m365_chat_auth_flow"
 CHAT_AUTH_STATE_PREFIX = "m365-chat-"
-_OIDC_SCOPES = frozenset({"openid", "profile", "offline_access", "email"})
 _SOURCE_SCOPE_NAMES = {
     "calendar": frozenset({"User.Read", "Calendars.Read", "MailboxSettings.Read"}),
     "email": frozenset({"User.Read", "Mail.Read"}),
@@ -272,6 +271,20 @@ def _scope_names(scopes, config):
         scope.rsplit("/", 1)[-1].lower()
         for scope in normalize_m365_scopes(scopes, config)
     }
+
+
+def _require_granted_scopes(requested_scopes, granted_scope, config):
+    """Verify requested grants without treating prior consent as a new scope request."""
+    required = _scope_names(requested_scopes, config)
+    prefix = f"{config.graph_resource}/".lower()
+    granted = {
+        scope.lower().removeprefix(prefix)
+        for scope in granted_scope.split()
+    } if isinstance(granted_scope, str) else set()
+    if not required.issubset(granted):
+        raise M365ConnectionError(
+            "m365_consent_required", "Not all selected Microsoft 365 permissions were authorized.",
+        )
 
 
 def _validate_callback_uri(redirect_uri, *, interactive=False):
@@ -586,10 +599,7 @@ class M365ConnectionService:
             for token in refresh_tokens
         ):
             raise M365ConnectionError("m365_offline_consent_required", "Offline delegated consent is required for workflow connections.")
-        raw_granted = result.get("scope", "").split()
-        granted = [scope for scope in raw_granted if scope.lower() not in _OIDC_SCOPES]
-        if not granted or not _scope_names(record["requested_scopes"], config).issubset(_scope_names(granted, config)):
-            raise M365ConnectionError("m365_consent_required", "Not all selected Microsoft 365 permissions were authorized.")
+        _require_granted_scopes(record["requested_scopes"], result.get("scope"), config)
         current, _config = self._own_connection(connection["id"], user_id, tenant_id)
         if current["generation"] != record["generation"]:
             raise M365ConnectionError("m365_connection_changed", "The connection changed during sign-in. Start Connect again.")
@@ -669,12 +679,7 @@ class M365ConnectionService:
         select_m365_account(accounts, user_id, tenant_id)
         if len(accounts) != 1:
             raise M365ConnectionError("m365_account_mismatch", "The sign-in result must contain only your own account.")
-        granted = [
-            scope for scope in result.get("scope", "").split()
-            if scope.lower() not in _OIDC_SCOPES
-        ]
-        if not granted or not _scope_names(record["required_scopes"], config).issubset(_scope_names(granted, config)):
-            raise M365ConnectionError("m365_consent_required", "The selected source permissions were not all authorized.")
+        _require_granted_scopes(record["required_scopes"], result.get("scope"), config)
         serialized = cache.serialize()
         deserialize_m365_cache(serialized)
         session["token_cache"] = serialized

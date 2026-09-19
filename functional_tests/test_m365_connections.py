@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.032
+Version: 0.261.033
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -71,6 +71,7 @@ class MsalHttp:
         self.refresh_token = True
         self.home_user = "user-a"
         self.home_tenant = config.tenant_id
+        self.scope_transform = lambda scopes: scopes
 
     def get(self, url, **kwargs):
         if "/.well-known/openid-configuration" not in url:
@@ -103,7 +104,7 @@ class MsalHttp:
             "id_token": f"{encoded_json({'alg': 'none'})}.{encoded_json(claims)}.",
             "client_info": encoded_json({"uid": self.home_user, "utid": self.home_tenant}),
             "token_type": "Bearer", "expires_in": 3600,
-            "scope": data.get("scope", ""),
+            "scope": self.scope_transform(data.get("scope", "")),
         }
         if self.refresh_token:
             payload["refresh_token"] = "refresh-token-must-stay-server-side"
@@ -594,6 +595,156 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(self.container.items, {})
         self.assertEqual(self.approval_container.items, {})
         self.service.key_provider.assert_not_called()
+
+    def test_callbacks_accept_previously_consented_scope_supersets_in_every_cloud(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        configurations = (
+            self.config,
+            connections.M365IdentityConfig(
+                "client-a", "tenant-a", "https://login.microsoftonline.us/tenant-a",
+                "https://graph.microsoft.us", "usgovernment",
+            ),
+            connections.M365IdentityConfig(
+                "client-a", "tenant-a", "https://identity.example.test/tenant-a",
+                "https://graph.example.test:8443/graph", "custom",
+            ),
+        )
+        for config in configurations:
+            self.config = self.http.config = config
+            for qualified in (False, True):
+                def scope_superset(requested):
+                    names = [scope.rsplit("/", 1)[-1] for scope in requested.split()]
+                    names += ["User.ReadWrite", "Directory.Read.All", "Tasks.Read", "Mail.Send"]
+                    names += [f"PreviouslyGranted.Permission{index}" for index in range(35)]
+                    return " ".join(
+                        f"{config.graph_resource}/{name}" if qualified else name
+                        for name in names
+                    )
+
+                self.http.scope_transform = scope_superset
+                for callback in ("chat", "workflow"):
+                    with self.subTest(cloud=config.cloud, qualified=qualified, callback=callback):
+                        if callback == "chat":
+                            with app.test_request_context():
+                                _started, query = self.begin_chat()
+                                completed = self.service.complete_chat_connection(
+                                    "user-a", "tenant-a",
+                                    {"state": query["state"][0], "code": "scope-superset"},
+                                )
+                                token = connections.get_m365_access_token(
+                                    ["User.Read", "Files.Read.All", "Sites.Read.All"], include_auth_url=False,
+                                )
+                                cached = session.get("token_cache")
+                                current_user = dict(session["user"])
+                            self.assertEqual(completed["request_id"], "chat-request")
+                            self.assertIsInstance(cached, str)
+                            self.assertIn("access_token", token)
+                            self.assertEqual(current_user["oid"], "user-a")
+                            self.assertNotIn("token_cache", completed)
+                        else:
+                            connected, _started, _query = self.connect(sources=["spo"])
+                            self.assertEqual(connected["status"], "connected")
+                            self.assertEqual(connected["sources"], ["spo"])
+                            self.assertEqual(
+                                set(connected["authorized_scopes"]), {"User.Read", "Files.Read.All", "Sites.Read.All"},
+                            )
+                        self.assertNotIn("Directory.Read.All", self.http.posts[-1]["scope"])
+                        self.assertNotIn("User.ReadWrite", self.http.posts[-1]["scope"])
+                        self.assertNotIn("Tasks.Read", self.http.posts[-1]["scope"])
+        self.assertEqual(self.approval_container.items, {})
+
+    def test_extra_returned_grants_do_not_expand_a_narrow_workflow_connection(self):
+        self.http.scope_transform = lambda requested: f"{requested} User.ReadWrite Directory.Read.All Mail.Send Calendars.ReadWrite"
+        connected, _started, _query = self.connect(scopes=["Mail.Read"])
+        context = self.workflow(connected)
+        result = connections.get_m365_access_token(["Mail.Send"], context=context)
+        self.assertEqual(result["error"], "m365_consent_required")
+        self.assertNotIn("access_token", result)
+        self.assertEqual(set(connected["authorized_scopes"]), {"User.Read", "Mail.Read"})
+
+    def test_callbacks_reject_missing_or_wrong_resource_grants_without_publishing_credentials(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        for replacement in (
+            "",
+            "Directory.Read.All",
+            "https://graph.microsoft.us/Sites.Read.All",
+            "https://graph.microsoft.com.attacker.test/Sites.Read.All",
+            "https://graph.microsoft.com/other/Sites.Read.All",
+            "http://graph.microsoft.com/Sites.Read.All",
+        ):
+            def incomplete_scopes(requested):
+                granted = [scope for scope in requested.split() if not scope.endswith("/Sites.Read.All")]
+                return " ".join([*granted, replacement])
+
+            self.http.scope_transform = incomplete_scopes
+            for callback in ("chat", "workflow"):
+                with self.subTest(replacement=replacement, callback=callback):
+                    if callback == "chat":
+                        with app.test_request_context():
+                            _started, query = self.begin_chat()
+                            with self.assertRaises(connections.M365ConnectionError) as raised:
+                                self.service.complete_chat_connection(
+                                    "user-a", "tenant-a", {"state": query["state"][0], "code": "missing-scope"},
+                                )
+                            self.assertNotIn("token_cache", session)
+                    else:
+                        _started, query = self.begin(["spo"])
+                        cache_writer = Mock()
+                        with self.assertRaises(connections.M365ConnectionError) as raised:
+                            self.service.complete_connection(
+                                "user-a", "tenant-a", {"state": query["state"][0], "code": "missing-scope"},
+                                "session-binding-for-user-a", cache_writer=cache_writer,
+                            )
+                        saved = self.service.current_connection("user-a", "tenant-a")
+                        self.assertEqual(saved["status"], "disconnected")
+                        self.assertEqual(saved["authorized_scopes"], [])
+                        cache_writer.assert_not_called()
+                    self.assertEqual(raised.exception.code, "m365_consent_required")
+
+    def test_requested_scope_allowlist_is_not_expanded_by_the_callback_fix(self):
+        for scope in ("User.ReadWrite", "Directory.Read.All", "Tasks.Read", "https://graph.microsoft.us/Files.Read.All"):
+            with self.subTest(scope=scope), self.assertRaises(connections.M365ConnectionError):
+                self.service.start_connection(
+                    "user-a", "tenant-a", ["spo"],
+                    f"https://simplechat.example.test{connections.CONNECTION_CALLBACK_PATH}",
+                    "session-binding-for-user-a", scopes=[scope],
+                )
+        self.assertEqual(self.clients, [])
+        self.assertEqual(self.http.posts, [])
+        self.assertEqual(self.container.items, {})
+
+    def test_grant_validation_requires_a_scope_response_and_the_exact_requested_permission(self):
+        for returned in (
+            None, "", [], ["Files.Read.All"], 42,
+            "openid profile email offline_access", "Files.ReadWrite.All",
+        ):
+            with self.subTest(returned=returned), self.assertRaises(connections.M365ConnectionError) as raised:
+                connections._require_granted_scopes(["Files.Read.All"], returned, self.config)
+            self.assertEqual(raised.exception.code, "m365_consent_required")
+        connections._require_granted_scopes(
+            ["Files.Read.All", "Sites.Read.All"],
+            "  files.read.all  https://GRAPH.MICROSOFT.COM/Sites.Read.All openid profile email Directory.Read.All  ",
+            self.config,
+        )
+
+    def test_other_cloud_grants_cannot_satisfy_government_or_custom_requests(self):
+        for config in (
+            connections.M365IdentityConfig(
+                "client-a", "tenant-a", "https://login.microsoftonline.us/tenant-a",
+                "https://graph.microsoft.us", "usgovernment",
+            ),
+            connections.M365IdentityConfig(
+                "client-a", "tenant-a", "https://identity.example.test/tenant-a",
+                "https://graph.example.test:8443/graph", "custom",
+            ),
+        ):
+            with self.subTest(cloud=config.cloud), self.assertRaises(connections.M365ConnectionError) as raised:
+                connections._require_granted_scopes(
+                    ["Files.Read.All"], "openid https://graph.microsoft.com/Files.Read.All", config,
+                )
+            self.assertEqual(raised.exception.code, "m365_consent_required")
 
     def test_chat_connection_rejects_wrong_user_tenant_nonce_and_guest_claims(self):
         app = Flask(__name__)

@@ -6,6 +6,9 @@ Related version update: `application/single_app/config.py`, from `0.261.031`
 to `0.261.032`. Associated issue: [#1493](https://github.com/microsoft/simplechat/issues/1493);
 feature PR: [#1497](https://github.com/microsoft/simplechat/pull/1497).
 
+Follow-up: [consent scope-response validation](M365_CONSENT_SCOPE_RESPONSE_FIX.md)
+was corrected in **0.261.033** after live sign-in reached the token callback.
+
 ## Reported behavior and evidence
 
 An agent configured with the four new Microsoft 365 actions answered that it
