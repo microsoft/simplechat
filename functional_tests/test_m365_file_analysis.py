@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for source-specific retained-file analysis tools.
-Version: 0.261.029
+Version: 0.261.035
 Implemented in: 0.261.029
 
 Real provider modules validate capability and retained conversation context.
@@ -11,6 +11,7 @@ bounded processing batch; the adapter never reads fresh Microsoft 365 content.
 """
 
 import asyncio
+import json
 from copy import deepcopy
 from dataclasses import replace
 from inspect import iscoroutinefunction
@@ -143,6 +144,26 @@ def test_analyze_preserves_the_parent_fast_answer_decision(
     assert result["status"] == "fast_answer"
     assert result["coverage"]["complete"] is False
     assert callback.await_count == 1
+
+
+@pytest.mark.parametrize("delta", [-1, 0, 1])
+def test_analysis_reply_must_fit_the_calling_model_without_truncating_findings(
+    execution, memory_runtime, real_content_helpers, monkeypatch, delta,
+):
+    prepared = ContentGraphFixture(source="spo").operations().prepare_file("drive-1", "item-1")
+    response = {"status": "completed", "analysis_id": "retained-analysis", "findings": "Exact retained findings."}
+    original = deepcopy(response)
+    callback = AsyncMock(return_value=response)
+    _configure_analysis(memory_runtime, monkeypatch, callback)
+    memory_runtime.settings["model_room"] = len(json.dumps(response, ensure_ascii=False)) + delta
+    result = asyncio.run(_plugin("spo").analyze_file(prepared["memory_id"], "Summarize the source."))
+    assert callback.await_count == 1
+    assert response == original
+    if delta < 0:
+        assert result["error"]["code"] == "model_context_full"
+        assert result["provider"] == "conversation_memory"
+    else:
+        assert result is response
 
 
 def test_analyze_missing_callback_is_explicitly_unsupported(execution, monkeypatch):

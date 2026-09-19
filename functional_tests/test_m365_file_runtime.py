@@ -1,7 +1,7 @@
 # test_m365_file_runtime.py
 """
 Functional regressions for persisted Microsoft 365 request budgets.
-Version: 0.261.031
+Version: 0.261.035
 Implemented in: 0.261.030
 
 Loads the real resolver with scoped owner/I/O dependencies. Conditional-write
@@ -9,6 +9,7 @@ conflicts never reset budgets, switch identities, or return an implicit None.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
@@ -17,6 +18,7 @@ from unittest.mock import Mock
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from flask import Flask, g
 import pytest
+from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -25,6 +27,7 @@ sys.path.insert(0, str(APP))
 # Standalone tests initialize the source path before repository imports.
 from functions_m365_execution import M365ExecutionContext
 from functions_m365_transport import M365ProviderError
+from functions_model_capabilities import ModelTokenBudget
 from test_support.m365 import CosmosContainer
 
 
@@ -42,7 +45,6 @@ def runtime(monkeypatch):
         "functions_m365_agent_continuation": {"configure_m365_agent_continuation": Mock()},
         "functions_m365_analysis_runtime": {"analyze_m365_memory": Mock()},
         "functions_m365_workflow_checkpoints": {"configure_m365_workflow_checkpoints": Mock()},
-        "functions_model_capabilities": {"resolve_model_token_limits": Mock()},
     }
     for name, values in seams.items():
         module = types.ModuleType(name)
@@ -154,6 +156,53 @@ def test_non_conflict_storage_failures_are_surfaced_without_retry(runtime, monke
     assert raised.value.status_code == status
     assert failure.call_count == 1
     assert "m365_has_pending_record" not in g
+
+
+def test_model_room_counts_dict_messages_instructions_and_tool_schemas(runtime):
+    budget = ModelTokenBudget(
+        context_window=20000, input_limit=18000, output_limit=5000,
+        request_output_limit=1000, output_accounting="total_generation",
+    )
+    messages = [{"role": "user", "content": "hello"}]
+    tools = [{"type": "function", "function": {"name": "search", "description": "x" * 1000}}]
+    token = runtime.module.configure_m365_model_context(
+        budget, messages, instructions="Use sources", tool_schemas=tools,
+    )
+    try:
+        room = runtime.module.resolve_m365_model_room(runtime.context)
+    finally:
+        runtime.module.reset_m365_model_context(token)
+    expected_bytes = len(json.dumps(messages[0]).encode()) + 256 + len("Use sources") + len(json.dumps(tools).encode()) + 4096
+    assert room == 18000 - expected_bytes
+    assert runtime.module._model_context.get() is None
+
+
+def test_serialized_tool_arguments_are_included_even_without_visible_content(runtime):
+    message = ChatMessageContent(role=AuthorRole.ASSISTANT, items=[
+        FunctionCallContent(id="call", name="search", arguments=json.dumps({"query": "x" * 3000})),
+    ])
+    budget = ModelTokenBudget(context_window=20000, request_output_limit=1000, output_accounting="total_generation")
+    token = runtime.module.configure_m365_model_context(budget, [message])
+    try:
+        room = runtime.module.resolve_m365_model_room(runtime.context)
+    finally:
+        runtime.module.reset_m365_model_context(token)
+    assert room < 20000 - 1000 - 4096 - 3000
+
+
+@pytest.mark.parametrize("message", [
+    {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.invalid/image"}}]},
+    {"role": "user", "items": [{"content_type": "audio", "uri": "https://example.invalid/audio"}]},
+])
+def test_remote_media_is_not_budgeted_as_short_url_text(runtime, message):
+    budget = ModelTokenBudget(context_window=20000, output_limit=1000, output_accounting="total_generation")
+    token = runtime.module.configure_m365_model_context(budget, [message])
+    try:
+        with pytest.raises(M365ProviderError) as error:
+            runtime.module.resolve_m365_model_room(runtime.context)
+    finally:
+        runtime.module.reset_m365_model_context(token)
+    assert error.value.code == "model_input_estimate_unavailable"
 
 
 if __name__ == "__main__":

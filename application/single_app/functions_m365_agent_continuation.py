@@ -3,6 +3,7 @@
 
 from contextlib import aclosing
 from contextvars import ContextVar
+from dataclasses import asdict
 from functools import wraps
 import hashlib
 import json
@@ -18,6 +19,8 @@ from functions_conversation_memory import EvidenceChunk, EvidenceSource
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_m365_execution import get_m365_execution_context
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
+from functions_model_capabilities import ModelTokenBudget
+from functions_model_budget_runtime import prepare_model_execution_settings
 
 
 _current_journal = ContextVar("m365_agent_journal", default=None)
@@ -26,10 +29,13 @@ _dependencies = {}
 PAUSED_TOOL_MARKER = "simplechat_m365_tool_waiting"
 
 
-def configure_m365_agent_continuation(*, memory_resolver, jobs_factory, model_context_setter):
+def configure_m365_agent_continuation(
+    *, memory_resolver, jobs_factory, model_context_setter, model_context_reset=None,
+):
     _dependencies.update(
         memory_resolver=memory_resolver, jobs_factory=jobs_factory,
         model_context_setter=model_context_setter,
+        model_context_reset=model_context_reset,
     )
 
 
@@ -74,9 +80,17 @@ async def _capture_function_wait(context, next):
 async def _terminate_for_approval(context, next):
     call_id = context.function_call_content.id
     token = _current_call_id.set(call_id)
+    journal = _current_journal.get()
+    budget_token = None
     try:
+        if journal is not None and context.chat_history is not None:
+            budget_token = journal.configure_model_context(
+                context.chat_history.messages, settings=context.execution_settings,
+            )
         await next(context)
     finally:
+        if journal is not None:
+            journal.reset_model_context(budget_token)
         _current_call_id.reset(token)
     journal = _current_journal.get()
     if journal is not None and journal.pending is None:
@@ -153,7 +167,35 @@ class AgentContinuationJournal:
         self.run_id = None
         self.thread = None
         self.history = None
+        self.model_budget = getattr(agent, "model_token_budget", None)
+        self.model_instructions = agent.instructions
+        self.model_context_tokens = []
+        self.tool_schemas = [
+            metadata.model_dump(mode="json", exclude_none=True)
+            for metadata in agent.kernel.get_full_list_of_function_metadata()
+        ]
         install_m365_agent_filters(agent.kernel)
+
+    def configure_model_context(self, messages, settings=None):
+        budget = self.model_budget
+        tool_schemas = self.tool_schemas
+        if isinstance(budget, ModelTokenBudget) and settings is not None:
+            settings, budget = prepare_model_execution_settings(settings, budget)
+            tool_schemas = getattr(settings, "tools", None) or tool_schemas
+        return _dependencies["model_context_setter"](
+            budget if isinstance(budget, ModelTokenBudget) else getattr(self.agent, "deployment_name", None),
+            messages, instructions=self.model_instructions, tool_schemas=tool_schemas,
+        )
+
+    def reset_model_context(self, token):
+        reset = _dependencies.get("model_context_reset")
+        if reset is not None and token is not None:
+            reset(token)
+
+    def close(self):
+        for token in reversed(self.model_context_tokens):
+            self.reset_model_context(token)
+        self.model_context_tokens.clear()
 
     def _job(self):
         try:
@@ -224,6 +266,17 @@ class AgentContinuationJournal:
         )
 
     async def prepare(self, args, kwargs):
+        if isinstance(self.model_budget, ModelTokenBudget):
+            arguments = self.agent._merge_arguments(kwargs.get("arguments"))
+            _service, settings = await self.agent._get_chat_completion_service_and_settings(
+                kernel=self.agent.kernel, arguments=arguments,
+            )
+            _settings, self.model_budget = prepare_model_execution_settings(settings, self.model_budget)
+            self.model_instructions = await self.agent.format_instructions(self.agent.kernel, arguments)
+            self.fingerprint = hashlib.sha256(json.dumps({
+                "agent": self.fingerprint, "budget": asdict(self.model_budget),
+                "tools": self.tool_schemas,
+            }, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         entry = self._job().get("agent_checkpoints", {}).get(self.key)
         if entry:
             if entry["fingerprint"] != self.fingerprint:
@@ -235,10 +288,7 @@ class AgentContinuationJournal:
             if not checkpoint:
                 raise M365PolicyError("m365_recovery_required", "The agent checkpoint needs recovery.")
             self.history = self._read_history(checkpoint["checkpoint"])
-            _dependencies["model_context_setter"](
-                getattr(self.agent, "deployment_name", None), self.history.messages,
-                instructions=self.agent.instructions,
-            )
+            self.model_context_tokens.append(self.configure_model_context(self.history.messages))
             await self._resume_paused_calls()
             self.thread = ChatHistoryAgentThread(self.history)
             args = ()
@@ -250,11 +300,10 @@ class AgentContinuationJournal:
         history_messages = self.history.messages if self.history is not None else (
             messages if isinstance(messages, list) else [messages] if messages else []
         )
-        _dependencies["model_context_setter"](
-            getattr(self.agent, "deployment_name", None),
-            history_messages,
-            instructions=self.agent.instructions,
-        )
+        if self.history is None and kwargs.get("thread") is not None:
+            existing_messages = [message async for message in self.thread.get_messages()]
+            history_messages = existing_messages + history_messages
+        self.model_context_tokens.append(self.configure_model_context(history_messages))
         return args, kwargs
 
     async def _resume_paused_calls(self):
@@ -343,6 +392,7 @@ def m365_agent_continuation(function):
             await journal.finish()
             return result
         finally:
+            journal.close()
             _current_journal.reset(token)
     return wrapped
 
@@ -367,5 +417,6 @@ def m365_agent_stream_continuation(function):
                         yield response
             await journal.finish()
         finally:
+            journal.close()
             _current_journal.reset(token)
     return wrapped

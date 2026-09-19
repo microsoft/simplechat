@@ -1,7 +1,7 @@
 # test_m365_runtime_adapters.py
 """
 Integration tests for staged file processing and subject-owned resume adapters.
-Version: 0.261.029
+Version: 0.261.035
 Implemented in: 0.261.029
 
 Real memory manifests and batch execution are used with mocked external model
@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from flask import Flask, Response, g, request, session
 import pytest
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -242,22 +243,23 @@ def test_staged_model_analysis_commits_each_source_chunk_once():
         async def get_chat_message_contents(self, *, chat_history, settings):
             model_calls.append(str(chat_history))
             assert settings.function_choice_behavior is None
-            assert settings.max_tokens <= 2000
+            assert settings.max_completion_tokens == 1536
+            assert settings.max_tokens is None
+            assert settings.tools is None
             return [types.SimpleNamespace(content=f"Findings from batch {len(model_calls)}")]
 
     class Agent:
-        deployment_name = "test-model"
+        deployment_name = "gpt-5.6-terra"
         kernel = object()
         arguments = None
 
         async def _get_chat_completion_service_and_settings(self, **kwargs):
-            return Model(), types.SimpleNamespace(
-                function_choice_behavior="auto", extension_data={"tools": ["not-allowed"]},
-                max_tokens=10000,
+            return Model(), OpenAIChatPromptExecutionSettings(
+                tools=[{"type": "function", "function": {"name": "must_not_be_called", "parameters": {"type": "object", "properties": {}}}}],
+                max_completion_tokens=10000,
             )
 
     runtime.get_m365_analysis_agent = lambda context: Agent()
-    runtime.resolve_model_token_limits = lambda model: (100000, 2000)
     runtime.get_m365_approval_service = lambda: types.SimpleNamespace(
         authorize_extended_analysis=lambda *args: {"mode": "extended"},
     )

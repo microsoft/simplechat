@@ -32,6 +32,7 @@ from model_endpoint_clients import (
     normalize_chat_completion_text,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_capabilities import ModelTokenBudgetError
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
@@ -20873,6 +20874,9 @@ def register_route_backend_chats(bp):
             )), 409
         except M365SignInRequired as error:
             return jsonify(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id'))), 409
+        except ModelTokenBudgetError as error:
+            log_event("[CHAT_API_ERROR] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+            return jsonify(error.payload), 400
         except M365PolicyError as error:
             return jsonify(error.payload), 403
         except Exception as e:
@@ -24366,7 +24370,9 @@ def register_route_backend_chats(bp):
                                 exceptionTraceback=True,
                             )
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
-                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                            if isinstance(stream_error, ModelTokenBudgetError):
+                                error_payload = stream_error.payload
+                            elif isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
                                 error_payload = {
                                     'error': str(stream_error),
@@ -25250,6 +25256,9 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps(record_m365_pending(error, user_message_id=locals().get('user_message_id')))}\n\n"
             except M365SignInRequired as error:
                 yield f"data: {json.dumps(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except ModelTokenBudgetError as error:
+                log_event("[STREAMING] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except M365PolicyError as error:
                 yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:

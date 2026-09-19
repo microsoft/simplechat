@@ -1,14 +1,19 @@
 # agent_logging_chat_completion.py
 from contextlib import aclosing
+from copy import deepcopy
 import json
 import logging
 from pydantic import Field
 from semantic_kernel.agents import ChatCompletionAgent
+from semantic_kernel.const import DEFAULT_SERVICE_NAME
+from semantic_kernel.functions import KernelArguments
 from functions_m365_agent_continuation import (
     m365_agent_continuation,
     m365_agent_stream_continuation,
 )
 from functions_appinsights import log_event
+from functions_model_capabilities import ModelTokenBudget, ModelTokenBudgetError
+from functions_model_budget_runtime import prepare_model_execution_settings
 import datetime
 import re
 
@@ -16,12 +21,14 @@ import re
 class LoggingChatCompletionAgent(ChatCompletionAgent):
     display_name: str | None = Field(default=None)
     default_agent: bool = Field(default=False)
+    is_global: bool = Field(default=False)
     tool_invocations: list = Field(default_factory=list)
     deployment_name: str | None = Field(default=None)
     azure_endpoint: str | None = Field(default=None)
     api_version: str | None = Field(default=None)
+    model_token_budget: ModelTokenBudget | None = Field(default=None, exclude=True)
 
-    def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, **kwargs):
+    def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, model_token_budget=None, **kwargs):
         # Remove these from kwargs so the base class doesn't see them
         kwargs.pop('display_name', None)
         kwargs.pop('default_agent', None)
@@ -34,7 +41,57 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         self.deployment_name = deployment_name
         self.azure_endpoint = azure_endpoint
         self.api_version = api_version
+        self.model_token_budget = model_token_budget
         # tool_invocations is now properly declared as a Pydantic field
+
+    def _merge_arguments(self, override_args):
+        base = self.arguments if self.arguments is not None else KernelArguments()
+        values = dict(base)
+        execution_settings = deepcopy(base.execution_settings or {})
+        if override_args is not None:
+            values.update(override_args)
+            overrides = deepcopy(override_args.execution_settings or {})
+            if self.model_token_budget is not None and self.service is not None:
+                service_id = self.service.service_id
+                if set(overrides) - {service_id, DEFAULT_SERVICE_NAME}:
+                    raise ModelTokenBudgetError(
+                        "model_context_invalid", "Select an agent bound to the requested model service."
+                    )
+                default = overrides.pop(DEFAULT_SERVICE_NAME, None)
+                if default is not None and service_id not in overrides:
+                    default.service_id = service_id
+                    overrides[service_id] = default
+            execution_settings.update(overrides)
+        return KernelArguments(settings=execution_settings, **values)
+
+    async def _get_chat_completion_service_and_settings(self, kernel, arguments):
+        service, settings = await super()._get_chat_completion_service_and_settings(kernel, arguments)
+        if self.model_token_budget is None:
+            return service, settings
+        if (
+            self.service is not None and service is not self.service
+            or self.deployment_name is not None and service.ai_model_id != self.deployment_name
+        ):
+            raise ModelTokenBudgetError(
+                "model_context_invalid", "The selected service does not match this agent's model budget."
+            )
+        override_model = getattr(settings, "ai_model_id", None)
+        if override_model and override_model != service.ai_model_id:
+            raise ModelTokenBudgetError(
+                "model_context_invalid", "Select a model with matching budget metadata instead of overriding its request identifier."
+            )
+        try:
+            settings, _ = prepare_model_execution_settings(
+                settings, self.model_token_budget,
+                tools_enabled=bool(kernel.get_full_list_of_function_metadata()),
+            )
+        except ModelTokenBudgetError as error:
+            log_event(
+                "[SK_LOADER] Agent model budget configuration is invalid.",
+                extra={"agent_id": self.id, "code": error.code}, level=logging.ERROR,
+            )
+            raise
+        return service, settings
 
     def log_tool_execution(self, tool_name, arguments=None, result=None):
         """Manual method to log tool executions. Can be called by plugins."""

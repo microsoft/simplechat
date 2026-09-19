@@ -2,8 +2,7 @@
 """Bounded read-only model batches over approved, retained file snapshots."""
 
 import asyncio
-from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import json
 import re
@@ -17,7 +16,8 @@ from functions_m365_analysis_jobs import AnalysisBatchResult, ConversationAnalys
 from functions_m365_approvals import M365PolicyError, get_m365_approval_service
 from functions_m365_execution import authorize_m365_publication
 from functions_m365_transport import M365ProviderError
-from functions_model_capabilities import resolve_model_token_limits
+from functions_model_capabilities import ModelTokenBudgetError, resolve_model_token_budget
+from functions_model_budget_runtime import prepare_model_execution_settings
 
 
 async def analyze_m365_memory(context, source, action_id, memory_id, question, analysis_id=""):
@@ -65,11 +65,9 @@ async def analyze_m365_memory(context, source, action_id, memory_id, question, a
         }
     agent = get_m365_analysis_agent(context)
     model = getattr(agent, "deployment_name", None)
-    context_limit, output_limit = resolve_model_token_limits(model)
-    if not context_limit or not output_limit:
-        raise M365ProviderError("model_context_unavailable", "Declare this model's context limits before deeper file analysis.")
+    model_budget = resolve_model_token_budget(getattr(agent, "model_token_budget", None) or model)
     processor_version = "m365-v1-" + hashlib.sha256(
-        f"{model}\n{question}".encode("utf-8")
+        json.dumps({"model": model, "budget": asdict(model_budget), "question": question}, sort_keys=True).encode("utf-8")
     ).hexdigest()[:24]
     loop = asyncio.get_running_loop()
 
@@ -87,24 +85,29 @@ async def analyze_m365_memory(context, source, action_id, memory_id, question, a
             "previous_findings": batch.previous_state.get("summary", ""),
             "evidence": batch.evidence,
         }, ensure_ascii=False)
-        reserve = min(output_limit, 1536)
-        if len(content.encode("utf-8")) + reserve + 4096 > context_limit:
-            raise M365ProviderError(
-                "model_context_full",
-                "This evidence chunk exceeds the selected model's declared context. Use a larger-context model.",
-            )
         history.add_user_message(content)
         service, settings = await agent._get_chat_completion_service_and_settings(
             kernel=agent.kernel, arguments=agent.arguments or KernelArguments(),
         )
-        settings = deepcopy(settings)
+        try:
+            settings, batch_budget = prepare_model_execution_settings(
+                settings, model_budget, output_limit=1536,
+            )
+            input_bytes = len(history.serialize().encode("utf-8")) + 4096
+            if batch_budget.remaining_input() < input_bytes:
+                raise M365ProviderError(
+                    "model_context_full",
+                    "This evidence chunk exceeds the selected model's declared context. Use a larger-context model.",
+                )
+        except ModelTokenBudgetError as error:
+            raise M365ProviderError(error.code, error.public_message) from error
         settings.function_choice_behavior = None
-        if getattr(settings, "max_completion_tokens", None) is not None:
-            settings.max_completion_tokens = min(settings.max_completion_tokens, reserve)
-        elif hasattr(settings, "max_tokens"):
-            settings.max_tokens = min(getattr(settings, "max_tokens", None) or reserve, reserve)
         for key in ("tools", "tool_choice", "functions", "function_call"):
             settings.extension_data.pop(key, None)
+            if key in type(settings).model_fields:
+                setattr(settings, key, None)
+            if getattr(settings, "extra_body", None):
+                settings.extra_body.pop(key, None)
         results = await service.get_chat_message_contents(
             chat_history=history, settings=settings,
         )

@@ -3,6 +3,7 @@
 
 import json
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
@@ -15,34 +16,68 @@ from functions_m365_agent_continuation import configure_m365_agent_continuation
 from functions_m365_analysis_runtime import analyze_m365_memory
 from functions_m365_workflow_checkpoints import configure_m365_workflow_checkpoints
 from functions_m365_transport import M365ProviderError
-from functions_model_capabilities import resolve_model_token_limits
+from functions_model_capabilities import ModelTokenBudgetError, resolve_model_token_budget
+
+
+_model_context = ContextVar("m365_model_context", default=None)
 
 
 def _message_text(message):
+    if hasattr(message, "model_dump"):
+        message = message.model_dump(mode="json", exclude_none=True)
     if isinstance(message, Mapping):
         return json.dumps(dict(message), ensure_ascii=False, default=str)
     return str(message)
 
 
-def configure_m365_model_context(model, messages, *, instructions=""):
-    """Reserve declared model output and conservatively count the input envelope."""
-    context_limit, output_limit = resolve_model_token_limits(model)
-    g.m365_model_context_limit = context_limit
-    g.m365_model_output_limit = output_limit
-    g.m365_model_base_bytes = sum(
+def _has_uncounted_media(message):
+    if isinstance(message, Mapping):
+        items = message.get("items", message.get("content", ()))
+    else:
+        items = getattr(message, "items", ())
+    if not isinstance(items, (list, tuple)):
+        return False
+    return any(
+        (item.get("content_type") or item.get("type") if isinstance(item, Mapping) else getattr(item, "content_type", ""))
+        in ("image", "image_url", "input_image", "audio", "input_audio", "video", "file", "file_reference")
+        for item in items
+    )
+
+
+def configure_m365_model_context(model, messages, *, instructions="", tool_schemas=()):
+    """Bind a task-local budget to the complete text/tool envelope, not Flask's shared g."""
+    budget = resolve_model_token_budget(model)
+    messages = list(messages)
+    unsupported_media = any(_has_uncounted_media(message) for message in messages)
+    input_bytes = sum(
         len(_message_text(message).encode("utf-8")) + 256 for message in messages
-    ) + len(str(instructions or "").encode("utf-8")) + 4096
+    ) + len(str(instructions or "").encode("utf-8")) + len(
+        json.dumps(list(tool_schemas), ensure_ascii=False, default=str).encode("utf-8")
+    ) + 4096
+    return _model_context.set((budget, input_bytes, unsupported_media))
+
+
+def reset_m365_model_context(token):
+    _model_context.reset(token)
 
 
 def resolve_m365_model_room(context):
-    context_limit = getattr(g, "m365_model_context_limit", None)
-    output_limit = getattr(g, "m365_model_output_limit", None)
-    if not context_limit or not output_limit:
+    current = _model_context.get()
+    if current is None:
         raise M365ProviderError(
             "model_context_unavailable",
-            "This model needs declared context and output limits before file evidence can be added.",
+            "Select an agent with verified model token limits before adding file evidence.",
         )
-    return max(0, context_limit - output_limit - g.m365_model_base_bytes)
+    budget, input_bytes, unsupported_media = current
+    if unsupported_media:
+        raise M365ProviderError(
+            "model_input_estimate_unavailable",
+            "A safe file-evidence budget cannot be calculated for this multimodal history. Start a text-only conversation.",
+        )
+    try:
+        return budget.remaining_input(input_bytes)
+    except ModelTokenBudgetError as error:
+        raise M365ProviderError(error.code, error.public_message) from error
 
 
 def count_m365_context_tokens(text, context):
@@ -107,6 +142,7 @@ def configure_m365_file_runtime():
         memory_resolver=resolve_m365_memory,
         jobs_factory=lambda: cosmos_m365_execution_runs_container,
         model_context_setter=configure_m365_model_context,
+        model_context_reset=reset_m365_model_context,
     )
     configure_m365_retrieval(
         memory_resolver=resolve_m365_memory,

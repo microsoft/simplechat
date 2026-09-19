@@ -99,6 +99,7 @@ database migration, app-registration permission change, or workflow encryption
 key is required for interactive reconnect.
 
 Reconnecting alone does not resolve the screenshot's missing model-context
-limits. That retrieval configuration remains a separate follow-up; the
-application must not guess a model's capacity or bypass its file-context budget.
+limits. That separate follow-up is addressed by the
+[model catalog token-budget fix in 0.261.035](MODEL_CATALOG_TOKEN_BUDGET_FIX.md);
+the application does not guess a model's capacity or bypass its file-context budget.
 Azure inspection was read-only and this session did not deploy the application.

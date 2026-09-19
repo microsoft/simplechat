@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.034)
+# Microsoft 365 actions and conversation evidence (v0.261.035)
 
 Implemented in version: **0.261.029**
 
@@ -19,6 +19,10 @@ selected action or workflow authorization. See the
 Profile can explicitly renew interactive Microsoft 365 sign-in in **0.261.034**,
 independently of pending requests or workflow setup. See the
 [reconnect recovery fix](../fixes/M365_CHAT_RECONNECT_RECOVERY_FIX.md).
+
+Verified model token limits and selected-endpoint budget propagation were added
+in **0.261.035**. See the
+[model token-budget fix](../fixes/MODEL_CATALOG_TOKEN_BUDGET_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.
@@ -122,6 +126,21 @@ file-context tokens per logical request, additionally constrained by actual
 model room. Token estimates are conservative when a provider-specific tokenizer
 is unavailable. These windows trigger an analysis choice rather than silently
 declaring partial content fully analyzed.
+
+The selected model's budget comes from its model override, endpoint override,
+and verified catalog profile, resolved independently for each field. Shared
+context, independent maximum input, and maximum output are separate constraints.
+An explicitly configured Response Length is the generation allowance reserved
+for that request; when no request ceiling is configured, a documented model
+output maximum remains the conservative upper bound. A custom model with no
+published output maximum needs an explicit total-generation cap.
+
+For an arbitrarily named deployment, set `catalogModelId` to its actual
+published model ID and retain the correct `modelVersion`. Capacity overrides
+belong in Model Endpoints, not in Microsoft 365 connection settings. Unknown
+limits and visible-only output allowances do not trigger reconnect: they produce
+a model-budget configuration error instead. Image/audio/video history without a
+verified token estimate requires a text-only conversation for file evidence.
 
 Approved deeper analysis uses a separate writable analysis run over immutable
 captured evidence. Each call processes a bounded batch, preserving full

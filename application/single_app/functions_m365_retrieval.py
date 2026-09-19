@@ -1443,6 +1443,11 @@ class M365FileOperations:
         result = await pending
         if not isinstance(result, dict) or not result:
             raise M365ProviderError("invalid_analysis_result", "The analysis callback did not return a bounded progress result.")
+        if _text_tokens(json.dumps(result, ensure_ascii=False), context) > _model_room(context):
+            raise M365ProviderError(
+                "model_context_full",
+                "The analysis response exceeds the remaining model room. Reduce the conversation history or use a larger-context model. Retained evidence and existing analysis checkpoints remain available.",
+            )
         return result
 
 

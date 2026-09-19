@@ -33,6 +33,12 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_capabilities import (
+    ModelTokenBudgetError,
+    project_model_budget_metadata,
+    resolve_model_token_budget,
+)
+from functions_model_budget_runtime import build_model_budget_arguments
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -170,6 +176,45 @@ def get_agent_prompt_settings_config(agent_config, settings=None):
     if (settings or {}).get("max_auto_invoke_attempts") is not None:
         prompt_settings_config["max_auto_invoke_attempts"] = (settings or {}).get("max_auto_invoke_attempts")
     return prompt_settings_config
+
+
+def build_agent_model_budget(agent_config, settings=None):
+    """Bind token metadata to the same authorized endpoint/model used by the service."""
+    model = agent_config.get("model_budget_model")
+    endpoint = agent_config.get("model_budget_endpoint") or {
+        "provider": agent_config.get("model_provider") or "aoai",
+    }
+    if model is None:
+        model = {"deploymentName": agent_config.get("deployment")}
+        global_endpoint = (settings or {}).get("azure_openai_gpt_endpoint")
+        for candidate in ((settings or {}).get("gpt_model") or {}).get("selected") or ():
+            if (
+                candidate.get("deploymentName") == agent_config.get("deployment")
+                and (candidate.get("endpoint") or global_endpoint) == agent_config.get("endpoint")
+            ):
+                model = project_model_budget_metadata(candidate)
+                break
+    request_limit = agent_config.get("max_completion_tokens")
+    if request_limit in (None, "", -1, 0):
+        request_limit = model.get("responseLength")
+    runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
+    protocol = "messages" if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else "chat_completions"
+    provider = endpoint.get("provider")
+    if agent_config.get("api_type") == "azure_openai":
+        provider = "azure"
+    return resolve_model_token_budget(
+        model, endpoint, provider=provider, protocol=protocol,
+        request_output_limit=request_limit,
+    )
+
+
+def build_agent_budget_arguments(chat_service, agent_config, budget):
+    model = agent_config.get("model_budget_model") or {}
+    reasoning_effort = (
+        agent_config.get("reasoning_effort")
+        or model.get("reasoning_effort") or model.get("reasoningEffort")
+    )
+    return build_model_budget_arguments(chat_service, budget, reasoning_effort=reasoning_effort)
 
 
 def resolve_agent_endpoint_protocol(agent_config):
@@ -622,6 +667,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "deployment": deployment,
             "auth": auth,
             "model": model_cfg,
+            "model_budget_model": project_model_budget_metadata(model_cfg),
+            "model_budget_endpoint": project_model_budget_metadata(endpoint_cfg),
         }
 
     def resolve_multi_endpoint_agent_config():
@@ -882,6 +929,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     "model_id": agent.get("model_id", ""),
                     "model_provider": provider,
                     "auth": auth,
+                    "model_budget_model": multi_endpoint_config["model_budget_model"],
+                    "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
+                    "reasoning_effort": agent.get("reasoning_effort"),
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -913,6 +963,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 "other_settings": other_settings,
                 "token_provider": token_provider,
             }
+        except ModelTokenBudgetError:
+            raise
         except Exception as e:
             log_event(f"[SK_LOADER] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
 
@@ -963,6 +1015,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "model_id": agent.get("model_id", ""),
             "model_provider": provider,
             "auth": auth,
+            "model_budget_model": multi_endpoint_config["model_budget_model"],
+            "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
+            "reasoning_effort": agent.get("reasoning_effort"),
         }
         return result
 
@@ -1910,6 +1965,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         context_obj.redis_client = redis_client
     agent_objs = {}
     agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id)
+    agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
     agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
@@ -2112,6 +2168,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 )
 
         try:
+            model_budget = build_agent_model_budget(agent_config, settings)
             kwargs = {
                 "name": agent_config["name"],
                 "instructions": agent_config["instructions"],
@@ -2124,6 +2181,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
+                "model_token_budget": model_budget,
+                "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
                 "function_choice_behavior": FunctionChoiceBehavior.Auto(
                     maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
                 )
@@ -3035,6 +3094,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 orchestrator_cfg = agent_cfg
                 continue
             agent_config = resolve_agent_config(agent_cfg, settings)
+            agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
             chat_service = None
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
             agent_has_auth = bool(agent_config.get("key")) or bool(agent_config.get("token_provider"))
@@ -3057,10 +3117,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id, settings)
-                        if should_apply_prompt_settings(orchestrator_config, settings):
-                            if orchestrator_config.get('max_completion_tokens', -1) > 0:
-                                print(f"[SK_LOADER] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(orchestrator_config, settings))
+                        if should_apply_prompt_settings(agent_config, settings):
+                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                         if chat_service:
                             kernel.add_service(chat_service)
                 except Exception as e:
@@ -3071,6 +3129,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         if agent_config.get('max_completion_tokens', -1) > 0:
                             print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
                         chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+                    model_budget = build_agent_model_budget(agent_config, settings)
                     kwargs = {
                         "name": agent_config["name"],
                         "instructions": agent_config["instructions"],
@@ -3083,6 +3142,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
                         "api_version": agent_config["api_version"],
+                        "model_token_budget": model_budget,
+                        "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
                         "function_choice_behavior": FunctionChoiceBehavior.Auto(
                             maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
                         )
@@ -3157,10 +3218,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id, settings)
-                        if should_apply_prompt_settings(agent_config, settings):
-                            if agent_config.get('max_completion_tokens', -1) > 0:
-                                print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+                        if should_apply_prompt_settings(orchestrator_config, settings):
+                            chat_service = set_prompt_settings_for_agent(
+                                chat_service, get_agent_prompt_settings_config(orchestrator_config, settings),
+                            )
                         if chat_service:
                             kernel.add_service(chat_service)
                 if not chat_service:
