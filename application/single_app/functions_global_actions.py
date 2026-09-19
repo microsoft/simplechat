@@ -147,14 +147,13 @@ def save_global_action(action_data, user_id=None):
         now = datetime.utcnow().isoformat()
 
         # Check if this is a new action or an update to preserve created_by/created_at
-        existing_action = None
         try:
             existing_action = cosmos_global_actions_container.read_item(
                 item=action_data['id'],
                 partition_key=action_data['id']
             )
         except exceptions.CosmosResourceNotFoundError:
-            pass
+            existing_action = None
 
         if existing_action:
             action_data['created_by'] = existing_action.get('created_by') or user_id

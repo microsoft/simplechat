@@ -31,7 +31,6 @@ from functions_keyvault import (
     keyvault_plugin_save_helper,
     redact_plugin_secret_values,
 )
-from functions_settings import get_settings, get_user_settings
 from functions_legacy_action_management import (
     LEGACY_ACTION_PREFIX,
     LegacyActionConflictError,
@@ -90,7 +89,7 @@ def _clean_action(action, user_id, return_type):
     cleaned = bind_action_origin(cleaned, "personal", user_id)
     if return_type == SecretReturnType.VALUE and cleaned["type"] == "mcp":
         ensure_action_type_access("governance_user_actions", user_id, "mcp", "personal")
-        authorize_scoped_mcp_secret_read(cleaned, get_settings())
+        authorize_scoped_mcp_secret_read(cleaned, user_settings_service.get_settings())
     cleaned = keyvault_plugin_get_helper(
         cleaned, scope_value=user_id, scope="user", return_type=return_type
     )
@@ -268,7 +267,7 @@ def _save_personal_action(user_id, action_data, enforce_governance=True, migrati
 
         action_data = bind_action_origin(action_data, "personal", user_id)
         if action_data["type"] == "mcp":
-            validate_scoped_mcp_action(action_data, user_id, get_settings())
+            validate_scoped_mcp_action(action_data, user_id, user_settings_service.get_settings())
         if migration_snapshot is not None:
             validate_action_configuration(action_data)
         validate_action_identity_reference(
@@ -351,7 +350,7 @@ def delete_personal_action(user_id, action_id):
 def _read_legacy_settings_document(user_id):
     # The settings accessor remains the object-level authorization boundary.
     # Its request cache cannot prove that a source is unchanged before deletion.
-    get_user_settings(user_id)
+    user_settings_service.get_user_settings(user_id)
     try:
         document = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
     except exceptions.CosmosResourceNotFoundError:
@@ -674,7 +673,7 @@ def _prepare_personal_action_configuration(user_id, incoming):
     ensure_action_type_access("governance_user_actions", user_id, payload["type"], "personal")
     validate_action_configuration(payload)
     if payload["type"] == "mcp":
-        validate_scoped_mcp_action(payload, user_id, get_settings())
+        validate_scoped_mcp_action(payload, user_id, user_settings_service.get_settings())
     validate_action_identity_reference(payload, WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id)
     return payload
 

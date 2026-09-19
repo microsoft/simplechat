@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional regression tests for safe retired MCP management and action migration.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
+Global creation and lookup-failure regression coverage added in: 0.261.030
 
 Uses real scoped persistence, manifest normalization, schema validation, locators,
 and migration routes with in-memory storage and mocked credential/policy boundaries.
@@ -860,6 +861,38 @@ class LegacyMcpManagementTests(unittest.TestCase):
             enabled = state.global_service.update_global_action_enabled("remote-one", False, OWNER)
             self.assert_origin(state, enabled, "global", "global")
 
+    def test_global_save_creates_a_missing_action_with_default_metadata(self):
+        with action_services() as state:
+            created = state.global_service.save_global_action(remote(), OWNER)
+            self.assertEqual(created["created_by"], OWNER)
+            self.assertEqual(created["modified_by"], OWNER)
+            self.assertEqual(created["created_at"], created["modified_at"])
+            self.assertTrue(created["is_enabled"])
+            self.assertEqual(len(state.global_actions.writes), 1)
+            self.assert_origin(state, created, "global", "global")
+
+    def test_global_save_preserves_existing_creation_metadata_and_disabled_state(self):
+        with action_services() as state:
+            state.global_actions.seed(dict(
+                remote(), created_by="original-admin", created_at="2026-01-01T00:00:00",
+                is_enabled=False,
+            ))
+            updated = state.global_service.save_global_action(remote(), OWNER)
+            self.assertEqual(updated["created_by"], "original-admin")
+            self.assertEqual(updated["created_at"], "2026-01-01T00:00:00")
+            self.assertEqual(updated["modified_by"], OWNER)
+            self.assertFalse(updated["is_enabled"])
+            self.assertEqual(len(state.global_actions.writes), 1)
+
+    def test_global_save_propagates_lookup_failures_without_writes(self):
+        for status_code in (403, 429, 503):
+            with self.subTest(status_code=status_code), action_services() as state:
+                with patch.object(state.global_actions, "read_item", side_effect=StoreError(status_code)):
+                    with self.assertRaises(StoreError):
+                        state.global_service.save_global_action(remote(), OWNER)
+                self.assertEqual(state.global_actions.writes, [])
+                self.assertEqual(state.secret_saves, [])
+
     def test_destination_and_preconfiguration_denials_happen_before_secret_writes(self):
         for flag in ("deny_destination", "deny_preconfiguration"):
             with self.subTest(flag=flag), action_services() as state:
@@ -1179,7 +1212,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
         originals = [retired("one"), retired(None), retired(None)]
         with action_services(originals) as state:
             state.denied_types.add("mcp")
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 prepared = state.personal_service.prepare_legacy_personal_actions_update(OWNER, [])
             self.assertEqual(prepared["plugins"], originals)
             self.assertFalse(prepared["has_imports"])
@@ -1191,7 +1224,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
         original = retired()
         with action_services([original]) as state:
             state.denied_types.add("mcp")
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 prepared = state.personal_service.prepare_legacy_action_settings_update(
                     user_id=OWNER, incoming_plugins=[]
                 )
@@ -1239,7 +1272,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
             incoming.update({"is_global": True, "scope_id": "forged", "runtime_user_id": "admin"})
             incoming["additionalFields"]["command"] = "ignored-remote-process-field"
             unchanged_input = deepcopy(incoming)
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 prepared = state.personal_service.prepare_legacy_personal_actions_update(OWNER, [incoming])
             self.assertTrue(prepared["has_imports"])
             self.assertTrue(prepared["changed"])
@@ -1338,7 +1371,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
         first["auth"] = {"type": "key", "key": "private-first-secret"}
         second["auth"] = {"type": "key", "key": "private-second-secret"}
         with action_services() as state:
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 with self.assertRaises(state.management.LegacyActionSecretConflictError):
                     state.personal_service.prepare_legacy_personal_actions_update(OWNER, [first, second])
             self.assertEqual(state.personal.writes + state.source.writes, [])
@@ -1351,7 +1384,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
             replacement = remote("forged-id", "new_name")
             replacement["auth"] = {"type": "key", "key": "private-replacement-secret"}
             replacement["additionalFields"]["auth_method"] = "bearer"
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 prepared = state.personal_service.prepare_legacy_personal_action_reconfiguration(
                     OWNER, snapshot.locator, replacement
                 )
@@ -1366,7 +1399,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
         original = retired("original-id")
         with action_services([original]) as state:
             snapshot = state.management.legacy_action_snapshots(OWNER, [original])[0]
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 prepared = state.personal_service.validate_legacy_personal_action_reconfiguration(
                     user_id=OWNER, locator=snapshot.locator, replacement=remote("ignored-id")
                 )
@@ -1396,7 +1429,7 @@ class LegacyMcpManagementTests(unittest.TestCase):
             replacement = remote("ignored-id", "same_name")
             replacement["auth"] = {"type": "key", "key": "private-new-secret"}
             state.personal.seed(dict(remote("other-id", "same-name"), user_id=OWNER))
-            with patch.object(state.personal_service, "get_user_settings", side_effect=_blocked):
+            with patch.object(state.personal_service.user_settings_service, "get_user_settings", side_effect=_blocked):
                 with self.assertRaises(state.management.LegacyActionSecretConflictError):
                     state.personal_service.prepare_legacy_personal_action_reconfiguration(
                         OWNER, snapshot.locator, replacement

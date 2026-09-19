@@ -100,13 +100,19 @@ class McpActionOrigin:
 
 
 class ScopedActionManifest(dict):
-    """A mapping whose server-only origin is not part of its JSON payload."""
+    """Compare JSON payloads, keeping server-only authorization origin separate."""
 
     def __init__(self, manifest, origin):
         if not isinstance(origin, McpActionOrigin):
             raise ValueError("Action origin is required.")
         super().__init__(manifest)
         self._action_origin = origin
+
+    def __eq__(self, other):
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other):
+        return dict.__ne__(self, other)
 
     @property
     def action_origin(self):

@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for remote-only MCP configuration and manifest boundaries.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
+Explicit payload equality regression coverage added in: 0.261.030
 
 Exercises real normalization and schema validation without cloud, credentials,
 or native MCP processes. Runtime authorization and legacy management have
@@ -27,6 +28,7 @@ from functions_action_manifest import (
     McpActionOrigin,
     McpConfigurationError,
     McpStdioRemovedError,
+    ScopedActionManifest,
     bind_action_origin,
     copy_action_manifest,
     get_action_execution_status,
@@ -230,6 +232,60 @@ class McpStdioRemovalTests(unittest.TestCase):
         self.assertEqual(status["code"], "mcp_stdio_removed")
         self.assertNotIn("never-run", json.dumps(status))
         self.presets.normalize_mcp_preset_id.assert_not_called()
+
+    def test_manifest_equality_preserves_plain_dict_and_json_round_trips(self):
+        manifest = bind_action_origin(remote_manifest(), "personal", "owner")
+        plain = dict(manifest)
+        decoded = json.loads(json.dumps(manifest))
+        decoded_origin = get_action_origin(decoded)
+        self.assertIsNone(decoded_origin)
+        for other in (plain, decoded):
+            for left, right in ((manifest, other), (other, manifest)):
+                with self.subTest(left_type=type(left).__name__, right_type=type(right).__name__):
+                    equality = left == right
+                    inequality = left != right
+                    self.assertIs(equality, True)
+                    self.assertIs(inequality, False)
+
+    def test_manifest_equality_does_not_conflate_authorization_origins(self):
+        payload = remote_manifest()
+        personal_origin = McpActionOrigin("personal", "owner", "action")
+        global_origin = McpActionOrigin("global", "global", "action")
+        personal = ScopedActionManifest(payload, personal_origin)
+        global_action = ScopedActionManifest(payload, global_origin)
+        actual_personal_origin = get_action_origin(personal)
+        actual_global_origin = get_action_origin(global_action)
+        self.assertIs(actual_personal_origin, personal_origin)
+        self.assertIs(actual_global_origin, global_origin)
+        self.assertNotEqual(actual_personal_origin, actual_global_origin)
+        for left, right in ((personal, global_action), (global_action, personal)):
+            equality = left == right
+            inequality = left != right
+            self.assertIs(equality, True)
+            self.assertIs(inequality, False)
+
+    def test_manifest_equality_detects_payload_changes(self):
+        origin = McpActionOrigin("personal", "owner", "action")
+        manifest = ScopedActionManifest(remote_manifest(), origin)
+        changed = dict(manifest, endpoint="https://other.example.test/mcp")
+        for other in (changed, ScopedActionManifest(changed, origin)):
+            for left, right in ((manifest, other), (other, manifest)):
+                equality = left == right
+                inequality = left != right
+                self.assertIs(equality, False)
+                self.assertIs(inequality, True)
+
+    def test_manifest_comparison_dispatch_and_unhashability_match_dict(self):
+        manifest = ScopedActionManifest(remote_manifest(), McpActionOrigin("personal", "owner"))
+        unrelated = object()
+        equality = manifest.__eq__(unrelated)
+        inequality = manifest.__ne__(unrelated)
+        self.assertIs(equality, NotImplemented)
+        self.assertIs(inequality, NotImplemented)
+        self.assertNotEqual(manifest, unrelated)
+        self.assertNotEqual(unrelated, manifest)
+        with self.assertRaises(TypeError):
+            hash(manifest)
 
     def test_configuration_and_authorization_errors_are_non_retryable(self):
         cases = (

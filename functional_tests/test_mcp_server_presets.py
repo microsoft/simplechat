@@ -1,7 +1,7 @@
 # test_mcp_server_presets.py
 """
 Offline functional tests for declarative MCP server presets.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.250.062
 Remote-only compatibility implemented in: 0.261.029
 
@@ -202,7 +202,7 @@ class McpServerPresetTests(unittest.TestCase):
         definitions = {preset["id"]: preset for preset in (default_stdio, only_stdio, no_transports, contradictory, malformed, valid)}
         with _virtual_custom_catalog(self.catalog, definitions):
             loaded = {preset["id"]: preset for preset in self.catalog.load_mcp_server_presets()}
-        self.assertTrue({"generic", "splunk", "still_available"} <= loaded.keys())
+        self.assertLessEqual({"generic", "splunk", "still_available"}, loaded.keys())
         for preset_id in definitions.keys() - {"still_available"}:
             self.assertNotIn(preset_id, loaded)
         messages = "\n".join(call.args[0] for call in self.logs.call_args_list)

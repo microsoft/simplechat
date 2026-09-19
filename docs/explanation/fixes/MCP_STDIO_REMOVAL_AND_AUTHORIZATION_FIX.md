@@ -1,10 +1,10 @@
 # MCP Stdio Removal and Authorization Fix
 
-Current documentation version: **0.261.029**
+Current documentation version: **0.261.030**
 
 Fixed in version: **0.261.029**
 
-Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.030`. The transport and authorization fix was implemented in `0.261.029`; the review follow-up below was implemented in `0.261.030`.
 
 ## Issue and Root Cause
 
@@ -80,7 +80,7 @@ See [MCP Server Presets](../features/MCP_SERVER_PRESETS.md) and [MCP Server Prec
 | `route_backend_users.py` | Legacy settings import preflight and sanitized, management-only action views in user-settings responses. |
 | MCP schemas and preset definitions, `functions_mcp_presets.py` | Remote-only configuration and older remote preset compatibility. |
 | Shared action modal and workspace action/migration JavaScript | Unsupported-state presentation and explicit owner choices. |
-| `application\single_app\config.py` | Application version update to `0.261.029`; no deployer version change. |
+| `application\single_app\config.py` | Application version update to `0.261.030`; no deployer version change. |
 
 Application paths above are relative to `application\single_app` unless written in full. Semantic Kernel remains a dependency for remote MCP.
 
@@ -92,7 +92,7 @@ Route policy, Swagger security decorators, documentation coverage, and documenta
 
 | Suite | Coverage |
 | --- | --- |
-| `functional_tests\test_mcp_stdio_removal.py` | Universal retirement without credential/connector activity, remote transport preservation, and non-retryable configuration failures. |
+| `functional_tests\test_mcp_stdio_removal.py` | Universal retirement without credential/connector activity, remote transport preservation, non-retryable configuration failures, and payload equality independent of authorization provenance. |
 | `functional_tests\test_mcp_action_route_security.py` | MCP authorization and retirement checks in selected actual route/helper bodies, using real Flask request dispatch with mocked I/O. |
 | `functional_tests\test_mcp_user_settings_ingestion.py` | Safe settings responses, legacy action imports, and validation before preference or active-workspace writes. |
 | `functional_tests\test_mcp_authorization_context.py` | Consistent MCP classification, trusted scope, current user/workflow identity and settings, cached use, and environment policy precedence. |
@@ -128,3 +128,13 @@ python -m pytest .\ui_tests\test_workspace_mcp_action_modal.py
 ```
 
 Before this change, documentation offered stdio configuration for privileged/global actions. After this change, no role or scope can use it; users see an explicit unsupported state and retain control over reconfiguration or deletion. Remote actions keep their supported capabilities while authorization follows current context and the deployment policy floor.
+
+## Review Follow-Up in 0.261.030
+
+`ScopedActionManifest` now explicitly defines dictionary-style equality and inequality. Equal JSON payloads remain equal even when their server-only origins differ, preserving unchanged management-view round trips. Equality is not an authorization check: execution continues to require the independently stored origin returned by `get_action_origin`, which plain or JSON-decoded dictionaries cannot supply.
+
+Personal action persistence uses module-qualified settings access consistently, including the object-level legacy-read authorization boundary. Global action creation explicitly handles an absent record while preserving existing creation metadata and disabled state on updates; other storage errors still propagate before credential or database writes. The preset regression uses a precise subset assertion for useful failure diagnostics.
+
+Focused regressions cover both operand orders, distinct authorization origins, changed payloads, `NotImplemented` comparison dispatch, dictionary unhashability, global creation/update metadata, and non-not-found lookup failures. The existing legacy-management and settings-ingestion fixtures patch the settings module directly so their no-write and authorization checks continue to exercise the production boundary.
+
+The eight selected retirement, preset, legacy-management, settings-ingestion, bulk-save, runtime-authorization, route-security, and fresh-process import suites passed in normal and optimized Python: **161 tests and 266 subtests in each run**.

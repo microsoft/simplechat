@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for the legacy action user-settings request boundary.
-Version: 0.261.029
+Version: 0.261.030
 Implemented in: 0.261.029
 
 Executes the actual route and sanitizer with Flask request dispatch and isolated
@@ -118,7 +118,7 @@ class McpUserSettingsIngestionTests(unittest.TestCase):
                 **vars(state.management),
                 "get_current_user_id": lambda: state.actor,
                 "get_settings": lambda: deepcopy(state.settings),
-                "get_user_settings": state.personal_service.get_user_settings,
+                "get_user_settings": state.personal_service.user_settings_service.get_user_settings,
             }
             previous_callback = self.update_settings.side_effect
             self.update_settings.side_effect = state.personal_service.user_settings_service.update_user_settings
