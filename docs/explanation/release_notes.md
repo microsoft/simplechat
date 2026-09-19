@@ -12,6 +12,31 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The access-denied state now identifies the current account using safe session claims while suppressing resource-tenant `#EXT#` UPNs, helping users distinguish native Azure Government and synchronized commercial identities.
     *   Improved the action's light- and dark-theme contrast without changing tenant authority, app-role authorization, Easy Auth configuration, or login-hint behavior.
     *   (Ref: `route_frontend_authentication.py`, `functions_authentication.py`, access-denied landing page, cross-cloud Microsoft Entra B2B sign-in)
+### **(v0.261.028)**
+
+Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
+
+#### Bug Fixes
+
+*   **Credential-Aware Cosmos Deployment Checks**
+    *   Managed-identity deployments now use the deployment runner's tenant-scoped Entra credential instead of requiring Cosmos keys. Key-mode deployments report when local authentication is disabled.
+    *   Authentication and network failures no longer trigger automatic firewall changes or misleading propagation waits. Windows environment lookups and POSIX role operations target the selected deployment explicitly.
+    *   **Deployment requirement:** The runner must already have the required data-plane permissions and network access. Post-configuration does not open firewalls, enable key authentication, or create policy exemptions.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployers/azure.yaml`, `deployment_cosmos.py`, `cosmosDb-postDeployPerms.sh`)
+
+*   **Safe Post-Deployment Settings Publication**
+    *   Post-configuration uses conflict-checked Cosmos writes and the application's shared Redis publication protocol, preserving concurrent unrelated settings changes and reporting publication failures instead of claiming success.
+    *   Consolidated duplicate Redis configuration blocks and preserved external Redis settings when no cache is provisioned. Equivalent connection settings can be normalized; changing an active cache endpoint or authentication mode requires a planned migration.
+    *   **Deployment requirement:** When Redis is enabled, the runner needs Redis data-plane access as well as network connectivity. The service restarts only after post-configuration succeeds.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `postconfig.py`, `deployment_configuration.py`, `app_settings_store.py`)
+
+#### New Features
+
+*   **Automatic Missing Search Index Creation**
+    *   Post-configuration creates missing personal, group, and public Search indexes from the same JSON schemas used by the admin setup controls.
+    *   Existing indexes and documents are left unchanged. Authorization and service failures stop initialization rather than being treated as missing indexes; concurrent creation is verified before continuing.
+    *   Included in deployer version **1.0.31**. Existing-index schema upgrades remain administrator-managed operations.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployment_configuration.py`, `application/single_app/static/json/ai_search-index-*.json`, [deployment prerequisites](../reference/deploy/azd-cli_deploy.md#post-provision-access))
 
 ### **(v0.261.027)**
 

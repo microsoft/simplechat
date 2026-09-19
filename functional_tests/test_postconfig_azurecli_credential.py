@@ -2,12 +2,11 @@
 # test_postconfig_azurecli_credential.py
 """
 Functional test for postconfig deployment credential usage.
-Version: 0.237.053
+Version: 0.261.028
 Implemented in: 0.237.053
 
-This test ensures the AZD post-deployment configuration script supports a
-deployment-time Cosmos DB key fallback while still using Azure CLI credentials
-for other Azure resource access such as Key Vault.
+This test ensures postconfig uses tenant-scoped Azure CLI credentials and the
+shared Cosmos authentication helper rather than inheriting a stale Cosmos key.
 """
 
 from pathlib import Path
@@ -35,16 +34,14 @@ def test_postconfig_uses_repeatable_deployment_credentials() -> bool:
     content = POSTCONFIG.read_text(encoding="utf-8")
 
     require_contains(content, "from azure.identity import AzureCliCredential", "Azure CLI credential import")
-    require_contains(content, "credential = AzureCliCredential()", "Azure CLI credential initialization")
-    require_contains(content, "cosmosKey = os.getenv(\"var_cosmosDb_key\")", "deployment Cosmos key input")
-    require_contains(content, "if cosmosKey:", "Cosmos key fallback branch")
-    require_contains(content, "client = CosmosClient(cosmosEndpoint, cosmosKey)", "Cosmos key client initialization")
-    require_contains(content, "credential.get_token(\"https://cosmos.azure.com/.default\")", "Azure CLI token fallback")
+    require_contains(content, 'credential = AzureCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"])', "tenant-scoped CLI identity")
+    require_contains(content, "client = create_deployment_cosmos_client()", "shared credential-aware Cosmos check")
+    require_not_contains(content, 'os.getenv("var_cosmosDb_key")', "stale key precedence")
     require_not_contains(content, "DefaultAzureCredential()", "DefaultAzureCredential initialization")
 
     print("✅ postconfig imports AzureCliCredential")
-    print("✅ postconfig accepts a deployment Cosmos DB key fallback")
-    print("✅ postconfig retains Azure CLI credential fallback for Cosmos and Key Vault")
+    print("✅ postconfig uses explicit deployment authentication selection")
+    print("✅ postconfig scopes the Azure CLI credential to the deployment tenant")
     print("✅ postconfig no longer initializes DefaultAzureCredential")
     return True
 
