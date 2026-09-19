@@ -57,9 +57,10 @@ visible to its members. Turning one on does not turn on the other.
 | Enable Group Workflows | Lets permitted members create, manage and run workflows from group workspaces. Owners and Admins may author them unless Workspaces restricts group agent, action and workflow management to Owners. | Off | `allow_group_workflows` |
 | Require Group Assignment to Use Workflow | Narrows group workflows to an explicit allow list instead of every group. Groups outside the list lose the capability. | Off | `require_group_assignment_for_group_workflows` |
 | Assigned Groups | The groups that may use group workflows while assignment is required. Ignored when it is not. | Empty list | `group_workflow_allowed_group_ids` |
-| Workflow Agent Action Limit | Caps the automatic tool and action calls an agent may make in one workflow run, which is what stops a run from looping. Large document sets need a higher cap. Values above 100 are capacity-sensitive: enable Cosmos DB throughput automation and watch Azure OpenAI throttling, App Service CPU and memory, and downstream latency. | 60 | `workflow_max_auto_invoke_attempts` |
+| Workflow Agent Action Limit | Caps the automatic tool and action calls an agent may make in one workflow run, independently of authored For each or Repeat blocks. Large document sets may need a higher cap. Values above 100 are capacity-sensitive: enable Cosmos DB throughput automation and watch Azure OpenAI throttling, App Service CPU and memory, and downstream latency. | 60 | `workflow_max_auto_invoke_attempts` |
 | Workflow Task Limit | Caps the ordered instruction tasks a single workflow may contain. Supported range is 1–100. | 50 | `workflow_max_tasks` |
 | Workflow Loop Item Limit | Bounds the actual per-item body visits in a For each block, not the number of documents that may be searched. A collection above the effective limit must be narrowed before its body can run; it is never silently trimmed. | 500 | `workflow_max_loop_items`; supported range 1-5,000; applies to new runs |
+| Workflow Repeat Iteration Limit | Bounds one automatic Repeat until batch, including its first round. Authors must choose an explicit per-block maximum; a new run above this ceiling is rejected rather than shortened. | 25 | `workflow_max_repeat_iterations`; supported range 1-1,000; new runs only; active runs and manual continuation retain the admitted policy |
 
 The action and task limits apply to personal and group runs alike, so they stay
 in effect whichever capability is enabled.
@@ -121,6 +122,32 @@ is no cumulative run-token/spend cap in this slice.
 See [Serial For each and exact Collect](../explanation/features/WORKFLOW_FOR_EACH_COLLECT.md)
 for retained-data behavior, partial coverage, and inspection.
 
+### Repeat batches and manual continuation
+
+Version **0.261.120** adds **Repeat until** to the durable V2 List editor.
+Its separate setting limits automatic rounds, not selected document counts.
+The value 25 is the administrator default, never an implicit authored block
+maximum. A saved workflow above a newly lowered ceiling stays unchanged, but
+cannot start a new run until its authored maximum or administrator policy is
+deliberately adjusted.
+
+When the condition remains false at the block's maximum, the run pauses with
+its saved state and earlier rounds retained. An authorized person can explicitly
+grant another batch of the same frozen size. Changing this administrator
+setting cannot enlarge an active run, and ordinary Resume cannot grant a batch.
+
+Manual continuation resets only batch usage. It preserves lifetime round
+numbers, the admitted execution budget (at most 5,000), and the original elapsed
+deadline (at most 86,400 seconds, including the time waiting for a person).
+Remaining global budgets can prevent the grant or stop a later round before
+the batch allowance is used.
+
+The run retains bounded exhaustion and continuation counters/audit records.
+Control Center personal-user monitoring, group monitoring, and a dedicated
+**Workflow Monitoring** section are an approved future follow-up, **not
+implemented here**. This setting adds no monitoring role or cross-run access.
+See [Repeat until](../explanation/features/WORKFLOW_REPEAT_UNTIL.md).
+
 ## Common tasks
 
 ### Publication completion
@@ -158,6 +185,8 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | A group has no Workflows section | Group workflows are off, or assignment is required and the group is not assigned. | Check Enable Group Workflows, then add the group under Assigned Groups. |
 | A workflow run stops before its last task | The run hit the agent action limit. | Raise Workflow Agent Action Limit, and review capacity before going above 100. |
 | A workflow rejects a new task | The workflow already holds the maximum number of tasks. | Raise Workflow Task Limit, or split the work across two workflows. |
+| A saved Repeat workflow cannot start a new run | Its explicit block maximum exceeds the current Repeat ceiling. | Deliberately reduce the authored maximum or adjust Workflow Repeat Iteration Limit; the app does not silently clamp it. |
+| Repeat pauses with its condition unmet | The automatic batch ended, or a separate global budget blocked progress. | Inspect the gate and remaining budgets. Only a Repeat-limit gate can receive an explicit same-sized manual continuation; global budget exhaustion cannot be reset. |
 
 ## Related
 

@@ -1,8 +1,10 @@
 # workflow_admin_limits.py
 """
-Closed Classic/V2 fixtures for the production workflow loop-limit settings field.
-Version: 0.261.117
+Closed Classic/V2 fixtures for production For-each and Repeat policy fields.
+Version: 0.261.120
 Implemented in: 0.261.117
+
+Repeat-until policy coverage was added in 0.261.120.
 """
 
 import copy

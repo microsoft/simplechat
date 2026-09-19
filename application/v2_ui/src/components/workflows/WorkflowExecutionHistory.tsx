@@ -11,6 +11,8 @@ import {
     fetchWorkflowExecutionProvenancePage,
     fetchWorkflowExecutionsPage,
     fetchWorkflowLoopItemsPage,
+    fetchWorkflowRepeatIterationsPage,
+    fetchWorkflowRepeatStatePage,
     fetchWorkflowRuntimeDecisionsPage,
     workflowReportingSummary,
     type WorkflowExecutionAttemptRecord,
@@ -18,9 +20,10 @@ import {
     type WorkflowExecutionPage,
     type WorkflowExecutionRecord,
     type WorkflowRuntimeDecisionRecord,
-    type WorkflowLoopItemRecord,
+    type WorkflowRepeatIterationRecord,
 } from '../../lib/workflowExecutionHistory';
 import {
+    formatWorkflowIterationPath,
     workflowErrorMessage,
     type WorkflowConsumedInput,
     type WorkflowIterationFrame,
@@ -33,6 +36,8 @@ import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
 import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
+import { WorkflowRepeatProgress } from './WorkflowRepeatProgress';
+import { isRecord } from '../../lib/workspaceAuthoring';
 
 interface PagedState<T> {
     items: T[];
@@ -101,17 +106,7 @@ function validationTone(value: WorkflowValidationResult | undefined): 'ok' | 'wa
 }
 
 function formatIterationPath(path: WorkflowIterationFrame[] | undefined): string {
-    if (!Array.isArray(path) || !path.length) {
-        return '';
-    }
-    return path.map((frame, index) => {
-        const loop = text(frame.loop_id) || `region ${index + 1}`;
-        const labels = [
-            text(frame.item_id) ? `item ${text(frame.item_id)}` : '',
-            Number.isFinite(Number(frame.index)) ? `index ${Number(frame.index)}` : '',
-        ].filter(Boolean);
-        return labels.length ? `${loop} (${labels.join(', ')})` : loop;
-    }).join(' / ');
+    return formatWorkflowIterationPath(path);
 }
 
 function resultReferenceSummary(reference: WorkflowResultReference | undefined): string {
@@ -158,6 +153,8 @@ function decisionSummary(decision: WorkflowExecutionDecisionPreview | WorkflowRu
         text(decision.target?.exit_region_id) ? `exit ${text(decision.target?.exit_region_id)}` : '',
         text(decision.exit_region_id) ? `exit ${text(decision.exit_region_id)}` : '',
         text(decision.reason_code) ? `reason ${text(decision.reason_code)}` : '',
+        typeof decision.condition_result === 'boolean' ? `stop condition ${decision.condition_result}` : '',
+        text(decision.outcome) ? `outcome ${text(decision.outcome)}` : '',
     ].filter(Boolean);
     return parts.join(' · ');
 }
@@ -310,6 +307,18 @@ function DetailLine({ label, children }: { label: string; children: ReactNode })
     );
 }
 
+function CoverageDetails({ coverage, label = 'Collection coverage' }: { coverage?: Record<string, unknown>; label?: string }) {
+    if (!coverage) return null;
+    return <div aria-label={label} className="text-xs text-text-3">
+        {Object.entries(coverage).filter(([key, value]) =>
+            ['complete', 'status', 'total', 'completed', 'completed_empty', 'skipped', 'failed', 'pending', 'missing',
+                'item_count', 'record_count', 'total_items', 'completed_items', 'skipped_items', 'failed_items',
+                'expected_count', 'processed_count', 'empty_count', 'skipped_count', 'failed_count', 'partial_count'].includes(key) &&
+            ['boolean', 'number', 'string'].includes(typeof value))
+            .map(([key, value]) => <p key={key}>{key.replaceAll('_', ' ')}: {String(value)}</p>)}
+    </div>;
+}
+
 function ConsumedInputs({ inputs }: { inputs?: WorkflowConsumedInput[] }) {
     if (!inputs?.length) {
         return null;
@@ -397,6 +406,7 @@ function V3ResultExcerpt({
     runId,
     executionId,
     attempt,
+    output = 'authoritative',
     onAccessLost,
 }: {
     scope: WorkflowScope;
@@ -404,6 +414,7 @@ function V3ResultExcerpt({
     runId: string;
     executionId: string;
     attempt: number;
+    output?: string;
     onAccessLost?: (status: number) => void;
 }) {
     const [page, setPage] = useState<WorkflowRunResultPage | null>(null);
@@ -432,6 +443,7 @@ function V3ResultExcerpt({
             nextOffset,
             2000,
             controller.signal,
+            output,
         )
             .then((result) => {
                 if (controller.signal.aborted || token !== tokenRef.current) {
@@ -464,7 +476,7 @@ function V3ResultExcerpt({
             <div className="flex flex-wrap items-center gap-2">
                 <GlassButton size="sm" disabled={loading} onClick={() => load()}>
                     {loading ? <Loader2 size={14} className="animate-spin" /> : <FileJson size={14} />}
-                    {requested ? 'Reload authoritative output excerpt' : 'Load authoritative output excerpt'}
+                    {requested ? 'Reload' : 'Load'} {output} output excerpt
                 </GlassButton>
                 {page?.next_offset !== null && page?.next_offset !== undefined ? (
                     <GlassButton size="sm" disabled={loading} onClick={() => load(Number(page.next_offset))}>
@@ -473,7 +485,7 @@ function V3ResultExcerpt({
                 ) : null}
             </div>
             <p className="text-xs text-text-3">
-                V3 output inspection always reads the exact execution attempt's authoritative output. Byte excerpts may split JSON records; use Complete records for a collection.
+                V3 output inspection always reads the exact execution attempt's selected {output} output. Byte excerpts may split JSON records; use Complete records for a collection.
             </p>
             {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
             {page ? (
@@ -498,17 +510,22 @@ function AttemptHistory({
     runId,
     executionId,
     onAccessLost,
+    inspectBoundary = false,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     runId: string;
     executionId: string;
     onAccessLost?: (status: number) => void;
+    inspectBoundary?: boolean;
 }) {
+    const [boundaryOpen, setBoundaryOpen] = useState(false);
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowExecutionAttemptsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
     [executionId, runId, scope, workflowId]);
     const page = usePagedResource<WorkflowExecutionAttemptRecord>(loadPage, 'Could not load execution attempts.', onAccessLost);
+    const boundary = inspectBoundary ? page.items.find((attempt) =>
+        attempt.node_kind === 'repeat_until' || attempt.node_kind === 'for_each') : undefined;
 
     return (
         <div className="space-y-3">
@@ -525,15 +542,26 @@ function AttemptHistory({
             {page.loading ? <p role="status" className="text-xs text-text-3">Loading execution attempts...</p> : null}
             {page.error ? <p role="alert" className="rounded-xl bg-danger-soft p-3 text-xs text-danger">{page.error}</p> : null}
             {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No attempts were recorded for this execution.</p> : null}
+            {boundary ? <div className="min-w-0 space-y-3">
+                <GlassButton size="sm" aria-expanded={boundaryOpen}
+                    aria-label={`${boundaryOpen ? 'Hide' : 'Show'} ${boundary.node_kind === 'repeat_until' ? 'Repeat rounds' : 'frozen items'} for ${executionId}`}
+                    onClick={() => setBoundaryOpen(!boundaryOpen)}>
+                    {boundaryOpen ? 'Close nested inspection' : boundary.node_kind === 'repeat_until' ? 'Inspect nested Repeat rounds' : 'Inspect nested For each items'}
+                </GlassButton>
+                {boundaryOpen && !page.loading && !page.error ? boundary.node_kind === 'repeat_until' ? <RepeatIterations
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                    finalOutputAvailable={Boolean(boundary.workflow_result?.result_ref)} onAccessLost={onAccessLost} /> : <LoopItems
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} onAccessLost={onAccessLost} /> : null}
+            </div> : null}
             <ul className="space-y-2" aria-label={`Attempts for execution ${executionId}`}>
                 {page.items.map((attempt) => {
                     const validation = validationSummary(attempt.workflow_validation);
                     const resultSummary = resultReferenceSummary(attempt.workflow_result?.result_ref);
                     const inputs = attempt.consumed_inputs ?? attempt.workflow_result?.consumed_inputs;
-                    const collectionOutputs = [...new Set([
-                        ...Object.keys(attempt.workflow_result?.outputs ?? {}),
-                        attempt.workflow_result?.authoritative_output ?? '',
-                    ])].filter((name) => ['records', 'documents'].includes(name));
+                    const outputs = attempt.workflow_result?.outputs ?? {};
+                    const collectionOutputs = [...new Set([...Object.keys(outputs), attempt.workflow_result?.authoritative_output ?? ''])]
+                        .filter((name) => ['records', 'documents'].includes(name) ||
+                            isRecord(outputs[name]) && ['records', 'document_results'].includes(String(outputs[name].kind)));
                     return (
                         <li key={`${attempt.execution_id}:${attempt.attempt}`} className="space-y-2 rounded-xl border border-edge p-3">
                             <div className="flex flex-wrap items-center gap-2">
@@ -588,13 +616,7 @@ function RecordPages({ scope, workflowId, runId, executionId, attempt, output, o
             {page.loading ? <p role="status" className="text-xs text-text-3">Loading complete records...</p> : null}
             {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
             {summary ? <DetailLine label="Collection validation">{summary}</DetailLine> : null}
-            {coverage ? <div aria-label="Collection coverage" className="text-xs text-text-3">
-                {Object.entries(coverage).filter(([key, value]) =>
-                    ['complete', 'status', 'total', 'completed', 'completed_empty', 'skipped', 'failed', 'pending', 'missing', 'item_count', 'record_count', 'total_items', 'completed_items', 'skipped_items', 'failed_items',
-                        'expected_count', 'processed_count', 'empty_count', 'skipped_count', 'failed_count', 'partial_count'].includes(key) &&
-                    ['boolean', 'number', 'string'].includes(typeof value))
-                    .map(([key, value]) => <p key={key}>{key.replaceAll('_', ' ')}: {String(value)}</p>)}
-            </div> : null}
+            <CoverageDetails coverage={coverage} />
             {!page.loading && !page.error ? (
                 <ol className="max-h-96 space-y-2 overflow-auto" aria-label="Complete saved records">
                     {page.items.map((record, index) => <li key={index} className="min-w-0">
@@ -663,17 +685,18 @@ function ContributorPages({ scope, workflowId, runId, executionId, attempt, onAc
     );
 }
 
-function LoopItemExecutions({ item, scope, workflowId, runId, onAccessLost }: {
-    item: WorkflowLoopItemRecord; scope: WorkflowScope; workflowId: string; runId: string;
+function IterationExecutions({ executionIds, scope, workflowId, runId, onAccessLost, iterationLabel = 'item' }: {
+    executionIds?: string[]; scope: WorkflowScope; workflowId: string; runId: string;
     onAccessLost?: (status: number) => void;
+    iterationLabel?: 'item' | 'round';
 }) {
     const [selected, setSelected] = useState<string | null>(null);
     return (
         <>
-            {item.execution_ids?.map((id) => <GlassButton key={id} size="sm" aria-label={`Inspect item execution ${id}`}
+            {executionIds?.map((id) => <GlassButton key={id} size="sm" aria-label={`Inspect ${iterationLabel} execution ${id}`}
                 onClick={() => setSelected(selected === id ? null : id)}><span className="break-all">Inspect execution {id}</span></GlassButton>)}
             {selected ? <AttemptHistory key={selected} scope={scope} workflowId={workflowId} runId={runId}
-                executionId={selected} onAccessLost={onAccessLost} /> : null}
+                executionId={selected} onAccessLost={onAccessLost} inspectBoundary /> : null}
         </>
     );
 }
@@ -704,11 +727,122 @@ function LoopItems({ scope, workflowId, runId, executionId, onAccessLost }: {
                     <DetailLine label="Item ID">{item.item_id}</DetailLine>
                     <DetailLine label="Iteration path">{formatIterationPath(item.iteration_path)}</DetailLine>
                     {item.record_count !== undefined ? <DetailLine label="Output records">{item.record_count}</DetailLine> : null}
-                    <LoopItemExecutions item={item} scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
+                    <IterationExecutions executionIds={item.execution_ids} scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
                 </li>)}
             </ul> : null}
         </section>
     );
+}
+
+function RepeatStatePages({ scope, workflowId, runId, executionId, iteration, phase, onAccessLost }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string; iteration: number; phase: 'before' | 'after';
+    onAccessLost?: (status: number) => void;
+}) {
+    const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
+        fetchWorkflowRepeatStatePage(scope, workflowId, runId, executionId, iteration, phase, cursor, 50, signal),
+    [executionId, iteration, phase, runId, scope, workflowId]);
+    const page = usePagedResource(loadPage, 'Could not read the saved Repeat state.', onAccessLost);
+    return <section aria-label={`State ${phase} round ${iteration + 1}`} className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
+        <p className="text-sm font-medium text-text-1">State {phase} round {iteration + 1}</p>
+        <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
+            hasPrevious={page.previousCursors.length > 0} hasNext={Boolean(page.nextCursor)} nextLabel="state" totalCount={page.totalCount} />
+        <p className="text-xs text-text-3">At most 50 slot receipts per page. Values stay at their exact saved producers; content and record pages load only when requested.</p>
+        {page.loading ? <p role="status" className="text-xs text-text-3">Loading saved state metadata...</p> : null}
+        {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
+        {page.metadata?.stateAvailable === false ? <p role="status" className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
+            State {phase} this round is not committed or available yet. This is not an empty eligible result.
+        </p> : null}
+        {page.metadata?.partial ? <p className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
+            This state retains accepted partial data. Its coverage and limitations are not cleared by a later round or manual continuation.
+        </p> : null}
+        {page.metadata?.sourceSnapshotChanged ? <p className="text-xs text-warn">Source snapshots have changed. These are retained saved versions, with access checked on every read.</p> : null}
+        <ul className="space-y-3" aria-label={`Saved state ${phase} round ${iteration + 1}`}>
+            {page.items.map((slot) => {
+                const source = slot.source;
+                const validation = validationSummary(slot.workflow_validation);
+                return <li key={slot.name} className="min-w-0 space-y-2 rounded-lg bg-surface-sunken p-3">
+                    <p className="break-words text-sm font-semibold text-text-1">{slot.name} ({slot.kind.replaceAll('_', ' ')})</p>
+                    <DetailLine label="State validation"><Pill tone={validationTone(slot.workflow_validation)}>{validation}</Pill></DetailLine>
+                    {slot.workflow_validation.eligible === false ? <p className="text-xs text-danger">This saved output is not eligible for consumption.</p> : null}
+                    <CoverageDetails coverage={slot.coverage} label={`Coverage for state ${slot.name}`} />
+                    {slot.prior_coverage ? <div className="space-y-1 rounded-lg bg-warn-soft p-2">
+                        <p className="text-xs font-medium text-warn">Retained coverage from earlier rounds</p>
+                        <CoverageDetails coverage={slot.prior_coverage} label={`Retained prior coverage for state ${slot.name}`} />
+                    </div> : null}
+                    {slot.limitations.length ? <ul aria-label={`Limitations for state ${slot.name}`} className="space-y-1 text-xs text-warn">
+                        {slot.limitations.map((limitation, index) => <li key={index} className="break-words">{limitation}</li>)}
+                    </ul> : null}
+                    <DetailLine label="Exact producer">Node {source.node_id} · execution {source.execution_id} · attempt {source.attempt} · output {source.output_name}</DetailLine>
+                    {source.iteration_path.length ? <DetailLine label="Producer path">{formatIterationPath(source.iteration_path)}</DetailLine> : null}
+                    {slot.kind === 'records' || slot.kind === 'document_results' ? <CompleteRecords
+                        key={`records:${source.execution_id}:${source.attempt}:${source.output_name}`}
+                        scope={scope} workflowId={workflowId} runId={runId} executionId={source.execution_id} attempt={source.attempt}
+                        outputs={[source.output_name]} onAccessLost={onAccessLost} /> : <V3ResultExcerpt
+                        key={`state:${source.execution_id}:${source.attempt}:${source.output_name}`}
+                        scope={scope} workflowId={workflowId} runId={runId} executionId={source.execution_id} attempt={source.attempt}
+                        output={source.output_name} onAccessLost={onAccessLost} />}
+                </li>;
+            })}
+        </ul>
+    </section>;
+}
+
+function RepeatRound({ round, scope, workflowId, runId, executionId, onAccessLost }: {
+    round: WorkflowRepeatIterationRecord; scope: WorkflowScope; workflowId: string; runId: string; executionId: string;
+    onAccessLost?: (status: number) => void;
+}) {
+    const [phase, setPhase] = useState<'before' | 'after' | null>(null);
+    return <li className="min-w-0 space-y-3 rounded-lg border border-edge p-3">
+        <div className="flex flex-wrap items-center gap-2">
+            <Pill tone={statusTone(round.state)}>{round.state}</Pill>
+            <span className="text-sm font-semibold text-text-1">Round {round.iteration + 1}</span>
+        </div>
+        <DetailLine label="Lifetime identity">{formatIterationPath(round.iteration_path)}</DetailLine>
+        <DetailLine label="Automatic batch">{round.batch_number + 1} · {round.batch_usage} of {round.batch_size} rounds admitted</DetailLine>
+        <DetailLine label="Stop condition">{round.condition_result === null ? 'Not evaluated' : round.condition_result ? 'true (satisfied)' : 'false (unmet)'}</DetailLine>
+        <p className="text-xs text-text-3">State before: {round.before_available ? 'saved' : 'unavailable'}.
+            {' '}State after: {round.after_available ? 'committed' : 'not committed'}.</p>
+        {round.partial ? <p className="text-xs text-warn">This round retains partial coverage.</p> : null}
+        <div className="flex flex-wrap gap-2">
+            {(['before', 'after'] as const).map((value) => <GlassButton key={value} size="sm" aria-pressed={phase === value}
+                onClick={() => setPhase(phase === value ? null : value)}>State {value} round {round.iteration + 1}</GlassButton>)}
+        </div>
+        {phase ? <RepeatStatePages key={`${executionId}:${round.iteration}:${phase}`}
+            scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} iteration={round.iteration}
+            phase={phase} onAccessLost={onAccessLost} /> : null}
+        <IterationExecutions executionIds={round.execution_ids} scope={scope} workflowId={workflowId} runId={runId}
+            onAccessLost={onAccessLost} iterationLabel="round" />
+    </li>;
+}
+
+function RepeatIterations({ scope, workflowId, runId, executionId, finalOutputAvailable, onAccessLost }: {
+    scope: WorkflowScope; workflowId: string; runId: string; executionId: string; finalOutputAvailable: boolean;
+    onAccessLost?: (status: number) => void;
+}) {
+    const [finalOpen, setFinalOpen] = useState(false);
+    const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
+        fetchWorkflowRepeatIterationsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
+    [executionId, runId, scope, workflowId]);
+    const page = usePagedResource(loadPage, 'Could not read the saved Repeat rounds.', onAccessLost);
+    return <section className="min-w-0 space-y-3" aria-label="Repeat round inspection">
+        <WorkflowRepeatProgress summary={page.metadata?.repeat} label="Inspected Repeat progress" />
+        <PageControls loading={page.loading} onRefresh={page.refresh} onPrevious={page.previous} onNext={page.next}
+            hasPrevious={page.previousCursors.length > 0} hasNext={Boolean(page.nextCursor)} nextLabel="rounds" totalCount={page.totalCount} />
+        <p className="text-xs text-text-3">Lifetime rounds never reset when a person grants another batch. At most 50 rounds per page; state and saved content are read separately.</p>
+        {page.loading ? <p role="status" className="text-xs text-text-3">Loading Repeat rounds...</p> : null}
+        {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
+        {page.metadata?.sourceSnapshotChanged ? <p className="text-xs text-warn">Source snapshots have changed; these retained rounds are still subject to current read authorization.</p> : null}
+        {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No rounds have been admitted for this Repeat execution.</p> : null}
+        <ul className="space-y-3" aria-label="Repeat rounds">
+            {page.items.map((round) => <RepeatRound key={round.iteration} round={round} scope={scope} workflowId={workflowId}
+                runId={runId} executionId={executionId} onAccessLost={onAccessLost} />)}
+        </ul>
+        {finalOutputAvailable ? <GlassButton size="sm" onClick={() => setFinalOpen(!finalOpen)}>
+            {finalOpen ? 'Close Repeat final outputs' : 'Inspect Repeat final outputs'}
+        </GlassButton> : <p className="text-xs text-text-3">No final Repeat result has been committed. A batch-limit pause does not expose final exports.</p>}
+        {finalOpen && !page.loading && !page.error ? <AttemptHistory scope={scope} workflowId={workflowId} runId={runId}
+            executionId={executionId} onAccessLost={onAccessLost} /> : null}
+    </section>;
 }
 
 function DecisionHistory({
@@ -770,6 +904,14 @@ function DecisionHistory({
                                     ) : null}
                                     {text(decision.input_digest) ? <DetailLine label="Input digest">{text(decision.input_digest)}</DetailLine> : null}
                                     {decision.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(decision.iteration_path)}</DetailLine> : null}
+                                    {decision.choice === 'continue_repeat' ? <>
+                                        <DetailLine label="Manual continuation">Explicit grant{decision.actor_user_id ? ` by ${decision.actor_user_id}` : ''}</DetailLine>
+                                        {decision.request_id ? <DetailLine label="Request">{decision.request_id}</DetailLine> : null}
+                                        {decision.event_id ? <DetailLine label="Audit event">{decision.event_id}</DetailLine> : null}
+                                        <WorkflowRepeatProgress summary={decision.repeat} label="Repeat state at manual grant" />
+                                    </> : null}
+                                    {decision.iteration !== undefined ? <DetailLine label="Lifetime round">{decision.iteration + 1}</DetailLine> : null}
+                                    {decision.batch_number !== undefined ? <DetailLine label="Automatic batch">{decision.batch_number + 1}</DetailLine> : null}
                                 </li>
                             );
                         })}
@@ -840,6 +982,8 @@ export function WorkflowExecutionHistory({
                                                 icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                                                 label={execution.node_kind === 'for_each'
                                                     ? `${expanded ? 'Hide' : 'Show'} frozen items for ${executionId}`
+                                                    : execution.node_kind === 'repeat_until'
+                                                        ? `${expanded ? 'Hide' : 'Show'} Repeat rounds for ${executionId}`
                                                     : `${expanded ? 'Hide' : 'Show'} execution attempts for ${executionId}`}
                                                 onClick={() => setExpandedExecutionId(expanded ? null : executionId)}
                                             />
@@ -866,7 +1010,9 @@ export function WorkflowExecutionHistory({
                                         {expanded ? (
                                             execution.node_kind === 'for_each' ? <LoopItems key={executionId}
                                                 scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
-                                                onAccessLost={onAccessLost} /> : <AttemptHistory
+                                                onAccessLost={onAccessLost} /> : execution.node_kind === 'repeat_until' ? <RepeatIterations
+                                                    key={executionId} scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                                                    finalOutputAvailable={Boolean(execution.workflow_result?.result_ref)} onAccessLost={onAccessLost} /> : <AttemptHistory
                                                 scope={scope}
                                                 workflowId={workflowId}
                                                 runId={runId}

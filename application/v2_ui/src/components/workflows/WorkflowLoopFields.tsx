@@ -10,11 +10,13 @@ import { WorkflowDecisionFields } from './WorkflowConditionEditor';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     analyzeWorkflowFlow,
-    enclosingFlowLoops,
+    enclosingFlowLoopControls,
+    enclosingFlowRepeats,
     flowBinding,
     flowLoops,
     flowProducers,
     loopSelectionErrors,
+    repeatStateBinding,
     MAX_LOOP_ITEMS,
     workflowLoopLimit,
     type WorkflowCollectNode,
@@ -181,15 +183,27 @@ export function WorkflowForEachFields({ node, workflow, scope, options, onChange
     const limit = Math.min(ceiling, node.max_items);
     const errors = loopSelectionErrors(node, ceiling);
     const available = analyzeWorkflowFlow(workflow).available.get(node.id) ?? new Set<string>();
-    const collections = flowProducers(workflow).filter((producer) => available.has(producer.id)).flatMap((producer) =>
-        producer.outputs.filter((output) => ['records', 'document_results'].includes(output.kind)).map((output) => ({
-            key: JSON.stringify([producer.id, output.name]), producer, output,
-        })));
+    const collections = [
+        ...flowProducers(workflow).filter((producer) => available.has(producer.id)).flatMap((producer) =>
+            producer.outputs.filter((output) => ['records', 'document_results'].includes(output.kind)).map((output) => ({
+                key: JSON.stringify([producer.id, output.name]),
+                label: `${producer.label} / ${output.name} (${output.kind.replaceAll('_', ' ')})`,
+                binding: { ...flowBinding('', producer.id, output.name), expected_kind: output.kind },
+            }))),
+        ...enclosingFlowRepeats(workflow, node.id).flatMap((repeat) =>
+            repeat.state.filter((slot) => ['records', 'document_results'].includes(slot.output_contract.kind)).map((slot) => ({
+                key: JSON.stringify(['repeat_state', repeat.id, slot.name]),
+                label: `Current Repeat ${repeat.id} state ${slot.name} (${slot.output_contract.kind.replaceAll('_', ' ')})`,
+                binding: repeatStateBinding('', repeat.id, slot),
+            }))),
+    ];
     const iterable = node.iterable;
     const inputName = iterable.kind === 'input' ? iterable.name : '';
     const binding = node.inputs.find((item) => item.name === inputName);
     const selectedCollection = binding?.source.kind === 'node_output'
-        ? JSON.stringify([binding.source.node_id, binding.source.output]) : '';
+        ? JSON.stringify([binding.source.node_id, binding.source.output])
+        : binding?.source.kind === 'repeat_state'
+            ? JSON.stringify(['repeat_state', binding.source.loop_id, binding.source.state_name]) : '';
     const previewSelection = async () => {
         abortRef.current?.abort();
         const controller = new AbortController();
@@ -264,16 +278,17 @@ export function WorkflowForEachFields({ node, workflow, scope, options, onChange
                         onChange={(event) => {
                             const selected = collections.find((item) => item.key === event.target.value);
                             if (!selected) return;
-                            const next = { ...flowBinding(inputName, selected.producer.id, selected.output.name), expected_kind: selected.output.kind };
+                            const next = { ...selected.binding, name: inputName };
                             onChange({ ...node, inputs: binding
                                 ? node.inputs.map((item) => item.name === inputName ? next : item) : [...node.inputs, next] });
                         }}>
                         {!collections.some((item) => item.key === selectedCollection)
                             ? <option value={selectedCollection}>{selectedCollection ? 'Unavailable saved producer (retained)' : 'Choose an earlier typed collection'}</option> : null}
-                        {collections.map((item) => <option key={item.key} value={item.key}>{item.producer.label} / {item.output.name} ({item.output.kind.replaceAll('_', ' ')})</option>)}
+                        {collections.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                     </select>
                 </label>
                 <p className="text-xs text-text-3">Reads the complete immutable records or document results in saved order, not a byte excerpt. Equal-looking records remain distinct. A document ID in model-generated JSON does not grant document access.</p>
+                {binding?.source.kind === 'repeat_state' ? <p className="text-xs text-text-3">Uses the named state saved at the start of this Repeat round. This For each instance freezes its membership from that state and requires complete eligible output.</p> : null}
             </fieldset> : null}
             {iterable.kind === 'workspace_query' ? <QueryFields key={`${node.id}:${iterable.kind}`} value={iterable} scope={scope} limit={limit}
                 onChange={(next) => onChange({ ...node, iterable: next })} /> : null}
@@ -305,9 +320,9 @@ export function WorkflowCollectFields({ node, workflow, onChange }: {
     onChange: (node: WorkflowCollectNode) => void;
 }) {
     const available = analyzeWorkflowFlow(workflow).available.get(node.id) ?? new Set<string>();
-    const parentIds = JSON.stringify(enclosingFlowLoops(workflow, node.id).map((loop) => loop.id));
+    const parentIds = JSON.stringify(enclosingFlowLoopControls(workflow, node.id).map((loop) => loop.id));
     const loops = flowLoops(workflow).filter((loop) => available.has(loop.node.id) &&
-        JSON.stringify(enclosingFlowLoops(workflow, loop.node.id).map((parent) => parent.id)) === parentIds);
+        JSON.stringify(enclosingFlowLoopControls(workflow, loop.node.id).map((parent) => parent.id)) === parentIds);
     const selectedLoop = loops.find((loop) => loop.node.id === node.source.loop_id)?.node;
     const producers = flowProducers(workflow);
     const outputs = selectedLoop?.body.outputs.flatMap((item) => {

@@ -2,8 +2,9 @@
 
 Implemented in version: **0.261.119**.
 
-Related application version update: `VERSION = "0.261.119"` in
-`application\single_app\config.py`.
+Updated in version: **0.261.120** for Repeat final records.
+
+Application version tracking: `application\single_app\config.py`.
 
 ## Overview and purpose
 
@@ -17,6 +18,11 @@ Analyze task.
 This M4C-2 slice uses the existing
 [Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md).
 There is no workflow-only renderer or second publication service.
+
+In **0.261.120**, a satisfied [Repeat until](WORKFLOW_REPEAT_UNTIL.md) boundary
+can also provide a named final records export. It remains a real engine-node
+output with its exact selected-producer receipt, not an invented Analyze task.
+An unmet batch limit exposes no final Repeat output for publication.
 
 | Representation | Purpose |
 | --- | --- |
@@ -91,8 +97,9 @@ records output in the frozen definition. A task's authoritative records output
 is also eligible. An explicit join retains its selected-producer receipt and
 branch lineage; it is not resolved by looking for a recent task ID.
 
-The adapter rejects loop-item inputs, optional missing inputs, diagnostics,
-preview rows, text, scalar or untyped JSON, and `document_results` bundles.
+The adapter rejects direct loop-item or Repeat-state inputs, optional missing
+inputs, diagnostics, preview rows, text, scalar or untyped JSON, and
+`document_results` bundles.
 Nested objects and arrays **inside supported record objects** remain supported.
 Invalid, failed, pending or unreadable sources cannot become valid files by
 changing the format.
@@ -102,6 +109,11 @@ contract and `allow_partial: true` on the publishing input. Validation and
 coverage remain visibly partial; missing work is not relabeled complete.
 Duplicates and record order are preserved. A declared uniqueness-contract
 violation remains invalid: export never deduplicates it into a passing result.
+
+For Repeat exports, the state-slot and body/downstream partial policies must
+also have accepted the carried data. A later true Until condition never removes
+its coverage limitations. Body-state receipts are not a shortcut around the
+required final `node_output` records binding.
 
 `source_kind` describes the source, not the destination. Personal, group and
 public destination fields keep their existing meaning. The selected workspace
@@ -189,6 +201,12 @@ notifications and reconciliation. Native receipt identities are unchanged;
 generic identities additionally bind the validated saved-output source.
 Different publication nodes or destinations may reuse a source artifact while
 retaining their own destination receipts.
+
+A genuinely new Repeat round changes the source identity when a new producer
+actually runs. Retrying a publication of already materialized output keeps
+the same exact source, immutable bytes, and destination receipt; changes to
+the publisher's attempt or display order do not select a newer round.
+Manual continuation grants no publication permission or completion bypass.
 
 ## Authorization and existing APIs
 
@@ -335,6 +353,7 @@ do not publish documents to live workspaces or establish deployment acceptance.
   defaults to **500 actual selected items**; administrators can set **1-5,000**
   for new runs only. A searchable corpus is not itself a loop selection.
 - The owner-deferred cumulative run-token/spend cap is not implemented here.
-- Repeat until, M5 read-only Flow and accessible visual authoring remain
-  separate future slices. This feature adds no automation of those steps, new
-  scheduler, promotion service or destination ledger.
+- Repeat until is added separately in **0.261.120** and reuses this exact source
+  and publication contract. M5A read-only Flow and M5B accessible visual
+  authoring remain separate future slices. This feature adds no automation of
+  those steps, new scheduler, promotion service, or destination ledger.

@@ -92,6 +92,29 @@
                         </div>
                     </div>
 
+                    <div class="form-group mb-3">
+                        <label for="workflow_max_repeat_iterations" class="form-label">
+                            Workflow Repeat Iteration Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_repeat_iterations"
+                            name="workflow_max_repeat_iterations"
+                            min="1"
+                            max="1000"
+                            step="1"
+                            required
+                            aria-describedby="workflow-max-repeat-iterations-help"
+                            value="{{ settings.workflow_max_repeat_iterations|default(25) }}" />
+                        <div class="form-text" id="workflow-max-repeat-iterations-help">
+                            Maximum rounds allowed in one automatic Repeat until batch in a new personal
+                            or group workflow run. Default is 25; supported range is 1-1,000. Authors must
+                            choose a per-block maximum; new runs above this ceiling are rejected, never
+                            shortened. Active runs and manual continuation keep their admitted limit.
+                            Another batch does not reset the run's execution-admission budget or elapsed deadline.
+                        </div>
+                    </div>
+
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox"
                             class="form-check-input"

@@ -8,15 +8,18 @@ import {
     workflowLoopSelection,
     validWorkflowIterationPath,
     isWorkflowPublicationStatus,
+    isWorkflowRepeatProgress,
     type WorkflowConsumedInput,
     type WorkflowIterationFrame,
     type WorkflowLoopSelection,
     type WorkflowResultReference,
     type WorkflowPublicationStatus,
+    type WorkflowRepeatProgress,
     type WorkflowRunResultPage,
     type WorkflowScope,
     type WorkflowValidationResult,
 } from './workflowEditor';
+import { DEFAULT_FLOW_LIMITS, FLOW_ALIAS_PATTERN, MAX_REPEAT_ITERATIONS, REPEAT_STATE_KINDS, type WorkflowRepeatStateKind } from './workflowFlow';
 
 export interface WorkflowExecutionDecisionPreview {
     choice?: string;
@@ -31,6 +34,16 @@ export interface WorkflowExecutionDecisionPreview {
     reason_code?: string;
     timestamp?: string;
     decided_at?: string;
+    actor_user_id?: string;
+    request_id?: string;
+    event_id?: string;
+    repeat?: WorkflowRepeatProgress;
+    iteration?: number;
+    batch_number?: number;
+    batch_size?: number;
+    batch_usage?: number;
+    condition_result?: boolean;
+    outcome?: string;
     [key: string]: unknown;
 }
 
@@ -64,6 +77,7 @@ export interface WorkflowExecutionRecord {
 export interface WorkflowExecutionAttemptRecord {
     execution_id: string;
     node_id: string;
+    node_kind?: string;
     task_id?: string;
     attempt: number;
     state: string;
@@ -83,7 +97,7 @@ export interface WorkflowExecutionAttemptRecord {
     [key: string]: unknown;
 }
 
-export interface WorkflowRuntimeDecisionRecord {
+export interface WorkflowRuntimeDecisionRecord extends WorkflowExecutionDecisionPreview {
     execution_id?: string;
     node_id?: string;
     attempt?: number;
@@ -116,7 +130,42 @@ export interface WorkflowExecutionPage<T> {
         coverage?: Record<string, unknown>;
         admittedLimit?: number;
         selection?: WorkflowLoopSelection;
+        repeat?: WorkflowRepeatProgress;
+        stateAvailable?: boolean;
+        partial?: boolean;
+        sourceSnapshotChanged?: boolean;
     };
+}
+
+export interface WorkflowRepeatIterationRecord {
+    iteration: number;
+    iteration_path: WorkflowIterationFrame[];
+    batch_number: number;
+    batch_size: number;
+    batch_usage: number;
+    state: 'running' | 'completed' | 'completed_partial' | 'cancelled';
+    condition_result: boolean | null;
+    execution_ids: string[];
+    before_available: true;
+    after_available: boolean;
+    partial: boolean;
+}
+
+export interface WorkflowRepeatStateRecord {
+    name: string;
+    kind: WorkflowRepeatStateKind;
+    source: {
+        node_id: string;
+        execution_id: string;
+        task_id?: string;
+        iteration_path: WorkflowIterationFrame[];
+        attempt: number;
+        output_name: string;
+    };
+    workflow_validation: WorkflowValidationResult;
+    coverage: Record<string, string | number | boolean | null>;
+    prior_coverage?: Record<string, string | number | boolean | null>;
+    limitations: string[];
 }
 
 export interface WorkflowLoopItemRecord {
@@ -226,6 +275,7 @@ function isExecution(value: unknown): value is WorkflowExecutionRecord {
 
 function isAttempt(value: unknown): value is WorkflowExecutionAttemptRecord {
     return isRecord(value) && validIdentity(value.execution_id) && validIdentity(value.node_id) &&
+        (value.node_kind === undefined || validIdentity(value.node_kind)) &&
         validIdentity(value.state) && typeof value.attempt === 'number' &&
         Number.isInteger(value.attempt) && value.attempt >= 1 && validPath(value.iteration_path) && validResultMetadata(value);
 }
@@ -234,7 +284,12 @@ function isDecision(value: unknown): value is WorkflowRuntimeDecisionRecord {
     return isRecord(value) && validPath(value.iteration_path) &&
         (value.execution_id === undefined || validIdentity(value.execution_id)) &&
         (value.node_id === undefined || validIdentity(value.node_id)) &&
-        (value.attempt === undefined || typeof value.attempt === 'number' && Number.isInteger(value.attempt) && value.attempt >= 0);
+        (value.attempt === undefined || typeof value.attempt === 'number' && Number.isInteger(value.attempt) && value.attempt >= 0) &&
+        (value.repeat === undefined || isWorkflowRepeatProgress(value.repeat)) &&
+        (value.condition_result === undefined || typeof value.condition_result === 'boolean') &&
+        ['iteration', 'batch_number', 'batch_size', 'batch_usage'].every((key) =>
+            value[key] === undefined || typeof value[key] === 'number' && Number.isSafeInteger(value[key]) &&
+            Number(value[key]) >= 0 && Number(value[key]) <= DEFAULT_FLOW_LIMITS.max_executions);
 }
 
 function pageParams(cursor: string | null, limit: number): URLSearchParams {
@@ -247,7 +302,7 @@ function pageParams(cursor: string | null, limit: number): URLSearchParams {
 
 function pageFromResponse<T>(
     response: unknown,
-    key: 'executions' | 'attempts' | 'decisions' | 'items' | 'records' | 'contributors',
+    key: 'executions' | 'attempts' | 'decisions' | 'items' | 'records' | 'contributors' | 'iterations' | 'states',
     isItem: (value: unknown) => value is T,
     identity?: (value: T) => string,
     limit = 100,
@@ -321,13 +376,15 @@ export async function fetchWorkflowExecutionAttemptResult(
     offset: number,
     limit = 2000,
     signal?: AbortSignal,
+    output = 'authoritative',
 ): Promise<WorkflowRunResultPage> {
     const resultLimit = boundedLimit(limit, 2000);
-    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1 || !Number.isInteger(offset) || offset < 0) {
+    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1 ||
+        !Number.isInteger(offset) || offset < 0 || !FLOW_ALIAS_PATTERN.test(output)) {
         throw new Error('The requested execution attempt or result range is invalid.');
     }
     const params = new URLSearchParams({
-        output: 'authoritative',
+        output,
         offset: String(offset),
         limit: String(resultLimit),
     });
@@ -381,7 +438,7 @@ export async function fetchWorkflowLoopItemsPage(
             !validIdentity(value.state) || typeof value.index !== 'number' || !Number.isSafeInteger(value.index) || value.index < 0 ||
             !validWorkflowIterationPath(value.iteration_path)) return false;
         const frame = value.iteration_path.at(-1);
-        return frame?.item_id === value.item_id && frame.index === value.index &&
+        return frame !== undefined && 'item_id' in frame && frame.item_id === value.item_id && frame.index === value.index &&
             (value.execution_ids === undefined || Array.isArray(value.execution_ids) && value.execution_ids.length <= 256 && value.execution_ids.every(validIdentity)) &&
             (value.record_count === undefined || typeof value.record_count === 'number' && Number.isSafeInteger(value.record_count) && value.record_count >= 0);
     }, (item) => item.item_id, limit);
@@ -389,6 +446,122 @@ export async function fetchWorkflowLoopItemsPage(
         frozenAt: typeof response.frozen_at === 'string' ? response.frozen_at : undefined,
         admittedLimit: response.limit,
         selection: workflowLoopSelection(response.selection),
+    } };
+}
+
+export async function fetchWorkflowRepeatIterationsPage(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    executionId: string,
+    cursor: string | null,
+    limit = 50,
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionPage<WorkflowRepeatIterationRecord>> {
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId,
+        `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/iterations`,
+        pageParams(cursor, limit)), signal);
+    if (!isRecord(response) || response.repeat_execution_id !== executionId ||
+        !isWorkflowRepeatProgress(response.repeat) || response.repeat.execution_id !== executionId ||
+        !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0 ||
+        Number(response.total_count) > DEFAULT_FLOW_LIMITS.max_executions ||
+        typeof response.source_snapshot_changed !== 'boolean') {
+        throw new Error('The Repeat rounds returned an unsupported response.');
+    }
+    const repeat = response.repeat;
+    const page = pageFromResponse(response, 'iterations', (value): value is WorkflowRepeatIterationRecord => {
+        if (!isRecord(value) || Object.keys(value).some((key) => ![
+            'iteration', 'iteration_path', 'batch_number', 'batch_size', 'batch_usage', 'state', 'condition_result',
+            'execution_ids', 'before_available', 'after_available', 'partial',
+        ].includes(key)) || !validWorkflowIterationPath(value.iteration_path) ||
+            typeof value.state !== 'string' || !['running', 'completed', 'completed_partial', 'cancelled'].includes(value.state) ||
+            typeof value.partial !== 'boolean' || value.before_available !== true ||
+            typeof value.after_available !== 'boolean' ||
+            value.condition_result !== null && typeof value.condition_result !== 'boolean' ||
+            !value.after_available && value.condition_result !== null ||
+            !Array.isArray(value.execution_ids) || value.execution_ids.length > 256 || !value.execution_ids.every(validIdentity) ||
+            ['iteration', 'batch_number', 'batch_size', 'batch_usage'].some((key) =>
+                typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || Number(value[key]) < 0)) return false;
+        const frame = value.iteration_path.at(-1);
+        return frame !== undefined && 'iteration' in frame && frame.iteration === value.iteration && frame.loop_id === repeat.node_id &&
+            value.batch_size === repeat.batch_size && Number(value.batch_size) <= MAX_REPEAT_ITERATIONS &&
+            Number(value.batch_usage) >= 1 && Number(value.batch_usage) <= Number(value.batch_size) &&
+            Number(value.batch_number) * Number(value.batch_size) + Number(value.batch_usage) - 1 === value.iteration;
+    }, (item) => String(item.iteration), limit);
+    if (page.items.some((item, index) => item.iteration >= Number(response.total_count) ||
+        index > 0 && item.iteration <= page.items[index - 1].iteration)) {
+        throw new Error('The Repeat round page contains conflicting lifetime identities.');
+    }
+    return { ...page, metadata: { repeat, sourceSnapshotChanged: response.source_snapshot_changed === true } };
+}
+
+function isRepeatValidation(value: unknown): value is WorkflowValidationResult {
+    return isRecord(value) && value.version === 1 &&
+        ['valid', 'invalid', 'incomplete', 'accepted_partial', 'not_requested'].includes(String(value.status)) &&
+        (value.eligible === undefined || typeof value.eligible === 'boolean') &&
+        (value.reason_codes === undefined || Array.isArray(value.reason_codes) && value.reason_codes.length <= 100 &&
+            value.reason_codes.every((code) => typeof code === 'string' && code.length <= 256)) &&
+        (value.counts === undefined || isRecord(value.counts) && Object.values(value.counts).every((count) =>
+            typeof count === 'number' && Number.isFinite(count) && count >= 0));
+}
+
+function isRepeatCoverage(value: unknown): value is WorkflowRepeatStateRecord['coverage'] {
+    return isRecord(value) && Object.values(value).every((item) =>
+        item === null || typeof item === 'string' || typeof item === 'boolean' ||
+        typeof item === 'number' && Number.isFinite(item));
+}
+
+function isRepeatStateRecord(value: unknown): value is WorkflowRepeatStateRecord {
+    if (!isRecord(value) || Object.keys(value).some((key) =>
+        !['name', 'kind', 'source', 'workflow_validation', 'coverage', 'prior_coverage', 'limitations'].includes(key)) ||
+        typeof value.name !== 'string' || !FLOW_ALIAS_PATTERN.test(value.name) ||
+        !REPEAT_STATE_KINDS.some((kind) => kind === value.kind) || !isRecord(value.source) ||
+        !isRepeatValidation(value.workflow_validation) || !isRepeatCoverage(value.coverage) ||
+        value.prior_coverage !== undefined && !isRepeatCoverage(value.prior_coverage) ||
+        !Array.isArray(value.limitations) || !value.limitations.every((item) => typeof item === 'string')) return false;
+    const source = value.source;
+    return Object.keys(source).every((key) => ['node_id', 'execution_id', 'task_id', 'iteration_path', 'attempt', 'output_name'].includes(key)) &&
+        validIdentity(source.node_id) && validIdentity(source.execution_id) &&
+        (source.task_id === undefined || validIdentity(source.task_id)) &&
+        typeof source.attempt === 'number' && Number.isSafeInteger(source.attempt) && source.attempt >= 1 &&
+        validWorkflowIterationPath(source.iteration_path) &&
+        typeof source.output_name === 'string' && FLOW_ALIAS_PATTERN.test(source.output_name);
+}
+
+export async function fetchWorkflowRepeatStatePage(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    executionId: string,
+    iteration: number,
+    phase: 'before' | 'after',
+    cursor: string | null,
+    limit = 50,
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionPage<WorkflowRepeatStateRecord>> {
+    if (!Number.isSafeInteger(iteration) || iteration < 0 || iteration >= DEFAULT_FLOW_LIMITS.max_executions ||
+        !['before', 'after'].includes(phase)) {
+        throw new Error('Select an exact admitted Repeat round and before or after state.');
+    }
+    const params = pageParams(cursor, limit);
+    params.set('phase', phase);
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId,
+        `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/iterations/${iteration}/state`, params), signal);
+    if (!isRecord(response) || response.repeat_execution_id !== executionId || response.iteration !== iteration ||
+        response.phase !== phase || typeof response.available !== 'boolean' ||
+        !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0 || Number(response.total_count) > 100 ||
+        response.available && (typeof response.partial !== 'boolean' || typeof response.source_snapshot_changed !== 'boolean') ||
+        !response.available && (phase !== 'after' || response.partial !== undefined || response.source_snapshot_changed !== undefined)) {
+        throw new Error('The Repeat state returned an unsupported response.');
+    }
+    const page = pageFromResponse(response, 'states', isRepeatStateRecord, (item) => item.name, limit);
+    if (!response.available && (page.items.length || response.total_count !== 0 || page.next_cursor !== null) ||
+        response.available && (Number(response.total_count) < 1 || page.items.length > Number(response.total_count))) {
+        throw new Error('The Repeat state page has an invalid availability or count.');
+    }
+    return { ...page, metadata: {
+        stateAvailable: response.available, partial: response.partial === true,
+        sourceSnapshotChanged: response.source_snapshot_changed === true,
     } };
 }
 
@@ -403,7 +576,7 @@ export async function fetchWorkflowExecutionRecordsPage(
     limit = 100,
     signal?: AbortSignal,
 ): Promise<WorkflowExecutionPage<unknown>> {
-    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1 || !['records', 'documents'].includes(output)) {
+    if (!validIdentity(executionId) || !Number.isInteger(attempt) || attempt < 1 || !FLOW_ALIAS_PATTERN.test(output)) {
         throw new Error('The requested execution collection is invalid.');
     }
     const params = pageParams(cursor, limit);

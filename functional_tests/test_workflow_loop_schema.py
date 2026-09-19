@@ -1,7 +1,7 @@
 # test_workflow_loop_schema.py
 """
 Isolated production-backed compiler and iteration identity regression tests.
-Version: 0.261.117
+Version: 0.261.120
 Implemented in: 0.261.117
 
 Validates additive loop schemas, frozen-source descriptors, lexical availability,
@@ -859,7 +859,7 @@ def test_group_iterable_scope_is_bound_to_the_server_normalization_context():
 
 @pytest.mark.parametrize("path", [
     {}, (), "", [None], [{}], [{**frame(), "iteration": 0}], [{**frame(), "repeat_id": "again"}],
-    [{"loop_id": "each_source", "iteration": 0}], [{**frame(), "item_id": "A" * 64}],
+    [{"loop_id": "each_source", "iteration": -1}], [{**frame(), "item_id": "A" * 64}],
     [{**frame(), "item_id": "a" * 63}], [{**frame(), "item_id": "z" * 64}],
     [{**frame(), "index": True}], [{**frame(), "index": -1}], [{**frame(), "index": 5000}],
     [{**frame(), "index": 0.0}], [{**frame(), "index": "0"}], [{**frame(), "loop_id": "bad/path"}],
@@ -877,6 +877,13 @@ def test_iteration_paths_copy_values_and_none_remains_root_scope():
     assert normalized == path and normalized is not path and normalized[0] is not path[0]
     normalized[0]["index"] = 1
     assert path[0]["index"] == 0
+
+
+def test_repeat_frame_cannot_replace_a_for_each_item_frame():
+    path = [{"loop_id": "each_source", "iteration": 0}]
+    assert normalize_workflow_iteration_path(path) == path
+    with pytest.raises(ValueError):
+        workflow_execution_id(definition(), "run", "analyze_node", path)
 
 
 def test_execution_and_producer_identities_follow_every_engine_and_task_ancestor():

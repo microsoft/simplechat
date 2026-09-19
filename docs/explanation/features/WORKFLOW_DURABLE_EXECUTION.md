@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.111**
 
+Updated in version: **0.261.120**.
+
 Application version tracking: `application/single_app/config.py`.
 
 Structured control-flow integration in **0.261.116** adds an opt-in version-3
@@ -101,7 +103,7 @@ provider response or make an arbitrary external tool transactional.
 | `waiting_approval` | A task is blocked on an authorized human decision. |
 | `waiting_output` | A submitted background operation has not produced the required final output. |
 | `waiting_recovery` | An interrupted or failed operation may have performed external actions; review is required before replay. |
-| `paused` | Changed inputs, unavailable access, or an unsupported continuation needs attention. |
+| `paused` | Changed inputs, unavailable access, an unmet Repeat batch limit, or an unsupported continuation needs attention. |
 | `completed` / `completed_partial` | The normal output-validation policy determines the final deliverable outcome. |
 | `failed` / `invalid` / `incomplete` | A task or deliverable requirement was not satisfied. |
 | `cancelled` | Cancellation fenced further checkpoint/publication work. |
@@ -117,6 +119,31 @@ A decision from an old tab cannot approve a replacement gate. Current personal
 ownership or group management rights are checked at the decision endpoint.
 Readers without decision rights can inspect authorized progress but cannot
 approve or resume it.
+
+### Finite Repeat batches
+
+[Repeat until](WORKFLOW_REPEAT_UNTIL.md) adds post-body state transitions in
+**0.261.120**. Each block requires an explicit maximum for one automatic batch.
+New runs must fit the separate administrator ceiling (default 25, range
+1-1,000); admitted runs freeze that policy and authored batch size.
+
+An unmet condition at the batch maximum creates a `paused` gate with
+`reason_code: "repeat_iteration_limit"` and choices `continue_repeat` or
+`cancel`. Ordinary Resume is not a batch grant. The decision is bound to the
+exact exhausted transition, saved next state, gate/version, and request ID.
+Replays and duplicate acknowledgments cannot grant extra batches.
+
+Manual continuation grants the same batch size and resets only its usage.
+Lifetime round indexes, accumulated execution admissions (at most 5,000), and
+elapsed deadline (at most 86,400 seconds) remain intact. Human waiting counts
+toward the deadline. The grant cannot repair invalid state, clear another
+pause, approve body tasks, or authorize destination publication.
+
+Committed rounds and before/after state remain reference-based and inspectable.
+Exhaustion/continuation counters and audit records are durable; sanitized event
+delivery is not a separate execution ledger or a promise of exactly-once
+telemetry. Control Center workflow monitoring remains a separate future
+capability.
 
 ### Readiness
 
@@ -187,5 +214,6 @@ after reload, and explicit decision permissions.
 
 No new Cosmos container or external workflow service is required. Structured
 If/else, Run when, and restricted forward routing are available through the
-version-3 List editor. General For each, Repeat until, exact Collect, and visual
-Flow authoring remain later milestones.
+version-3 List editor. Serial For each and exact Collect were added in
+**0.261.117**, followed by finite Repeat until in **0.261.120**. M5A read-only
+Flow and M5B accessible visual authoring remain separate later milestones.

@@ -6,6 +6,7 @@ import json
 import re
 
 from functions_workflow_definitions import workflow_definition_revision
+from functions_workflow_limits import WORKFLOW_MAX_EXECUTION_ADMISSIONS, WORKFLOW_REPEAT_ITERATIONS_MAX
 from functions_workflow_loop_schema import WORKFLOW_LOOP_MAX_ITEMS
 
 
@@ -19,24 +20,33 @@ def canonical_digest(value):
 
 
 def normalize_workflow_iteration_path(path):
-    """Validate shape only; readers must additionally prove sealed item membership."""
+    """Validate shape only; readers must additionally prove sealed iteration admission."""
     if path is None:
         return []
     if not isinstance(path, list) or len(path) > 3:
         raise ValueError("An iteration path requires at most three enclosing loop frames.")
     normalized, loops = [], set()
     for frame in path:
-        if not isinstance(frame, dict) or frame.keys() != {"loop_id", "item_id", "index"}:
-            raise ValueError("An iteration frame requires exactly loop_id, item_id and index.")
-        loop_id, item_id, index = frame["loop_id"], frame["item_id"], frame["index"]
+        if not isinstance(frame, dict) or frame.keys() not in (
+            {"loop_id", "item_id", "index"}, {"loop_id", "iteration"},
+        ):
+            raise ValueError("An iteration frame requires an exact For-each item or Repeat round.")
+        loop_id = frame["loop_id"]
         if not isinstance(loop_id, str) or not _NODE_ID.fullmatch(loop_id) or loop_id in loops:
             raise ValueError("Iteration loop ids must be stable and unique within a path.")
-        if not isinstance(item_id, str) or not _ITEM_ID.fullmatch(item_id):
-            raise ValueError("Iteration item ids must be lowercase SHA256 digests.")
-        if type(index) is not int or not 0 <= index < WORKFLOW_LOOP_MAX_ITEMS:
-            raise ValueError("An iteration index must be a zero-based integer within the technical item limit.")
         loops.add(loop_id)
-        normalized.append({"loop_id": loop_id, "item_id": item_id, "index": index})
+        if "iteration" in frame:
+            iteration = frame["iteration"]
+            if type(iteration) is not int or not 0 <= iteration < WORKFLOW_MAX_EXECUTION_ADMISSIONS:
+                raise ValueError("A Repeat iteration must be a zero-based lifetime index within the execution limit.")
+            normalized.append({"loop_id": loop_id, "iteration": iteration})
+        else:
+            item_id, index = frame["item_id"], frame["index"]
+            if not isinstance(item_id, str) or not _ITEM_ID.fullmatch(item_id):
+                raise ValueError("Iteration item ids must be lowercase SHA256 digests.")
+            if type(index) is not int or not 0 <= index < WORKFLOW_LOOP_MAX_ITEMS:
+                raise ValueError("An iteration index must be a zero-based integer within the technical item limit.")
+            normalized.append({"loop_id": loop_id, "item_id": item_id, "index": index})
     return normalized
 
 
@@ -62,7 +72,7 @@ def _flow_node(workflow, node_id):
                 raise ValueError("A saved flow node must be an object.")
             register(node.get("id"))
             kind = node.get("kind")
-            if not isinstance(kind, str) or kind not in {"task", "if", "route", "for_each", "collect"}:
+            if not isinstance(kind, str) or kind not in {"task", "if", "route", "for_each", "collect", "repeat_until"}:
                 raise ValueError("The saved flow node kind is unsupported.")
             if kind == "task":
                 task_id = node.get("task_id")
@@ -81,11 +91,12 @@ def _flow_node(workflow, node_id):
                     matched = ({"id": node_id, "kind": "join"}, ancestors)
                 visit(node.get("then"), ancestors, depth + 1)
                 visit(node.get("else"), ancestors, depth + 1)
-            elif kind == "for_each":
-                max_items = node.get("max_items")
-                if type(max_items) is not int or not 1 <= max_items <= WORKFLOW_LOOP_MAX_ITEMS:
-                    raise ValueError("A saved loop requires a bounded max_items value.")
-                visit(node.get("body"), (*ancestors, (node["id"], max_items)), depth + 1)
+            elif kind in {"for_each", "repeat_until"}:
+                limit = node.get("max_items" if kind == "for_each" else "max_iterations")
+                maximum = WORKFLOW_LOOP_MAX_ITEMS if kind == "for_each" else WORKFLOW_REPEAT_ITERATIONS_MAX
+                if type(limit) is not int or not 1 <= limit <= maximum:
+                    raise ValueError("A saved loop requires an explicit bounded iteration limit.")
+                visit(node.get("body"), (*ancestors, (node["id"], kind, limit)), depth + 1)
 
     visit(workflow.get("flow"), (), 1)
     if matched is None:
@@ -107,10 +118,20 @@ def _execution_parts(workflow, run_id, node_id, iteration_path):
             raise ValueError("Iteration paths require a structured workflow.")
         return path, None
     node, ancestors = _flow_node(workflow, node_id)
-    if [frame["loop_id"] for frame in path] != [loop_id for loop_id, _ in ancestors]:
+    if [frame["loop_id"] for frame in path] != [loop_id for loop_id, _, _ in ancestors]:
         raise ValueError("The iteration path does not match the node's enclosing loop ancestors.")
-    if any(frame["index"] >= limit for frame, (_, limit) in zip(path, ancestors)):
-        raise ValueError("An iteration index exceeds its enclosing loop's authored item limit.")
+    for frame, (_, kind, limit) in zip(path, ancestors):
+        if kind == "for_each":
+            if "index" not in frame or frame["index"] >= limit:
+                raise ValueError("An iteration index exceeds its enclosing For-each loop's authored item limit.")
+        else:
+            run_limit = (workflow.get("limits") or {}).get("max_executions", WORKFLOW_MAX_EXECUTION_ADMISSIONS)
+            if (
+                "iteration" not in frame or type(run_limit) is not int
+                or not 1 <= run_limit <= WORKFLOW_MAX_EXECUTION_ADMISSIONS
+                or frame["iteration"] >= run_limit
+            ):
+                raise ValueError("A Repeat lifetime iteration exceeds its enclosing run's execution limit.")
     return path, node
 
 

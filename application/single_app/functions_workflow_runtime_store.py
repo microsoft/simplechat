@@ -22,6 +22,7 @@ from azure.cosmos import exceptions as cosmos_exceptions
 from functions_workflow_journal import WorkflowJournalMixin
 from functions_workflow_identity import workflow_execution_id
 from functions_artifact_publication_readiness import public_publication_status
+from functions_workflow_limits import WORKFLOW_REPEAT_ITERATIONS_DEFAULT, WORKFLOW_REPEAT_ITERATIONS_MAX
 
 
 CONTROL_ID = "workflow-runtime:v1"
@@ -54,6 +55,7 @@ ALLOWED_UPDATE_KEYS = frozenset({
     "reference_snapshot_ref",
     "metadata",
     "loop_progress",
+    "repeat_progress",
 })
 IDENTITY_KEYS = frozenset({"workflow_id", "user_id", "group_id", "scope_type", "scope_id", "run_id"})
 FORBIDDEN_PAYLOAD_KEY_PARTS = ("token", "secret", "password", "connection")
@@ -79,6 +81,8 @@ GATE_ALLOWED_KEYS = frozenset({
     "retryable",
     "metadata",
     "publication",
+    "reason_code",
+    "repeat",
 })
 GATE_KIND_BY_STATE = {
     "waiting_approval": "approval",
@@ -99,6 +103,7 @@ NEXT_STATE_BY_DECISION = {
     ("recovery", "cancel"): "cancelled",
     ("pause", "resume"): "queued",
     ("pause", "cancel"): "cancelled",
+    ("pause", "continue_repeat"): "queued",
 }
 
 
@@ -112,6 +117,24 @@ class WorkflowRuntimeConflict(RuntimeError):
 
 
 RuntimeConflict = WorkflowRuntimeConflict
+
+
+def validate_repeat_admission_policy(compiled, policy=None):
+    repeats = [entry["node"] for entry in compiled["nodes"].values() if entry["node"]["kind"] == "repeat_until"]
+    if not repeats:
+        return None
+    if policy is not None and not isinstance(policy, dict):
+        raise RuntimeConflict("invalid_repeat_policy")
+    maximum = (policy or {}).get("max_iterations", WORKFLOW_REPEAT_ITERATIONS_DEFAULT)
+    if type(maximum) is not int or not 1 <= maximum <= WORKFLOW_REPEAT_ITERATIONS_MAX:
+        raise RuntimeConflict("invalid_repeat_policy")
+    if any(node["max_iterations"] > maximum for node in repeats):
+        raise RuntimeConflict(
+            "repeat_policy_exceeded",
+            "A Repeat maximum exceeds the administrator's current iteration limit. "
+            "Change the authored maximum or ask an administrator to change the policy before starting a new run.",
+        )
+    return {"version": 1, "max_iterations": maximum}
 
 
 class RuntimeUnavailable(RuntimeError):
@@ -283,7 +306,16 @@ def _validate_gate(gate, state):
     if kind != expected_kind:
         raise RuntimeConflict("invalid_gate", "Workflow runtime gate kind does not match state.")
     choices = gate.get("choices")
-    allowed_choices = CHOICES_BY_GATE_KIND[kind]
+    repeat_limit = gate.get("reason_code") == "repeat_iteration_limit"
+    allowed_choices = frozenset({"continue_repeat", "cancel"}) if repeat_limit else CHOICES_BY_GATE_KIND[kind]
+    if repeat_limit:
+        from functions_workflow_repeat_state import validate_repeat_gate_summary
+
+        if kind != "pause" or choices != ["continue_repeat", "cancel"]:
+            raise RuntimeConflict("invalid_gate", "Repeat continuation requires its exact exhaustion gate.")
+        validate_repeat_gate_summary(gate.get("repeat"))
+    elif "repeat" in gate:
+        raise RuntimeConflict("invalid_gate", "Repeat state requires an exhaustion gate.")
     if choices is None:
         choices = sorted(allowed_choices)
     if not isinstance(choices, list) or any(not _valid_id(choice, max_length=64) for choice in choices):
@@ -447,6 +479,8 @@ def public_projection(control):
         "phase": control.get("phase"),
         "progress": control.get("progress"),
         **({"loop_progress": deepcopy(control["loop_progress"])} if control.get("loop_progress") else {}),
+        **({"repeat_progress": deepcopy(control["repeat_progress"])} if control.get("repeat_progress") else {}),
+        **({"repeat_counts": deepcopy(control["repeat_counts"])} if control.get("repeat_counts") else {}),
         **({
             "limits": {
                 "max_executions": control["max_executions"],
@@ -455,6 +489,7 @@ def public_projection(control):
                 "deadline_seconds": control["deadline_seconds"],
                 "waits_count": True,
                 **({"max_loop_items": control["loop_policy"]["max_items"]} if control.get("loop_policy") else {}),
+                **({"max_repeat_iterations": control["repeat_policy"]["max_iterations"]} if control.get("repeat_policy") else {}),
             },
         } if control.get("schema_version") == 2 else {}),
         "deleted": bool(control.get("deleted")),
@@ -594,7 +629,11 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
     def expire_deadline(self):
         def mutator(current):
             deadline = _parse_timestamp(current.get("deadline_at"))
-            if current.get("schema_version") != 2 or deadline is None or self._now() < deadline or current["state"] in TERMINAL_STATES | {"paused"}:
+            if (
+                current.get("schema_version") != 2 or deadline is None or self._now() < deadline
+                or current["state"] in TERMINAL_STATES
+                or current["state"] == "paused" and (current.get("gate") or {}).get("reason_code") != "repeat_iteration_limit"
+            ):
                 return NO_WRITE
             return self._limit_pause(current, "deadline_exceeded")
 
@@ -606,6 +645,7 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
         replacement.update(state="paused", phase=code, lease=None, version=current["version"] + 1, gate={
             "id": uuid.uuid4().hex, "kind": "pause", "unit_id": node_id or "run-limits",
             "input_digest": current["definition_revision"], "choices": ["cancel"],
+            "reason_code": code,
             "reason": (
                 "The elapsed workflow deadline was reached, including time spent waiting. Cancel and start a new run."
                 if code == "deadline_exceeded" else
@@ -678,9 +718,24 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
                 raise
         raise RuntimeConflict("etag_conflict", "Workflow runtime changed concurrently. Retry the operation.")
 
-    def initialize(self, *, snapshot_ref, definition_revision, actor_user_id, request_id, loop_policy=None):
+    def initialize(self, *, snapshot_ref, definition_revision, actor_user_id, request_id, loop_policy=None, repeat_policy=None):
         actor_user_id = _require_id(actor_user_id, "actor_user_id")
         request_id = _require_id(request_id, "request_id")
+        try:
+            existing = self._read_control(allow_deleted=True)
+        except RuntimeConflict as exc:
+            if exc.code != "not_found":
+                raise
+            existing = None
+        if existing is not None:
+            if existing.get("deleted"):
+                raise RuntimeConflict("tombstoned", "Workflow runtime control was deleted.")
+            if (
+                existing.get("request_id") != request_id or existing.get("snapshot_ref") != snapshot_ref
+                or existing.get("definition_revision") != definition_revision or existing.get("actor_user_id") != actor_user_id
+            ):
+                raise RuntimeConflict("initialize_conflict", "Workflow runtime was already initialized.")
+            return existing
         timestamp = _iso(self._now())
         control = {
             "id": CONTROL_ID,
@@ -722,6 +777,10 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
                 if type(maximum) is not int or not 1 <= maximum <= 5000:
                     raise RuntimeConflict("invalid_loop_policy")
                 control["loop_policy"] = {"version": 1, "max_items": maximum}
+            admitted_repeat_policy = validate_repeat_admission_policy(compiled, repeat_policy)
+            if admitted_repeat_policy is not None:
+                control["repeat_policy"] = admitted_repeat_policy
+                control["repeat_counts"] = {"exhaustion_count": 0, "continuation_count": 0}
         _bounded_json_copy(control)
         try:
             saved = self.container.create_item(body=control)

@@ -1,7 +1,7 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.117
+Version: 0.261.120
 Implemented in: 0.261.117
 
 Loads the real built local SPA and validates authoring payloads with production
@@ -1037,13 +1037,14 @@ def test_malformed_frozen_item_pages_fail_closed(workflow_loops_ui, malformed):
     assert not any(request.path.endswith("/records") for request in ui.requests)
 
 
-def test_repeat_runtime_gate_identity_is_not_actionable(workflow_loops_ui):
+def test_hybrid_repeat_and_item_runtime_gate_identity_is_not_actionable(workflow_loops_ui):
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     runtime = ui.workflow_runtimes[("user", LOOP_WORKFLOW_ID, LOOP_RUN_ID)]
     runtime.update(state="waiting_approval", gate={
         "id": "invalid-repeat-gate", "kind": "approval", "unit_id": "task:analyze-task",
         "execution_id": ITEM_A_EXECUTION_ID, "node_id": "analyze-one", "attempt": 1,
-        "iteration_path": [{"loop_id": LOOP_ID, "iteration": 1}], "choices": ["approve", "reject"],
+        "iteration_path": [{"loop_id": LOOP_ID, "iteration": 1, "item_id": "a" * 64, "index": 1}],
+        "choices": ["approve", "reject"],
     })
     expand_history(ui)
     expect(page.get_by_role("alert").filter(has_text="unsupported iteration identity")).to_be_visible()

@@ -82,7 +82,9 @@ from functions_service_health import get_default_service_health
 from json_schema_validation import validate_legacy_plugin_settings_update
 from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
+    WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
     validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
 )
 import admin_settings_secret_utils as _secret_utils
 import app_settings_cache
@@ -1376,6 +1378,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_workflow_user': False,
         'workflow_max_tasks': 50,
         'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
+        'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
         'allow_group_workflows': False,
         'require_group_assignment_for_group_workflows': False,
         'group_workflow_allowed_group_ids': [],
@@ -2080,6 +2083,13 @@ def update_settings(new_settings, *, expected_etag=None):
             **new_settings,
             'workflow_max_loop_items': validate_workflow_max_loop_items(
                 new_settings['workflow_max_loop_items']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'workflow_max_repeat_iterations' in new_settings:
+        new_settings = {
+            **new_settings,
+            'workflow_max_repeat_iterations': validate_workflow_max_repeat_iterations(
+                new_settings['workflow_max_repeat_iterations']
             ),
         }
     expected_etag = expected_etag or new_settings.get("_etag")

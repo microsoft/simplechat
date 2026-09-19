@@ -6123,7 +6123,9 @@ def _add_workflow_activity_thought(
         activity_key = f"{activity_key}:{identity['execution_id']}:{identity['attempt']}"
         lane_key = identity['execution_id']
         lane_label = ' / '.join(
-            f"{frame['loop_id']} item {frame['index'] + 1}" for frame in identity['iteration_path']
+            f"{frame['loop_id']} round {frame['iteration'] + 1}" if 'iteration' in frame
+            else f"{frame['loop_id']} item {frame['index'] + 1}"
+            for frame in identity['iteration_path']
         )
     return thought_tracker.add_thought(
         step_type,
@@ -10675,6 +10677,9 @@ def _execute_workflow_task_sequence(
         if callable(cancel_check):
             cancel_check(workflow, run_id)
 
+    has_repeat = flow_runner is not None and any(
+        entry['node']['kind'] == 'repeat_until' for entry in flow_runner.compiled['nodes'].values()
+    )
     for task_index, raw_task in enumerate(flow_runner.tasks() if flow_runner else tasks):
         raise_if_cancelled()
         task = dict(raw_task or {})
@@ -10682,6 +10687,10 @@ def _execute_workflow_task_sequence(
         task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
         task['id'] = task_id
         task_unit_key = f'task:{task_id}'
+        if has_repeat:
+            # Resume skips sealed rounds; retain the original ordinal rather than
+            # weakening native/task checkpoint fingerprints when enumeration changes.
+            task['order'] = durable.cache(f'task-order:{task_id}', {'order': task['order']})['order']
         completed_task = durable.snapshot(f'task-result:{task_id}') if durable is not None else None
         if completed_task is None:
             completed_task = read_m365_task_checkpoint(task_id)
@@ -10739,11 +10748,11 @@ def _execute_workflow_task_sequence(
                 workflow,
                 run_id,
                 step_type='task',
-                content=f"Starting task {task_index + 1}: {task.get('name') or task_id}",
+                content=f"Starting task {task['order']}: {task.get('name') or task_id}",
                 detail=None,
                 activity_key=f'task:{run_id}:{task_id}',
                 kind='workflow_task',
-                title=str(task.get('name') or f'Task {task_index + 1}'),
+                title=str(task.get('name') or f"Task {task['order']}"),
                 status='running',
             )
         # Older M365 checkpoints retain the complete result, not a UI preview.
@@ -11021,11 +11030,11 @@ def _execute_workflow_task_sequence(
                         workflow,
                         run_id,
                         step_type='task',
-                        content=f"Retrying task {task_index + 1}: {task.get('name') or task_id}",
+                        content=f"Retrying task {task['order']}: {task.get('name') or task_id}",
                         detail=f'attempt={attempt_count + 1}',
                         activity_key=f'task:{run_id}:{task_id}',
                         kind='workflow_task',
-                        title=str(task.get('name') or f'Task {task_index + 1}'),
+                        title=str(task.get('name') or f"Task {task['order']}"),
                         status='running',
                     )
 
@@ -11240,11 +11249,11 @@ def _execute_workflow_task_sequence(
                     workflow,
                     run_id,
                     step_type='task',
-                    content=f"Finished task {task_index + 1}: {task.get('name') or task_id}",
+                    content=f"Finished task {task['order']}: {task.get('name') or task_id}",
                     detail=task_error or f'attempts={attempt_count}; validation={validation["status"]}',
                     activity_key=f'task:{run_id}:{task_id}',
                     kind='workflow_task',
-                    title=str(task.get('name') or f'Task {task_index + 1}'),
+                    title=str(task.get('name') or f"Task {task['order']}"),
                     status='completed' if validation['eligible'] else 'failed',
                 )
             completed_results[task_id] = {
@@ -11304,11 +11313,11 @@ def _execute_workflow_task_sequence(
                 workflow,
                 run_id,
                 step_type='task',
-                content=f"Failed task {task_index + 1}: {task.get('name') or task_id}",
+                content=f"Failed task {task['order']}: {task.get('name') or task_id}",
                 detail=task_error,
                 activity_key=f'task:{run_id}:{task_id}',
                 kind='workflow_task',
-                title=str(task.get('name') or f'Task {task_index + 1}'),
+                title=str(task.get('name') or f"Task {task['order']}"),
                 status='failed',
             )
         if error_strategy != 'continue':
