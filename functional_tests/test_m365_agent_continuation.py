@@ -1,7 +1,7 @@
 # test_m365_agent_continuation.py
 """
 Real Semantic Kernel filter/thread regression for Microsoft 365 approvals.
-Version: 0.261.030
+Version: 0.261.034
 Implemented in: 0.261.029
 
 Completed calls, including concurrent siblings, are never changed into pending
@@ -218,6 +218,97 @@ class AgentContinuationTests(unittest.TestCase):
 
     def test_concurrent_completed_tool_keeps_its_real_result(self):
         asyncio.run(self.exercise_resume(True))
+
+    def test_rejected_graph_token_becomes_a_sign_in_wait_with_scopes_and_no_completed_call_replay(self):
+        class GraphTools:
+            def __init__(self):
+                self.connected = False
+                self.completed_calls = 0
+                self.file_calls = 0
+
+            @kernel_function
+            async def completed(self) -> str:
+                self.completed_calls += 1
+                return "Already done"
+
+            @kernel_function
+            async def files(self) -> dict:
+                self.file_calls += 1
+                if not self.connected:
+                    return {
+                        "source": "spo", "status": "error",
+                        "error": {
+                            "code": "authentication_required",
+                            "scopes": ["https://graph.microsoft.com/Files.Read.All"],
+                            "sources": ["spo"],
+                        },
+                    }
+                return {"source": "spo", "status": "ok", "results": []}
+
+        async def exercise():
+            tools = GraphTools()
+            kernel = Kernel()
+            first = kernel.add_function(plugin_name="tools", function=tools.completed)
+            second = kernel.add_function(plugin_name="tools", function=tools.files)
+            agent = SimpleNamespace(
+                name="agent", instructions="Use selected tools", kernel=kernel,
+                arguments=KernelArguments(), function_choice_behavior=None,
+            )
+            journal = continuation.AgentContinuationJournal(agent, self.context)
+            calls = [
+                FunctionCallContent(id="completed", name=first.metadata.fully_qualified_name, arguments="{}"),
+                FunctionCallContent(id="files", name=second.metadata.fully_qualified_name, arguments="{}"),
+            ]
+            history = ChatHistory(messages=[ChatMessageContent(role=AuthorRole.ASSISTANT, items=calls)])
+            token = continuation._current_journal.set(journal)
+            try:
+                for call in calls:
+                    await kernel.invoke_function_call(call, history)
+                journal.thread = ChatHistoryAgentThread(history)
+                with self.assertRaises(M365SignInRequired) as raised:
+                    await journal.finish()
+                self.assertEqual(raised.exception.payload["sources"], ["spo"])
+                self.assertEqual(raised.exception.payload["scopes"], ["https://graph.microsoft.com/Files.Read.All"])
+            finally:
+                continuation._current_journal.reset(token)
+            tools.connected = True
+            resumed = continuation.AgentContinuationJournal(agent, self.context)
+            token = continuation._current_journal.set(resumed)
+            try:
+                await resumed.prepare((), {"messages": []})
+            finally:
+                continuation._current_journal.reset(token)
+            self.assertEqual(tools.completed_calls, 1)
+            self.assertEqual(tools.file_calls, 2)
+            self.assertIsNone(resumed.pending)
+
+        asyncio.run(exercise())
+
+    def test_retrieval_configuration_errors_do_not_prompt_for_sign_in(self):
+        async def exercise():
+            kernel = Kernel()
+
+            @kernel_function
+            async def files() -> dict:
+                return {
+                    "source": "spo", "status": "error",
+                    "error": {"code": "model_context_unavailable", "message": "Declare model limits."},
+                }
+
+            function = kernel.add_function(plugin_name="tools", function=files)
+            agent = SimpleNamespace(name="agent", instructions="Use files", kernel=kernel)
+            journal = continuation.AgentContinuationJournal(agent, self.context)
+            call = FunctionCallContent(id="files", name=function.metadata.fully_qualified_name, arguments="{}")
+            history = ChatHistory(messages=[ChatMessageContent(role=AuthorRole.ASSISTANT, items=[call])])
+            token = continuation._current_journal.set(journal)
+            try:
+                await kernel.invoke_function_call(call, history)
+            finally:
+                continuation._current_journal.reset(token)
+            self.assertIsNone(journal.pending)
+            self.assertEqual(journal.deferred_calls, set())
+
+        asyncio.run(exercise())
 
 
 if __name__ == "__main__":

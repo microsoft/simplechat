@@ -13,6 +13,7 @@
             return;
         }
         let connection = null;
+        let chatConnectBusy = false;
         let bindingContinuation = null;
         let revocation = null;
         let revocationBusy = false;
@@ -78,6 +79,95 @@
                 showStatus('m365-preferences-status', error.message, 'danger');
             } finally {
                 button.disabled = false;
+            }
+        }
+
+        function showChatConnectionReturn() {
+            const currentUrl = new URL(window.location.href);
+            const result = currentUrl.searchParams.get('m365_chat_connection');
+            if (result === null) {
+                return;
+            }
+            currentUrl.searchParams.delete('m365_chat_connection');
+            window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+            if (result === 'connected') {
+                showStatus('m365-chat-connection-notice',
+                    'Microsoft 365 sign-in completed. Return to your conversation and retry your original question. No past requests were retried.',
+                    'success');
+            }
+        }
+
+        async function loadChatConnection() {
+            if (chatConnectBusy) {
+                return;
+            }
+            const fields = document.getElementById('m365-chat-connection-fields');
+            fields.disabled = true;
+            try {
+                const response = await api.requestJson('/api/m365/chat/connection');
+                const chatConnection = response.connection;
+                const descriptions = {
+                    available: 'Sign-in saved for this session',
+                    not_connected: 'No Microsoft 365 sign-in is saved for this session',
+                    reconnect_required: 'Reconnect Microsoft 365 before using these sources in chat'
+                };
+                if (!Object.prototype.hasOwnProperty.call(descriptions, chatConnection?.status)
+                    || !Array.isArray(chatConnection.sources)
+                    || !chatConnection.sources.every(source => typeof source === 'string'
+                        && Object.prototype.hasOwnProperty.call(api.sourceLabels, source))) {
+                    throw new Error('The chat sign-in status could not be verified. Refresh before trying again.');
+                }
+                root.querySelectorAll('[data-m365-chat-connect-source]').forEach(checkbox => {
+                    checkbox.checked = chatConnection.sources.includes(checkbox.dataset.m365ChatConnectSource);
+                });
+                document.getElementById('m365-chat-connection-details').textContent =
+                    `Sources saved for this session: ${chatConnection.sources.map(source => api.sourceLabels[source]).join(', ') || 'None'}.`;
+                fields.disabled = false;
+                showStatus('m365-chat-connection-status',
+                    `${descriptions[chatConnection.status]}. Access is checked when a source runs.`,
+                    chatConnection.status === 'reconnect_required' ? 'warning' : 'info');
+            } catch (error) {
+                showStatus('m365-chat-connection-status', error.message, 'danger');
+            }
+        }
+
+        async function connectChat() {
+            if (chatConnectBusy) {
+                return;
+            }
+            const fields = document.getElementById('m365-chat-connection-fields');
+            const sources = Array.from(root.querySelectorAll('[data-m365-chat-connect-source]:checked'))
+                .map(input => input.dataset.m365ChatConnectSource);
+            if (!sources.length) {
+                showStatus('m365-chat-connection-status', 'Select at least one source to reconnect for chat.', 'warning');
+                document.getElementById('m365-chat-connection-status').focus();
+                return;
+            }
+            chatConnectBusy = true;
+            fields.disabled = true;
+            document.getElementById('m365-chat-connection-notice').classList.add('d-none');
+            showStatus('m365-chat-connection-status', 'Opening Microsoft 365 sign-in for the selected chat sources...');
+            try {
+                const result = await api.requestJson('/api/m365/chat/connection/connect', { method: 'POST', body: { sources } });
+                const invalidUrlMessage = 'The server did not return a valid HTTPS Microsoft 365 sign-in URL.';
+                if (typeof result.authorization_url !== 'string') {
+                    throw new Error(invalidUrlMessage);
+                }
+                let target;
+                try {
+                    target = new URL(result.authorization_url);
+                } catch {
+                    throw new Error(invalidUrlMessage);
+                }
+                if (target.protocol !== 'https:' || !target.hostname || target.username || target.password) {
+                    throw new Error(invalidUrlMessage);
+                }
+                window.location.assign(target.href);
+            } catch (error) {
+                showStatus('m365-chat-connection-status', error.message, 'danger');
+                chatConnectBusy = false;
+                fields.disabled = false;
+                document.getElementById('m365-chat-connection-status').focus();
             }
         }
 
@@ -221,7 +311,7 @@
 
         async function refresh() {
             await loadPreferences();
-            await Promise.all([loadConnection(), loadBindings()]);
+            await Promise.all([loadChatConnection(), loadConnection(), loadBindings()]);
         }
 
         root.querySelectorAll('[data-m365-revoke-source]').forEach(button => {
@@ -253,10 +343,12 @@
             }
         });
         document.getElementById('m365-preferences-form').addEventListener('submit', savePreferences);
+        document.getElementById('m365-chat-connect-btn').addEventListener('click', connectChat);
         document.getElementById('m365-connect-btn').addEventListener('click', connect);
         document.getElementById('m365-revoke-confirm').addEventListener('click', revoke);
         document.getElementById('m365-profile-refresh').addEventListener('click', refresh);
         document.getElementById('m365-bindings-more').addEventListener('click', () => loadBindings(true));
+        showChatConnectionReturn();
         refresh();
     }
 

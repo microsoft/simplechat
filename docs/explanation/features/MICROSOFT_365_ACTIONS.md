@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.033)
+# Microsoft 365 actions and conversation evidence (v0.261.034)
 
 Implemented in version: **0.261.029**
 
@@ -15,6 +15,10 @@ Consent callbacks were corrected in **0.261.033** to accept token responses
 containing additional previously granted permissions without widening the
 selected action or workflow authorization. See the
 [consent scope-response fix](../fixes/M365_CONSENT_SCOPE_RESPONSE_FIX.md).
+
+Profile can explicitly renew interactive Microsoft 365 sign-in in **0.261.034**,
+independently of pending requests or workflow setup. See the
+[reconnect recovery fix](../fixes/M365_CHAT_RECONNECT_RECOVERY_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.

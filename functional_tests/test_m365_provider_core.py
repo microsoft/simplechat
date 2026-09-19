@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for source-bounded Microsoft 365 providers and file evidence.
-Version: 0.261.029
+Version: 0.261.034
 Implemented in: 0.261.029
 
 External Graph, authentication, logging, and storage I/O is mocked. The tests
@@ -28,6 +28,7 @@ import openpyxl
 import pytest
 import requests
 import jsonschema
+from flask import Flask, session
 from opentelemetry.instrumentation.utils import is_http_instrumentation_enabled
 from pptx import Presentation
 from pptx.util import Inches
@@ -278,6 +279,56 @@ def test_transport_errors_are_safe_and_do_not_retry(execution, status, code):
     assert caught.value.retry_after_seconds == 41
     assert "private-token" not in json.dumps(caught.value.as_dict())
     assert request.call_count == 1
+    if status == 401:
+        assert caught.value.details["scopes"] == ["https://graph.microsoft.com/Files.Read.All"]
+        assert caught.value.details["sources"] == ["spo"]
+    else:
+        assert "scopes" not in caught.value.details
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+def test_only_graph_authentication_rejection_marks_the_current_chat_for_reconnect(execution, status):
+    from functions_m365_connections import CHAT_RECONNECT_SESSION_KEY
+
+    request = Mock(return_value=FakeResponse({"error": {"code": "rejected"}}, status=status))
+    client = M365Transport(
+        "spo", cloud=M365CloudConfig("https://graph.microsoft.com/v1.0", "https://login.microsoftonline.com/tenant"),
+        request=request, token_provider=lambda scopes, context: {"access_token": "unexpired-but-rejected-token"},
+    )
+    app = Flask(__name__)
+    app.secret_key = "test-only"
+    with app.test_request_context():
+        session["user"] = {"oid": execution.data_user_id, "tid": execution.tenant_id}
+        session["token_cache"] = "existing-cache"
+        with pytest.raises(M365ProviderError):
+            client.request_json("POST", "/search/query", ["Files.Read.All", "Sites.Read.All"])
+        marker = session.get(CHAT_RECONNECT_SESSION_KEY)
+        retained_cache = session["token_cache"]
+    assert bool(marker) is (status == 401)
+    assert retained_cache == "existing-cache"
+    assert request.call_count == 1
+
+
+def test_expired_preauthenticated_download_link_does_not_mark_graph_login_invalid(execution):
+    from functions_m365_connections import CHAT_RECONNECT_SESSION_KEY
+
+    first = FakeResponse(status=302, headers={"Location": "https://tenant.sharepoint.com/download?temporary=opaque"})
+    expired = FakeResponse(status=401, body=b"Expired download")
+    client = M365Transport(
+        "spo", cloud=M365CloudConfig("https://graph.microsoft.com/v1.0", "https://login.microsoftonline.com/tenant"),
+        request=Mock(side_effect=[first, expired]), token_provider=lambda scopes, context: {"access_token": "valid-token"},
+    )
+    app = Flask(__name__)
+    app.secret_key = "test-only"
+    with app.test_request_context():
+        session["user"] = {"oid": execution.data_user_id, "tid": execution.tenant_id}
+        with pytest.raises(M365ProviderError) as raised:
+            with client.download_file("drive", "item", suffix=".txt", allowed_mime_types=["text/plain"], max_bytes=100):
+                pytest.fail("An expired download cannot yield a file.")
+        marker = session.get(CHAT_RECONNECT_SESSION_KEY)
+    assert raised.value.code == "download_link_expired"
+    assert marker is None
+    assert first.closed and expired.closed
 
 
 def test_graph_file_results_have_canonical_source_and_never_download_url(execution):

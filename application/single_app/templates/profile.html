@@ -1224,6 +1224,29 @@
             </fieldset>
         </form>
         <hr />
+        <div id="m365-chat-connection" role="region" aria-labelledby="m365-chat-connection-heading">
+            <h6 id="m365-chat-connection-heading">Microsoft 365 chat connection</h6>
+            <p class="small">Renew your interactive Microsoft 365 sign-in here, even without a pending chat request. This uses your current sign-in session and does not require Key Vault or a saved workflow connection.</p>
+            <p class="small">Reconnecting does not change sharing approvals or preferences, saved workflow credentials, or workflow Run as authorizations. It does not enable disabled action capabilities or fix unrelated model or storage configuration errors.</p>
+            <div id="m365-chat-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
+            <div id="m365-chat-connection-status" class="alert alert-info" role="status" aria-live="polite" tabindex="-1">Loading chat sign-in status...</div>
+            <p class="small text-muted">This status reflects local saved sign-in state, not a live test of Microsoft 365 access.</p>
+            <p id="m365-chat-connection-details" class="small"></p>
+            <fieldset id="m365-chat-connection-fields" aria-describedby="m365-chat-source-permissions-help" disabled>
+                <legend class="fs-6">Sources to connect for chat</legend>
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    {% for m365_source, m365_label in [("calendar", "Calendar"), ("email", "Email"), ("onedrive", "OneDrive"), ("spo", "SPO")] %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="m365-chat-connect-{{ m365_source }}" data-m365-chat-connect-source="{{ m365_source }}" />
+                        <label class="form-check-label" for="m365-chat-connect-{{ m365_source }}">{{ m365_label }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="form-text" id="m365-chat-source-permissions-help">Each source includes the permissions for all of its supported operations. Calendar includes reading events, creating invitations, mailbox timezone, and recipient lookup. Email includes reading messages, managing drafts and read state, sending mail, and recipient lookup. OneDrive and SPO include file discovery and reading. Microsoft shows the permissions before you consent. Action capabilities, delivery confirmations, and sharing approvals still control what can actually run.</p>
+                <button type="button" class="btn btn-primary" id="m365-chat-connect-btn">Reconnect Microsoft 365 for chat</button>
+            </fieldset>
+        </div>
+        <hr />
         <h6>Connect Microsoft 365 for workflows</h6>
         <p class="small">This is separate from ordinary sign-in, sharing preferences, and workflow approval. Each selected Run as workflow revision needs your explicit authorization. Disconnect stops future connected-account use and invalidates bindings; it does not sign you out of other applications.</p>
         <p class="small">This status is for saved workflow access. Interactive chat asks you to connect in the conversation when permission is needed; a disconnected workflow account does not disable chat.</p>

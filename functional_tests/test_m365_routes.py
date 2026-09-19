@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.032
+Version: 0.261.034
 Implemented in: 0.261.029
 
 Imports the real route module with scoped authentication/logging I/O seams.
@@ -528,9 +528,71 @@ class M365RouteTests(unittest.TestCase):
         self.assertEqual(saved["status"], "awaiting_sign_in")
 
     def test_connection_profile_and_approval_responses_are_not_cached(self):
-        for path in ("/api/m365/preferences", "/api/m365/connections"):
+        for path in ("/api/m365/preferences", "/api/m365/connections", "/api/m365/chat/connection"):
             response = self.client.get(path)
             self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+
+    def test_profile_chat_reconnect_uses_current_subject_sources_and_fixed_callback(self):
+        dependencies = {
+            "config": module_stub("config", LOGIN_REDIRECT_URL=None),
+            "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
+        }
+        begin = Mock(return_value={"authorization_url": "https://login.microsoftonline.com/tenant-a/authorize"})
+        with patch.dict(sys.modules, dependencies), patch.object(self.connection_service, "start_profile_chat_connection", begin):
+            missing = self.client.post("/api/m365/chat/connection/connect", json={"sources": ["spo"]})
+            for payload in ({"sources": ["spo"], "user_id": "user-b"}, {"sources": ["spo"], "redirect_uri": "https://foreign.test"}, {"scopes": ["Mail.Send"]}):
+                invalid = self.client.post(
+                    "/api/m365/chat/connection/connect", json=payload,
+                    headers={"X-M365-CSRF-Token": self.csrf},
+                )
+                self.assertEqual(invalid.status_code, 400)
+            valid = self.client.post(
+                "/api/m365/chat/connection/connect", json={"sources": ["spo", "email"]},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(valid.status_code, 200)
+        begin.assert_called_once_with("user-a", "tenant-a", ["spo", "email"], "http://localhost/getAToken")
+        self.assertEqual(self.connection_container.items, {})
+
+    def test_profile_callback_does_not_read_or_replay_any_chat_request(self):
+        jobs = CosmosContainer("user_id")
+        dependencies = self.chat_request_dependencies(jobs)
+        resume = Mock(side_effect=AssertionError("Profile reconnect must not resume past requests."))
+        dependencies["functions_m365_request_resume"].get_m365_chat_request = resume
+        dependencies["functions_m365_runtime"] = module_stub("functions_m365_runtime", _conversation_access=resume)
+        with patch.dict(sys.modules, dependencies), patch.object(
+            self.connection_service, "complete_chat_connection", return_value={"return_to": "profile"},
+        ):
+            response = self.client.get("/api/m365/connections/callback?state=m365-chat-validstate&code=opaque")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/profile?tab=settings&m365_chat_connection=connected#m365-chat-connection")
+        self.assertEqual(jobs.items, {})
+        resume.assert_not_called()
+
+    def test_profile_chat_connection_is_private_and_does_not_expose_cache_contents(self):
+        self.set_session({
+            "user": {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]},
+            "token_cache": "private-corrupted-token-material",
+        })
+        response = self.client.get("/api/m365/chat/connection")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["connection"], {"status": "reconnect_required", "sources": []})
+        self.assertNotIn("private-corrupted", response.get_data(as_text=True))
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        self.set_session({})
+        anonymous = self.client.get("/api/m365/chat/connection")
+        self.assertEqual(anonymous.status_code, 401)
+
+    def test_verified_workflow_reconnect_clears_an_interactive_rejection_marker(self):
+        with self.app.test_request_context():
+            session["token_cache"] = "old-cache"
+            session[connections.CHAT_RECONNECT_SESSION_KEY] = {"user_id": "user-a", "tenant_id": "tenant-a"}
+            self.routes._publish_verified_workflow_cache_to_session("verified-cache")
+            cached = session["token_cache"]
+            marker = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
+        self.assertEqual(cached, "verified-cache")
+        self.assertIsNone(marker)
 
     def test_real_notification_helper_only_targets_subject_and_deduplicates(self):
         notification_container = CosmosContainer("user_id")

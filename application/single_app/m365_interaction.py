@@ -7,7 +7,7 @@ from functions_m365_approvals import M365PolicyError
 M365_AUTH_INTERACTION_CODES = frozenset({
     "interactive_auth_required", "authentication_required", "consent_required",
     "m365_connection_required", "m365_reconnect_required", "m365_connection_scopes_required",
-    "m365_consent_required",
+    "m365_consent_required", "m365_cache_unavailable",
 })
 
 

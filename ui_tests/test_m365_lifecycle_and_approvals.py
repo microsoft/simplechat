@@ -1,9 +1,10 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.032
+Version: 0.261.034
 Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
+Independent Profile chat reconnect coverage implemented in: 0.261.034
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -97,16 +98,21 @@ class ApiFixture:
         self.revocations = []
         self.errors = []
         self.connection = None
+        self.chat_connection = {"status": "not_connected", "sources": []}
         self.connect_requests = []
         self.chat_connect_requests = []
+        self.profile_chat_connect_requests = []
+        self.workflow_connect_available = False
         self.authorization_url = "https://login.microsoftonline.com/ui-test-tenant/oauth2/v2.0/authorize?state=fixture"
         self.oauth_navigations = []
         self.chat_callback_url = None
+        self.profile_callback_url = None
         self.auth_callbacks = []
         self.api_paths = []
         self.csrf_token = CSRF_TOKEN
         self.preference_reads = 0
         self.m365_posts = []
+        self.get_failures = {}
         self.post_failures = {}
         self.fail_decision = False
         self.waiting_requests = []
@@ -138,6 +144,12 @@ class ApiFixture:
         request = route.request
         self.api_paths.append(path)
         body = json.loads(request.post_data or "{}")
+        if request.method == "GET":
+            failures = self.get_failures.get(path)
+            if failures:
+                payload, status = failures.pop(0)
+                self.respond(route, payload, status)
+                return
         if request.method in ("POST", "PATCH", "PUT") and path.startswith("/api/m365/"):
             self.m365_posts.append({
                 "path": path, "body": body, "method": request.method,
@@ -162,11 +174,19 @@ class ApiFixture:
                 self.preference_writes.append(body)
                 self.preferences.update(copy.deepcopy(body))
                 self.respond(route, {"success": True, "preferences": self.preferences})
+        elif path == "/api/m365/chat/connection":
+            self.respond(route, {"success": True, "connection": self.chat_connection, "csrf_token": self.csrf_token})
+        elif path == "/api/m365/chat/connection/connect":
+            self.profile_chat_connect_requests.append(body)
+            self.respond(route, {"success": True, "authorization_url": self.authorization_url})
         elif path == "/api/m365/connections":
             self.respond(route, {"success": True, "connection": self.connection, "csrf_token": self.csrf_token})
         elif path == "/api/m365/connections/connect":
             self.connect_requests.append(body)
-            self.respond(route, {"message": "Key Vault is required for workflow connections."}, 503)
+            if self.workflow_connect_available:
+                self.respond(route, {"success": True, "authorization_url": self.authorization_url})
+            else:
+                self.respond(route, {"message": "Key Vault is required for workflow connections."}, 503)
         elif path == "/api/m365/connections/disconnect":
             self.revocations.append((path, body))
             self.connection = {**self.connection, "status": "disconnected", "sources": []}
@@ -354,13 +374,17 @@ def ui(m365_browser, monkeypatch):
         if path.startswith("/api/"):
             api.handle_api(route, path)
             return
-        if path == "/getAToken" and api.chat_callback_url:
+        callback_destination = api.profile_callback_url or api.chat_callback_url
+        if path == "/getAToken" and callback_destination:
             api.auth_callbacks.append(route.request.url)
             # A fulfilled redirect bypasses subsequent Playwright routes. Keep
             # its destination local to this fixture using an inert navigation link.
             callback_html = environment.from_string(
-                '<h1>OAuth callback fixture</h1><a href="{{ destination }}">Return to original chat</a>'
-            ).render(destination=api.chat_callback_url)
+                '<h1>OAuth callback fixture</h1><a href="{{ destination }}">{{ label }}</a>'
+            ).render(
+                destination=callback_destination,
+                label="Return to Microsoft 365 chat connection" if api.profile_callback_url else "Return to original chat",
+            )
             route.fulfill(content_type="text/html", body=callback_html)
             return
         if path.startswith("/conversation/") and path.endswith("/messages"):
@@ -934,6 +958,336 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
     )""")
     expect(page.locator("#workflow-activity-cancel-btn")).to_be_visible()
     expect(page.locator("#workflow-activity-cancel-btn")).to_be_enabled()
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("status,sources,message", [
+    ("available", list(SOURCES), "Sign-in saved for this session"),
+    ("not_connected", [], "No Microsoft 365 sign-in is saved for this session"),
+    ("reconnect_required", ["email"], "Reconnect Microsoft 365 before using these sources in chat"),
+])
+def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewport, status, sources, message):
+    page, api = ui
+    api.chat_connection = {"status": status, "sources": sources}
+    page.set_viewport_size(viewport)
+    page.goto(f"{ORIGIN}/profile?tab=settings")
+    region = page.get_by_role("region", name="Microsoft 365 chat connection", exact=True)
+    expect(region.get_by_role("button", name="Reconnect Microsoft 365 for chat", exact=True)).to_be_enabled()
+    expect(region.locator("#m365-chat-connection-status")).to_contain_text(message)
+    expect(region).to_contain_text("Access is checked when a source runs")
+    expect(region).to_contain_text("does not require Key Vault")
+    expect(region).to_contain_text("sharing approvals")
+    expect(region).to_contain_text("saved workflow credentials")
+    expect(region).to_contain_text("workflow Run as")
+    expect(region).to_contain_text("disabled action capabilities")
+    expect(region).to_contain_text("model or storage configuration")
+    expect(region.get_by_role("checkbox")).to_have_count(4)
+    for source in SOURCES:
+        checkbox = region.locator(f"#m365-chat-connect-{source}")
+        if source in sources:
+            expect(checkbox).to_be_checked()
+        else:
+            expect(checkbox).not_to_be_checked()
+    expect(page.locator("#m365-connection-fields")).to_be_enabled()
+    expect(page.locator("#m365-bindings-status")).to_contain_text("No workflow authorizations")
+    layout = region.evaluate("""element => ({
+        content: element.scrollWidth, width: element.clientWidth,
+        left: element.getBoundingClientRect().left,
+        right: element.getBoundingClientRect().right, viewport: window.innerWidth
+    })""")
+    assert layout["content"] <= layout["width"]
+    assert 0 <= layout["left"] < layout["right"] <= layout["viewport"]
+    assert api.api_paths[0] == "/api/m365/preferences"
+    assert "/api/m365/chat/connection" in api.api_paths
+    assert "/api/m365/requests" not in api.api_paths
+    assert not api.m365_posts
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("source,description", [
+    ("calendar", "reading events, creating invitations"),
+    ("email", "reading messages, managing drafts and read state, sending mail"),
+    ("onedrive", "file discovery and reading"),
+    ("spo", "file discovery and reading"),
+])
+def test_profile_chat_source_selection_is_separate_from_workflow_and_sharing(ui, source, description):
+    page, api = ui
+    api.chat_connection = {"status": "available", "sources": list(SOURCES)}
+    api.connection = {
+        "id": "saved-workflow", "status": "connected", "sources": ["spo"],
+        "authorized_scopes": ["Files.Read.All"],
+    }
+    saved_connection = copy.deepcopy(api.connection)
+    saved_preferences = copy.deepcopy(api.preferences)
+    page.goto(f"{ORIGIN}/profile")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    expect(page.locator("#m365-chat-source-permissions-help")).to_contain_text(description)
+    expect(page.locator("#m365-chat-source-permissions-help")).to_contain_text("Microsoft shows the permissions")
+    expect(page.locator("#m365-connect-spo")).to_be_checked()
+    for selected_source in SOURCES:
+        page.locator(f"#m365-chat-connect-{selected_source}").set_checked(selected_source == source)
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.profile_chat_connect_requests == [{"sources": [source]}]
+    assert api.m365_posts == [{
+        "path": "/api/m365/chat/connection/connect", "method": "POST",
+        "body": {"sources": [source]}, "csrf": CSRF_TOKEN,
+    }]
+    assert api.connection == saved_connection
+    assert api.preferences == saved_preferences
+    assert not api.connect_requests
+    assert not api.chat_connect_requests
+    assert not api.preference_writes
+    assert not api.decisions
+    assert not api.revocations
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("authorization_endpoint", [
+    "https://login.microsoftonline.com/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://login.microsoftonline.us/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://login.chinacloudapi.cn/ui-test-tenant/oauth2/v2.0/authorize",
+    "https://identity.custom-cloud.test:8443/organizations/ui-test-tenant/authentication/start",
+])
+def test_profile_chat_reconnect_preserves_server_oauth_for_each_cloud_in_the_same_tab(ui, authorization_endpoint):
+    page, api = ui
+    oauth_query = {
+        "state": "ui-profile-state.with+reserved/&values",
+        "nonce": "ui-profile-nonce",
+        "code_challenge": "ui-profile-pkce-challenge-not-a-credential",
+        "code_challenge_method": "S256",
+        "redirect_uri": "https://simplechat.test/getAToken",
+    }
+    api.authorization_url = f"{authorization_endpoint}?{urlencode(oauth_query)}"
+    page.goto(f"{ORIGIN}/profile")
+    page.locator("#m365-chat-connect-calendar").check()
+    page.locator("#m365-chat-connect-email").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert page.context.pages == [page]
+    assert api.oauth_navigations == [api.authorization_url]
+    forwarded_query = parse_qs(urlsplit(page.url).query)
+    assert forwarded_query == {key: [value] for key, value in oauth_query.items()}
+    assert api.profile_chat_connect_requests == [{"sources": ["calendar", "email"]}]
+    assert not api.chat_connect_requests
+    assert not api.resume_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_chat_reconnect_requires_a_source_and_allows_correction(ui):
+    page, api = ui
+    page.goto(f"{ORIGIN}/profile")
+    page.locator("#m365-chat-connect-btn").click()
+    status = page.locator("#m365-chat-connection-status")
+    expect(status).to_contain_text("Select at least one source to reconnect for chat")
+    expect(status).to_have_class("alert alert-warning")
+    expect(status).to_be_focused()
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    assert not api.m365_posts
+    page.locator("#m365-chat-connect-calendar").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.profile_chat_connect_requests == [{"sources": ["calendar"]}]
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("failure_stage", ["status", "connect"])
+def test_profile_chat_reconnect_does_not_depend_on_workflow_key_vault(ui, failure_stage):
+    page, api = ui
+    if failure_stage == "status":
+        api.get_failures["/api/m365/connections"] = [
+            ({"message": "Key Vault is unavailable for workflow connections."}, 503)
+        ]
+    page.goto(f"{ORIGIN}/profile")
+    if failure_stage == "connect":
+        page.locator("#m365-connect-onedrive").check()
+        page.locator("#m365-connect-btn").click()
+    expect(page.locator("#m365-connection-status")).to_contain_text("Key Vault")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    page.locator("#m365-chat-connect-email").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.profile_chat_connect_requests == [{"sources": ["email"]}]
+    assert not api.chat_connect_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("failure_stage", ["status", "connect"])
+def test_profile_chat_errors_do_not_block_the_existing_workflow_connect_path(ui, failure_stage):
+    page, api = ui
+    api.workflow_connect_available = True
+    message = 'Model context is unavailable. Check model or storage configuration. <img src=x onerror="window.injected=true">'
+    failure = ({"error": "model_context_unavailable", "message": message}, 503)
+    if failure_stage == "status":
+        api.get_failures["/api/m365/chat/connection"] = [failure]
+    else:
+        api.post_failures["/api/m365/chat/connection/connect"] = [failure]
+    page.goto(f"{ORIGIN}/profile")
+    if failure_stage == "connect":
+        page.locator("#m365-chat-connect-email").check()
+        page.locator("#m365-chat-connect-btn").click()
+    status = page.locator("#m365-chat-connection-status")
+    expect(status).to_have_text(message)
+    expect(status).to_have_class("alert alert-danger")
+    expect(status.locator("img")).to_have_count(0)
+    expect(status).not_to_contain_text("expired")
+    expect(page.locator("#m365-connect-btn")).to_be_enabled()
+    assert not api.oauth_navigations
+    page.locator("#m365-connect-onedrive").check()
+    page.locator("#m365-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert api.connect_requests == [{"sources": ["onedrive"]}]
+    assert api.m365_posts[-1] == {
+        "path": "/api/m365/connections/connect", "method": "POST",
+        "body": {"sources": ["onedrive"]}, "csrf": CSRF_TOKEN,
+    }
+    assert not api.profile_chat_connect_requests
+    assert not api.chat_connect_requests
+    assert not api.decisions
+    assert not api.revocations
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_chat_connect_failure_allows_only_an_explicit_retry(ui):
+    page, api = ui
+    api.post_failures["/api/m365/chat/connection/connect"] = [
+        ({"message": "Microsoft 365 sign-in could not be started. Try again."}, 503)
+    ]
+    page.goto(f"{ORIGIN}/profile")
+    page.locator("#m365-chat-connect-email").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("could not be started")
+    expect(page.locator("#m365-chat-connection-status")).to_be_focused()
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    expect(page.locator("#m365-chat-connect-email")).to_be_checked()
+    assert len(api.m365_posts) == 1
+    assert not api.oauth_navigations
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    assert len(api.m365_posts) == 2
+    assert api.profile_chat_connect_requests == [{"sources": ["email"]}]
+    assert not api.resume_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("connection", [
+    None,
+    {"status": "connected", "sources": ["email"]},
+    {"status": "available", "sources": "email"},
+    {"status": "available", "sources": [["email"]]},
+    {"status": "available", "sources": ['<img src=x onerror="window.injected=true">']},
+])
+def test_profile_chat_invalid_status_is_visible_without_blocking_workflow_controls(ui, connection):
+    page, api = ui
+    api.chat_connection = connection
+    page.goto(f"{ORIGIN}/profile")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("chat sign-in status could not be verified")
+    expect(page.locator("#m365-chat-connection-status")).to_have_class("alert alert-danger")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_disabled()
+    expect(page.locator("#m365-chat-connection img")).to_have_count(0)
+    expect(page.locator("#m365-connect-btn")).to_be_enabled()
+    api.chat_connection = {"status": "not_connected", "sources": []}
+    page.locator("#m365-profile-refresh").click()
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("No Microsoft 365 sign-in is saved")
+    assert not api.m365_posts
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("url", [
+    "javascript:window.injected=true",
+    "http://login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+    "https://person@login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+    "https://",
+    "https://[invalid/authorize",
+    "/relative-sign-in",
+    "",
+    None,
+    ["https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize"],
+])
+def test_profile_chat_connect_rejects_invalid_oauth_urls_with_a_visible_error(ui, url):
+    page, api = ui
+    api.authorization_url = url
+    page.goto(f"{ORIGIN}/profile")
+    page.locator("#m365-chat-connect-email").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("valid HTTPS Microsoft 365 sign-in URL")
+    expect(page.locator("#m365-chat-connection-status")).to_have_class("alert alert-danger")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    expect(page.locator("#m365-chat-connect-email")).to_be_checked()
+    assert page.url == f"{ORIGIN}/profile"
+    assert len(api.m365_posts) == 1
+    assert not api.oauth_navigations
+    assert not api.resume_requests
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_chat_callback_reports_success_preserves_navigation_and_never_replays(ui):
+    page, api = ui
+    page.add_init_script("window.history.replaceState({ fixture: 'preserved' }, '', window.location.href)")
+    page.goto(f"{ORIGIN}/profile?tab=settings")
+    page.locator("#m365-chat-connect-email").check()
+    page.locator("#m365-chat-connect-btn").click()
+    expect(page.get_by_role("heading", name="Microsoft sign-in fixture")).to_be_visible()
+    api.chat_connection = {"status": "available", "sources": ["email"], "connected_at": "2026-09-19T12:00:00Z"}
+    api.profile_callback_url = (
+        f"{ORIGIN}/profile?tab=settings&keep=one%20two&m365_chat_connection=connected&keep=again#m365-chat-connection"
+    )
+    callback_url = f"{ORIGIN}/getAToken?code=ui-profile-code&state=fixture"
+    page.goto(callback_url)
+    page.get_by_role("link", name="Return to Microsoft 365 chat connection", exact=True).click()
+    notice = page.locator("#m365-chat-connection-notice")
+    expect(notice).to_be_visible()
+    expect(notice).to_have_class("alert alert-success")
+    expect(notice).to_contain_text("Microsoft 365 sign-in completed")
+    expect(notice).to_contain_text("retry your original question")
+    expect(notice).to_contain_text("No past requests were retried")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Sign-in saved for this session")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    returned_url = urlsplit(page.url)
+    assert returned_url.path == "/profile"
+    assert returned_url.fragment == "m365-chat-connection"
+    assert parse_qs(returned_url.query) == {"tab": ["settings"], "keep": ["one two", "again"]}
+    history_state = page.evaluate("window.history.state")
+    assert history_state == {"fixture": "preserved"}
+    assert api.auth_callbacks == [callback_url]
+    assert api.m365_posts == [{
+        "path": "/api/m365/chat/connection/connect", "method": "POST",
+        "body": {"sources": ["email"]}, "csrf": CSRF_TOKEN,
+    }]
+    assert not api.chat_requests
+    assert not api.chat_connect_requests
+    assert not api.resume_requests
+    assert not api.reattach_requests
+    assert not api.connect_requests
+    assert not api.decisions
+    assert not api.revocations
+    page.reload()
+    expect(notice).to_be_hidden()
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    assert len(api.m365_posts) == 1
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_chat_callback_does_not_claim_success_for_an_unknown_result(ui):
+    page, api = ui
+    page.goto(f"{ORIGIN}/profile?tab=settings&m365_chat_connection=unknown#m365-chat-connection")
+    expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
+    expect(page.locator("#m365-chat-connection-notice")).to_be_hidden()
+    expect(page).to_have_url(f"{ORIGIN}/profile?tab=settings#m365-chat-connection")
+    assert not api.m365_posts
     assert not api.errors
 
 

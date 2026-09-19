@@ -51,6 +51,8 @@ CONNECTION_CALLBACK_PATH = "/api/m365/connections/callback"
 CHAT_CALLBACK_PATH = "/getAToken"
 CHAT_AUTH_SESSION_KEY = "m365_chat_auth_flow"
 CHAT_AUTH_STATE_PREFIX = "m365-chat-"
+CHAT_CONNECTION_SESSION_KEY = "m365_chat_connection"
+CHAT_RECONNECT_SESSION_KEY = "m365_chat_reconnect_required"
 _SOURCE_SCOPE_NAMES = {
     "calendar": frozenset({"User.Read", "Calendars.Read", "MailboxSettings.Read"}),
     "email": frozenset({"User.Read", "Mail.Read"}),
@@ -271,6 +273,28 @@ def _scope_names(scopes, config):
         scope.rsplit("/", 1)[-1].lower()
         for scope in normalize_m365_scopes(scopes, config)
     }
+
+
+def _source_connection_scopes(sources):
+    if (
+        not isinstance(sources, list) or not sources or len(sources) > len(M365_SOURCES)
+        or any(not isinstance(source, str) or source not in M365_SOURCES for source in sources)
+    ):
+        raise M365ConnectionError("m365_sources_invalid", "Select at least one supported Microsoft 365 source.")
+    return sorted(set().union(*(_SOURCE_CONNECT_SCOPE_NAMES[source] for source in sources)))
+
+
+def mark_m365_chat_reconnect_required(context):
+    """Fence rejected interactive credentials without revoking workflow connections."""
+    if not has_request_context() or context is None or context.workflow_id:
+        return
+    user = session.get("user") or {}
+    if user.get("oid") == context.data_user_id == context.actor_user_id and user.get("tid") == context.tenant_id:
+        session[CHAT_RECONNECT_SESSION_KEY] = {"user_id": context.data_user_id, "tenant_id": context.tenant_id}
+
+
+def _chat_reconnect_required(user_id, tenant_id):
+    return session.get(CHAT_RECONNECT_SESSION_KEY) == {"user_id": user_id, "tenant_id": tenant_id}
 
 
 def _require_granted_scopes(requested_scopes, granted_scope, config):
@@ -618,17 +642,71 @@ class M365ConnectionService:
 
     def start_chat_connection(self, user_id, tenant_id, request_id, conversation_id, scopes, redirect_uri):
         """Store a short-lived PKCE flow in the existing server-side login session."""
+        _identifier(request_id)
+        _identifier(conversation_id)
+        return self._start_interactive_connection(
+            user_id, tenant_id, scopes, redirect_uri,
+            request_id=request_id, conversation_id=conversation_id, purpose="chat_request",
+        )
+
+    def _interactive_config(self, user_id, tenant_id):
         config = self.config_provider()
         user = session.get("user") or {}
         if (
             user.get("oid") != user_id or user.get("tid") != tenant_id
             or tenant_id != config.tenant_id or user.get("acct") in (1, "1")
         ):
-            raise M365ConnectionError("m365_account_mismatch", "Connect the same account that started this conversation.")
-        _identifier(request_id)
-        _identifier(conversation_id)
+            raise M365ConnectionError("m365_account_mismatch", "Connect the same tenant account that is signed in to SimpleChat.")
+        return config
+
+    def read_chat_connection(self, user_id, tenant_id):
+        """Report local session state without probing Graph or exposing credential material."""
+        config = self._interactive_config(user_id, tenant_id)
+        metadata = session.get(CHAT_CONNECTION_SESSION_KEY)
+        if not isinstance(metadata, dict) or (
+            metadata.get("user_id") != user_id or metadata.get("tenant_id") != tenant_id
+            or metadata.get("configuration") != config.binding()
+        ):
+            metadata = {}
+        sources = [
+            source for source in metadata.get("sources", [])
+            if isinstance(source, str) and source in M365_SOURCES
+        ]
+        result = {"status": "not_connected", "sources": sources}
+        if _chat_reconnect_required(user_id, tenant_id):
+            result["status"] = "reconnect_required"
+        elif session.get("token_cache"):
+            try:
+                cache = deserialize_m365_cache(session["token_cache"])
+                accounts = list(cache.search(msal.TokenCache.CredentialType.ACCOUNT))
+                select_m365_account(accounts, user_id, tenant_id)
+                result["status"] = "available"
+            except M365ConnectionError:
+                result["status"] = "reconnect_required"
+        if metadata.get("connected_at"):
+            result["connected_at"] = metadata["connected_at"]
+        return result
+
+    def start_profile_chat_connection(self, user_id, tenant_id, sources, redirect_uri):
+        scopes = _source_connection_scopes(sources)
+        return self._start_interactive_connection(
+            user_id, tenant_id, scopes, redirect_uri,
+            purpose="profile_reconnect", sources=sorted(set(sources)),
+        )
+
+    def _start_interactive_connection(
+        self, user_id, tenant_id, scopes, redirect_uri, *,
+        purpose, request_id=None, conversation_id=None, sources=None,
+    ):
+        config = self._interactive_config(user_id, tenant_id)
         _validate_callback_uri(redirect_uri, interactive=True)
         required = normalize_m365_scopes(scopes, config)
+        if sources is None:
+            names = _scope_names(required, config)
+            sources = [
+                source for source in M365_SOURCES
+                if {name.lower() for name in _SOURCE_CONNECT_SCOPE_NAMES[source]}.issubset(names)
+            ]
         client = self.msal_factory(msal.SerializableTokenCache(), config)
         flow = client.initiate_auth_code_flow(
             scopes=required, redirect_uri=redirect_uri,
@@ -641,6 +719,7 @@ class M365ConnectionService:
             "flow": flow, "user_id": user_id, "tenant_id": tenant_id,
             "request_id": request_id, "conversation_id": conversation_id,
             "configuration": config.binding(), "required_scopes": required,
+            "purpose": purpose, "sources": sources,
             "expires_at": expires_at.isoformat(),
         }
         return {"authorization_url": flow["auth_uri"], "expires_at": expires_at.isoformat()}
@@ -683,6 +762,13 @@ class M365ConnectionService:
         serialized = cache.serialize()
         deserialize_m365_cache(serialized)
         session["token_cache"] = serialized
+        session[CHAT_CONNECTION_SESSION_KEY] = {
+            "user_id": user_id, "tenant_id": tenant_id, "configuration": config.binding(),
+            "sources": record.get("sources") or [], "connected_at": self.clock().isoformat(),
+        }
+        session.pop(CHAT_RECONNECT_SESSION_KEY, None)
+        if record.get("purpose") == "profile_reconnect":
+            return {"return_to": "profile"}
         return {
             "request_id": record["request_id"], "conversation_id": record["conversation_id"],
         }
@@ -847,6 +933,12 @@ def _direct_access_token(scopes, context, *, include_auth_url=True):
     ):
         return _auth_error("m365_principal_mismatch", "Sign in as the original Microsoft 365 data user to continue.")
     required = normalize_m365_scopes(scopes, config)
+    if _chat_reconnect_required(user_id, tenant_id):
+        return _auth_error(
+            "m365_reconnect_required",
+            "Microsoft 365 rejected this saved sign-in. Reconnect your account before trying again.",
+            scopes=required,
+        )
     serialized = session.get("token_cache")
     if not isinstance(serialized, str) or not serialized:
         return _auth_error("interactive_auth_required", "Sign in again to access Microsoft 365.", scopes=required)
@@ -929,7 +1021,7 @@ def preflight_m365_chat_authentication(manifests, context):
     if result.get("access_token"):
         return
     code = result.get("error") or "m365_authorization_unavailable"
-    if code in M365_AUTH_INTERACTION_CODES or code == "m365_cache_unavailable":
+    if code in M365_AUTH_INTERACTION_CODES:
         raise M365SignInRequired(code, {"scopes": scopes, "sources": sorted(sources)})
     raise M365PolicyError(
         code, result.get("message") or "Microsoft 365 access could not be verified. No source access has been allowed.",

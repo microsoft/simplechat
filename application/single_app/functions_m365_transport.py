@@ -539,7 +539,7 @@ class M365Transport:
             raise M365ProviderError("incomplete_response", "The Microsoft 365 response was interrupted.") from exc
         return b"".join(chunks)
 
-    def _response_error(self, response, payload: Any = None) -> M365ProviderError:
+    def _response_error(self, response, payload: Any = None, *, auth_scopes=None) -> M365ProviderError:
         status = response.status_code
         provider_error = payload.get("error") if isinstance(payload, dict) else None
         raw_code = provider_error.get("code") if isinstance(provider_error, dict) else ""
@@ -554,6 +554,13 @@ class M365Transport:
         }
         code, message = code_map.get(status, ("provider_error", "Microsoft 365 could not complete this operation."))
         details = {}
+        if status == 401 and auth_scopes:
+            # A rejected Graph bearer token must not be reused just because its cache entry is unexpired.
+            from functions_m365_connections import mark_m365_chat_reconnect_required
+            mark_m365_chat_reconnect_required(get_m365_context())
+            details["scopes"] = list(auth_scopes)
+            if self.source:
+                details["sources"] = [self.source]
         if status == 403 or str(raw_code).lower() in (
             "blockedbypolicy", "policydenied", "informationprotectionpolicy", "accessdenied",
         ):
@@ -578,7 +585,7 @@ class M365Transport:
         expect_json: bool = True,
     ) -> Dict[str, Any]:
         url = self.graph_url(path)
-        token, _ = self.get_token(scopes)
+        token, qualified_scopes = self.get_token(scopes)
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         for key, value in (additional_headers or {}).items():
             if key.lower() not in ("prefer", "consistencylevel", "if-match", "if-none-match", "content-type"):
@@ -593,14 +600,14 @@ class M365Transport:
                 payload = json.loads(body) if body else {}
             except (UnicodeError, ValueError, RecursionError) as exc:
                 if response.status_code >= 400:
-                    raise self._response_error(response) from exc
+                    raise self._response_error(response, auth_scopes=qualified_scopes) from exc
                 raise M365ProviderError("invalid_response", "Microsoft Graph returned an invalid JSON response.") from exc
             if response.status_code >= 400:
-                raise self._response_error(response, payload)
+                raise self._response_error(response, payload, auth_scopes=qualified_scopes)
             if not 200 <= response.status_code < 300:
                 raise M365ProviderError("invalid_response", "Microsoft Graph returned an unexpected response status.")
             if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
-                raise self._response_error(response, payload)
+                raise self._response_error(response, payload, auth_scopes=qualified_scopes)
             if not expect_json:
                 result = {"status_code": response.status_code, "accepted": True}
                 if payload:
@@ -631,13 +638,14 @@ class M365Transport:
         if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
             raise M365ProviderError("unsupported_format", "This file format is not supported for extraction.")
         url = self.graph_url(f"/drives/{quote(drive_id, safe='')}/items/{quote(item_id, safe='')}/content")
-        token, _ = self.get_token(["Files.Read.All"])
+        token, qualified_scopes = self.get_token(["Files.Read.All"])
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/octet-stream"}
         if etag:
             headers["If-Match"] = etag
         response = None
         local_path = None
         started = time.monotonic()
+        graph_authorized = True
         try:
             response = self._send("GET", url, headers=headers)
             for redirect_index in range(M365_MAX_DOWNLOAD_REDIRECTS + 1):
@@ -656,8 +664,16 @@ class M365Transport:
                     auth=_NoDownloadCredentials(),
                     secret_url=True,
                 )
+                graph_authorized = False
             if response.status_code >= 400:
-                raise self._response_error(response)
+                if response.status_code == 401 and not graph_authorized:
+                    raise M365ProviderError(
+                        "download_link_expired", "The temporary file link expired. Request a fresh copy of this file.",
+                        status_code=401,
+                    )
+                raise self._response_error(
+                    response, auth_scopes=qualified_scopes if graph_authorized else None,
+                )
             if response.status_code != 200:
                 raise M365ProviderError("incomplete_download", "Microsoft 365 did not return the complete file.")
             mime = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()

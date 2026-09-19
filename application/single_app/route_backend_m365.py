@@ -25,6 +25,7 @@ from functions_m365_approvals import (
 from functions_m365_connections import (
     CHAT_AUTH_STATE_PREFIX,
     CHAT_CALLBACK_PATH,
+    CHAT_RECONNECT_SESSION_KEY,
     CONNECTION_CALLBACK_PATH,
     get_m365_connection_service,
 )
@@ -196,6 +197,8 @@ def _complete_chat_connection(user_id, tenant_id, auth_response):
     from functions_m365_request_resume import get_m365_chat_request
     from functions_m365_runtime import _conversation_access
     completed = get_m365_connection_service().complete_chat_connection(user_id, tenant_id, auth_response)
+    if completed.get("return_to") == "profile":
+        return redirect("/profile?tab=settings&m365_chat_connection=connected#m365-chat-connection")
     job = get_m365_chat_request(completed["request_id"], user_id)
     if job.get("conversation_id") != completed["conversation_id"]:
         raise M365PolicyError("m365_request_changed", "The conversation request changed during sign-in.")
@@ -209,6 +212,11 @@ def _complete_chat_connection(user_id, tenant_id, auth_response):
         'm365_auth': 'connected',
     })
     return redirect(f"/chats?{query}")
+
+
+def _publish_verified_workflow_cache_to_session(serialized):
+    session["token_cache"] = serialized
+    session.pop(CHAT_RECONNECT_SESSION_KEY, None)
 
 
 @login_required
@@ -297,6 +305,33 @@ def register_route_backend_m365(bp):
         result = get_m365_connection_service().start_chat_connection(
             user_id, tenant_id, request_id, job["conversation_id"],
             job.get("required_scopes") or [], _callback_uri(CHAT_CALLBACK_PATH),
+        )
+        return jsonify({"success": True, **result})
+
+    @bp.route("/api/m365/chat/connection", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def read_m365_chat_connection():
+        user_id, tenant_id = _subject()
+        return jsonify({
+            "success": True,
+            "connection": get_m365_connection_service().read_chat_connection(user_id, tenant_id),
+            "csrf_token": get_m365_csrf_token(),
+        })
+
+    @bp.route("/api/m365/chat/connection/connect", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def reconnect_m365_chat_connection():
+        user_id, tenant_id = _subject()
+        validate_m365_csrf()
+        data = _body()
+        if set(data) != {"sources"}:
+            raise ValueError("Select only the Microsoft 365 sources to reconnect.")
+        result = get_m365_connection_service().start_profile_chat_connection(
+            user_id, tenant_id, data["sources"], _callback_uri(CHAT_CALLBACK_PATH),
         )
         return jsonify({"success": True, **result})
 
@@ -441,7 +476,7 @@ def register_route_backend_m365(bp):
             raise M365PolicyError("m365_auth_state_invalid", "Start Connect again from Profile.")
         service.complete_connection(
             user_id, tenant_id, auth_response, session_binding,
-            cache_writer=lambda serialized: session.__setitem__("token_cache", serialized),
+            cache_writer=_publish_verified_workflow_cache_to_session,
         )
         return redirect("/profile?m365_connection=connected")
 

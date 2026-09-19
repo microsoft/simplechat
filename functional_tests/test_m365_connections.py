@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.033
+Version: 0.261.034
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -595,6 +595,117 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(self.container.items, {})
         self.assertEqual(self.approval_container.items, {})
         self.service.key_provider.assert_not_called()
+
+    def test_profile_reconnect_repairs_interactive_cache_without_a_saved_request_or_workflow(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        self.service.key_provider = Mock(side_effect=AssertionError("Profile chat reconnect must not use Key Vault."))
+        with app.test_request_context():
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"], "name": "Original user"}
+            session["token_cache"] = "broken-cache"
+            original_user = copy.deepcopy(session["user"])
+            status_before = self.service.read_chat_connection("user-a", "tenant-a")
+            begin = self.service.start_profile_chat_connection(
+                "user-a", "tenant-a", ["spo"], f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+            )
+            query = parse_qs(urlsplit(begin["authorization_url"]).query)
+            self.http.nonce = query["nonce"][0]
+            cache_before_callback = session["token_cache"]
+            completed = self.service.complete_chat_connection(
+                "user-a", "tenant-a", {"state": query["state"][0], "code": "profile-chat-code"},
+            )
+            status_after = self.service.read_chat_connection("user-a", "tenant-a")
+            user_after = dict(session["user"])
+            metadata = session[connections.CHAT_CONNECTION_SESSION_KEY]
+        self.assertEqual(status_before["status"], "reconnect_required")
+        self.assertEqual(cache_before_callback, "broken-cache")
+        self.assertEqual(completed, {"return_to": "profile"})
+        self.assertEqual(status_after["status"], "available")
+        self.assertEqual(status_after["sources"], ["spo"])
+        self.assertIn("connected_at", status_after)
+        self.assertEqual(original_user, user_after)
+        self.assertNotIn("request_id", metadata)
+        self.assertEqual(self.container.items, {})
+        self.assertEqual(self.approval_container.items, {})
+        self.assertNotIn("access-token", json.dumps(status_after))
+        self.assertNotIn("refresh-token", json.dumps(status_after))
+        self.service.key_provider.assert_not_called()
+
+    def test_failed_profile_reconnect_preserves_previous_sign_in_and_reconnect_marker(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        context = execution.M365ExecutionContext("user-a", "user-a", "tenant-a", request_id="request")
+        with app.test_request_context():
+            _begin, query = self.begin_chat()
+            self.service.complete_chat_connection("user-a", "tenant-a", {"state": query["state"][0], "code": "first"})
+            previous_cache = session["token_cache"]
+            connections.mark_m365_chat_reconnect_required(context)
+            blocked = connections.get_m365_access_token(["Files.Read.All"], context=context)
+            clients_before = len(self.clients)
+            self.service.read_chat_connection("user-a", "tenant-a")
+            self.assertEqual(len(self.clients), clients_before)
+            reconnect = self.service.start_profile_chat_connection(
+                "user-a", "tenant-a", ["spo"], f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+            )
+            query = parse_qs(urlsplit(reconnect["authorization_url"]).query)
+            self.http.nonce = query["nonce"][0]
+            self.http.claim_overrides = {"oid": "different-user"}
+            with self.assertRaises(connections.M365ConnectionError):
+                self.service.complete_chat_connection(
+                    "user-a", "tenant-a", {"state": query["state"][0], "code": "wrong-user"},
+                )
+            cached = session["token_cache"]
+            failed_status = self.service.read_chat_connection("user-a", "tenant-a")
+            self.http.claim_overrides = {}
+            reconnect = self.service.start_profile_chat_connection(
+                "user-a", "tenant-a", ["spo"], f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+            )
+            query = parse_qs(urlsplit(reconnect["authorization_url"]).query)
+            self.http.nonce = query["nonce"][0]
+            self.service.complete_chat_connection(
+                "user-a", "tenant-a", {"state": query["state"][0], "code": "renewed"},
+            )
+            renewed = connections.get_m365_access_token(["Files.Read.All"], context=context)
+            marker = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
+        self.assertEqual(blocked["error"], "m365_reconnect_required")
+        self.assertEqual(cached, previous_cache)
+        self.assertEqual(failed_status["status"], "reconnect_required")
+        self.assertIn("access_token", renewed)
+        self.assertIsNone(marker)
+
+    def test_chat_reconnect_marker_never_fences_a_workflow_or_another_principal(self):
+        connected, _started, _query = self.connect()
+        workflow = self.workflow(connected)
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        with app.test_request_context():
+            session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+            connections.mark_m365_chat_reconnect_required(workflow)
+            after_workflow = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
+            other = execution.M365ExecutionContext("other", "other", "tenant-a", request_id="other")
+            connections.mark_m365_chat_reconnect_required(other)
+            after_other = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
+            own = execution.M365ExecutionContext("user-a", "user-a", "tenant-a", request_id="own")
+            connections.mark_m365_chat_reconnect_required(own)
+            result = connections.get_m365_access_token(["Mail.Read"], context=workflow)
+        self.assertIsNone(after_workflow)
+        self.assertIsNone(after_other)
+        self.assertIn("access_token", result)
+
+    def test_profile_reconnect_validates_sources_before_any_auth_or_storage_io(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        for sources in (None, [], ["unknown"], [{}], "spo", ["spo"] * 5):
+            with self.subTest(sources=sources), app.test_request_context():
+                session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+                with self.assertRaises(connections.M365ConnectionError) as raised:
+                    self.service.start_profile_chat_connection(
+                        "user-a", "tenant-a", sources,
+                        f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+                    )
+                self.assertEqual(raised.exception.code, "m365_sources_invalid")
+        self.assertEqual(self.clients, [])
+        self.assertEqual(self.container.items, {})
 
     def test_callbacks_accept_previously_consented_scope_supersets_in_every_cloud(self):
         app = Flask(__name__)

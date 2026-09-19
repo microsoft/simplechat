@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.032"
+version: "0.261.034"
 ---
 
 ## Choose the right action
@@ -69,6 +69,25 @@ The **workflow connection** status in Profile applies to unattended workflow
 access. A disconnected workflow account does not mean interactive chat is
 disabled. Reloading already-published file evidence also does not require a
 fresh source sign-in.
+
+## Reconnect without a pending request
+
+In **Profile > Settings > Microsoft 365 chat connection**, select the sources
+and choose **Reconnect Microsoft 365 for chat**. This starts a fresh sign-in
+even if a token is already saved and no conversation is currently paused.
+Sign in with the same account you use for SimpleChat.
+
+The existing sign-in remains untouched until the new account, tenant, consent,
+and authorization-code flow are verified. After success, Profile shows the
+renewed sign-in; return to the conversation and retry your question explicitly.
+Profile reconnect does not run old requests, change sharing approvals, or renew
+workflow Run as authorizations. It does not require Key Vault.
+
+The local status **available** means a matching sign-in is saved for the current
+session, not that every remote resource is accessible. A rejected Graph bearer
+token supplies a reconnect prompt through the existing paused-chat flow.
+An access-denied policy, service outage, throttling, or missing model context
+configuration is a different failure and must not be described as expired login.
 
 ## Share evidence deliberately
 
