@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.030)**
+
+#### Bug Fixes
+
+*   **Cross-Cloud Account Selection for Access-Denied Users**
+    *   Added a **Sign in with another account** action for authenticated users whose selected Microsoft Entra identity does not have the required SimpleChat app role.
+    *   The alternate flow requests the Entra account picker only through the controlled `/login?select_account=1` path; ordinary sign-in remains prompt-free, and arbitrary OAuth prompt values are ignored.
+    *   The access-denied state now identifies the current account using safe session claims while suppressing resource-tenant `#EXT#` UPNs, helping users distinguish native Azure Government and synchronized commercial identities.
+    *   Improved the action's light- and dark-theme contrast without changing tenant authority, app-role authorization, Easy Auth configuration, or login-hint behavior.
+    *   (Ref: `route_frontend_authentication.py`, `functions_authentication.py`, access-denied landing page, cross-cloud Microsoft Entra B2B sign-in)
+
+*   **ANSI-Encoded CSV Files Are Now Read Correctly**
+    *   CSV metadata extraction, indexing, citations, row searches, and durable tabular replay now support UTF-8, UTF-8 with BOM, Windows-1252, and Latin-1 files, preserving characters that previously made uploaded content appear unreadable.
+    *   Tabular analysis retains the broader automatic-invocation budget for complex questions while detecting repeated equivalent failures and routing the next model pass to a different call shape instead of repeating the same error.
+    *   Repeated tabular tool failures now emit an explicit retry lifecycle thought and server-side diagnostic event, making the failure visible while recovery continues.
+    *   (Ref: `functions_tabular_csv_query.py`, `functions_documents.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`, [Tabular CSV ANSI Encoding and Retry Fix](fixes/TABULAR_CSV_ANSI_ENCODING_AND_RETRY_FIX.md))
+
+*   **Group Chat Uploads Now Recognize Workspace Owners**
+    *   Fixed group-scoped chat uploads incorrectly reporting that no group workspace was available when the signed-in user was the group owner.
+    *   Chat bootstrap data now includes each group's resolved user role, allowing owners, admins, and document managers to use the existing group upload permissions while preserving server-side authorization checks.
+    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+
 ### **(v0.261.028)**
 
 Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
@@ -54,6 +76,11 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### Bug Fixes
 
+*   **Delegated Action-Type Policies Now Override Broad Action Access**
+    *   Fixed a governance gap where an explicit delegated item policy for a personal, group, or global action type could still be bypassed by a broader feature-level allow.
+    *   Action-type governance now treats explicit item policies as authoritative once they exist, so a targeted policy such as `personal_action_type = azure_maps` can block that action type even when the broader action feature remains enabled.
+    *   This resolves cases where action types such as Azure Maps continued to appear in action creation flows after admins saved a delegated item policy intended to block them.
+    *   (Ref: delegated item governance, action-type enforcement, `functions_governance.py`)
 *   **Admin Settings Consistency Across Workers**
     *   Removed worker-local admin settings snapshots so reloads read shared Redis settings, or Cosmos directly when Redis is disabled.
     *   Added conflict-checked writes and coordinated cache publication to prevent stale metadata updates, worker startup, and interrupted saves from restoring older settings.

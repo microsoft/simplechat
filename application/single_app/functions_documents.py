@@ -61,6 +61,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_tabular_csv_query import read_tabular_csv
 from model_endpoint_clients import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI, infer_model_endpoint_protocol
 import azure.cognitiveservices.speech as speechsdk
 
@@ -8418,7 +8419,7 @@ def _build_minimal_tabular_summary(temp_file_path, original_filename, file_ext):
     if file_ext == '.csv':
         column_summary = "Column discovery unavailable"
         try:
-            header_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=0)
+            header_df = read_tabular_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=0)
             compact_columns = _compact_tabular_columns(header_df.columns.tolist())
             if compact_columns:
                 column_summary = ", ".join(compact_columns)
@@ -8465,7 +8466,7 @@ def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
     plugin_note = "This file is available for detailed analysis via the Tabular Processing plugin."
 
     if file_ext == '.csv':
-        df_preview = pandas.read_csv(
+        df_preview = read_tabular_csv(
             temp_file_path,
             keep_default_na=False,
             dtype=str,
@@ -8703,7 +8704,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
     if total_chunks_saved == 0 and not enable_enhanced_citations:
         try:
             if file_ext == '.csv':
-                df = pandas.read_csv(
+                df = read_tabular_csv(
                     temp_file_path,
                     keep_default_na=False,
                     dtype=str

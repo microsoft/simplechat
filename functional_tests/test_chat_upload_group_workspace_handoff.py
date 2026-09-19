@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for chat upload group workspace handoff.
-Version: 0.241.176
-Implemented in: 0.241.176
+Version: 0.261.029
+Implemented in: 0.261.029
 
 This test ensures group-scoped chat uploads are queued into group workspaces,
 respect group write roles, avoid accidental group document revisions through
@@ -54,6 +54,7 @@ def test_upload_route_group_scope_contract():
     route_frontend_chats = read_repo_file("application/single_app/route_frontend_chats.py")
 
     assert_contains(route_frontend_chats, "GROUP_CHAT_UPLOAD_ROLES = ('Owner', 'Admin', 'DocumentManager')", "group upload role allowlist")
+    assert_contains(route_frontend_chats, "'userRole': get_user_role_in_group(group, user_id)", "chat group role passed to frontend")
     assert_contains(route_frontend_chats, "def _resolve_group_workspace_upload_target", "group upload target resolver")
     assert_contains(route_frontend_chats, "check_group_status_allows_operation(group_doc, 'upload')", "group upload status validation")
     assert_contains(route_frontend_chats, "assert_group_role(user_id, normalized_selected_group_id, allowed_roles=GROUP_CHAT_UPLOAD_ROLES)", "server-side write role enforcement")
@@ -106,7 +107,7 @@ def test_group_uploaded_documents_are_linked_to_chat_search_and_delete_contract(
 def test_version_contract():
     """Validate the implementation version was bumped consistently."""
     config = read_repo_file("application/single_app/config.py")
-    assert_contains(config, 'VERSION = "0.241.176"', "application version bump")
+    assert_contains(config, 'VERSION = "0.261.029"', "application version bump")
 
 
 def main():
