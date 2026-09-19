@@ -46,6 +46,17 @@ from model_endpoint_clients import (
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
+from functions_action_manifest import (
+    McpConfigurationError,
+    McpStdioRemovedError,
+    ScopedActionManifest,
+    copy_action_manifest,
+    get_action_execution_status,
+    get_action_origin,
+    is_mcp_action,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
 from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
@@ -111,6 +122,8 @@ from functions_simplechat_operations import (
 )
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_mcp_operations import MCP_PLUGIN_TYPE
+from functions_mcp_destinations import McpDestinationPolicyError, resolve_mcp_execution_context
+from functions_mcp_preconfigurations import authorize_mcp_action
 from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
@@ -1301,18 +1314,9 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         )
 
         debug_print(f"[SK_LOADER] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
-        debug_print(f"[SK_LOADER] Plugin manifests to load: {plugin_manifests}")
+        debug_print(f"[SK_LOADER] Plugin names to load: {[manifest.get('name') for manifest in plugin_manifests]}")
 
-        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
-            debug_print(f"[SK_LOADER] Resolving Key Vault secrets in plugin manifests if needed")
-            try:
-                plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
-                debug_print(f"[SK_LOADER] Resolved Key Vault secrets in plugin manifests {plugin_manifests}")
-            except Exception as e:
-                log_event(f"[SK_LOADER] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
-                print(f"[SK_LOADER] Failed to resolve Key Vault secrets in plugin manifests: {e}")
-
-        plugin_manifests = [hydrate_workspace_identity_in_plugin(p) for p in plugin_manifests]
+        plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
         
         if not plugin_manifests:
             print(f"[SK_LOADER] Warning: No plugin manifests found for names/IDs: {plugin_names}")
@@ -1393,6 +1397,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 agent_other_settings=agent_other_settings,
                 group_id=group_id,
             )
+            plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         except Exception as fallback_error:
             log_event(
@@ -1413,7 +1418,7 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
 
     overlaid_manifests = []
     for manifest in plugin_manifests or []:
-        manifest_copy = dict(manifest)
+        manifest_copy = copy_action_manifest(manifest)
         if group_id and not manifest_copy.get('group_id'):
             manifest_copy['default_group_id'] = group_id
 
@@ -1495,7 +1500,14 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
         discovered_plugins = discover_plugins()
         
         for manifest in plugin_manifests:
-            plugin_type = manifest.get('type')
+            try:
+                plugin_type = resolve_action_type(manifest)
+            except ValueError:
+                log_event("[SK_LOADER] Skipping action with an invalid type.", level=logging.WARNING)
+                continue
+            if get_action_execution_status(manifest):
+                _log_unavailable_mcp_action(manifest)
+                continue
             name = manifest.get('name')
             description = manifest.get('description', '')
             
@@ -1504,8 +1516,10 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
             normalized_type = normalize(plugin_type)
             
-            matched_class = None
+            matched_class = McpPluginFactory if plugin_type == MCP_PLUGIN_TYPE else None
             for class_name, cls in discovered_plugins.items():
+                if resolve_action_type({"type": cls.__name__}) == MCP_PLUGIN_TYPE and plugin_type != MCP_PLUGIN_TYPE:
+                    continue
                 normalized_class = normalize(class_name)
                 if normalized_type == normalized_class or normalized_type in normalized_class:
                     matched_class = cls
@@ -1529,8 +1543,11 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     elif plugin_type == YAMCS_PLUGIN_TYPE:
                         plugin = YamcsPluginFactory.create_from_config(manifest)
                         print(f"[SK_LOADER] Created Yamcs plugin: {name}")
-                    elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
-                        plugin = McpPluginFactory.create_from_config(manifest)
+                    elif plugin_type == MCP_PLUGIN_TYPE:
+                        origin = get_action_origin(manifest)
+                        if origin is None:
+                            raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+                        plugin = McpPluginFactory.create_from_config(manifest, origin=origin)
                         print(f"[SK_LOADER] Created MCP plugin: {name}")
                     else:
                         # Standard plugin instantiation
@@ -2090,6 +2107,14 @@ def _get_plugin_secret_context(plugin_manifest):
     if not isinstance(plugin_manifest, dict):
         return None, None
 
+    if is_mcp_action(plugin_manifest):
+        origin = get_action_origin(plugin_manifest)
+        if origin is None:
+            raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+        if origin.scope_type == "global":
+            return origin.action_id, "global"
+        return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
+
     plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
     if plugin_scope == "group" or plugin_manifest.get("is_group"):
         return plugin_manifest.get("group_id"), "group"
@@ -2105,6 +2130,12 @@ def _get_plugin_identity_context(plugin_manifest):
     if not isinstance(plugin_manifest, dict):
         return None, None
 
+    if is_mcp_action(plugin_manifest):
+        origin = get_action_origin(plugin_manifest)
+        if origin is None:
+            raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+        return origin.scope_type, origin.scope_id
+
     plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
     if plugin_scope == "group" or plugin_manifest.get("is_group"):
         return WORKSPACE_IDENTITY_SCOPE_GROUP, plugin_manifest.get("group_id")
@@ -2119,31 +2150,46 @@ def hydrate_workspace_identity_in_plugin(plugin_manifest):
     """Resolve a reusable workspace identity reference before runtime plugin loading."""
     if not isinstance(plugin_manifest, dict):
         return plugin_manifest
+    if is_retired_mcp_stdio(plugin_manifest):
+        raise McpStdioRemovedError()
     if not get_action_identity_reference_id(plugin_manifest):
         return plugin_manifest
 
+    mcp_action = is_mcp_action(plugin_manifest)
+    if mcp_action:
+        origin, _ = resolve_mcp_execution_context(plugin_manifest)
+        authorize_mcp_action(
+            plugin_manifest,
+            origin=origin,
+            settings=get_settings(),
+            operation="mcp_identity_hydration",
+        )
     scope_type, scope_id = _get_plugin_identity_context(plugin_manifest)
     if not scope_type or not scope_id:
         return plugin_manifest
 
     try:
-        return hydrate_action_identity_reference(
-            plugin_manifest,
+        hydrated_manifest = hydrate_action_identity_reference(
+            copy_action_manifest(plugin_manifest),
             scope_type,
             scope_id,
             return_type=SecretReturnType.VALUE,
         )
+        origin = get_action_origin(plugin_manifest)
+        return ScopedActionManifest(hydrated_manifest, origin) if origin is not None else hydrated_manifest
     except Exception as exc:
         log_event(
-            f"[SK_LOADER] Failed to hydrate workspace identity for plugin '{plugin_manifest.get('name')}': {exc}",
+            "[SK_LOADER] Failed to hydrate workspace identity for plugin",
             extra={
                 "plugin_name": plugin_manifest.get("name"),
                 "plugin_id": plugin_manifest.get("id"),
                 "scope_type": scope_type,
+                "exception_type": type(exc).__name__,
             },
             level=logging.ERROR,
-            exceptionTraceback=True,
         )
+        if mcp_action:
+            raise McpConfigurationError("MCP action credentials could not be resolved.") from exc
         return plugin_manifest
 
 
@@ -2169,13 +2215,23 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     """
     if not isinstance(plugin_manifest, dict):
         raise ValueError("Plugin manifest must be a dictionary")
-    
+    mcp_action = is_mcp_action(plugin_manifest)
+    if mcp_action:
+        origin, _ = resolve_mcp_execution_context(plugin_manifest)
+        settings = get_settings()
+        authorize_mcp_action(
+            plugin_manifest,
+            origin=origin,
+            settings=settings,
+            operation="mcp_secret_hydration",
+        )
+
     kv_name = settings.get("key_vault_name")
     if not kv_name:
         raise ValueError("Key Vault name not configured in settings")
     
     scope_value, scope = _get_plugin_secret_context(plugin_manifest)
-    resolved_manifest = dict(plugin_manifest)
+    resolved_manifest = copy_action_manifest(plugin_manifest)
 
     auth = plugin_manifest.get("auth", {})
     if isinstance(auth, dict):
@@ -2184,6 +2240,8 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
             value = auth.get(auth_field)
             if not isinstance(value, str) or not validate_secret_name_dynamic(value):
                 continue
+            if mcp_action and not scope_value:
+                raise McpDestinationPolicyError("MCP credential resolution requires an authorized action identifier.")
             try:
                 resolved_auth[auth_field] = resolve_secret_reference_for_context(
                     value,
@@ -2193,6 +2251,8 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
                     context_label=f"plugin auth field '{auth_field}'",
                 )
             except ValueError as exc:
+                if mcp_action:
+                    raise McpConfigurationError("MCP action credentials could not be resolved.") from exc
                 log_event(
                     f"[SK_LOADER] Blocked plugin auth secret resolution for field '{auth_field}': {exc}",
                     extra={
@@ -2213,6 +2273,8 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
                 continue
             if not (field_name.endswith("__Secret") or _is_sensitive_plugin_additional_field(plugin_manifest, field_name)):
                 continue
+            if mcp_action and not scope_value:
+                raise McpDestinationPolicyError("MCP credential resolution requires an authorized action identifier.")
             try:
                 resolved_additional_fields[field_name] = resolve_secret_reference_for_context(
                     value,
@@ -2222,6 +2284,8 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
                     context_label=f"plugin additional field '{field_name}'",
                 )
             except ValueError as exc:
+                if mcp_action:
+                    raise McpConfigurationError("MCP action credentials could not be resolved.") from exc
                 log_event(
                     f"[SK_LOADER] Blocked plugin additionalField secret resolution for '{field_name}': {exc}",
                     extra={
@@ -2236,16 +2300,56 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
 
     return resolved_manifest
 
+
+def _log_unavailable_mcp_action(manifest, error=None):
+    status = get_action_execution_status(manifest) or {
+        "code": getattr(error, "code", "authorization" if isinstance(error, PermissionError) else "validation"),
+        "message": "MCP action could not be loaded. Check its configuration and access policy.",
+    }
+    log_event(
+        "[SK_LOADER] MCP action unavailable",
+        extra={"plugin_name": manifest.get("name"), "plugin_id": manifest.get("id"), **status},
+        level=logging.WARNING,
+    )
+
+
+def _prepare_plugin_manifests_for_runtime(plugin_manifests, settings):
+    """Hydrate independently so unavailable MCP actions do not disable other actions."""
+    prepared_manifests = []
+    for manifest in plugin_manifests or []:
+        if is_retired_mcp_stdio(manifest):
+            _log_unavailable_mcp_action(manifest)
+            prepared_manifests.append(manifest)
+            continue
+        mcp_action = False
+        try:
+            prepared = copy_action_manifest(manifest)
+            prepared["type"] = resolve_action_type(prepared)
+            mcp_action = is_mcp_action(prepared)
+            if mcp_action and get_action_origin(prepared) is None:
+                raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+            if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
+                prepared = resolve_key_vault_secrets_in_plugins(prepared, settings)
+            prepared = hydrate_workspace_identity_in_plugin(prepared)
+            prepared_manifests.append(prepared)
+        except Exception as exc:
+            if mcp_action:
+                _log_unavailable_mcp_action(manifest, exc)
+                continue
+            log_event(
+                "[SK_LOADER] Could not prepare action credentials",
+                extra={"plugin_name": manifest.get("name"), "exception_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            prepared_manifests.append(manifest)
+    return prepared_manifests
+
+
 def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="global"):
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
-    if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
-        try:
-            plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
-        except Exception as e:
-            log_event(f"[SK_LOADER] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
-    plugin_manifests = [hydrate_workspace_identity_in_plugin(p) for p in plugin_manifests]
+    plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
     
@@ -2377,15 +2481,24 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     try:
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
-            plugin_type = manifest.get('type')
+            try:
+                plugin_type = resolve_action_type(manifest)
+            except ValueError:
+                log_event("[SK_LOADER] Skipping action with an invalid type.", level=logging.WARNING)
+                continue
+            if get_action_execution_status(manifest):
+                _log_unavailable_mcp_action(manifest)
+                continue
             name = manifest.get('name')
             description = manifest.get('description', '')
             # Normalize for matching
             def normalize(s):
                 return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
             normalized_type = normalize(plugin_type)
-            matched_class = None
+            matched_class = McpPluginFactory if plugin_type == MCP_PLUGIN_TYPE else None
             for class_name, cls in discovered_plugins.items():
+                if resolve_action_type({"type": cls.__name__}) == MCP_PLUGIN_TYPE and plugin_type != MCP_PLUGIN_TYPE:
+                    continue
                 normalized_class = normalize(class_name)
                 if normalized_type == normalized_class or normalized_type in normalized_class:
                     matched_class = cls
@@ -2404,8 +2517,11 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         plugin = TableauPluginFactory.create_from_config(manifest)
                     elif plugin_type == YAMCS_PLUGIN_TYPE:
                         plugin = YamcsPluginFactory.create_from_config(manifest)
-                    elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
-                        plugin = McpPluginFactory.create_from_config(manifest)
+                    elif plugin_type == MCP_PLUGIN_TYPE:
+                        origin = get_action_origin(manifest)
+                        if origin is None:
+                            raise McpDestinationPolicyError("MCP execution requires a trusted action origin.")
+                        plugin = McpPluginFactory.create_from_config(manifest, origin=origin)
                     else:
                         # Standard plugin instantiation with health checking and robust error handling
                         plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
