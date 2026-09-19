@@ -294,6 +294,7 @@ export function GeneratedArtifactCard({
     const summary = text(artifact.summary);
     const running = Boolean(artifact.background_export);
     const compact = isCompletedTabularArtifact(artifact);
+    const savedRecordsExport = artifact.capability === 'file_export' && artifact.row_source === 'saved_records';
     const downloadUrl = generatedArtifactDownloadUrl(artifact, conversationId);
 
     const sourceNote = [
@@ -423,6 +424,9 @@ export function GeneratedArtifactCard({
                     {sourceNote && <p className="text-xs text-text-3">{sourceNote}</p>}
                     {summary && <p className="mt-2 text-xs text-text-2">{summary}</p>}
                 </>
+            )}
+            {compact && !running && savedRecordsExport && summary && (
+                <p className="mt-2 text-xs text-text-2">{summary}</p>
             )}
 
             {running && (

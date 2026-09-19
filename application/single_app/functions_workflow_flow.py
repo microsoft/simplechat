@@ -641,8 +641,17 @@ def compile_workflow_flow(workflow):
                 after_possible.update({(node["id"], output) for output in WORKFLOW_BINDABLE_OUTPUTS})
                 if "run_when" not in node:
                     after_definite.update(keys)
-                if catalogue[node["task_id"]].get("publication") is not None and len(bindings) != 1:
-                    raise WorkflowDefinitionError("A v3 publication task requires exactly one explicit upstream input.")
+                publication = catalogue[node["task_id"]].get("publication")
+                if publication is not None:
+                    if len(bindings) != 1:
+                        raise WorkflowDefinitionError("A v3 publication task requires exactly one explicit upstream input.")
+                    if isinstance(publication, dict) and publication.get("source_kind") == "saved_output" and (
+                        bindings[0]["source"]["kind"] != "node_output"
+                        or bindings[0]["required"] is not True
+                        or bindings[0]["expected_kind"] != "records"
+                        or collection_kind(bindings[0]["source"]) != "records"
+                    ):
+                        raise WorkflowDefinitionError("Saved-output publication requires one required records node-output input.")
             elif kind == "if":
                 ends = {name: analyze(node[name], (set(definite), set(possible)), branch=True)
                         for name in ("then", "else")}

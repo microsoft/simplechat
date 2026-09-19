@@ -2283,7 +2283,10 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
     for analysis_context in analysis_result_contexts(message):
         load_saved_analysis(user_id, analysis_context)
     if message.get('role') == 'file':
-        authorize_analysis_artifact(user_id, message)
+        # File exports retain the same source boundary as direct artifact downloads.
+        from functions_generated_artifact_sources import authorize_generated_artifact_source
+
+        authorize_generated_artifact_source(user_id, message, native_authorizer=authorize_analysis_artifact)
 
     if isinstance(message.get('agent_citations'), list) and any(
         isinstance(citation, dict) and citation.get('artifact_id')

@@ -11,6 +11,7 @@ import {
     flowBinding,
     flowBindingSchema,
     flowProducers,
+    isRecordsFlowOutput,
     loopItemBinding,
     FLOW_ALIAS_PATTERN,
     FLOW_COMPARISONS,
@@ -36,6 +37,7 @@ export function WorkflowFlowInputs({
     label = 'Named inputs',
     availableIds,
     allowLoopItems = true,
+    recordsOnly = false,
 }: {
     workflow: WorkflowDefinition;
     nodeId: string;
@@ -44,10 +46,13 @@ export function WorkflowFlowInputs({
     label?: string;
     availableIds?: Set<string>;
     allowLoopItems?: boolean;
+    recordsOnly?: boolean;
 }) {
     const available = availableIds ?? analyzeWorkflowFlow(workflow).available.get(nodeId) ?? new Set<string>();
-    const producers = flowProducers(workflow).filter((producer) => available.has(producer.id));
-    const loops = allowLoopItems ? enclosingFlowLoops(workflow, nodeId) : [];
+    const producers = flowProducers(workflow).filter((producer) => available.has(producer.id))
+        .map((producer) => recordsOnly ? { ...producer, outputs: producer.outputs.filter(isRecordsFlowOutput) } : producer)
+        .filter((producer) => !recordsOnly || producer.outputs.length > 0);
+    const loops = allowLoopItems && !recordsOnly ? enclosingFlowLoops(workflow, nodeId) : [];
     const update = (index: number, binding: WorkflowFlowBinding) =>
         onChange(bindings.map((current, position) => position === index ? binding : current));
     const add = () => {
@@ -65,6 +70,7 @@ export function WorkflowFlowInputs({
             <legend className="px-1 text-sm font-medium text-text-1">{label}</legend>
             <p className="text-xs text-text-3">
                 Only these named final outputs are consumed. A skipped producer never falls back to another task.
+                {recordsOnly ? ' File export requires exactly one required records output. Partial output still needs this binding’s explicit acceptance and an eligible producer.' : ''}
             </p>
             {bindings.map((binding, index) => {
                 const source = binding.source;
@@ -85,7 +91,7 @@ export function WorkflowFlowInputs({
                                     : { ...flowBinding(binding.name, producers[0]?.id ?? '', producers[0]?.outputs[0]?.name ?? ''),
                                         expected_kind: producers[0]?.outputs[0]?.kind ?? 'any' })}>
                                 <option value="node_output">Saved node output</option>
-                                <option value="loop_item" disabled={!allowLoopItems}>Current loop item, key and index</option>
+                                <option value="loop_item" disabled={!allowLoopItems || recordsOnly}>Current loop item, key and index</option>
                             </select>
                         </label> : null}
                         {source.kind === 'node_output' ? <>
@@ -100,7 +106,7 @@ export function WorkflowFlowInputs({
                                         expected_kind: selected.outputs[0]?.kind ?? 'any',
                                     });
                                 }}>
-                                {!producer ? <option value={source.node_id}>Unavailable: {source.node_id || 'choose a producer'}</option> : null}
+                                {!producer ? <option value={source.node_id} disabled={recordsOnly}>Unavailable: {source.node_id || 'choose a producer'}</option> : null}
                                 {producers.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                             </select>
                         </label>
@@ -115,7 +121,7 @@ export function WorkflowFlowInputs({
                                     });
                                 }}>
                                 {!producer?.outputs.some((item) => item.name === source.output) ? (
-                                    <option value={source.output}>Unavailable: {source.output || 'choose an output'}</option>
+                                    <option value={source.output} disabled={recordsOnly}>Unavailable: {source.output || 'choose an output'}</option>
                                 ) : null}
                                 {producer?.outputs.map((output) => <option key={output.name} value={output.name}>{output.name}</option>)}
                             </select>
@@ -136,7 +142,8 @@ export function WorkflowFlowInputs({
                             <select className={inputClass} aria-label={`${label} input ${index + 1} kind`}
                                 value={binding.expected_kind} disabled={source.kind === 'loop_item'}
                                 onChange={(event) => update(index, { ...binding, expected_kind: event.target.value as WorkflowOutputKind })}>
-                                {FLOW_OUTPUT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replaceAll('_', ' ')}</option>)}
+                                {FLOW_OUTPUT_KINDS.map((kind) => <option key={kind} value={kind}
+                                    disabled={recordsOnly && kind !== 'records'}>{kind.replaceAll('_', ' ')}</option>)}
                             </select>
                         </label>
                         <label className="flex items-center gap-2 text-xs text-text-2">
@@ -158,11 +165,15 @@ export function WorkflowFlowInputs({
                     </div>
                 );
             })}
-            <GlassButton size="sm" disabled={(!producers.length && !loops.length) || bindings.length >= 100} onClick={add}
+            <GlassButton size="sm" disabled={(!producers.length && !loops.length) || bindings.length >= (recordsOnly ? 1 : 100)} onClick={add}
                 aria-label={`Add ${label.toLowerCase()} input`}>
                 <Plus size={14} /> Add input
             </GlassButton>
-            {!producers.length && !loops.length ? <p className="text-xs text-text-3">Add a reachable producer before this node to bind its output.</p> : null}
+            {!producers.length && !loops.length ? <p className="text-xs text-text-3">
+                {recordsOnly
+                    ? 'No reachable saved records output is available. Declare records on an earlier task, Collect, or explicit join; text, scalar JSON, and document results are not file-export sources.'
+                    : 'Add a reachable producer before this node to bind its output.'}
+            </p> : null}
         </fieldset>
     );
 }

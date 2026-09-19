@@ -2,6 +2,7 @@
 # Backend endpoints for enhanced citations supporting different media types
 
 from flask import jsonify, request, Response
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
@@ -38,6 +39,7 @@ from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_collaboration import build_conversation_participation_context
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
+from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
 from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
     assert_generated_chat_artifact_is_published_for_user,
@@ -88,7 +90,12 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     # unreachable for every caller, including the participant who requested it.
     assert_generated_file_approval_allows_download(user_id, message_item)
     assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
-    assert_evidence_available(message_item, user_id)
+    # A workspace link names the active representation; its retained chat blob is not the source to read.
+    evidence = {
+        key: value for key, value in message_item.items()
+        if not message_item.get("workspace_document_id") or key not in {"blob_container", "blob_path"}
+    }
+    assert_evidence_available(evidence, user_id)
     return message_item
 
 
@@ -211,28 +218,48 @@ def _build_content_disposition(disposition, file_name, fallback='download'):
 def _serve_chat_artifact_download(user_id, conversation_id, message_id):
     """Read an authorized chat artifact, not a workspace document's representation."""
     artifact = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
-    content = download_blob_content(artifact['blob_container'], artifact['blob_path'])
-    current = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
-    identity_fields = ('id', 'conversation_id', 'blob_container', 'blob_path', 'filename', '_etag')
-    digest = (artifact.get('metadata') or {}).get('generated_artifact_content_sha256')
-    current_digest = (current.get('metadata') or {}).get('generated_artifact_content_sha256')
-    if any(artifact.get(field) != current.get(field) for field in identity_fields) or digest != current_digest:
-        raise LookupError('The artifact changed during download.')
-    if digest and hashlib.sha256(content).hexdigest() != digest:
-        raise LookupError('The artifact content changed.')
+    with ExitStack() as resources:
+        active_document = None
+        streamed = False
+        if artifact.get('workspace_document_id'):
+            active_document, content = read_available_document_bytes(
+                artifact['workspace_document_id'], user_id=user_id, purpose='chat_file',
+            )
+        elif has_generated_artifact_source(artifact.get('metadata') or {}):
+            # This explicit source can exceed the old in-memory artifact path.
+            from functions_simplechat_operations import open_generated_chat_artifact_stream
 
-    file_name = _resolve_generated_artifact_file_name(current)
-    content_type = {
-        '.csv': 'text/csv; charset=utf-8',
-        '.md': 'text/markdown; charset=utf-8',
-        '.json': 'application/json',
-    }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
-    return Response(content, content_type=content_type, headers={
-        'Content-Length': str(len(content)),
-        'Content-Disposition': _build_content_disposition('attachment', file_name),
-        'Cache-Control': 'private, no-store',
-        'X-Content-Type-Options': 'nosniff',
-    })
+            content = resources.enter_context(open_generated_chat_artifact_stream(artifact))
+            streamed = True
+        else:
+            content = download_blob_content(artifact['blob_container'], artifact['blob_path'])
+        current = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+        identity_fields = ('id', 'conversation_id', 'workspace_document_id', 'blob_container', 'blob_path', 'filename', '_etag')
+        digest = (artifact.get('metadata') or {}).get('generated_artifact_content_sha256')
+        current_digest = (current.get('metadata') or {}).get('generated_artifact_content_sha256')
+        if any(artifact.get(field) != current.get(field) for field in identity_fields) or digest != current_digest:
+            raise LookupError('The artifact changed during download.')
+        if not streamed and active_document is None and digest and hashlib.sha256(content).hexdigest() != digest:
+            raise LookupError('The artifact content changed.')
+
+        file_name = (active_document or {}).get('file_name') or _resolve_generated_artifact_file_name(current)
+        content_type = {
+            '.csv': 'text/csv; charset=utf-8',
+            '.md': 'text/markdown; charset=utf-8',
+            '.json': 'application/json',
+        }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
+        response = Response(
+            iter(lambda: content.read(65536), b'') if streamed else content,
+            content_type=content_type, headers={
+                'Content-Length': str(current['metadata']['generated_artifact_size_bytes'] if streamed else len(content)),
+                'Content-Disposition': _build_content_disposition('attachment', file_name),
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+            },
+        )
+        if streamed:
+            response.call_on_close(resources.pop_all().close)
+        return response
 
 
 def _log_enhanced_citations_debug(message, **details):
@@ -677,6 +704,8 @@ def register_enhanced_citations_routes(bp):
 
         try:
             return _serve_chat_artifact_download(user_id, conversation_id, message_id)
+        except ScreeningError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
         except PermissionError:
             return jsonify({"error": "You no longer have access to this artifact or its sources."}), 403
         except (LookupError, ResourceNotFoundError):
@@ -725,7 +754,9 @@ def register_enhanced_citations_routes(bp):
 
             if not payload.get("workspace_scope"):
                 raise ValueError("Choose an explicit destination for this analysis artifact.")
-            authorize_analysis_artifact(user_id, message_item, for_publication=True)
+            authorize_generated_artifact_source(
+                user_id, message_item, for_publication=True, native_authorizer=authorize_analysis_artifact,
+            )
             file_name = _resolve_generated_artifact_file_name(message_item)
             requester_display_name = (
                 str(current_user_info.get("displayName") or "").strip()

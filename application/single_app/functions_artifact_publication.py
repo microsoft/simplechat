@@ -29,6 +29,7 @@ from functions_artifact_publication_readiness import (
 from functions_collaboration import build_conversation_participation_context
 from functions_documents import allowed_file, create_document, update_document
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
+from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
 from functions_personal_workflows import normalize_workflow_publication
@@ -71,7 +72,9 @@ def _authorize_artifact(user_id, conversation_id, message_id):
         raise LookupError("Generated artifact is unavailable.")
     assert_generated_file_approval_allows_download(user_id, artifact)
     assert_generated_chat_artifact_is_published_for_user(user_id, artifact)
-    authorize_analysis_artifact(user_id, artifact, for_publication=True)
+    authorize_generated_artifact_source(
+        user_id, artifact, for_publication=True, native_authorizer=authorize_analysis_artifact,
+    )
     return artifact
 
 
@@ -111,7 +114,7 @@ def _authorize_destination(user_id, destination):
 
 def _artifact_identity(artifact):
     metadata = artifact.get("metadata") or {}
-    return {
+    identity = {
         "conversation_id": artifact["conversation_id"],
         "message_id": artifact["id"],
         "blob_container": artifact["blob_container"],
@@ -120,6 +123,36 @@ def _artifact_identity(artifact):
         "contexts": metadata.get("analysis_result_contexts"),
         "content_sha256": metadata.get("generated_artifact_content_sha256"),
     }
+    if has_generated_artifact_source(metadata):
+        identity["generated_source"] = deepcopy(metadata.get("generated_artifact_source"))
+        identity["source_required"] = metadata.get("generated_artifact_source_required")
+    return identity
+
+
+def _artifact_producer(artifact):
+    metadata = artifact.get("metadata") or {}
+    if has_generated_artifact_source(metadata):
+        return {"kind": "workflow_saved_output", **metadata["generated_artifact_source"]["producer"]}
+    return metadata.get("analysis_producer")
+
+
+def _publication_destination(publication):
+    return {key: value for key, value in publication.items()
+            if key not in {"artifact_format", "completion_policy", "source_kind"}}
+
+
+def _read_publication_artifact_content(artifact, resources, expected_digest, *, check=None):
+    if has_generated_artifact_source(artifact.get("metadata") or {}):
+        # The existing transport verifies into bounded private storage before any handoff.
+        from functions_simplechat_operations import open_generated_chat_artifact_stream
+
+        if (artifact.get("metadata") or {}).get("generated_artifact_content_sha256") != expected_digest:
+            raise ValueError("The generated artifact bytes changed.")
+        return resources.enter_context(open_generated_chat_artifact_stream(artifact, check=check))
+    content = download_blob_content(artifact["blob_container"], artifact["blob_path"])
+    if hashlib.sha256(content).hexdigest() != expected_digest:
+        raise ValueError("The generated artifact bytes changed.")
+    return content
 
 
 def _receipt_change(artifact, key, change):
@@ -355,6 +388,19 @@ def publish_generated_chat_artifact_for_user(
     user_id, *, conversation_id, message_id, destination, request_id, requester_display_name="", file_name="",
     completion_policy=None, source_receipt=None, execution_check=None,
 ):
+    with ExitStack() as resources:
+        return _publish_generated_chat_artifact_for_user(
+            user_id, conversation_id=conversation_id, message_id=message_id, destination=destination,
+            request_id=request_id, requester_display_name=requester_display_name, file_name=file_name,
+            completion_policy=completion_policy, source_receipt=source_receipt,
+            execution_check=execution_check, resources=resources,
+        )
+
+
+def _publish_generated_chat_artifact_for_user(
+    user_id, *, conversation_id, message_id, destination, request_id, requester_display_name="", file_name="",
+    completion_policy=None, source_receipt=None, execution_check=None, resources,
+):
     """Copy or request approval once; uncertain external work is never blindly repeated."""
     user_id = _text(user_id, "Acting user")
     request_id = _text(request_id, "Explicit publication request id")
@@ -379,6 +425,10 @@ def publish_generated_chat_artifact_for_user(
         _authorize_destination(user_id, destination)
 
     metadata = artifact.get("metadata") or {}
+    bound_source = has_generated_artifact_source(metadata)
+    recheck_effect = completion_policy is not None or bound_source
+    if bound_source and source_receipt is None:
+        source_receipt = deepcopy(metadata["generated_artifact_source"]["source_receipt"])
     name = str(file_name or artifact.get("filename") or "generated-artifact.json").replace("\\", "/").split("/")[-1]
     output_format = str(metadata.get("generated_artifact_output_format") or "").lower()
     extension = {"markdown": ".md", "md": ".md", "csv": ".csv", "json": ".json"}.get(output_format)
@@ -398,8 +448,10 @@ def publish_generated_chat_artifact_for_user(
     key = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     if key not in (metadata.get(RECEIPTS_FIELD) or {}):
         if artifact_bytes is None:
-            artifact_bytes = download_blob_content(artifact["blob_container"], artifact["blob_path"])
-        if hashlib.sha256(artifact_bytes).hexdigest() != content_sha256:
+            artifact_bytes = _read_publication_artifact_content(
+                artifact, resources, content_sha256, check=execution_check,
+            )
+        if not bound_source and hashlib.sha256(artifact_bytes).hexdigest() != content_sha256:
             raise ValueError("The generated artifact bytes changed.")
     if destination["workspace_scope"] != "personal":
         stem, suffix = os.path.splitext(name)
@@ -409,12 +461,14 @@ def publish_generated_chat_artifact_for_user(
         "content_sha256": content_sha256, "document_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"simplechat-publication:{key}")),
         "file_name": name, "created_at": datetime.now(timezone.utc).isoformat(), "stages": {},
     }
-    if completion_policy is not None:
+    if recheck_effect:
         receipt.update(
-            completion_policy=completion_policy, source_receipt=deepcopy(source_receipt),
+            source_receipt=deepcopy(source_receipt),
             artifact_reference={"conversation_id": conversation_id, "artifact_message_id": message_id},
             source_identity=_artifact_identity(artifact),
         )
+        if completion_policy is not None:
+            receipt["completion_policy"] = completion_policy
     if len(metadata.get(RECEIPTS_FIELD) or {}) >= MAX_ARTIFACT_PUBLICATION_REQUESTS and key not in metadata[RECEIPTS_FIELD]:
         raise ValueError("This artifact has reached its publication request limit.")
     reauthorize()
@@ -429,7 +483,7 @@ def publish_generated_chat_artifact_for_user(
     if document is None:
         reauthorize()
     if document is None and _stage(artifact, receipt, "create"):
-        if completion_policy:
+        if recheck_effect:
             reauthorize()
         try:
             with ExitStack() as cleanup:
@@ -453,7 +507,7 @@ def publish_generated_chat_artifact_for_user(
     if document is None:
         return _publication_response(artifact, receipt, container)
     _stage(artifact, receipt, "create", complete=True)
-    if completion_policy and "document_version" not in receipt:
+    if recheck_effect and "document_version" not in receipt:
         if type(document.get("version")) is not int or document["version"] < 1:
             raise ValueError("The publication destination has no valid native revision.")
         reauthorize()
@@ -464,10 +518,10 @@ def publish_generated_chat_artifact_for_user(
     if not document.get("generated_artifact_publication_receipt_id"):
         reauthorize()
     if not document.get("generated_artifact_publication_receipt_id") and _stage(artifact, receipt, "prepare"):
-        if completion_policy:
+        if recheck_effect:
             reauthorize()
         updates = {"generated_artifact_publication_receipt_id": key}
-        if completion_policy:
+        if recheck_effect:
             updates[PUBLICATION_BINDING] = {
                 "version": 1, "receipt_id": key, "document_version": receipt["document_version"],
                 "content_sha256": content_sha256, "conversation_id": conversation_id,
@@ -500,12 +554,14 @@ def publish_generated_chat_artifact_for_user(
     if scope == "personal":
         if not (receipt.get("stages") or {}).get("queue"):
             if artifact_bytes is None:
-                artifact_bytes = download_blob_content(artifact["blob_container"], artifact["blob_path"])
-            if hashlib.sha256(artifact_bytes).hexdigest() != receipt["content_sha256"]:
+                artifact_bytes = _read_publication_artifact_content(
+                    artifact, resources, receipt["content_sha256"], check=execution_check,
+                )
+            if not bound_source and hashlib.sha256(artifact_bytes).hexdigest() != receipt["content_sha256"]:
                 raise ValueError("The generated artifact bytes changed.")
         reauthorize()
         if _stage(artifact, receipt, "queue"):
-            if completion_policy:
+            if recheck_effect:
                 reauthorize()
             try:
                 queue_generated_document_processing(
@@ -537,13 +593,13 @@ def publish_generated_chat_artifact_for_user(
                 "message": f"{requester_display_name or 'A workspace member'} requested approval for {name} in {workspace_name}.",
                 "link_url": link_url, "link_context": link_context, "metadata": notification_metadata,
             }
-            if completion_policy:
+            if recheck_effect:
                 return create_notification(**scope_args, **kwargs, idempotency_key=f"publication:{key}:workspace")
             return notify_workspace(destination[target_field], kwargs.pop("notification_type"), kwargs.pop("title"), kwargs.pop("message"), **kwargs)
 
         _notify_once(
             artifact, receipt, "workspace_notification", "approval_request_pending",
-            workspace_notice, before=reauthorize if completion_policy else None,
+            workspace_notice, before=reauthorize if recheck_effect else None,
         )
         reauthorize()
         _notify_once(
@@ -553,18 +609,18 @@ def publish_generated_chat_artifact_for_user(
                 title="Generated artifact submitted for approval",
                 message=f"{name} is waiting for approval in {workspace_name}.",
                 link_url=link_url, link_context=link_context, metadata=notification_metadata,
-                **({"idempotency_key": f"publication:{key}:submitter"} if completion_policy else {}),
+                **({"idempotency_key": f"publication:{key}:submitter"} if recheck_effect else {}),
             ),
-            before=reauthorize if completion_policy else None,
+            before=reauthorize if recheck_effect else None,
         )
         if scope == "group":
             invalidate_group_search_cache(destination["group_id"])
-    if completion_policy:
+    if recheck_effect:
         reauthorize()
     return _publication_response(artifact, receipt, container)
 
 
-def publish_workflow_analysis_artifact(
+def publish_workflow_artifact(
     user_id, *, publication, artifact_reference, request_id, source_receipt=None, execution_check=None,
 ):
     """Dispatch only a configured publication task using an actual upstream artifact address."""
@@ -577,9 +633,19 @@ def publish_workflow_analysis_artifact(
     message_id = _text(artifact_reference.get("artifact_message_id"), "Upstream artifact message id")
     artifact = _authorize_artifact(user_id, conversation_id, message_id)
     metadata = artifact.get("metadata") or {}
-    if not metadata.get("analysis_result_required"):
+    saved_output = publication.get("source_kind") == "saved_output"
+    if saved_output:
+        if not has_generated_artifact_source(metadata):
+            raise ValueError("The upstream artifact is not bound to saved workflow records.")
+        bound_receipt = metadata["generated_artifact_source"]["source_receipt"]
+        if not isinstance(source_receipt, dict) or any(
+            source_receipt.get(key) != bound_receipt[key]
+            for key in ("producer", "result_ref", "output_name", "output_ref")
+        ):
+            raise ValueError("Publication requires the exact saved-output source receipt.")
+    elif not metadata.get("analysis_result_required") or has_generated_artifact_source(metadata):
         raise ValueError("The upstream artifact is not bound to a saved final analysis.")
-    if artifact_reference.get("producer") is not None and artifact_reference["producer"] != metadata.get("analysis_producer"):
+    if (saved_output or artifact_reference.get("producer") is not None) and artifact_reference.get("producer") != _artifact_producer(artifact):
         raise ValueError("The upstream artifact belongs to a different analysis result.")
     output_format = str(metadata.get("generated_artifact_output_format") or "").lower()
     if output_format == "markdown":
@@ -587,19 +653,19 @@ def publish_workflow_analysis_artifact(
     if output_format != publication["artifact_format"]:
         raise ValueError("The requested format is not available. Publish an existing upstream artifact.")
     if "completion_policy" in publication:
-        producer = metadata.get("analysis_producer") or {}
+        producer = _artifact_producer(artifact) or {}
         if (
-            producer.get("kind") != "workflow" or not producer.get("execution_id")
+            producer.get("kind") != ("workflow_saved_output" if saved_output else "workflow") or not producer.get("execution_id")
             or not isinstance(source_receipt, dict)
             or source_receipt.get("producer") != {key: value for key, value in producer.items() if key != "kind"}
             or not isinstance(source_receipt.get("result_ref"), dict)
             or not isinstance(source_receipt.get("output_ref"), dict)
             or not source_receipt.get("output_name")
         ):
-            raise ValueError("Publication completion needs the exact native workflow result and attempt.")
+            raise ValueError("Publication completion needs the exact saved workflow result and attempt.")
     result = publish_generated_chat_artifact_for_user(
         user_id, conversation_id=conversation_id, message_id=message_id,
-        destination={key: value for key, value in publication.items() if key not in {"artifact_format", "completion_policy"}},
+        destination=_publication_destination(publication),
         request_id=request_id,
         completion_policy=publication.get("completion_policy"), source_receipt=source_receipt,
         execution_check=execution_check,
@@ -619,6 +685,16 @@ def publish_workflow_analysis_artifact(
     return response
 
 
+def publish_workflow_analysis_artifact(
+    user_id, *, publication, artifact_reference, request_id, source_receipt=None, execution_check=None,
+):
+    """Compatibility entry point; native definitions retain their original source checks."""
+    return publish_workflow_artifact(
+        user_id, publication=publication, artifact_reference=artifact_reference, request_id=request_id,
+        source_receipt=source_receipt, execution_check=execution_check,
+    )
+
+
 def read_workflow_artifact_publication(
     user_id, request, *, reconcile=False, execution_check=None, authorization_only=False,
 ):
@@ -633,10 +709,10 @@ def read_workflow_artifact_publication(
         ("artifact_reference", {key: address[key] for key in ("conversation_id", "artifact_message_id")}),
     )):
         raise PermissionError("The publication receipt does not match this workflow request.")
-    destination = {key: value for key, value in publication.items() if key not in {"artifact_format", "completion_policy"}}
+    destination = _publication_destination(publication)
     if (
         receipt["destination"] != destination or receipt.get("source_identity") != _artifact_identity(artifact)
-        or address.get("producer") != (artifact.get("metadata") or {}).get("analysis_producer")
+        or address.get("producer") != _artifact_producer(artifact)
     ):
         raise PermissionError("The publication receipt belongs to a different producer or destination.")
     _, _, container = _authorize_destination(user_id, destination)
@@ -737,6 +813,11 @@ def decide_artifact_publication(user_id, document, choice):
 
 
 def _decide_artifact_publication(user_id, document, choice):
+    with ExitStack() as resources:
+        return _decide_artifact_publication_with_content(user_id, document, choice, resources=resources)
+
+
+def _decide_artifact_publication_with_content(user_id, document, choice, *, resources):
     if choice not in {"approved", "rejected", "cancelled"}:
         raise ValueError("Invalid publication decision.")
     roles = ("Owner", "Admin", "DocumentManager", "User") if choice == "cancelled" else ("Owner", "Admin", "DocumentManager")
@@ -782,9 +863,7 @@ def _decide_artifact_publication(user_id, document, choice):
             raise ValueError("The original publication artifact changed.")
         _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
         _authorize_destination(receipt["actor_user_id"], destination)
-        source_bytes = download_blob_content(artifact["blob_container"], artifact["blob_path"])
-        if hashlib.sha256(source_bytes).hexdigest() != receipt["content_sha256"]:
-            raise ValueError("The original publication artifact changed.")
+        source_bytes = _read_publication_artifact_content(artifact, resources, receipt["content_sha256"])
         _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
         _authorize_destination(receipt["actor_user_id"], destination)
     authorize_decision()
@@ -804,6 +883,9 @@ def _decide_artifact_publication(user_id, document, choice):
     container = cosmos_group_documents_container if scope == "group" else cosmos_public_documents_container
     scope_args = {key: destination[key] for key in ("group_id", "public_workspace_id") if key in destination}
     if choice == "approved":
+        if has_generated_artifact_source(artifact.get("metadata") or {}):
+            _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
+            _authorize_destination(receipt["actor_user_id"], destination)
         authorize_decision()
         _replace_publication_destination(container, receipt, {
             "generated_artifact_promotion_status": "approved",
