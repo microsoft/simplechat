@@ -2,3 +2,6 @@
 azure-identity==1.23.0
 azure-cosmos==4.9.0
 azure-keyvault-secrets==4.10.0
+azure-search-documents==11.5.3
+python-dotenv==1.2.2
+redis==5.3.1

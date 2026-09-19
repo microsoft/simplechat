@@ -4,11 +4,14 @@ Additional validation endpoints for plugin health checking and manifest validati
 """
 
 import logging
+from copy import deepcopy
 
 from flask import Blueprint, current_app, jsonify, request
 
 from functions_appinsights import log_event
 from functions_authentication import admin_required, admin_required_blueprint, login_required, user_required, user_required_blueprint
+from functions_global_actions import save_global_action
+from functions_settings import get_settings, update_settings
 from json_schema_validation import apply_plugin_validation_defaults
 from semantic_kernel_plugins.plugin_health_checker import PluginErrorRecovery, PluginHealthChecker
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -252,10 +255,8 @@ def repair_plugin(plugin_name):
     Attempt to repair a plugin that has issues.
     """
     try:
-        from functions_settings import get_settings, update_settings
-        
         settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
+        plugins = deepcopy(settings.get('semantic_kernel_plugins', []))
         
         # Find the plugin
         plugin_index = None
@@ -312,20 +313,18 @@ def repair_plugin(plugin_name):
             plugin_manifest['metadata']['original_errors'] = instantiation_errors
             
             plugins[plugin_index] = plugin_manifest
-            # NOTE: Update container-based storage instead of legacy settings
-            from functions_global_actions import save_global_action
             try:
-                # Save to container instead of settings
-                save_global_action(plugin_manifest)
-                # Remove from legacy settings if present
-                if 'semantic_kernel_plugins' in settings:
-                    del settings['semantic_kernel_plugins']
-                    update_settings(settings)
+                saved_to_container = bool(save_global_action(plugin_manifest))
             except Exception as e:
-                print(f"Error updating plugin in container storage: {e}")
-                # Fallback to settings update if container fails
-                settings['semantic_kernel_plugins'] = plugins
-                update_settings(settings)
+                log_event("[PLUGIN_REPAIR] Container save failed; using legacy settings.",
+                          extra={'error_type': type(e).__name__}, level=logging.WARNING)
+                saved_to_container = False
+            remaining_plugins = plugins[:plugin_index] + plugins[plugin_index + 1:] if saved_to_container else plugins
+            if not update_settings(
+                {'semantic_kernel_plugins': remaining_plugins},
+                expected_etag=settings.get('_etag'),
+            ):
+                return jsonify({'success': False, 'error': 'Unable to save the plugin repair.'}), 500
             
             return jsonify({
                 'success': True,
@@ -349,20 +348,18 @@ def repair_plugin(plugin_name):
                 plugin_manifest['metadata']['repair_timestamp'] = health_report.get('timestamp')
                 
                 plugins[plugin_index] = plugin_manifest
-                # NOTE: Update container-based storage instead of legacy settings
-                from functions_global_actions import save_global_action
                 try:
-                    # Save to container instead of settings
-                    save_global_action(plugin_manifest)
-                    # Remove from legacy settings if present
-                    if 'semantic_kernel_plugins' in settings:
-                        del settings['semantic_kernel_plugins']
-                        update_settings(settings)
+                    saved_to_container = bool(save_global_action(plugin_manifest))
                 except Exception as e:
-                    print(f"Error updating plugin in container storage: {e}")
-                    # Fallback to settings update if container fails
-                    settings['semantic_kernel_plugins'] = plugins
-                    update_settings(settings)
+                    log_event("[PLUGIN_REPAIR] Container save failed; using legacy settings.",
+                              extra={'error_type': type(e).__name__}, level=logging.WARNING)
+                    saved_to_container = False
+                remaining_plugins = plugins[:plugin_index] + plugins[plugin_index + 1:] if saved_to_container else plugins
+                if not update_settings(
+                    {'semantic_kernel_plugins': remaining_plugins},
+                    expected_etag=settings.get('_etag'),
+                ):
+                    return jsonify({'success': False, 'error': 'Unable to save the plugin repair.'}), 500
                 
                 return jsonify({
                     'success': True,
@@ -380,5 +377,5 @@ def repair_plugin(plugin_name):
         log_event(f"[PLUGIN_REPAIR] Error repairing {plugin_name}: {str(e)}", level=logging.ERROR)
         return jsonify({
             'success': False,
-            'error': f'Repair failed: {str(e)}'
+            'error': 'Unable to repair the plugin.'
         }), 500

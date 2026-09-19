@@ -2,12 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for shared app settings and governance cache versioning.
-Version: 0.242.020
+Version: 0.261.027
 Implemented in: 0.242.020
 
-This test ensures Redis deployments keep shared version keys and non-Redis
-multi-worker deployments use Cosmos-backed version documents with bounded local
-version-read TTLs for app settings and governance policy caches.
+Settings versions are now carried with the shared document. Governance caches
+retain their separate version documents and bounded local version-read TTLs.
 """
 
 import os
@@ -31,33 +30,21 @@ def test_app_settings_cache_shared_version_contract():
 
     cache_content = _read("application", "single_app", "app_settings_cache.py")
     settings_content = _read("application", "single_app", "functions_settings.py")
+    store_content = _read("application", "single_app", "app_settings_store.py")
 
     for marker in [
-        "APP_SETTINGS_CACHE_VERSION_KEY",
-        "APP_SETTINGS_CACHE_VERSION_DOC_ID",
-        "CACHE_VERSION_READ_TTL_SECONDS = 15",
-        "get_app_settings_cache_version_redis",
-        "bump_app_settings_cache_version_redis",
-        "get_app_settings_cache_version_mem",
-        "bump_app_settings_cache_version_mem",
-        "cosmos_settings_container",
-        "_get_ttl_cached_cosmos_version(",
-        "APP_SETTINGS_SHARED_VERSION_CACHE",
+        "get_settings_store",
+        "get_app_settings_cache_version = _get_settings_revision",
+        "dependencies.settings_container",
     ]:
         assert marker in cache_content, f"Missing app settings cache version marker: {marker}"
 
-    assert "bump_app_settings_cache_version" in settings_content, (
-        "Expected app settings writes to bump shared app settings cache version"
-    )
-    assert "_refresh_app_settings_cache_after_write(merged, context=\"merge_upsert\")" in settings_content, (
-        "Expected merge upsert path to refresh and version app settings cache"
-    )
-    assert "_refresh_app_settings_cache_after_write(settings_item, context=\"update_settings\")" in settings_content, (
-        "Expected update_settings path to refresh and version app settings cache"
-    )
-    assert "before_version_bump" in settings_content and "after_version_bump" in settings_content, (
-        "Expected cache refresh helper to write payload before and after version bump"
-    )
+    assert "APP_SETTINGS_SHARED_VERSION_CACHE" not in cache_content
+    assert "APP_SETTINGS_CACHE = " not in cache_content
+    assert "store.write(normalize_loaded_settings)" in settings_content
+    assert "write(apply_updates, expected_etag=expected_etag)" in settings_content
+    assert 'candidate[SETTINGS_REVISION_FIELD]' in store_content
+    assert '"document": dict(stored)' in store_content
 
     print("PASS: app settings shared cache version contract verified")
 
@@ -76,7 +63,7 @@ def test_governance_cache_cosmos_fallback_contract():
         "bump_governance_cache_version_redis",
         "get_governance_cache_version_mem",
         "bump_governance_cache_version_mem",
-        "cosmos_governance_policies_container",
+        "dependencies.governance_container",
     ]:
         assert marker in cache_content, f"Missing governance cache version marker: {marker}"
 

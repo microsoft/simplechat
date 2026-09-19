@@ -84,6 +84,52 @@ This is the primary recommended deployment path for the repo.
 - **Resource quota** for required services in target region
 - **Permissions** to create service principals (if not using existing)
 
+### Post-Provision Access
+
+Implemented in version: **0.261.028**, deployer **1.0.31**.
+
+The deployment runner and the App Service managed identity are different identities.
+For `managed_identity` deployments, post-configuration uses the runner's Azure CLI
+Entra credential in `AZURE_TENANT_ID`, not the App Service identity and not Cosmos keys.
+The runner needs Cosmos DB data-plane read/write access and Search Service Contributor
+access to create indexes. An interactive CLI user receives the existing Cosmos role
+setup; non-user runners must have their Cosmos data role assigned beforehand.
+
+When Redis is enabled, the runner also needs network access and Redis data-plane
+permission to read and publish the shared settings record. For Azure Managed Redis,
+assign the runner a suitable database access policy such as Data Owner. Azure RBAC
+Owner on the resource alone does not grant Redis data access. If publication fails,
+the deployment fails rather than reporting a successful save with stale cached settings.
+
+Post-configuration no longer changes Cosmos firewall rules. A runner using a public
+endpoint must already be permitted by its firewall; an account with public access
+disabled requires a runner with private endpoint connectivity. Authentication/RBAC,
+network, and service failures have separate diagnostics. The hook does not enable key
+authentication or create policy exemptions. Key-mode deployments require local auth
+to be enabled; keys are not used as a fallback for failed Entra access.
+
+Select the environment explicitly before invoking hooks. Missing required outputs
+stop configuration instead of falling back to another environment. This includes
+`AZURE_TENANT_ID`; set it on older environments that do not already contain it.
+
+```powershell
+azd env set AZURE_TENANT_ID <tenant-id> -e <environment>
+azd hooks run postprovision -e <environment>
+```
+
+Settings updates use Cosmos ETags and the same shared Redis publication protocol as
+the app. With Redis disabled there is no shared-cache dependency. Enabling a newly
+deployed cache publishes the settings before restarting the app; changing an already
+active cache endpoint or authentication configuration requires a planned cache migration
+and is not performed automatically. When no Redis host is output by deployment,
+existing external Redis settings are preserved.
+
+The hook creates missing personal, group, and public Search indexes from the app's
+vendored JSON schemas. Existing indexes, including customized schemas and documents,
+are left unchanged. Authorization and service errors stop creation; only a not-found
+response triggers creation. A concurrent creation is accepted only after the index
+can be read. Schema upgrades for existing indexes remain an admin-managed operation.
+
 ### Supported Environments
 - ✅ **Azure Commercial** 
 - ✅ **Azure Government** (with environment configuration)
