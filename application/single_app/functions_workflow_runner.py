@@ -10423,14 +10423,21 @@ def _execute_workflow_task_sequence(
                     if publication_completion and (not structured_definition or durable is None):
                         raise WorkflowResultNotReadyError('Publication completion requires a version-3 durable workflow.')
                     publication_inputs = flow_runner.resolve(task['inputs'], metadata_only=True) if flow_runner else None
+                    # Completed loops are not yielded on replay; their display ordinal is
+                    # not part of a saved-output publication's immutable authored input.
+                    publication_task = (
+                        {key: value for key, value in task.items() if key != 'order'}
+                        if task['publication'].get('source_kind') == 'saved_output' else task
+                    )
                     task_result, consumed_inputs = workflow_unit(
                         task_unit_key,
                         lambda: _execute_workflow_analysis_publication(
                             workflow, run_id, task, previous_task_id, previous_result_ref,
                             actor_user_id=actor_user_id,
+                            conversation_id=conversation_id,
                             explicit_inputs=publication_inputs['bound_inputs'] if publication_inputs else None,
                         ),
-                        inputs=({'task': task, 'consumed_inputs': publication_inputs['consumed_inputs']}
+                        inputs=({'task': publication_task, 'consumed_inputs': publication_inputs['consumed_inputs']}
                                 if publication_inputs is not None else
                                 {'task': task, 'producer_task_id': previous_task_id, 'result_ref': previous_result_ref}),
                         approval=task.get('approval'),
@@ -10989,7 +10996,7 @@ def _execute_workflow_task_sequence(
 
 def _execute_workflow_analysis_publication(
     workflow, run_id, task, previous_task_id, previous_result_ref, *, actor_user_id=None,
-    result_reader=None, publish=None, explicit_inputs=None,
+    result_reader=None, publish=None, explicit_inputs=None, conversation_id=None,
 ):
     """Select only a committed ancestor artifact, before resolving a model or its context."""
     publication = task.get('publication')
@@ -11002,6 +11009,63 @@ def _execute_workflow_analysis_publication(
     publication = normalize_workflow_publication(publication)
     reader = result_reader or authorize_workflow_task_result_read
     actor = actor_user_id or workflow.get('user_id')
+
+    def complete_response(result, request_id):
+        state = (result.get('publication') or {}).get('state')
+        if 'completion_policy' in publication:
+            execution = current_workflow_execution()
+            result['_publication_reference'] = {
+                'kind': 'artifact_publication', 'version': 1, 'execution_id': execution.execution_id(),
+                'attempt': execution.selectors()['attempt'], 'request_id': request_id,
+                'receipt_id': result['publication']['id'],
+            }
+        elif state == 'pending_approval':
+            result['execution_status'] = 'pending'
+        elif state in {'uncertain', 'approval_failed'}:
+            result['execution_status'] = 'blocked'
+        return result
+
+    if publication.get('source_kind') == 'saved_output':
+        from functions_artifact_publication import publish_workflow_artifact
+        from functions_generated_file_exports import build_generated_file_artifact_metadata
+        from functions_workflow_artifacts import materialize_workflow_saved_output
+
+        execution = current_workflow_execution()
+        bindings = task.get('inputs') or []
+        if (
+            workflow.get('definition_version') != 3 or execution is None or not conversation_id
+            or not isinstance(explicit_inputs, list) or len(explicit_inputs) != 1 or len(bindings) != 1
+            or bindings[0].get('required') is not True or bindings[0].get('expected_kind') != 'records'
+            or (bindings[0].get('source') or {}).get('kind') != 'node_output'
+        ):
+            raise WorkflowResultNotReadyError('Saved-output publication requires one exact records input and the current durable execution.')
+        receipt = explicit_inputs[0]
+        artifact = materialize_workflow_saved_output(
+            execution, receipt, actor_user_id=actor, conversation_id=conversation_id,
+            allow_partial=bindings[0].get('allow_partial', False),
+        )
+        producer = receipt['producer']
+        request_id = f"workflow-publication:v3:{execution.execution_id()}:{producer['execution_id']}:{producer['attempt']}"
+        result = (publish or publish_workflow_artifact)(
+            actor, publication=publication,
+            artifact_reference={
+                'conversation_id': conversation_id, 'artifact_message_id': artifact['artifact_message_id'],
+                'producer': {'kind': 'workflow_saved_output', **producer},
+            },
+            request_id=request_id, source_receipt=receipt, execution_check=execution.check,
+        )
+        public_artifact = build_generated_file_artifact_metadata(
+            {'file_name': artifact['file_name'], 'output_format': 'json', 'capability': 'file_export',
+             'row_source': 'saved_records', 'row_count': artifact['record_count'],
+             'summary': f"{artifact['record_count']} exact saved records ({artifact['validation_status']})."},
+            {'message': {'id': artifact['artifact_message_id'], 'file_name': artifact['file_name']}},
+            conversation_id,
+        )
+        public_artifact.update(
+            row_count=artifact['record_count'], suppress_assistant_text=False, source_kind='workflow_saved_output',
+        )
+        result['generated_tabular_outputs'] = [public_artifact]
+        return complete_response(result, request_id), [receipt]
     if workflow.get('definition_version') == 3:
         if not isinstance(explicit_inputs, list) or len(explicit_inputs) != 1:
             raise WorkflowResultNotReadyError('Publication requires exactly one explicit saved analysis input.')
@@ -11092,18 +11156,7 @@ def _execute_workflow_analysis_publication(
                 request_id=publication_request_id,
                 **completion_options,
             )
-            state = (result.get('publication') or {}).get('state')
-            if 'completion_policy' in publication:
-                result['_publication_reference'] = {
-                    'kind': 'artifact_publication', 'version': 1, 'execution_id': execution.execution_id(),
-                    'attempt': execution.selectors()['attempt'], 'request_id': publication_request_id,
-                    'receipt_id': result['publication']['id'],
-                }
-            elif state == 'pending_approval':
-                result['execution_status'] = 'pending'
-            elif state in {'uncertain', 'approval_failed'}:
-                result['execution_status'] = 'blocked'
-            return result, (
+            return complete_response(result, publication_request_id), (
                 [*explicit_inputs, native_receipt] if workflow.get('definition_version') == 3
                 and explicit_inputs[0]['producer'] != native_receipt['producer'] else [native_receipt]
             )

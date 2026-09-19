@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.118**.
+Updated in version: **0.261.119**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -19,8 +19,10 @@ a known later step can safely replace optional intermediate work.
 
 This page describes the M4A foundation. Version **0.261.117** adds
 [serial For each and exact Collect](WORKFLOW_FOR_EACH_COLLECT.md) to the same
-definition version and journal. Repeat until, generic aggregate publication,
-and the visual Flow editor remain separate. M4A itself did not admit loops.
+definition version and journal. Version **0.261.119** adds
+[saved-record JSON publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md).
+Repeat until, M5 read-only Flow and accessible visual authoring remain separate
+future slices. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 
@@ -211,8 +213,27 @@ Version **0.261.118** adds an optional
 [publication completion policy](WORKFLOW_PUBLICATION_COMPLETION.md) for existing
 native Analyze artifacts: Submitted, Approved, or Indexed and ready. Unmet
 policies retain the existing receipt and wait or pause rather than creating
-another copy. Omitted policies retain the previous behavior. Publication
-adapters for generic aggregates remain a separate slice.
+another copy. Omitted policies retain the previous behavior.
+
+In **0.261.119**, explicitly choosing **Saved workflow output**
+(`publication.source_kind: "saved_output"`) renders one required `node_output`
+records binding from a real task, Collect, or explicit join as exact JSON
+through the shared Generated File Export Framework. The Publish task creates
+the downloadable file and submits it to the chosen destination using the same
+completion policies. It is not a download-only task or a native Analyze
+artifact. Omitting the source choice preserves existing native publication.
+
+Saved-record serialization rechecks current scope and the exact source attempt
+every 100 records. Reusing a materialized file still verifies its exact ready
+checkpoint. Generic destination approval rechecks current source and destination
+authority after the conditional decision write and before its external effect.
+
+Generic CSV, Markdown, Word/DOCX, PDF, PowerPoint/PPTX and XML mappings remain
+future extensions of the **same framework**, not separate workflow exporters.
+Existing native formats are unchanged. See the
+[shared format roadmap](GENERATED_FILE_EXPORT_FRAMEWORK.md#shared-format-roadmap)
+and [saved-output contract](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md) for exact
+record preservation, partial acceptance and source eligibility.
 
 ## Regression coverage and boundaries
 

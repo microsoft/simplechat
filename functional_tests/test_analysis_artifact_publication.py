@@ -1,7 +1,7 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.118
+Version: 0.261.119
 Implemented in: 0.261.109
 
 Exercise real publication, normalization, and route bodies with Cosmos/queue
@@ -33,6 +33,7 @@ from test_support.app_stubs import import_app_module
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 saved_analysis = import_app_module("functions_saved_analysis")
 definitions = import_app_module("functions_workflow_definitions")
+artifact_sources = import_app_module("functions_generated_artifact_sources")
 
 
 def load_functions(filename, names, namespace):
@@ -54,6 +55,7 @@ def normalizers():
         "WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH": 12000, "WORKFLOW_TASK_NAME_MAX_LENGTH": 120,
         "WORKFLOW_TASK_RUNNER_TYPES": {"inherit", "agent", "model"},
         "normalize_publication_completion_policy": definitions.normalize_publication_completion_policy,
+        "normalize_publication_source_kind": definitions.normalize_publication_source_kind,
     })
 
 
@@ -550,6 +552,7 @@ def test_manual_route_uses_same_receipt_service_and_safe_errors(publication):
         "get_current_user_info": lambda: {"displayName": "Actor"},
         "_get_authorized_chat_artifact_message": publication.module._authorize_artifact,
         "authorize_analysis_artifact": publication.module.authorize_analysis_artifact,
+        "authorize_generated_artifact_source": artifact_sources.authorize_generated_artifact_source,
         "publish_generated_chat_artifact_for_user": publication.module.publish_generated_chat_artifact_for_user,
         "log_event": lambda *args, **kwargs: None, "os": os,
     }
@@ -602,6 +605,8 @@ def test_upload_digest_binds_idempotent_streams_to_actual_bytes_and_producer():
         "cosmos_conversations_container": types.SimpleNamespace(read_item=lambda **kwargs: {"user_id": "actor"}),
         "build_conversation_participation_context": lambda *args: {"is_owner": True},
         "analysis_artifact_metadata": saved_analysis.analysis_artifact_metadata,
+        "has_generated_artifact_source": artifact_sources.has_generated_artifact_source,
+        "generated_chat_artifact_address": artifact_sources.generated_chat_artifact_address,
         "requires_generated_file_approval": lambda *args, **kwargs: False,
         "CLIENTS": {"storage_account_office_docs_client": types.SimpleNamespace(get_blob_client=lambda **kwargs: blob)},
         "storage_account_personal_chat_container_name": "chat",

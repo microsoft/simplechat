@@ -1,7 +1,7 @@
 # test_workflow_loop_native_analysis.py
 """
 Functional regression for current-document native Analyze in serial loops.
-Version: 0.261.117
+Version: 0.261.119
 Implemented in: 0.261.117
 
 Production task dispatch, native checkpoint adaptation, result transport and
@@ -17,6 +17,7 @@ import pytest
 from test_analyze_native_saved_integration import native, native_run  # noqa: F401
 from test_analyze_backend_saved_integration import saved
 from test_workflow_for_each_execution import loop_definition, loop_runtime
+from test_workflow_result_store import FakeBlobService
 from test_workflow_task_result_handoff import build_inventory_run
 from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources
 from functions_document_analysis_checkpoints import analysis_checkpoints_for_workflow
@@ -29,7 +30,9 @@ from functions_workflow_runtime_store import WorkflowRuntimeLease
 from functions_workflow_structured_execution import StructuredWorkflowExecution
 
 
-def test_each_document_uses_its_exact_native_producer_and_collects_complete_results(native_run, monkeypatch):
+@pytest.fixture
+def native_loop_flow(native_run, monkeypatch, request):
+    options = getattr(request, "param", None) or {}
     definition = loop_definition()
     definition["tasks"] = definition["tasks"][1:]
     definition["tasks"][0]["document_action"] = {
@@ -42,7 +45,47 @@ def test_each_document_uses_its_exact_native_producer_and_collects_complete_resu
     loop["iterable"] = {
         "kind": "documents", "documents": [{"document_id": key, "scope_type": "personal"} for key in identifiers],
     }
+    if options.get("partial"):
+        loop["body"]["nodes"][0]["run_when"] = {
+            "op": "lt", "left": {"input": "item", "path": "/index"}, "right": {"literal": 1},
+        }
+        loop["body"]["outputs"][0]["required"] = False
+        definition["flow"]["nodes"][1]["output_contract"].update(allow_partial=True, require_complete_coverage=False)
+        definition["flow"]["outputs"][0]["allow_partial"] = True
+    if options.get("publication") is not None:
+        publish_binding = {
+            "name": "deliverable",
+            "source": {"kind": "node_output", "node_id": "collect", "output": "records", "scope": "current"},
+            "required": True, "expected_kind": "records",
+            **({"allow_partial": options["accept_partial"]} if "accept_partial" in options else {}),
+        }
+        if options.get("join"):
+            definition["flow"]["nodes"].append({
+                "id": "choose", "kind": "if", "inputs": [],
+                "condition": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
+                "then": {"id": "then-region", "nodes": []},
+                "else": {"id": "else-region", "nodes": []},
+                "join": {"id": "selected", "exports": [{
+                    "name": "deliverable",
+                    "then": {"node_id": "collect", "output": "records"},
+                    "else": {"node_id": "collect", "output": "records"},
+                    "required": True, "expected_kind": "records",
+                }]},
+            })
+            publish_binding["source"].update(node_id="selected", output="deliverable")
+        definition["tasks"].append({
+            "id": "publish", "type": "instructions", "name": "Publish records", "instructions": "Publish exact records.",
+            "runner": {"type": "inherit"}, "document_action": {"type": "none"},
+            "inputs": [publish_binding], "output_contract": {"kind": "json"},
+            "publication": copy.deepcopy(options["publication"]),
+        })
+        definition["flow"]["nodes"].append({"id": "publish-node", "kind": "task", "task_id": "publish"})
     workflow, store, container, _ = loop_runtime(monkeypatch, definition=definition)
+    if options.get("storage") == "blob":
+        blobs = FakeBlobService()
+        configured = lambda *args, **kwargs: WorkflowResultStore(container, blobs, "private-workflow-results")
+        monkeypatch.setattr("functions_workflow_result_store._configured_store", configured)
+        monkeypatch.setattr("functions_workflow_result_store._configured_result_store", configured)
     sources = {
         key: {
             **copy.deepcopy(native_run.source), "document_id": key, "scope_id": "owner",
@@ -92,6 +135,7 @@ def test_each_document_uses_its_exact_native_producer_and_collects_complete_resu
         }
 
     monkeypatch.setattr(native_module, "_read_run", read_native)
+    monkeypatch.setitem(sys.modules, "functions_saved_analysis", saved)
     runner, _, _, _, _, _ = build_inventory_run()
     calls, bindings = [], []
 
@@ -132,13 +176,39 @@ def test_each_document_uses_its_exact_native_producer_and_collects_complete_resu
         ),
     )
 
-    def execute():
+    def execute(*, before_publication=None):
+        original_publication = runner["_execute_workflow_analysis_publication"]
+
+        def publication_dispatch(*args, **kwargs):
+            if before_publication:
+                before_publication()
+            return original_publication(*args, **kwargs)
+
+        runner["_execute_workflow_analysis_publication"] = publication_dispatch
         with WorkflowRuntimeLease(store, owner_id="native-loop-worker") as lease:
             execution = StructuredWorkflowExecution(store, lease, workflow, "run")
-            with workflow_execution_scope(execution):
-                return runner["_execute_workflow_task_sequence"](
-                    workflow, {}, "conversation-1", "run", None, {}, actor_user_id="owner",
-                )
+            try:
+                with workflow_execution_scope(execution):
+                    return runner["_execute_workflow_task_sequence"](
+                        workflow, {}, "conversation-1", "run", None, {}, actor_user_id="owner",
+                    )
+            finally:
+                runner["_execute_workflow_analysis_publication"] = original_publication
+
+    return {
+        "execute": execute, "workflow": workflow, "store": store, "container": container,
+        "calls": calls, "bindings": bindings, "identifiers": identifiers, "allowed": allowed,
+        "source_resolver": source_resolver, "native_run": native_run, "options": options,
+    }
+
+
+def test_each_document_uses_its_exact_native_producer_and_collects_complete_results(native_loop_flow):
+    fixture = native_loop_flow
+    execute, workflow, calls, bindings, identifiers, allowed, source_resolver, native_run = (
+        fixture[key] for key in (
+            "execute", "workflow", "calls", "bindings", "identifiers", "allowed", "source_resolver", "native_run",
+        )
+    )
 
     result = execute()
     assert result["workflow_outcome"] == {"status": "completed", "success": True}

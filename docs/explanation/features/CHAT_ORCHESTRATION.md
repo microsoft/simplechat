@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.105** (tracked in `application/single_app/config.py`)
+**Version: 0.261.119** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -465,6 +465,22 @@ pipeline all apply unchanged. Alongside it, a run record is written to the
 `orchestration_runs` and `orchestration_run_steps` containers, and a plan summary is
 recorded on the assistant message so reopening a conversation shows what produced the
 answer.
+
+The registry reserves a future **knowledge -> reasoning -> output** progression,
+but as of **0.261.119** no capability is assigned to the output phase. The
+existing `respond` adapter's saved-Analyze formatting is not a general output
+workflow. A future output capability should use the same
+[Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md) as chat
+and workflows: an authorized source adapter, an explicit renderer, the existing
+private artifact transport and optional existing workspace publication.
+Knowledge and reasoning supply durable data or approved content; rendering
+does not repeat that work or turn prose into engine state.
+
+Exact JSON for saved workflow records is the first new source mapping, not
+automatic orchestration output support. Generic CSV, Markdown, Word/DOCX, PDF
+and PowerPoint/PPTX mappings remain future extensions of that shared framework;
+existing XML/native formats are unchanged. This slice adds no output scheduling,
+workspace-placement or delivery capability.
 
 ## API
 
