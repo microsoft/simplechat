@@ -6,6 +6,13 @@ import re
 from functools import lru_cache
 from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
+from functions_action_manifest import (
+    MCP_STDIO_REMOVED_MESSAGE,
+    McpConfigurationError,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
+from functions_mcp_operations import normalize_mcp_transport, validate_mcp_endpoint_for_transport
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
@@ -39,6 +46,8 @@ PLUGIN_STORAGE_MANAGED_FIELDS = {
     'modified_at',
     'modified_by',
     'scope',
+    'scope_id',
+    'execution_status',
     'updated_at',
     'user_id',
 }
@@ -115,7 +124,7 @@ def validate_plugin_auth_type_allowed(plugin):
     if not declared_auth_type:
         return None
 
-    plugin_type = str(plugin.get('type') or '').strip().lower()
+    plugin_type = resolve_action_type(plugin).lower()
     if plugin_type == DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE:
         plugin_type = DATABRICKS_PLUGIN_TYPE
 
@@ -130,7 +139,9 @@ def validate_plugin_auth_type_allowed(plugin):
 
 def apply_plugin_validation_defaults(plugin):
     plugin_copy = plugin.copy() if isinstance(plugin, dict) else {}
-    plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+    plugin_type = resolve_action_type(plugin_copy).lower()
+    if plugin_type:
+        plugin_copy['type'] = plugin_type
     if plugin_type == DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE:
         plugin_type = DATABRICKS_PLUGIN_TYPE
         plugin_copy['type'] = DATABRICKS_PLUGIN_TYPE
@@ -154,8 +165,23 @@ def apply_plugin_validation_defaults(plugin):
 
 def validate_plugin(plugin):
     schema = load_schema('plugin.schema.json')
-    plugin_copy = apply_plugin_validation_defaults(plugin)
+    if is_retired_mcp_stdio(plugin):
+        return MCP_STDIO_REMOVED_MESSAGE
+    try:
+        plugin_copy = apply_plugin_validation_defaults(plugin)
+    except ValueError:
+        return 'Invalid action type.'
     plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+    if plugin_type == 'mcp':
+        fields = plugin_copy.get('additionalFields')
+        fields = fields if isinstance(fields, dict) else {}
+        try:
+            transport = normalize_mcp_transport(fields.get('transport'))
+            endpoint_errors = validate_mcp_endpoint_for_transport(plugin_copy.get('endpoint'), transport)
+        except McpConfigurationError as exc:
+            return exc.public_message
+        if endpoint_errors:
+            return '; '.join(endpoint_errors)
     
     # First run schema validation
     if schema.get("$ref") and schema.get("definitions"):
@@ -165,6 +191,10 @@ def validate_plugin(plugin):
     errors = sorted(validator.iter_errors(plugin_copy), key=lambda e: e.path)
     if errors:
         return '; '.join([f"{plugin.get('name', '<Unknown>')}: {e.message}" for e in errors])
+
+    auth_error = validate_plugin_auth_type_allowed(plugin_copy)
+    if auth_error:
+        return auth_error
     
     # Additional business logic validation
     # For non-SQL plugins, endpoint must not be empty

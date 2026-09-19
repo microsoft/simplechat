@@ -16,6 +16,7 @@ from flask import g, has_request_context
 import app_settings_cache
 from config import cosmos_governance_item_policies_container, cosmos_governance_policies_container
 from functions_activity_logging import log_governance_change
+from functions_action_manifest import resolve_action_type
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_public_workspaces
 from functions_settings import get_settings
@@ -1156,7 +1157,7 @@ def _normalize_action_scope(scope: str) -> str:
 
 
 def normalize_governed_action_type(action_type: Any) -> str:
-    normalized_type = str(action_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized_type = resolve_action_type({"type": action_type or ""}).lower().replace("-", "_").replace(" ", "_")
     return ACTION_TYPE_ALIASES.get(normalized_type, normalized_type)
 
 
@@ -1260,7 +1261,7 @@ def filter_actions_by_action_type_access(
     for action in actions or []:
         if not isinstance(action, dict):
             continue
-        if is_action_type_access_allowed(feature_key, user_id, action.get("type"), scope):
+        if is_action_type_access_allowed(feature_key, user_id, resolve_action_type(action), scope):
             governed_actions.append(action)
     return governed_actions
 
@@ -1302,7 +1303,7 @@ def ensure_global_action_access(user_id: str, action: Dict[str, Any]) -> None:
     ensure_action_type_access(
         "governance_global_actions_usage",
         normalized_user_id,
-        action.get("type"),
+        resolve_action_type(action),
         "global",
     )
 

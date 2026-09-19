@@ -2,6 +2,49 @@
 // Shared utilities for list/grid view toggle, name humanization, and view modal
 // Used by personal and group agents/actions workspace modules
 
+export const MCP_STDIO_REMOVED_MESSAGE = 'This action uses stdio, which is no longer supported. Reconfigure it to use a supported remote MCP server, or delete it.';
+
+export function isMcpActionType(type) {
+    return typeof type === 'string'
+        && ['mcp', 'mcpplugin', 'modelcontextprotocol', 'modelcontextprotocolplugin']
+            .includes(type.replace(/[\s_-]/g, '').toLowerCase());
+}
+
+export function getMcpRetirementStatus(action) {
+    if (!action || typeof action !== 'object') {
+        return null;
+    }
+    const serverStatus = action.execution_status;
+    const fields = action.additionalFields || action.additional_fields || {};
+    const declaredType = action.type;
+    const effectiveType = declaredType == null || (typeof declaredType === 'string' && !declaredType.trim())
+        ? action.metadata?.type
+        : declaredType;
+    const retiredTransport = typeof fields.transport === 'string' && fields.transport.trim().toLowerCase() === 'stdio';
+    const retiredEndpoint = typeof action.endpoint === 'string' && action.endpoint.trim().toLowerCase().startsWith('stdio:');
+    if ((serverStatus?.state === 'unsupported' && serverStatus.code === 'mcp_stdio_removed')
+        || (isMcpActionType(effectiveType) && (retiredTransport || retiredEndpoint))) {
+        return {
+            state: 'unsupported',
+            code: 'mcp_stdio_removed',
+            message: MCP_STDIO_REMOVED_MESSAGE
+        };
+    }
+    return null;
+}
+
+export function createMcpRetirementNotice(action) {
+    const status = getMcpRetirementStatus(action);
+    if (!status) {
+        return null;
+    }
+    const notice = document.createElement('div');
+    notice.className = 'alert alert-warning small mcp-retirement-notice';
+    notice.setAttribute('role', 'status');
+    notice.textContent = status.message;
+    return notice;
+}
+
 /**
  * Convert a technical name to a human-readable display name.
  * Handles underscores, camelCase, PascalCase, and consecutive uppercase.
@@ -220,6 +263,10 @@ export function openViewModal(item, type, callbacks = {}) {
     } else {
         titleEl.textContent = "Action Details";
         bodyEl.innerHTML = buildActionViewHtml(item);
+        const retirementNotice = createMcpRetirementNotice(item);
+        if (retirementNotice) {
+            bodyEl.prepend(retirementNotice);
+        }
     }
 
     // Build footer buttons dynamically
@@ -243,6 +290,9 @@ export function openViewModal(item, type, callbacks = {}) {
         editBtn.type = 'button';
         editBtn.className = 'btn btn-outline-secondary';
         editBtn.innerHTML = '<i class="bi bi-pencil me-1"></i>Edit';
+        if (type === 'action' && getMcpRetirementStatus(item)) {
+            editBtn.textContent = 'Reconfigure';
+        }
         editBtn.addEventListener('click', () => {
             bootstrap.Modal.getInstance(modalEl)?.hide();
             onEdit(item);
@@ -779,6 +829,18 @@ export function createActionCard(plugin, options = {}) {
     const viewBtn = col.querySelector(".item-card-view-btn");
     const editBtn = col.querySelector(".item-card-edit-btn");
     const deleteBtn = col.querySelector(".item-card-delete-btn");
+
+    const retirementNotice = createMcpRetirementNotice(plugin);
+    if (retirementNotice) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-warning text-dark ms-1';
+        badge.textContent = 'Unsupported';
+        col.querySelector('.card-title').appendChild(badge);
+        col.querySelector('.item-card-buttons').before(retirementNotice);
+        if (editBtn) {
+            editBtn.title = 'Reconfigure action';
+        }
+    }
 
     if (viewBtn && onView) viewBtn.addEventListener("click", (e) => { e.stopPropagation(); onView(plugin); });
     if (editBtn && onEdit) editBtn.addEventListener("click", (e) => { e.stopPropagation(); onEdit(plugin); });

@@ -16,6 +16,7 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError
 
 from functions_appinsights import log_event
+from functions_action_manifest import is_mcp_action
 from functions_mcp_catalog_implementations import (
     McpImplementationValidationError,
     clear_mcp_implementation_schema_cache,
@@ -27,9 +28,13 @@ from functions_mcp_destinations import (
     MCP_DESTINATION_SCOPE_GROUP,
     MCP_DESTINATION_SCOPE_PERSONAL,
     McpDestinationPolicyError,
+    assert_mcp_destination_allowed,
+    describe_mcp_destination,
     evaluate_mcp_destination_policy,
     get_mcp_destination_policy_config,
     normalize_mcp_destination_scope,
+    resolve_mcp_destination_scope,
+    resolve_mcp_execution_context,
 )
 from functions_mcp_operations import (
     MCP_PLUGIN_TYPE,
@@ -420,12 +425,47 @@ def _build_manifest_without_preconfiguration_match(manifest):
     return destination_manifest
 
 
+def _filter_allowed_policy_patterns(policy_config, predicate):
+    """Preserve deny rules while testing a required, specific kind of grant."""
+    filtered_policy = copy.deepcopy(policy_config)
+    filtered_policy["common_patterns"] = [
+        pattern for pattern in policy_config.get("common_patterns", []) if predicate(pattern)
+    ]
+    for key in ("scope_patterns", "group_patterns"):
+        filtered_policy[key] = {
+            scope: [pattern for pattern in patterns if predicate(pattern)]
+            for scope, patterns in policy_config.get(key, {}).items()
+        }
+    return filtered_policy
+
+
+def _evaluate_explicit_preconfiguration_policy(
+    preconfiguration, manifest, scope_type, scope_id, user_id, policy_config
+):
+    required_pattern = f"{MCP_PRECONFIGURATION_POLICY_PREFIX}{preconfiguration['id']}"
+    explicit_policy = _filter_allowed_policy_patterns(
+        policy_config, lambda pattern: str(pattern).strip().lower() == required_pattern
+    )
+    return evaluate_mcp_destination_policy(
+        manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        policy_config=explicit_policy,
+        user_id=user_id,
+    )
+
+
 def _evaluate_specific_destination_policy(manifest, scope_type, scope_id="", user_id="", policy_config=None):
+    if policy_config is None:
+        policy_config = get_mcp_destination_policy_config(user_id=user_id)
+    specific_policy = _filter_allowed_policy_patterns(
+        policy_config, lambda pattern: _is_specific_destination_policy_match({"matched_pattern": pattern})
+    )
     return evaluate_mcp_destination_policy(
         _build_manifest_without_preconfiguration_match(manifest),
         scope_type=scope_type,
         scope_id=scope_id,
-        policy_config=policy_config,
+        policy_config=specific_policy,
         user_id=user_id,
     )
 
@@ -453,6 +493,8 @@ def _is_preconfiguration_available_for_scope(
     if not _is_scope_eligible(preconfiguration, normalized_scope):
         return False
 
+    if policy_config is None:
+        policy_config = get_mcp_destination_policy_config(user_id=user_id)
     manifest = _build_preconfiguration_manifest(preconfiguration)
     decision = evaluate_mcp_destination_policy(
         manifest,
@@ -465,8 +507,12 @@ def _is_preconfiguration_available_for_scope(
         return False
 
     if _requires_explicit_preconfiguration_policy(preconfiguration):
+        explicit_decision = _evaluate_explicit_preconfiguration_policy(
+            preconfiguration, manifest, normalized_scope, scope_id, user_id, policy_config
+        )
         return (
-            _is_explicit_preconfiguration_policy_match(preconfiguration, decision)
+            explicit_decision.get("allowed")
+            and _is_explicit_preconfiguration_policy_match(preconfiguration, explicit_decision)
             and _enterprise_destination_policy_is_allowed(
                 preconfiguration,
                 manifest,
@@ -509,19 +555,26 @@ def build_mcp_server_preconfigurations_response(
 
 def evaluate_mcp_preconfiguration_manifest_policy(
     manifest,
-    scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
+    scope_type=None,
     scope_id="",
     user_id="",
     settings=None,
+    *,
+    origin=None,
+    policy_config=None,
 ):
     """Evaluate catalog-specific MCP preconfiguration policy for a submitted manifest."""
-    if not isinstance(manifest, dict) or manifest.get("type") != MCP_PLUGIN_TYPE:
+    if not isinstance(manifest, dict) or not is_mcp_action(manifest):
         return {
             "allowed": True,
             "reason": "not_mcp_preconfiguration",
             "matched_pattern": "",
         }
 
+    describe_mcp_destination(manifest)
+    scope_type, scope_id = resolve_mcp_destination_scope(
+        manifest, scope_type, scope_id, origin=origin
+    )
     additional_fields = manifest.get("additionalFields") if isinstance(manifest.get("additionalFields"), dict) else {}
     preconfiguration_id = normalize_mcp_preconfiguration_id(additional_fields.get("preconfiguration_id"))
     if not preconfiguration_id:
@@ -540,6 +593,14 @@ def evaluate_mcp_preconfiguration_manifest_policy(
             "preconfiguration_id": preconfiguration_id,
         }
 
+    if not _is_scope_eligible(preconfiguration, scope_type):
+        return {
+            "allowed": False,
+            "reason": "MCP preconfiguration is not available for this action scope.",
+            "matched_pattern": "",
+            "preconfiguration_id": preconfiguration_id,
+        }
+
     if not _requires_explicit_preconfiguration_policy(preconfiguration):
         return {
             "allowed": True,
@@ -548,13 +609,10 @@ def evaluate_mcp_preconfiguration_manifest_policy(
             "preconfiguration_id": preconfiguration_id,
         }
 
-    policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
-    decision = evaluate_mcp_destination_policy(
-        manifest,
-        scope_type=scope_type,
-        scope_id=scope_id,
-        policy_config=policy_config,
-        user_id=user_id,
+    if policy_config is None:
+        policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
+    decision = _evaluate_explicit_preconfiguration_policy(
+        preconfiguration, manifest, scope_type, scope_id, user_id, policy_config
     )
     if decision.get("allowed") and _is_explicit_preconfiguration_policy_match(preconfiguration, decision):
         if not _enterprise_destination_policy_is_allowed(
@@ -588,11 +646,14 @@ def evaluate_mcp_preconfiguration_manifest_policy(
 
 def assert_mcp_preconfiguration_manifest_allowed(
     manifest,
-    scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
+    scope_type=None,
     scope_id="",
     user_id="",
     settings=None,
     operation="mcp",
+    *,
+    origin=None,
+    policy_config=None,
 ):
     """Raise when a submitted MCP manifest uses a gated preconfiguration without explicit policy."""
     decision = evaluate_mcp_preconfiguration_manifest_policy(
@@ -601,12 +662,38 @@ def assert_mcp_preconfiguration_manifest_allowed(
         scope_id=scope_id,
         user_id=user_id,
         settings=settings,
+        origin=origin,
+        policy_config=policy_config,
     )
     if decision.get("allowed"):
         return decision
-    raise McpDestinationPolicyError(
-        f"{decision.get('reason')} Operation '{operation}' is not allowed for this MCP preconfiguration."
+    raise McpDestinationPolicyError(decision.get("reason") or "MCP preconfiguration is not authorized.")
+
+
+def authorize_mcp_action(manifest, *, origin=None, settings, operation="mcp"):
+    """Authorize credential or connector use with current caller and owner-supplied settings."""
+    action_origin, user_id = resolve_mcp_execution_context(manifest, origin=origin)
+    if not isinstance(settings, dict):
+        raise McpDestinationPolicyError("MCP destination policy is currently unavailable.")
+
+    policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
+    assert_mcp_destination_allowed(
+        manifest,
+        policy_config=policy_config,
+        operation=operation,
+        user_id=user_id,
+        mcp_operation_id=str(manifest.get("mcp_operation_id") or ""),
+        origin=action_origin,
     )
+    assert_mcp_preconfiguration_manifest_allowed(
+        manifest,
+        user_id=user_id,
+        settings=settings,
+        operation=operation,
+        origin=action_origin,
+        policy_config=policy_config,
+    )
+    return action_origin
 
 
 def clear_mcp_server_preconfiguration_cache():

@@ -35,6 +35,7 @@
       </div>
 
       <div class="modal-body pt-0">
+        <div id="mcp-retirement-notice" class="alert alert-warning d-none" role="status"></div>
         <!-- Step 1: Select Action Type -->
         <div class="plugin-step" id="plugin-step-1">
           <h6 class="mb-3">Select Action Type</h6>
@@ -737,11 +738,11 @@
                 </div>
                 <div class="col-md-4">
                   <label for="mcp-transport" class="form-label">Transport <span class="text-danger">*</span></label>
-                  <select class="form-select" id="mcp-transport">
+                  <select class="form-select" id="mcp-transport" aria-describedby="mcp-retirement-notice">
+                    <option value="" disabled>Select a remote transport...</option>
                     <option value="streamable_http">Streamable HTTP</option>
                     <option value="sse">Server-Sent Events</option>
                     <option value="websocket">WebSocket</option>
-                    <option value="stdio">Stdio</option>
                   </select>
                 </div>
                 <div class="col-md-4" id="mcp-endpoint-group">
@@ -750,21 +751,6 @@
                 </div>
               </div>
 
-              <div id="mcp-stdio-group" class="d-none mt-3">
-                <div class="mb-3">
-                  <label for="mcp-command" class="form-label">Command <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="mcp-command" placeholder="python" />
-                </div>
-                <div class="mb-3">
-                  <label for="mcp-args" class="form-label">Arguments</label>
-                  <textarea class="form-control" id="mcp-args" rows="3" placeholder="-m&#10;my_mcp_server"></textarea>
-                  <div class="form-text">One argument per line.</div>
-                </div>
-                <div>
-                  <label for="mcp-env" class="form-label">Environment (JSON)</label>
-                  <textarea class="form-control" id="mcp-env" rows="3" placeholder="{}"></textarea>
-                </div>
-              </div>
             </div>
 
             <div class="simplechat-config-card mb-3">

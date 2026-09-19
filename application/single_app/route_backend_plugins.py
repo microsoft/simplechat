@@ -28,6 +28,16 @@ from semantic_kernel_plugins.rocksdb_plugin import (
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
+from functions_action_manifest import (
+    McpActionOrigin,
+    McpConfigurationError,
+    McpStdioRemovedError,
+    ScopedActionManifest,
+    bind_action_origin,
+    get_action_origin,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
@@ -124,7 +134,6 @@ from functions_yamcs_operations import (
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
-    MCP_STDIO_ENDPOINT,
     McpRuntimeError,
     get_mcp_error_http_status,
     normalize_mcp_additional_fields,
@@ -161,6 +170,12 @@ from functions_governance import (
     is_action_type_access_allowed,
     upsert_item_policy,
 )
+from functions_legacy_action_management import (
+    LEGACY_ACTION_PREFIX,
+    LegacyActionConflictError,
+    LegacyActionSourceUpdateError,
+    is_unchanged_retired_action,
+)
 
 
 ACTION_VALIDATION_ERROR_MESSAGE = "Invalid action configuration."
@@ -175,9 +190,15 @@ DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
 
 def _apply_plugin_runtime_defaults(plugin_payload):
     if not isinstance(plugin_payload, dict):
-        return plugin_payload
+        raise McpConfigurationError("Action configuration must be an object.")
 
-    plugin_type = plugin_payload.get('type', '')
+    try:
+        plugin_type = resolve_action_type(plugin_payload)
+    except ValueError as exc:
+        raise McpConfigurationError("Invalid action type.") from exc
+    plugin_payload['type'] = plugin_type
+    if is_retired_mcp_stdio(plugin_payload):
+        raise McpStdioRemovedError()
     if plugin_type in ['sql_schema', 'sql_query']:
         if not str(plugin_payload.get('endpoint') or '').strip():
             plugin_payload['endpoint'] = f'sql://{plugin_type}'
@@ -201,9 +222,6 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
         additional_fields = normalize_mcp_additional_fields(additional_fields)
         plugin_payload['additionalFields'] = additional_fields
-
-        if additional_fields.get('transport') == 'stdio' and not str(plugin_payload.get('endpoint') or '').strip():
-            plugin_payload['endpoint'] = MCP_STDIO_ENDPOINT
 
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth_method = additional_fields.get('auth_method') or 'none'
@@ -622,6 +640,28 @@ bpap = Blueprint('admin_plugins', __name__)
 bpap.before_request(login_required_blueprint())
 
 
+@bpap.errorhandler(McpConfigurationError)
+def _handle_mcp_configuration_error(exc):
+    log_event(
+        "[PLUGIN_VALIDATION] MCP configuration rejected",
+        extra={"error_type": exc.code},
+        level=logging.WARNING,
+    )
+    return jsonify({'success': False, 'error': exc.public_message, 'error_type': exc.code}), 400
+
+
+@bpap.errorhandler(LegacyActionConflictError)
+@bpap.errorhandler(LegacyActionSourceUpdateError)
+def _handle_legacy_action_error(exc):
+    log_event(
+        "[PLUGIN_VALIDATION] Legacy action operation could not be completed",
+        extra={"error_type": exc.code},
+        level=logging.WARNING,
+    )
+    status = 409 if isinstance(exc, LegacyActionConflictError) else 500
+    return jsonify({'success': False, 'error': exc.public_message, 'error_type': exc.code}), status
+
+
 def _redact_plugin_for_logging(plugin):
     """Return a plugin manifest with secret-bearing values redacted for logging."""
     if not isinstance(plugin, dict):
@@ -634,36 +674,50 @@ def _resolve_plugin_secret_context(plugin_manifest, fallback_scope_value, fallba
     if not isinstance(plugin_manifest, dict):
         return fallback_scope_value, fallback_scope
 
-    plugin_scope = str(plugin_manifest.get("scope") or "").strip().lower()
-    if plugin_scope == "group" or plugin_manifest.get("is_group"):
-        return plugin_manifest.get("group_id"), "group"
-    if plugin_scope == "global" or plugin_manifest.get("is_global"):
-        return plugin_manifest.get("id") or fallback_scope_value, "global"
-    if plugin_scope == "user" or plugin_manifest.get("user_id"):
-        return plugin_manifest.get("user_id") or fallback_scope_value, "user"
-    return fallback_scope_value, fallback_scope
+    origin = get_action_origin(plugin_manifest)
+    if origin is None:
+        raise PermissionError("Action lookup provenance is required.")
+    if origin.scope_type == "global":
+        return origin.action_id, "global"
+    return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
 def _resolve_action_identity_context(data, existing_plugin, user_id):
     """Resolve the authoritative identity scope for an action test or save request."""
-    plugin_scope = ""
+    aliases = {
+        "user": "personal", "personal": "personal", "workspace": "personal",
+        "group": "group", "group_action": "group",
+        "global": "global", "admin": "global", "global_action": "global",
+    }
+    requested_value = str((data or {}).get("action_scope") or "personal").strip().lower()
+    if requested_value not in aliases:
+        raise ValueError("Action scope is invalid.")
+    requested_scope = aliases[requested_value]
     if isinstance(existing_plugin, dict):
-        plugin_scope = str(existing_plugin.get("scope") or "").strip().lower()
-        if plugin_scope == "group" or existing_plugin.get("is_group"):
+        origin = get_action_origin(existing_plugin)
+        if origin is None:
+            raise PermissionError("Action lookup provenance is required.")
+        if (data or {}).get("action_scope") and requested_scope != origin.scope_type:
+            raise PermissionError("Action scope does not match the existing action.")
+        if origin.scope_type == "group":
             active_group = require_active_group(user_id)
+            if active_group != origin.scope_id:
+                raise PermissionError("Action does not belong to the selected group.")
             assert_group_role(
                 user_id,
                 active_group,
                 allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
             )
             return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
-        if plugin_scope == "global" or existing_plugin.get("is_global"):
+        if origin.scope_type == "global":
             if "Admin" not in session.get("user", {}).get("roles", []):
                 raise PermissionError("Admin role required for global action identities")
             return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+        if origin.scope_id != user_id:
+            raise PermissionError("Action does not belong to the current user.")
+        return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
 
-    requested_scope = str((data or {}).get("action_scope") or "personal").strip().lower()
-    if requested_scope in {"group", "group_action"}:
+    if requested_scope == "group":
         active_group = require_active_group(user_id)
         assert_group_role(
             user_id,
@@ -671,7 +725,7 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
         return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
-    if requested_scope in {"global", "admin"}:
+    if requested_scope == "global":
         if "Admin" not in session.get("user", {}).get("roles", []):
             raise PermissionError("Admin role required for global action identities")
         return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
@@ -683,22 +737,9 @@ def _validate_action_identity_for_scope(plugin_manifest, scope_type, scope_id):
     validate_action_identity_reference(plugin_manifest, scope_type, scope_id)
 
 
-def _reject_non_admin_mcp_stdio(plugin_manifest, scope_label="personal"):
-    """Block stdio MCP actions outside admin/global action management."""
-    if not isinstance(plugin_manifest, dict):
-        return None
-    if plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
-        return None
-
-    additional_fields = normalize_mcp_additional_fields(plugin_manifest.get('additionalFields', {}))
-    if additional_fields.get('transport') == 'stdio':
-        return f"MCP stdio transport is only available for admin-managed global actions, not {scope_label} actions."
-    return None
-
-
 def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, operation, user_id=None, mcp_operation_id=""):
     """Enforce outbound MCP destination policy for save, discovery, and runtime-adjacent routes."""
-    if not isinstance(plugin_manifest, dict) or plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
+    if not isinstance(plugin_manifest, dict) or resolve_action_type(plugin_manifest) != MCP_PLUGIN_TYPE:
         return None
 
     normalized_user_id = str(user_id or get_current_user_id() or '').strip()
@@ -884,12 +925,22 @@ def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scop
 
 def _load_existing_plugin_for_test(plugin_context, user_id):
     """Load an existing plugin manifest with Key Vault reference names for edit-time plugin tests."""
-    if not isinstance(plugin_context, dict):
+    if plugin_context is None:
         return None
+    if not isinstance(plugin_context, dict):
+        raise ValueError("Action lookup context must be an object.")
 
-    plugin_scope = (plugin_context.get('scope') or 'user').lower()
+    plugin_scope = str(plugin_context.get('scope') or 'user').strip().lower()
+    if plugin_scope not in {'user', 'personal', 'group', 'global'}:
+        raise ValueError("Action lookup scope is invalid.")
+    for field in ('id', 'name'):
+        value = plugin_context.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Action lookup identifier must be a string.")
     plugin_identifier = plugin_context.get('id') or plugin_context.get('name')
     if not plugin_identifier:
+        if 'id' in plugin_context or 'name' in plugin_context:
+            raise ValueError("The requested action must have an identifier.")
         return None
 
     if plugin_scope == 'group':
@@ -899,16 +950,40 @@ def _load_existing_plugin_for_test(plugin_context, user_id):
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
-        return get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
+        plugin = get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
+        scope_type, scope_id = "group", active_group
 
-    if plugin_scope == 'global':
+    elif plugin_scope == 'global':
         # Global actions are admin-managed. Gate here so every test route inherits the check,
         # including routes that do not otherwise resolve an action identity scope.
         if "Admin" not in session.get("user", {}).get("roles", []):
             raise PermissionError("Admin role required to load a global action for testing.")
-        return get_global_action(plugin_identifier, return_type=SecretReturnType.NAME)
+        plugin = get_global_action(plugin_identifier, return_type=SecretReturnType.NAME)
+        scope_type, scope_id = "global", "global"
+    else:
+        if plugin_identifier.startswith(LEGACY_ACTION_PREFIX):
+            plugin = get_legacy_personal_action_record(user_id, plugin_identifier)
+        else:
+            plugin = get_personal_action(user_id, plugin_identifier, return_type=SecretReturnType.NAME)
+        scope_type, scope_id = "personal", user_id
+    if plugin is None:
+        raise LookupError("The requested action was not found.")
+    return bind_action_origin(plugin, scope_type, scope_id)
 
-    return get_personal_action(user_id, plugin_identifier, return_type=SecretReturnType.NAME)
+
+def _action_test_origin(existing_plugin, scope_type, scope_id):
+    if existing_plugin is not None:
+        origin = get_action_origin(existing_plugin)
+        if origin is None or (origin.scope_type, origin.scope_id) != (scope_type, scope_id):
+            raise PermissionError("Action lookup provenance does not match the authorized scope.")
+        return origin
+    return McpActionOrigin(scope_type, scope_id)
+
+
+def _action_origin_secret_context(origin):
+    if origin.scope_type == "global":
+        return origin.action_id, "global"
+    return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
 def _load_existing_plugin_for_sql_test(plugin_context, user_id):
@@ -927,6 +1002,7 @@ def get_user_plugins():
     
     # Get plugins from the new personal_actions container
     plugins = get_governed_personal_actions(user_id)
+    plugins.extend(list_legacy_personal_actions(user_id))
     
     # Always mark user plugins as is_global: False
     for plugin in plugins:
@@ -968,7 +1044,9 @@ def get_user_plugins():
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
     user_id = get_current_user_id()
-    plugins = request.json if isinstance(request.json, list) else []
+    plugins = request.get_json(silent=True)
+    if not isinstance(plugins, list):
+        raise McpConfigurationError("Actions must be provided as a list.")
     
     # Get global plugin names (case-insensitive)
     global_plugins = get_global_actions()
@@ -978,14 +1056,49 @@ def set_user_plugins():
     current_actions = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
     current_action_names = set(action['name'] for action in current_actions)
     current_action_ids = {action.get('id') for action in current_actions if action.get('id')}
+    current_actions_by_id = {action['id']: action for action in current_actions if action.get('id')}
+    legacy_actions = {action['id']: action for action in list_legacy_personal_actions(user_id)}
+    global_actions_by_id = {action['id']: action for action in global_plugins if action.get('id')}
     
     # Filter out plugins whose name matches a global plugin name
     filtered_plugins = []
+    legacy_replacements = {}
     new_plugin_names = set()
     new_plugin_ids = set()
+    submitted_ids = set()
     
     for plugin in plugins:
-        if plugin.get('name', '').lower() in global_plugin_names:
+        if not isinstance(plugin, dict):
+            raise McpConfigurationError("Each action must be an object.")
+        submitted_id = plugin.get('id')
+        if submitted_id is not None:
+            if not isinstance(submitted_id, str):
+                raise McpConfigurationError("Action identifiers must be strings.")
+            if submitted_id and submitted_id in submitted_ids:
+                raise McpConfigurationError("Each action identifier must occur only once.")
+            submitted_ids.add(submitted_id)
+        legacy_action = None
+        if isinstance(submitted_id, str) and submitted_id.startswith(LEGACY_ACTION_PREFIX):
+            legacy_action = legacy_actions.get(submitted_id)
+            if legacy_action is None:
+                raise LegacyActionConflictError()
+            if plugin == legacy_action:
+                continue
+        if is_retired_mcp_stdio(plugin):
+            existing_action = current_actions_by_id.get(submitted_id)
+            if existing_action is not None:
+                original = get_personal_action_record(user_id, submitted_id)
+                if is_unchanged_retired_action(plugin, original, 'personal', user_id):
+                    continue
+            global_action = global_actions_by_id.get(submitted_id)
+            if global_action is not None and plugin == global_action:
+                continue
+            raise McpStdioRemovedError()
+        if (
+            plugin.get('name', '').lower() in global_plugin_names
+            and submitted_id not in current_actions_by_id
+            and legacy_action is None
+        ):
             continue  # Skip global plugins
         plugin_to_save = dict(plugin)
         # Remove is_global if present
@@ -1005,14 +1118,13 @@ def set_user_plugins():
             if field == 'id':
                 continue
             plugin_to_save.pop(field, None)
+        for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+            plugin_to_save.pop(field, None)
         
         # Handle endpoint based on plugin type
-        plugin_type = plugin_to_save.get('type', '')
         plugin_to_save.setdefault('endpoint', '')
         _apply_plugin_runtime_defaults(plugin_to_save)
-        mcp_stdio_error = _reject_non_admin_mcp_stdio(plugin_to_save, scope_label='personal')
-        if mcp_stdio_error:
-            return jsonify({'error': mcp_stdio_error}), 400
+        plugin_type = plugin_to_save['type']
         try:
             _validate_action_identity_for_scope(
                 plugin_to_save,
@@ -1030,13 +1142,6 @@ def set_user_plugins():
         elif 'type' not in plugin_to_save['auth']:
             plugin_to_save['auth']['type'] = 'identity'
         
-        # Auto-fill type from metadata if missing or empty
-        if not plugin_to_save.get('type'):
-            if plugin_to_save.get('metadata', {}).get('type'):
-                plugin_to_save['type'] = plugin_to_save['metadata']['type']
-            else:
-                plugin_to_save['type'] = 'unknown'  # Default type
-        
         debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
         validation_error = validate_plugin(plugin_to_save)
         if validation_error:
@@ -1046,6 +1151,7 @@ def set_user_plugins():
             return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
 
         try:
+            ensure_action_type_access('governance_user_actions', user_id, plugin_type, 'personal')
             _enforce_mcp_destination_policy(
                 plugin_to_save,
                 WORKSPACE_IDENTITY_SCOPE_PERSONAL,
@@ -1053,12 +1159,16 @@ def set_user_plugins():
                 operation='personal_action_save',
                 user_id=user_id,
             )
-        except McpDestinationPolicyError:
+        except PermissionError:
             return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
         except ValueError:
             return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
-        
+
+        if legacy_action is not None:
+            prepare_legacy_personal_action_reconfiguration(user_id, submitted_id, plugin_to_save)
         filtered_plugins.append(plugin_to_save)
+        if legacy_action is not None:
+            legacy_replacements[submitted_id] = plugin_to_save
         new_plugin_names.add(plugin_to_save['name'])
         if plugin_to_save.get('id'):
             new_plugin_ids.add(plugin_to_save['id'])
@@ -1067,10 +1177,15 @@ def set_user_plugins():
     plugins_to_delete = []
     try:
         for plugin in filtered_plugins:
-            save_personal_action(user_id, plugin)
+            if plugin.get('id') in legacy_replacements:
+                reconfigure_legacy_personal_action(user_id, plugin['id'], plugin)
+            else:
+                save_personal_action(user_id, plugin)
         
         # Delete any plugins that are no longer in the list
         for action in current_actions:
+            if is_retired_mcp_stdio(action):
+                continue
             action_id = action.get('id')
             action_name = action.get('name')
             if action_id and action_id in new_plugin_ids:
@@ -1082,6 +1197,8 @@ def set_user_plugins():
         for action in plugins_to_delete:
             delete_personal_action(user_id, action.get('id') or action.get('name'))
             
+    except (LegacyActionConflictError, LegacyActionSourceUpdateError) as exc:
+        return _handle_legacy_action_error(exc)
     except ValueError as e:
         debug_print(f"Validation error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
@@ -1121,7 +1238,10 @@ def delete_user_plugin(plugin_name):
 
     # Try to delete from personal_actions container
     try:
-        deleted = delete_personal_action(user_id, plugin_name)
+        if plugin_name.startswith(LEGACY_ACTION_PREFIX):
+            deleted = delete_legacy_personal_action(user_id, plugin_name)
+        else:
+            deleted = delete_personal_action(user_id, plugin_name)
     except PermissionError:
         return jsonify({'error': 'You are not authorized to delete this action.'}), 403
     
@@ -1199,7 +1319,8 @@ def get_group_action_route(action_id):
     if not action:
         return jsonify({'error': 'Action not found'}), 404
     try:
-        ensure_action_type_access('governance_group_actions', user_id, action.get('type'), 'group')
+        if not is_retired_mcp_stdio(action):
+            ensure_action_type_access('governance_group_actions', user_id, resolve_action_type(action), 'group')
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
     return jsonify(action), 200
@@ -1225,6 +1346,7 @@ def create_group_action_route():
         return jsonify({'error': 'You are not authorized to create this group action.'}), 403
 
     payload = request.get_json(silent=True) or {}
+    _apply_plugin_runtime_defaults(payload)
     try:
         validate_group_action_payload(payload, partial=False)
     except ValueError as exc:
@@ -1235,11 +1357,6 @@ def create_group_action_route():
 
     for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
-
-    _apply_plugin_runtime_defaults(payload)
-    mcp_stdio_error = _reject_non_admin_mcp_stdio(payload, scope_label='group')
-    if mcp_stdio_error:
-        return jsonify({'error': mcp_stdio_error}), 400
 
     # Merge with schema to ensure all required fields are present (same as global actions)
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1316,16 +1433,13 @@ def update_group_action_route(action_id):
         return jsonify({'error': 'Action not found'}), 404
 
     updates = request.get_json(silent=True) or {}
+    if not isinstance(updates, dict):
+        raise McpConfigurationError("Action configuration must be an object.")
     if updates.get('is_global'):
         return jsonify({'error': 'Global actions cannot be modified within a group.'}), 400
 
     for key in ('id', 'group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         updates.pop(key, None)
-
-    try:
-        validate_group_action_payload(updates, partial=True)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
 
     merged = dict(existing)
     merged.update(updates)
@@ -1334,9 +1448,6 @@ def update_group_action_route(action_id):
     merged['id'] = existing.get('id', action_id)
 
     _apply_plugin_runtime_defaults(merged)
-    mcp_stdio_error = _reject_non_admin_mcp_stdio(merged, scope_label='group')
-    if mcp_stdio_error:
-        return jsonify({'error': mcp_stdio_error}), 400
 
     try:
         validate_group_action_payload(merged, partial=False)
@@ -1415,8 +1526,8 @@ def delete_group_action_route(action_id):
 
     try:
         existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
-        if existing:
-            ensure_action_type_access('governance_group_actions', user_id, existing.get('type'), 'group')
+        if existing and not is_retired_mcp_stdio(existing):
+            ensure_action_type_access('governance_group_actions', user_id, resolve_action_type(existing), 'group')
         removed = delete_group_action(active_group, action_id)
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
@@ -1577,6 +1688,8 @@ def set_plugin_enabled(plugin_name):
         if plugin_to_update is None:
             log_event("Toggle plugin enabled failed: not found", level=logging.WARNING, extra={"action": "toggle-enabled", "plugin_name": plugin_name})
             return jsonify({'error': 'Plugin not found.'}), 404
+        if is_retired_mcp_stdio(plugin_to_update):
+            return _handle_mcp_configuration_error(McpStdioRemovedError())
 
         result = update_global_action_enabled(
             plugin_to_update.get('id'),
@@ -1617,6 +1730,8 @@ def add_plugin():
     try:
         plugins = get_global_actions(include_disabled=True)
         new_plugin = request.get_json(silent=True) or {}
+        if not isinstance(new_plugin, dict):
+            raise McpConfigurationError("Action configuration must be an object.")
         governance_policy_payload = new_plugin.pop('governance_policy', None) if isinstance(new_plugin, dict) else None
         _apply_plugin_runtime_defaults(new_plugin)
         new_plugin = apply_plugin_validation_defaults(new_plugin)
@@ -1694,6 +1809,8 @@ def add_plugin():
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except McpConfigurationError as exc:
+        return _handle_mcp_configuration_error(exc)
     except ValueError as e:
         log_event(f"Validation error adding plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
@@ -1712,6 +1829,8 @@ def edit_plugin(plugin_name):
     try:
         plugins = get_global_actions(include_disabled=True)
         updated_plugin = request.get_json(silent=True) or {}
+        if not isinstance(updated_plugin, dict):
+            raise McpConfigurationError("Action configuration must be an object.")
         governance_policy_payload = updated_plugin.pop('governance_policy', None) if isinstance(updated_plugin, dict) else None
         _apply_plugin_runtime_defaults(updated_plugin)
         updated_plugin = apply_plugin_validation_defaults(updated_plugin)
@@ -1803,6 +1922,8 @@ def edit_plugin(plugin_name):
         
         log_event("Edit plugin failed: not found", level=logging.WARNING, extra={"action": "edit", "plugin_name": plugin_name})
         return jsonify({'error': 'Plugin not found.'}), 404
+    except McpConfigurationError as exc:
+        return _handle_mcp_configuration_error(exc)
     except ValueError as e:
         log_event(f"Validation error editing plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
@@ -1960,11 +2081,15 @@ def discover_mcp_tools():
     try:
         existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
-        plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+        origin = _action_test_origin(existing_plugin, scope_type, scope_id)
+        plugin_scope_value, plugin_scope = _action_origin_secret_context(origin)
 
         discovery_manifest = dict(payload)
         discovery_manifest['mcp_operation_id'] = mcp_operation_id
-        discovery_manifest['runtime_user_id'] = user_id
+        discovery_manifest.pop('runtime_user_id', None)
+        discovery_manifest.pop('id', None)
+        if origin.action_id:
+            discovery_manifest['id'] = origin.action_id
         discovery_manifest['type'] = MCP_PLUGIN_TYPE
         discovery_manifest.setdefault('name', 'mcp_discovery')
         discovery_manifest.setdefault('displayName', 'MCP Discovery')
@@ -1972,28 +2097,15 @@ def discover_mcp_tools():
         discovery_manifest.setdefault('metadata', {})
         discovery_manifest.setdefault('additionalFields', {})
         _apply_plugin_runtime_defaults(discovery_manifest)
-        if discovery_manifest.get('additionalFields', {}).get('transport') == 'stdio' and scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
-            log_event(
-                "[MCP_DISCOVERY] Failed",
-                extra=_build_mcp_discovery_log_context(
-                    mcp_operation_id,
-                    user_id,
-                    discovery_manifest,
-                    scope_type,
-                    scope_id,
-                    started_at,
-                    {
-                        "category": "authorization",
-                        "http_status": 403,
-                        "failure_stage": "transport_scope_validation",
-                    },
-                ),
-                level=logging.WARNING,
-            )
-            return jsonify({
-                'error': 'MCP stdio discovery is only available for admin-managed global actions.',
-                'mcp_operation_id': mcp_operation_id,
-            }), 403
+        discovery_manifest = ScopedActionManifest(discovery_manifest, origin)
+        _enforce_mcp_destination_policy(
+            discovery_manifest,
+            scope_type,
+            scope_id,
+            operation='mcp_discovery_prepare',
+            user_id=user_id,
+            mcp_operation_id=mcp_operation_id,
+        )
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
@@ -2010,6 +2122,7 @@ def discover_mcp_tools():
                 scope_id,
                 return_type=SecretReturnType.VALUE,
             )
+            discovery_manifest = ScopedActionManifest(discovery_manifest, origin)
         else:
             auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
             if auth.get('key'):
@@ -2061,7 +2174,7 @@ def discover_mcp_tools():
             mcp_operation_id=mcp_operation_id,
         )
 
-        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest))
+        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest, origin=origin))
         tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
         log_event(
             "[MCP_DISCOVERY] Completed",
@@ -2114,6 +2227,18 @@ def discover_mcp_tools():
             'error': 'MCP destination is not allowed by governance policy.',
             'mcp_operation_id': mcp_operation_id,
         }), 403
+    except McpConfigurationError as exc:
+        log_event(
+            "[MCP_DISCOVERY] Configuration rejected",
+            extra={"error_type": exc.code, "mcp_operation_id": mcp_operation_id},
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False,
+            'error': exc.public_message,
+            'error_type': exc.code,
+            'mcp_operation_id': mcp_operation_id,
+        }), 400
     except (LookupError, ValueError) as exc:
         log_event(
             "[MCP_DISCOVERY] Failed",
@@ -3022,7 +3147,8 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
     scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)
     # Secret references are resolved against the loaded action's own Key Vault scope, never
     # against a scope derived from the request body.
-    plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+    origin = _action_test_origin(existing_plugin, scope_type, scope_id)
+    plugin_scope_value, plugin_scope = _action_origin_secret_context(origin)
 
     default_name = f'{plugin_type}_connection_test'
     manifest = {
@@ -3041,6 +3167,15 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
         manifest['identity_id'] = identity_id
 
     _apply_plugin_runtime_defaults(manifest)
+    manifest = ScopedActionManifest(manifest, origin)
+    if plugin_type == MCP_PLUGIN_TYPE:
+        _enforce_mcp_destination_policy(
+            manifest,
+            scope_type,
+            scope_id,
+            operation='mcp_connection_test_prepare',
+            user_id=user_id,
+        )
 
     existing_auth = {}
     existing_additional_fields = {}
@@ -3099,6 +3234,7 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
             scope_id,
             return_type=SecretReturnType.VALUE,
         )
+        manifest = ScopedActionManifest(manifest, origin)
     else:
         auth = manifest.get('auth') if isinstance(manifest.get('auth'), dict) else {}
         if auth.get('key'):
@@ -3138,17 +3274,22 @@ def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=N
         manifest, scope_type, scope_id = _prepare_action_test_manifest(data, plugin_type, plugin_label)
         if callable(before_test):
             before_test(manifest, scope_type, scope_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except McpConfigurationError as exc:
+        return _handle_mcp_configuration_error(exc)
+    except PermissionError:
+        return jsonify({'success': False, 'error': 'This action connection test is not authorized.'}), 403
+    except LookupError:
+        return jsonify({'success': False, 'error': 'The requested action was not found.'}), 404
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid action connection test configuration.'}), 400
     except McpRuntimeError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), get_mcp_error_http_status(exc)
+        return jsonify({'success': False, 'error': 'MCP operation failed.', 'error_type': exc.category}), get_mcp_error_http_status(exc.category)
 
     try:
-        result = tester(manifest)
+        if plugin_type == MCP_PLUGIN_TYPE:
+            result = tester(manifest, origin=get_action_origin(manifest))
+        else:
+            result = tester(manifest)
     except Exception as exc:
         log_event(
             f'[ACTION_TEST] {plugin_label} connection test raised an unexpected error: {exc}',
@@ -3226,25 +3367,10 @@ def test_log_analytics_action_connection():
 @user_required
 def test_mcp_action_connection():
     """Test an MCP action by initializing a session and listing the server's tools."""
-
-    def enforce_mcp_test_policy(manifest, scope_type, scope_id):
-        if scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
-            stdio_error = _reject_non_admin_mcp_stdio(manifest, scope_label='non-global')
-            if stdio_error:
-                raise PermissionError(stdio_error)
-        _enforce_mcp_destination_policy(
-            manifest,
-            scope_type,
-            scope_id,
-            operation='mcp_connection_test',
-            user_id=get_current_user_id(),
-        )
-
     return _run_action_connection_test(
         MCP_PLUGIN_TYPE,
         'MCP',
         test_mcp_connection,
-        before_test=enforce_mcp_test_policy,
     )
 
 

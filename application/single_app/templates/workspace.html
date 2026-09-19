@@ -576,7 +576,7 @@
     {% include "_semantic_search_health_warning.html" %}
 
     <!-- Migration Banner (Hidden by default) -->
-    <div id="migration-banner" class="alert alert-info alert-dismissible fade show" role="alert" style="display: none;">
+    <div id="migration-banner" class="alert alert-info alert-dismissible fade show d-none" role="alert">
       <div class="d-flex align-items-center">
         <i class="bi bi-arrow-up-circle me-2"></i>
         <div class="flex-grow-1">
@@ -590,7 +590,7 @@
           <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
       </div>
-      <div id="migration-progress" class="mt-2" style="display: none;">
+      <div id="migration-progress" class="mt-2 d-none">
         <div class="progress" style="height: 4px;">
           <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
         </div>

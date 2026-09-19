@@ -27,8 +27,7 @@
     "constraints": {
         "allowedTransports": ["streamable_http"],
         "allowedAuthMethods": ["bearer"],
-        "customHeadersAllowed": true,
-        "stdioAllowed": false
+        "customHeadersAllowed": true
     },
     "implementation": {
         "id": "splunk",
