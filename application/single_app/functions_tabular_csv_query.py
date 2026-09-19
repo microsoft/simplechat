@@ -2,8 +2,48 @@
 """Shared bounded CSV query evaluation for foreground tools and durable exports."""
 
 import ast
+import io
+import os
 
 import pandas
+
+
+TABULAR_CSV_ENCODINGS = ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1')
+
+
+def read_tabular_csv(source, **read_options):
+    """Read a CSV after resolving UTF-8 and common ANSI encodings."""
+    if isinstance(source, (str, os.PathLike)):
+        with open(source, 'rb') as source_file:
+            source_bytes = source_file.read()
+    elif hasattr(source, 'read'):
+        current_position = source.tell() if hasattr(source, 'tell') else None
+        if hasattr(source, 'seek'):
+            source.seek(0)
+        source_value = source.read()
+        if current_position is not None and hasattr(source, 'seek'):
+            source.seek(current_position)
+        source_bytes = source_value.encode('utf-8') if isinstance(source_value, str) else source_value
+    else:
+        source_bytes = source
+
+    if not isinstance(source_bytes, bytes):
+        raise TypeError('CSV source must be a path, byte stream, or bytes')
+
+    for encoding in TABULAR_CSV_ENCODINGS:
+        try:
+            decoded_csv = source_bytes.decode(encoding)
+            return pandas.read_csv(io.StringIO(decoded_csv), **read_options)
+        except UnicodeDecodeError:
+            continue
+
+    raise UnicodeDecodeError(
+        'tabular_csv',
+        source_bytes,
+        0,
+        len(source_bytes),
+        'Unable to decode CSV using supported encodings',
+    )
 
 
 TABULAR_ROW_LOCAL_QUERY_AST_NODES = (
@@ -240,8 +280,7 @@ def validate_tabular_csv_query_expression(query_expression):
 def detect_tabular_csv_numeric_columns(csv_stream, source_chunk_rows, tabular_plugin):
     """Find columns that pandas can convert to numeric across every bounded chunk."""
     numeric_columns = None
-    csv_stream.seek(0)
-    for source_chunk in pandas.read_csv(
+    for source_chunk in read_tabular_csv(
         csv_stream,
         keep_default_na=False,
         dtype=str,
@@ -255,7 +294,6 @@ def detect_tabular_csv_numeric_columns(csv_stream, source_chunk_rows, tabular_pl
                 pandas.to_numeric(source_chunk[column_name])
             except (TypeError, ValueError):
                 numeric_columns.discard(column_name)
-    csv_stream.seek(0)
     return numeric_columns or set()
 
 
@@ -279,7 +317,6 @@ def iter_tabular_csv_query_rows(
     )
     parsed_return_columns = tabular_plugin._parse_optional_column_list_argument(return_columns)
 
-    csv_stream.seek(0)
     read_options = {
         'keep_default_na': False,
         'dtype': str,
@@ -289,7 +326,7 @@ def iter_tabular_csv_query_rows(
         read_options['skiprows'] = lambda row_index: 0 < row_index <= start_source_row
 
     source_row_offset = start_source_row
-    for source_chunk in pandas.read_csv(csv_stream, **read_options):
+    for source_chunk in read_tabular_csv(csv_stream, **read_options):
         source_chunk = tabular_plugin._normalize_dataframe_columns(source_chunk)
         source_chunk.index = range(source_row_offset, source_row_offset + len(source_chunk))
         source_row_offset += len(source_chunk)
