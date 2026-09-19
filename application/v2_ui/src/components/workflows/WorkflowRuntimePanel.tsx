@@ -8,6 +8,7 @@ import {
     cancelScopedWorkflow,
     decideWorkflowRuntime,
     fetchWorkflowRuntime,
+    formatWorkflowIterationPath,
     resumeWorkflowRuntime,
     workflowErrorMessage,
     workflowScopeKey,
@@ -22,6 +23,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
+import { WorkflowRepeatProgress } from './WorkflowRepeatProgress';
 
 function runtimeTone(state: string): 'ok' | 'warn' | 'danger' | 'neutral' | 'accent' {
     if (state === 'completed') {
@@ -73,17 +75,7 @@ function safeJson(value: unknown): string {
 }
 
 function formatIterationPath(path: WorkflowRuntimeGate['iteration_path']): string {
-    if (!Array.isArray(path) || !path.length) {
-        return '';
-    }
-    return path.map((frame, index) => {
-        const loop = String(frame.loop_id || `region ${index + 1}`);
-        const labels = [
-            frame.item_id ? `item ${frame.item_id}` : '',
-            frame.index !== undefined ? `index ${frame.index}` : '',
-        ].filter(Boolean);
-        return labels.length ? `${loop} (${labels.join(', ')})` : loop;
-    }).join(' / ');
+    return formatWorkflowIterationPath(path);
 }
 
 function gateReference(gate: WorkflowRuntimeGate | undefined): string {
@@ -98,6 +90,14 @@ function gateReference(gate: WorkflowRuntimeGate | undefined): string {
         path ? `Path ${path}` : '',
     ].filter(Boolean);
     return parts.join(' · ');
+}
+
+function repeatBudgetBlocker(runtime: WorkflowRuntimeProjection | null): string {
+    const limits = runtime?.limits;
+    if (!limits) return 'The frozen run budgets are unavailable. Reload before continuing Repeat.';
+    if (limits.admitted_count >= limits.max_executions) return 'The global execution-admission budget is exhausted. Another Repeat batch cannot extend it.';
+    if (Date.parse(limits.deadline_at) <= Date.now()) return 'The elapsed run deadline has expired, including time spent waiting. Another Repeat batch cannot reset it.';
+    return '';
 }
 
 function RuntimeMemoryDetails({
@@ -232,6 +232,7 @@ export function WorkflowRuntimePanel({
     const [action, setAction] = useState<string | null>(null);
     const [confirmRetry, setConfirmRetry] = useState(false);
     const [retryTarget, setRetryTarget] = useState<{ key: string; gate: WorkflowRuntimeGate } | null>(null);
+    const [repeatTarget, setRepeatTarget] = useState<{ key: string; gate: WorkflowRuntimeGate } | null>(null);
     const [pollReadToken, setPollReadToken] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
     const requestToken = useRef(0);
@@ -244,6 +245,7 @@ export function WorkflowRuntimePanel({
         setCanDecide(false);
         setConfirmRetry(false);
         setRetryTarget(null);
+        setRepeatTarget(null);
         retryRequest.current = null;
     }, [durable, runId, scopeKey, workflowId]);
 
@@ -264,16 +266,19 @@ export function WorkflowRuntimePanel({
             }
             setRuntime(response.runtime);
             setCanDecide(response.can_decide === true);
+            if (response.can_decide !== true) setRepeatTarget(null);
         } catch (cause: unknown) {
             if (controller.signal.aborted || token !== requestToken.current) {
                 return;
             }
             setCanDecide(false);
-            setRuntime((current) => current?.gate?.publication ? null : current);
+            setRepeatTarget(null);
+            setRuntime((current) => current?.gate?.publication || current?.repeat_progress || current?.gate?.repeat ? null : current);
             if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
                 setRuntime(null);
                 setConfirmRetry(false);
                 setRetryTarget(null);
+                setRepeatTarget(null);
                 retryRequest.current = null;
                 onAccessLost?.(cause.status);
             }
@@ -322,6 +327,7 @@ export function WorkflowRuntimePanel({
         record.gate?.execution_id, record.gate?.node_id, record.gate?.attempt,
         record.gate?.input_digest,
         record.gate?.iteration_path,
+        record.gate?.repeat,
     ]);
 
     const applyRuntimeResponse = (nextRuntime: WorkflowRuntimeProjection, nextCanDecide: boolean) => {
@@ -337,6 +343,7 @@ export function WorkflowRuntimePanel({
         setCanDecide(false);
         setConfirmRetry(false);
         setRetryTarget(null);
+        setRepeatTarget(null);
         setError(status === 404 ? 'No durable runtime record is available for this run.'
             : 'You no longer have access to this workflow runtime. Reload or ask an owner to restore access.');
         onAccessLost?.(status);
@@ -344,9 +351,24 @@ export function WorkflowRuntimePanel({
 
     const decide = async (choice: WorkflowRuntimeDecisionChoice) => {
         if (action) return;
+        if (choice === 'continue_repeat') {
+            if (!runtime?.gate?.repeat || !repeatTarget || repeatTarget.key !== recoveryKey(runtime) ||
+                runtime.gate.kind !== 'pause' || runtime.gate.reason_code !== 'repeat_iteration_limit' || !canDecide) {
+                setRepeatTarget(null);
+                setError('The Repeat gate changed while you were reviewing it. Review the current batch and saved state before continuing.');
+                return;
+            }
+            const blocker = repeatBudgetBlocker(runtime);
+            if (blocker) {
+                setRepeatTarget(null);
+                setError(blocker);
+                return;
+            }
+        }
         if (choice === 'retry' && (!runtime?.gate || !retryTarget || retryTarget.key !== recoveryKey(runtime) || runtime.gate.kind !== 'recovery' || !canDecide)) {
             setConfirmRetry(false);
             setRetryTarget(null);
+            setRepeatTarget(null);
             setError('The recovery gate changed while you were reviewing it. Review the current execution and attempt before retrying.');
             return;
         }
@@ -397,11 +419,12 @@ export function WorkflowRuntimePanel({
             setAction(null);
             setConfirmRetry(false);
             setRetryTarget(null);
+            setRepeatTarget(null);
         }
     };
 
     const resume = async () => {
-        if (!runtime || action) {
+        if (!runtime || action || runtime.gate?.reason_code === 'repeat_iteration_limit') {
             return;
         }
         abortRef.current?.abort();
@@ -454,9 +477,12 @@ export function WorkflowRuntimePanel({
     };
 
     const gate = runtime?.gate;
+    const repeatGate = gate?.reason_code === 'repeat_iteration_limit';
+    const repeatBlocker = repeatGate ? repeatBudgetBlocker(runtime) : '';
     const unsupportedRuntimeSchema = Boolean(runtime && runtime.schema_version !== undefined && ![1, 2].includes(runtime.schema_version));
     const gateAllows = (choice: WorkflowRuntimeDecisionChoice) =>
         Boolean(gate?.choices.includes(choice) &&
+            (!repeatGate || choice === 'continue_repeat' || choice === 'cancel') &&
             (!gate.publication || !['approve', 'reject', 'retry'].includes(choice)));
     const progressLabel = useMemo(() => {
         if (!runtime?.progress) {
@@ -489,6 +515,11 @@ export function WorkflowRuntimePanel({
                     {loading ? <Loader2 size={14} className="animate-spin text-text-3" /> : null}
                 </div>
                 {progressLabel ? <p className="text-xs text-text-3">{progressLabel}</p> : null}
+                <WorkflowRepeatProgress summary={runtime?.repeat_progress} />
+                {runtime?.repeat_counts ? <p className="text-xs text-text-3">
+                    All Repeat blocks in this run: {runtime.repeat_counts.exhaustion_count ?? 0} batch-limit pauses;
+                    {' '}{runtime.repeat_counts.continuation_count ?? 0} manual continuations.
+                </p> : null}
                 {runtime?.loop_progress ? (
                     <section aria-label="Frozen loop progress" className="space-y-1 rounded-lg border border-edge p-3 text-xs text-text-3">
                         <p className="break-words font-medium text-text-2">For each {runtime.loop_progress.loop_id}</p>
@@ -505,12 +536,17 @@ export function WorkflowRuntimePanel({
                     <p className="text-xs text-text-3">
                         {runtime.limits.admitted_count} of {runtime.limits.max_executions} execution admissions used.
                         {' '}Deadline: {formatTimestamp(runtime.limits.deadline_at)} (including waits).
+                        {runtime.repeat_progress || repeatGate ? <>
+                            {' '}Remaining execution admissions: {Math.max(0, runtime.limits.max_executions - runtime.limits.admitted_count)}.
+                            {' '}Elapsed time remaining: {Math.max(0, Math.floor((Date.parse(runtime.limits.deadline_at) - Date.now()) / 1000))} seconds.
+                            {' '}Frozen Repeat policy ceiling: {runtime.limits.max_repeat_iterations} rounds per batch.
+                        </> : null}
                     </p>
                 ) : null}
                 {error ? <p role="alert" className="rounded-xl bg-danger-soft p-3 text-xs text-danger">{error}</p> : null}
                 {runtime && !canDecide ? (
                     <p className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
-                        You can view this runtime, but you do not have permission to approve, reject, retry, resume or cancel it.
+                        You can view this runtime, but you do not have permission to approve, reject, retry, continue Repeat, resume or cancel it.
                     </p>
                 ) : null}
                 {unsupportedRuntimeSchema ? (
@@ -526,6 +562,14 @@ export function WorkflowRuntimePanel({
                         </div>
                         {gateReference(gate) ? <p className="break-words text-xs text-text-3">{gateReference(gate)}</p> : null}
                         {gate.reason ? <p className="text-xs text-text-2">{gate.reason}</p> : null}
+                        {repeatGate ? <div className="space-y-2">
+                            <p className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
+                                The stop condition is still unmet. The latest validated state is retained, but final Repeat outputs are not available.
+                                Continue Repeat explicitly grants one more same-sized batch; ordinary Resume is not a continuation grant.
+                            </p>
+                            {!runtime?.repeat_progress ? <WorkflowRepeatProgress summary={gate.repeat} label="Paused Repeat progress" /> : null}
+                            {repeatBlocker ? <p role="alert" className="text-xs text-danger">{repeatBlocker}</p> : null}
+                        </div> : null}
                         <WorkflowPublicationDetails publication={gate.publication} />
                         {gate.input_digest && !gate.publication ? <p className="text-xs text-text-3">Input digest: {gate.input_digest}</p> : null}
                         {gate.kind === 'output' ? (
@@ -573,6 +617,15 @@ export function WorkflowRuntimePanel({
                         ) : null}
                         {canMutate && gate.kind === 'pause' ? (
                             <div className="flex flex-wrap gap-2">
+                                {repeatGate && gate.repeat && gateAllows('continue_repeat') ? (
+                                    <GlassButton size="sm" variant="primary" disabled={Boolean(action) || Boolean(repeatBlocker)}
+                                        onClick={() => {
+                                            if (runtime) setRepeatTarget({ key: recoveryKey(runtime), gate: structuredClone(gate) });
+                                        }}>
+                                        {action === 'continue_repeat' ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                                        Continue Repeat
+                                    </GlassButton>
+                                ) : null}
                                 {gateAllows('resume') ? (
                                     <GlassButton size="sm" variant="primary" disabled={Boolean(action)} onClick={() => void decide('resume')}>
                                         {action === 'resume' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -630,6 +683,27 @@ export function WorkflowRuntimePanel({
                     {retryTarget && gateReference(retryTarget.gate) ? (
                         <p className="break-words text-xs text-text-2">{gateReference(retryTarget.gate)}</p>
                     ) : null}
+                </ConfirmDialog>
+            ) : null}
+            {repeatTarget?.gate.repeat ? (
+                <ConfirmDialog
+                    title="Continue Repeat?"
+                    description="The stop condition is unmet. This grants one additional automatic batch using the retained validated state and the run's frozen batch size."
+                    confirmLabel={`Continue Repeat for up to another ${repeatTarget.gate.repeat.batch_size} rounds`}
+                    confirmIcon={<RotateCcw size={14} />}
+                    cancelLabel="Keep paused"
+                    busy={action === 'continue_repeat'}
+                    tone="primary"
+                    onClose={() => setRepeatTarget(null)}
+                    onConfirm={() => void decide('continue_repeat')}
+                >
+                    <WorkflowRepeatProgress summary={repeatTarget.gate.repeat} label="Repeat continuation being confirmed" />
+                    <p className="text-xs text-text-2">
+                        Lifetime round numbering, the admission budget and the original deadline are unchanged.
+                        Remaining global budgets may stop the run before the whole batch finishes.
+                        This does not approve body tasks, publication destinations, partial data, or invalid output.
+                    </p>
+                    <p className="break-words text-xs text-text-3">{gateReference(repeatTarget.gate)}</p>
                 </ConfirmDialog>
             ) : null}
         </div>

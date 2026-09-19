@@ -522,10 +522,14 @@ def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result
         )
     if structured_run:
         from functions_workflow_execution_history import workflow_execution_history
+        from functions_workflow_node_results import WorkflowLineageAuthorization
 
         cursor = None
+        authorization = WorkflowLineageAuthorization(workflow, run_id, reader_user_id=reader_user_id, store=store)
         while True:
-            page = workflow_execution_history(workflow, run_id, reader_user_id=reader_user_id, cursor=cursor, limit=100)
+            page = workflow_execution_history(
+                workflow, run_id, reader_user_id=reader_user_id, cursor=cursor, limit=100, authorization=authorization,
+            )
             cursor = page["next_cursor"]
             if cursor is None:
                 break

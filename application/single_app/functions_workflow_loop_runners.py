@@ -14,7 +14,7 @@ def assert_workflow_loop_agent_type(agent_type):
     )
     if execution is not None and (getattr(execution, "iteration_path", []) or reporting) and (agent_type or "local") != "local":
         raise WorkflowInputError(
-            "For each and saved-record reporting require locally metered models or local agents. Hosted agents are not supported for these steps.",
+            "For each, Repeat until, and saved-record reporting require locally metered models or local agents. Hosted agents are not supported for these steps.",
         )
 
 
@@ -29,7 +29,7 @@ def require_local_loop_runner(workflow, *, actor_user_id, settings, resolve_agen
     agent = resolve_agent(workflow.get("selected_agent") or {}, user_id=actor_user_id, settings=settings)
     if agent.get("agent_type", "local") != "local":
         raise WorkflowInputError(
-            "For each and saved-record reporting require locally metered models or local agents. Hosted agents are not supported for these steps.",
+            "For each, Repeat until, and saved-record reporting require locally metered models or local agents. Hosted agents are not supported for these steps.",
         )
 
 
@@ -40,7 +40,7 @@ def validate_workflow_loop_runners(workflow, *, actor_user_id, settings, resolve
     pending = [(node, False) for node in (workflow.get("flow") or {}).get("nodes") or []]
     while pending:
         node, inside = pending.pop()
-        if node["kind"] == "for_each":
+        if node["kind"] in {"for_each", "repeat_until"}:
             pending.extend((child, True) for child in node["body"]["nodes"])
         elif node["kind"] == "if":
             pending.extend((child, inside) for name in ("then", "else") for child in node[name]["nodes"])

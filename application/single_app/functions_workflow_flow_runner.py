@@ -37,7 +37,7 @@ class WorkflowFlowRunner:
         self.finished = False
         self.control_receipts = []
         self.loop_frames = []
-        self.has_loops = any(entry["node"]["kind"] == "for_each" for entry in self.compiled["nodes"].values())
+        self.has_loops = any(entry["node"]["kind"] in {"for_each", "repeat_until"} for entry in self.compiled["nodes"].values())
 
     def _producer_path(self, node_id):
         ancestors = self.compiled.get("node_loop_ids", {}).get(node_id, [])
@@ -65,6 +65,33 @@ class WorkflowFlowRunner:
     def _remember(self, node_id, value):
         if not self.execution.iteration_path:
             self.completed[node_id] = value
+
+    def source_producer(self, source):
+        if source.get("kind", "node_output") != "repeat_state":
+            return self.producer(source["node_id"])
+        from functions_workflow_node_results import load_node_result
+        from functions_workflow_repeat_state import current_repeat_state, repeat_node
+
+        slot, receipt = current_repeat_state(
+            self.workflow, self.run_id, self.execution.iteration_path, source,
+            reader_user_id=self.actor_user_id, store=self.execution.store, load_result=self.execution.load_result,
+        )
+        manifest = load_node_result(
+            self.workflow, self.run_id, receipt["producer"], receipt["result_ref"], load_result=self.execution.load_result,
+        )
+        summary = workflow_result_summary(manifest, receipt["result_ref"])
+        summary["workflow_validation"] = deepcopy(slot["workflow_validation"])
+        declaration = next(
+            value for value in repeat_node(self.workflow, source["loop_id"])["state"]
+            if value["name"] == source["state_name"]
+        )
+        return {
+            "state": "completed", "summary": summary, "state_receipt": receipt,
+            "structured_validated": bool(declaration["output_contract"].get("schema")),
+            "state_metadata": {name: deepcopy(slot[name]) for name in (
+                "workflow_validation", "coverage", "prior_coverage", "limitations",
+            ) if name in slot},
+        }
 
     def current_item(self, loop_id):
         from functions_workflow_iterations import load_frozen_item_value
@@ -114,7 +141,7 @@ class WorkflowFlowRunner:
                     "kind": "json", "value": value,
                 }})
                 continue
-            producer = self.producer(source["node_id"])
+            producer = self.source_producer(source)
             if producer is None or producer.get("state") == "skipped":
                 if binding["required"]:
                     raise WorkflowInputError("A required producer was intentionally skipped or did not finish.")
@@ -124,23 +151,33 @@ class WorkflowFlowRunner:
             if producer.get("state") not in {"succeeded", "completed", "completed_partial"}:
                 raise WorkflowInputError("The selected producer is failed, invalid or pending, not optional absence.")
             summary = producer["summary"]
+            state_receipt = producer.get("state_receipt")
+            output_name = state_receipt["output_name"] if state_receipt else source["output"]
+            if (
+                state_receipt and (summary.get("workflow_validation") or {}).get("status") == "accepted_partial"
+                and not binding["allow_partial"]
+            ):
+                raise WorkflowInputError("This input does not accept the retained partial Repeat state.")
             try:
-                name = summary.get("authoritative_output") if source["output"] == "authoritative" else source["output"]
+                name = summary.get("authoritative_output") if output_name == "authoritative" else output_name
                 descriptor = summary.get("outputs", {}).get(name) or {}
                 if stream_collections and descriptor.get("kind") in {"records", "document_results"}:
                     reader = open_workflow_record_input(
                         self.workflow, self.run_id, summary["producer"], summary["result_ref"],
-                        output_name=source["output"], allow_partial=binding["allow_partial"],
+                        output_name=output_name, allow_partial=binding["allow_partial"],
                         reader_user_id=self.actor_user_id, load_result=self.execution.load_result,
                     )
                     if not workflow_output_kind_matches(reader.kind, binding["expected_kind"]):
                         raise WorkflowInputError("The selected collection does not match the declared input kind.")
+                    if state_receipt:
+                        reader.receipt["repeat_state"] = deepcopy(state_receipt["repeat_state"])
                     receipts.append({**reader.receipt, "input_name": binding["name"]})
                     values[binding["name"]] = reader
                     record_inputs.append({"name": binding["name"], "reader": reader})
                     inputs.append({"name": binding["name"], "status": "available", "result": {
                         "kind": reader.kind, "record_count": reader.record_count,
                         "consumed_result": reader.receipt, "complete_records_supplied_separately": True,
+                        **(producer.get("state_metadata") or {}),
                     }})
                     self.partial |= (summary.get("workflow_validation") or {}).get("status") == "accepted_partial"
                     continue
@@ -165,7 +202,7 @@ class WorkflowFlowRunner:
                 else:
                     prompt, receipt = self.load_output(
                         self.workflow, self.run_id, summary["producer"], summary["result_ref"],
-                        output_name=source["output"], allow_partial=binding["allow_partial"],
+                        output_name=output_name, allow_partial=binding["allow_partial"],
                         reader_user_id=self.actor_user_id, required=binding["required"],
                     )
             except AnalysisResultUnavailable:
@@ -176,7 +213,11 @@ class WorkflowFlowRunner:
                 inputs.append({"name": binding["name"], "status": "unavailable"})
                 values[binding["name"]] = MISSING
                 continue
+            if state_receipt:
+                receipt["repeat_state"] = deepcopy(state_receipt["repeat_state"])
             payload = json.loads(prompt)
+            if state_receipt:
+                payload.update(producer.get("state_metadata") or {})
             if not workflow_output_kind_matches(payload["kind"], binding["expected_kind"]):
                 raise WorkflowInputError("The input does not match its declared output kind.")
             if condition is not None and binding["name"] in condition:
@@ -304,7 +345,7 @@ class WorkflowFlowRunner:
                 continue
             selected = resolved["bound_inputs"][0]
             receipts.append(selected)
-            producer = self.producer(source["node_id"])
+            producer = self.source_producer(source)
             structured = structured and producer.get("structured_validated", False)
             descriptor = producer["summary"]["outputs"][selected["output_name"]]
             exports[export["name"]] = {
@@ -521,6 +562,10 @@ class WorkflowFlowRunner:
             self.execution.check()
             if node["kind"] == "for_each":
                 yield from self._for_each(node, region["id"])
+            elif node["kind"] == "repeat_until":
+                from functions_workflow_repeat_execution import run_repeat_until
+
+                yield from run_repeat_until(self, node, region["id"])
             elif node["kind"] == "collect":
                 self._collect(node, region["id"])
             elif node["kind"] == "task":

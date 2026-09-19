@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.117**
 
-Updated in version: **0.261.119**.
+Updated in version: **0.261.120**.
 
 Application version source: `application\single_app\config.py`.
 
@@ -27,12 +27,17 @@ The List editor supports three input sources:
 | Source | What becomes an item | Ordering |
 | --- | --- | --- |
 | Selected documents | Each explicitly selected, currently authorized document | Selection order |
-| Saved collection | Each complete record or per-document result from a declared earlier output | Original record order |
+| Saved collection | Each complete record or per-document result from a declared earlier output, or from named current Repeat state inside its body | Original record order |
 | Workspace query | Each distinct authorized logical document selected when the loop starts | Stable identity order for exhaustive selection, or the selected ranking for Best N |
 
 Searching a workspace does not make every searchable document an item. A search
 can cover a large workspace and select 80 documents; processing that selection
 creates 80 loop visits.
+
+In **0.261.120**, a For each inside Repeat may select a collection through a
+required, non-partial `repeat_state` binding. The frozen source retains that
+round's exact state receipt. Reading it requires authorization of that receipt;
+a prior-node ancestry prefix or a lookup of the latest state is insufficient.
 
 ### Frozen workspace queries
 
@@ -70,6 +75,12 @@ Administrator changes apply to new runs. Active runs retain their admitted
 policy and frozen inputs. Raising the item ceiling does not increase the
 separate execution-admission ceiling or elapsed deadline. A multi-task body can
 exhaust those limits before using every permitted item.
+
+Since **0.261.120**, [Repeat until](WORKFLOW_REPEAT_UNTIL.md) has a separate
+administrator ceiling: default 25 rounds, range 1-1,000 per automatic batch.
+Changing that setting does not change For each's default 500 items or its
+1-5,000 range. A Repeat continuation cannot reset the shared run's execution
+admissions or elapsed deadline.
 
 Model context capacity is a different limit. It comes from each task's effective
 catalog/deployment settings, including instructions, tools, and output
@@ -109,9 +120,11 @@ Each logical task appears once in the authored tree, but executes separately
 for each item. Ancestor outputs can be explicit inputs; another item's latest
 reply cannot.
 
-Body results cross the loop boundary through Collect, not through an implicit
-last-child output. Nested loop results must cross their own Collect boundary
-before an outer body can export them.
+For each body results cross the loop boundary through Collect, not through an
+implicit last-child output. Nested For each results must cross their own
+Collect boundary before an outer body can export them. A nested Repeat instead
+exposes its explicitly selected final exports after Until is satisfied; it is
+not an implicit Collect of all earlier rounds.
 
 Collect supports homogeneous `records` and `document_results` exports and
 preserves the selected kind. Text concatenation and arbitrary JSON-object
@@ -152,6 +165,11 @@ records, page coverage, intermediate checkpoints, and source-linked support.
 This mode requires text output, declared collection inputs, no document action
 or publication, and a locally metered runner.
 
+Inside a Repeat body, those collection inputs can explicitly select
+`repeat_state`. This reads the exact admitted collection and retains its
+original records and applicable partial policies. It does not authorize direct
+state publication or make saved-record reporting an automatic fallback.
+
 Ordinary full-input tasks do not silently become summary tasks. If the complete
 input cannot fit and cannot safely be split for the requested operation, the
 run pauses with the original data retained. Compact interpretations are not a
@@ -181,6 +199,14 @@ An iteration path contains one frame per enclosing loop:
 A retry retains its execution ID and advances its attempt. Approval and recovery
 bind the exact item, execution, attempt, input digest, and gate. Approval for
 item A cannot authorize item B, even when their data looks identical.
+
+Repeat's distinct `{loop_id, iteration}` frame can appear in the same path
+without changing For each frames or their execution hashes. The Repeat index
+counts lifetime rounds, not the position inside a newly granted batch.
+A For each inside Repeat freezes its inputs once per exact inner-loop
+execution. Resume reuses them; a genuinely new outer round creates a new
+inner-loop identity and can run its authored selection afresh. Previously
+frozen selections remain unchanged.
 
 V2 inspection pages show frozen items, their executions and attempts, complete
 record pages, and contributor receipts. Byte excerpts remain separate transport
@@ -253,9 +279,10 @@ the source contract, authorization, recovery and validation commands.
 
 Generic CSV, Markdown, Word/DOCX, PDF, PowerPoint/PPTX and XML mappings remain
 future extensions of that same shared framework; existing native formats keep
-their behavior. Repeat until, M5 read-only Flow and accessible visual authoring
-remain separate future slices. Parallel iteration and hosted-agent loops remain
-unsupported; cumulative run-token/spending caps remain deferred.
+their behavior. Repeat until is added in **0.261.120** without changing this
+For each/Collect contract. M5A read-only Flow and M5B accessible visual
+authoring remain separate future slices. Parallel iteration and hosted-agent
+loops remain unsupported; cumulative run-token/spending caps remain deferred.
 
 Validation uses fictional data and isolated services. It is not evidence of a
 live deployment or permission change.

@@ -9,14 +9,19 @@ from functions_workflow_definitions import (
 from functions_workflow_flow import FLOW_LIMITS
 from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
+    WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+    WORKFLOW_REPEAT_ITERATIONS_MAX,
     get_workflow_max_loop_items,
+    get_workflow_max_repeat_iterations,
     validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
 )
 
 
 def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks,
                                   agents, endpoints, default_model=None,
-                                  max_loop_items=WORKFLOW_LOOP_ITEMS_DEFAULT):
+                                  max_loop_items=WORKFLOW_LOOP_ITEMS_DEFAULT,
+                                  max_repeat_iterations=WORKFLOW_REPEAT_ITERATIONS_DEFAULT):
     if scope_type not in {"personal", "group"}:
         raise ValueError("Unsupported workflow editor scope.")
     agent_options = [
@@ -58,10 +63,10 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
     return {
         "definition_version": WORKFLOW_DEFINITION_VERSION,
         "supported_definition_versions": [1, 2, 3],
-        "supported_node_kinds": ["task", "if", "route", "for_each", "collect"],
+        "supported_node_kinds": ["task", "if", "route", "for_each", "collect", "repeat_until"],
         "supported_iterable_kinds": ["input", "documents", "workspace_query"],
         "supported_query_modes": ["all_matches", "best_n"],
-        "supported_binding_sources": ["node_output", "loop_item"],
+        "supported_binding_sources": ["node_output", "loop_item", "repeat_state"],
         "supported_input_processing_modes": sorted(WORKFLOW_INPUT_PROCESSING_MODES),
         "supported_publication_completion_policies": list(WORKFLOW_PUBLICATION_COMPLETION_POLICIES),
         "publication_source_capabilities": [
@@ -73,6 +78,8 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
         "flow_limits": {
             **FLOW_LIMITS,
             "max_loop_items": validate_workflow_max_loop_items(max_loop_items),
+            "max_repeat_iterations": validate_workflow_max_repeat_iterations(max_repeat_iterations),
+            "hard_repeat_iterations": WORKFLOW_REPEAT_ITERATIONS_MAX,
         },
         "scope": {"type": scope_type, "id": str(scope_id)},
         "can_manage": bool(can_manage),
@@ -124,4 +131,5 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         can_manage=can_manage, max_tasks=get_workflow_max_tasks(settings),
         agents=agents, endpoints=endpoints, default_model=_build_default_model_summary(settings),
         max_loop_items=get_workflow_max_loop_items(settings),
+        max_repeat_iterations=get_workflow_max_repeat_iterations(settings),
     )

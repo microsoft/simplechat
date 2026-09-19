@@ -1,7 +1,7 @@
 # test_workflow_loop_limits.py
 """
 Functional tests for strict workflow loop policy and non-secret editor options.
-Version: 0.261.117
+Version: 0.261.120
 Implemented in: 0.261.117
 
 Exercises production settings normalization, the Classic POST validation block,
@@ -34,6 +34,7 @@ from functions_workflow_limits import (
     get_workflow_loop_item_limit,
     get_workflow_max_loop_items,
     validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
 )
 from test_support.app_stubs import import_app_module
 
@@ -43,6 +44,32 @@ def _production_function(filename, name, namespace):
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     exec(compile(ast.Module(body=[function], type_ignores=[]), filename, "exec"), namespace)
     return namespace[name]
+
+
+def _classic_limit_validator(key, validator, getter):
+    source = ast.parse((APP_ROOT / "route_frontend_admin_settings.py").read_text(encoding="utf-8"))
+    validation = next(
+        node for node in ast.walk(source)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(child, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == key for target in child.targets)
+            for child in node.body
+        )
+    )
+    wrapper = ast.parse("def validate_form(form_data, settings):\n    pass\n").body[0]
+    wrapper.body = [validation, ast.Return(value=ast.Name(id=key, ctx=ast.Load()))]
+    flashes = []
+    namespace = {
+        "WorkflowLoopLimitError": WorkflowLoopLimitError,
+        validator.__name__: validator,
+        getter.__name__: getter,
+        "flash": lambda message, category: flashes.append((message, category)),
+        "redirect": lambda path: ("redirect", path),
+        "url_for": lambda endpoint: endpoint,
+    }
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[])), "classic_post", "exec"), namespace)
+    return namespace["validate_form"], flashes
 
 
 class WorkflowLoopPolicyTests(unittest.TestCase):
@@ -117,30 +144,9 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
         self.assertEqual(normalized["workflow_max_loop_items"], 1700)
 
     def test_classic_post_validation_and_absent_preservation(self):
-        source = ast.parse((APP_ROOT / "route_frontend_admin_settings.py").read_text(encoding="utf-8"))
-        validation = next(
-            node for node in ast.walk(source)
-            if isinstance(node, ast.Try)
-            and any(
-                isinstance(child, ast.Assign)
-                and any(isinstance(target, ast.Name) and target.id == "workflow_max_loop_items"
-                        for target in child.targets)
-                for child in node.body
-            )
+        validate, flashes = _classic_limit_validator(
+            "workflow_max_loop_items", validate_workflow_max_loop_items, get_workflow_max_loop_items,
         )
-        wrapper = ast.parse("def validate_form(form_data, settings):\n    pass\n").body[0]
-        wrapper.body = [validation, ast.Return(value=ast.Name(id="workflow_max_loop_items", ctx=ast.Load()))]
-        flashes = []
-        namespace = {
-            "WorkflowLoopLimitError": WorkflowLoopLimitError,
-            "validate_workflow_max_loop_items": validate_workflow_max_loop_items,
-            "get_workflow_max_loop_items": get_workflow_max_loop_items,
-            "flash": lambda message, category: flashes.append((message, category)),
-            "redirect": lambda path: ("redirect", path),
-            "url_for": lambda endpoint: endpoint,
-        }
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[])), "classic_post", "exec"), namespace)
-        validate = namespace["validate_form"]
         self.assertEqual(validate({}, {"workflow_max_loop_items": 2100}), 2100)
         self.assertEqual(validate({}, {}), 500)
         self.assertEqual(validate({"workflow_max_loop_items": "2600"}, {}), 2600)
@@ -151,10 +157,15 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
     def test_settings_writer_validates_before_storage_and_preserves_absent_value(self):
         class Storage:
             def __init__(self):
-                self.current = {"id": "app_settings", "_etag": "etag-1", "workflow_max_loop_items": 1800}
+                self.current = {
+                    "id": "app_settings", "_etag": "etag-1",
+                    "workflow_max_loop_items": 1800, "workflow_max_repeat_iterations": 200,
+                }
+                self.reads = 0
                 self.writes = []
 
             def read_item(self, **_kwargs):
+                self.reads += 1
                 return copy.deepcopy(self.current)
 
             def replace_item(self, *, body, **_kwargs):
@@ -169,6 +180,7 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
         namespace = {
             "copy": copy, "logging": logging,
             "validate_workflow_max_loop_items": validate_workflow_max_loop_items,
+            "validate_workflow_max_repeat_iterations": validate_workflow_max_repeat_iterations,
             "cosmos_settings_container": storage,
             "validate_content_screening_settings": lambda *_args: None,
             "coerce_multi_model_endpoint_enablement": lambda _old, requested: requested,
@@ -195,14 +207,26 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
         writer = _production_function("functions_settings.py", "update_settings", namespace)
         with self.assertRaises(WorkflowLoopLimitError):
             writer({"workflow_max_loop_items": False})
+        for value in (None, "", 0, 1001, True, 25.0, "invalid-secret"):
+            with self.subTest(value=value), self.assertRaises(WorkflowLoopLimitError):
+                writer({"workflow_max_repeat_iterations": value, "workflow_max_loop_items": 2500})
+        self.assertEqual(storage.reads, 0)
         self.assertFalse(storage.writes)
         embedding = ModuleType("functions_embedding_compatibility")
         embedding.embedding_settings_write_guard = lambda *_args, **_kwargs: nullcontext()
         with patch.dict(sys.modules, {"functions_embedding_compatibility": embedding}):
             self.assertTrue(writer({"allow_user_workflows": True}))
             self.assertEqual(storage.current["workflow_max_loop_items"], 1800)
+            self.assertEqual(storage.current["workflow_max_repeat_iterations"], 200)
             self.assertTrue(writer({"workflow_max_loop_items": "2500"}))
             self.assertEqual(storage.current["workflow_max_loop_items"], 2500)
+            self.assertEqual(storage.current["workflow_max_repeat_iterations"], 200)
+            for value in ("1", "750", "1000"):
+                update = {"workflow_max_repeat_iterations": value}
+                self.assertTrue(writer(update))
+                self.assertEqual(storage.current["workflow_max_repeat_iterations"], int(value))
+                self.assertEqual(storage.current["workflow_max_loop_items"], 2500)
+                self.assertEqual(update, {"workflow_max_repeat_iterations": value})
 
     def test_editor_capabilities_and_eligibility_are_safe_and_backwards_compatible(self):
         options = build_workflow_editor_options(
@@ -214,10 +238,13 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
                 {"id": "unknown", "name": "Unknown", "loop_eligible": True, "secret": "PRIVATE"},
             ],
         )
-        self.assertEqual(options["supported_node_kinds"], ["task", "if", "route", "for_each", "collect"])
+        self.assertEqual(
+            options["supported_node_kinds"],
+            ["task", "if", "route", "for_each", "collect", "repeat_until"],
+        )
         self.assertEqual(options["supported_iterable_kinds"], ["input", "documents", "workspace_query"])
         self.assertEqual(options["supported_query_modes"], ["all_matches", "best_n"])
-        self.assertEqual(options["supported_binding_sources"], ["node_output", "loop_item"])
+        self.assertEqual(options["supported_binding_sources"], ["node_output", "loop_item", "repeat_state"])
         self.assertEqual(options["supported_input_processing_modes"], ["full", "saved_record_report"])
         self.assertEqual(options["flow_limits"]["max_loop_items"], 1450)
         self.assertEqual([agent["loop_eligible"] for agent in options["agents"]], [True, False, False])
