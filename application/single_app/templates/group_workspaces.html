@@ -4140,7 +4140,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (canShare) {
         const shareCount = Array.isArray(doc.shared_group_ids) ? doc.shared_group_ids.length : 0;
         dropdownItems += `
-          <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeGroupHtml(doc.file_name || '')}'); return false;">
+          <li><a class="dropdown-item group-document-share-btn" href="#">
             <i class="bi bi-share-fill me-2"></i>Share
             <span class="badge bg-secondary ms-1">${shareCount}</span>
           </a></li>`;
@@ -4199,8 +4199,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <div class="item-card-icon"><i class="bi ${getGroupDocumentIcon(doc.file_name || '')}" style="font-size: 1.75rem;"></i></div>
             <div class="document-item-card__title-wrap">
               <div class="document-item-card__eyebrow">Group document</div>
-              <h6 class="card-title mb-1" title="${escapeGroupHtml(displayTitle)}">${escapeGroupHtml(truncateGroupDocumentText(displayTitle, 60))}</h6>
-              ${subtitle ? `<div class="document-item-card__subtitle" title="${escapeGroupHtml(subtitle)}">${escapeGroupHtml(subtitle)}</div>` : ''}
+              <h6 class="card-title mb-1"></h6>
             </div>
             <div class="document-item-card__status">${statusBadge}</div>
           </div>
@@ -4219,6 +4218,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
       </div>`;
+
+    const titleElement = column.querySelector('.card-title');
+    titleElement.title = displayTitle;
+    titleElement.textContent = truncateGroupDocumentText(displayTitle, 60);
+    if (subtitle) {
+      const subtitleElement = document.createElement('div');
+      subtitleElement.className = 'document-item-card__subtitle';
+      subtitleElement.title = subtitle;
+      subtitleElement.textContent = subtitle;
+      titleElement.after(subtitleElement);
+    }
+    window.bindGroupDocumentShareButton(column, doc);
 
     return column;
   }
@@ -6204,7 +6215,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             if (canShare) {
                 actionsDropdown += `
                     <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <li><a class="dropdown-item group-document-share-btn" href="#">
                         <i class="bi bi-share-fill me-2"></i>Share
                         <span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
                     </a></li>
@@ -6284,6 +6295,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </td>
     `;
 
+    window.bindGroupDocumentShareButton(docRow, doc);
     const actionsCell = docRow.querySelector("td:last-child");
     prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole);
 
@@ -8151,7 +8163,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         if (canManage && access.isOwnerGroup) {
           const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
           if (canShare) {
-            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item group-document-share-btn" href="#"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
           }
           const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
           if (canDelete) {
@@ -8293,6 +8305,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       // xss-check: ignore reviewed folder view shell assembled from local escaped table/card builders.
       container.innerHTML = html;
+      container.querySelectorAll('#group-folder-docs-table tbody tr').forEach((row, index) => {
+        window.bindGroupDocumentShareButton(row, docs[index]);
+      });
       wireGroupBackButton(container);
         if (groupCurrentView === 'folders-cards' && docs.length > 0) {
           renderGroupFolderDocumentCards(docs);

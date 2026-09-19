@@ -76,6 +76,20 @@ function setupGroupShareEventListeners() {
     }
 }
 
+window.bindGroupDocumentShareButton = function(container, doc) {
+    const shareButton = container.querySelector('.group-document-share-btn');
+    if (!shareButton) {
+        return;
+    }
+
+    const documentId = doc.id;
+    const fileName = doc.file_name || '';
+    shareButton.addEventListener('click', function(event) {
+        event.preventDefault();
+        window.shareGroupDocument(documentId, fileName);
+    });
+};
+
 // Main function to open share modal
 window.shareGroupDocument = function(documentId, fileName) {
     currentGroupDocumentId = documentId;
