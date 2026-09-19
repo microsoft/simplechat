@@ -9572,6 +9572,50 @@ def summarize_tabular_invocation_errors(invocations):
     return unique_errors
 
 
+def build_tabular_invocation_failure_signature(invocation):
+    """Build a stable signature for detecting repeated equivalent tool failures."""
+    error_message = get_tabular_invocation_error_message(invocation)
+    if not error_message:
+        return None
+
+    parameters = getattr(invocation, 'parameters', {}) or {}
+    comparable_parameters = {
+        str(parameter_name): parameter_value
+        for parameter_name, parameter_value in parameters.items()
+        if parameter_name not in {'user_id', 'conversation_id'}
+    }
+    normalized_error = re.sub(r'\s+', ' ', str(error_message).strip()).casefold()
+    return (
+        str(getattr(invocation, 'function_name', '') or '').strip(),
+        json.dumps(comparable_parameters, sort_keys=True, default=str),
+        normalized_error,
+    )
+
+
+def get_repeated_tabular_invocation_failures(invocations, minimum_repeats=2):
+    """Return repeated equivalent failures with their function and safe error text."""
+    failures_by_signature = {}
+    for invocation in invocations or []:
+        signature = build_tabular_invocation_failure_signature(invocation)
+        if signature is None:
+            continue
+        failures_by_signature.setdefault(signature, []).append(invocation)
+
+    repeated_failures = []
+    for (function_name, _parameters, normalized_error), matching_invocations in failures_by_signature.items():
+        if len(matching_invocations) < minimum_repeats:
+            continue
+        error_message = get_tabular_invocation_error_message(matching_invocations[0])
+        repeated_failures.append({
+            'function_name': function_name,
+            'count': len(matching_invocations),
+            'error_message': error_message,
+            'normalized_error': normalized_error,
+        })
+
+    return repeated_failures
+
+
 def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
     """Return compact workbook-discovery summaries for retry prompts."""
     discovery_summaries = []
@@ -12768,6 +12812,42 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 else:
                     successful_schema_summary_invocations.append(invocation)
 
+            repeated_failures = get_repeated_tabular_invocation_failures(
+                failed_analytical_invocations + failed_schema_summary_invocations,
+            )
+            repeated_failure_feedback_messages = []
+            if repeated_failures:
+                repeated_failure = repeated_failures[0]
+                safe_repeated_failure_error = sanitize_plugin_invocation_value(
+                    repeated_failure['error_message']
+                )
+                repeated_failure_feedback_messages.append(
+                    f"The tool call {repeated_failure['function_name']} produced the same error repeatedly. Do not repeat that exact call. Change the filename, sheet, column, arguments, or use a different analytical function that addresses the user's question."
+                )
+                log_event(
+                    '[TABULAR_SK_ANALYSIS] Repeated equivalent tool failure detected; routing away from the failed call',
+                    extra={
+                        'function_name': repeated_failure['function_name'],
+                        'repeat_count': repeated_failure['count'],
+                        'error_message': repeated_failure['error_message'],
+                        'attempt_number': attempt_number,
+                    },
+                    level=logging.ERROR,
+                )
+                await emit_tabular_analysis_lifecycle_thought(
+                    thought_callback,
+                    f"Tabular tool {repeated_failure['function_name']} failed repeatedly",
+                    detail=(
+                        f"Failed {repeated_failure['count']} times with the same error: "
+                        f"{safe_repeated_failure_error}"
+                    ),
+                    title='Tabular analysis needs a different query path',
+                    state='running',
+                    phase='retry',
+                    attempt_number=attempt_number,
+                    attempt_count=3,
+                )
+
             if synthesis_exception is not None:
                 raw_tool_fallback = None
                 if not schema_summary_mode:
@@ -12823,6 +12903,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_schema_summary_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         log_event(
                             f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
                             extra={
@@ -12928,7 +13009,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_analytical_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
-                        previous_execution_gap_messages = []
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         retry_sheet_overrides = get_tabular_retry_sheet_overrides(failed_analytical_invocations)
                         for workbook_name, override_payload in retry_sheet_overrides.items():
                             blob_location = workbook_blob_locations.get(workbook_name)

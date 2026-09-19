@@ -1,7 +1,7 @@
 # test_m365_loader_preflight.py
 """
 Runtime tests for authoritative Microsoft 365 loader preflight and propagation.
-Version: 0.261.030
+Version: 0.261.036
 Implemented in: 0.261.029
 
 Loads the complete real loader module and real M365 context/capability/policy
@@ -34,6 +34,7 @@ REAL_MODULES = {
     "functions_m365_operations",
     "functions_m365_approvals",
     "functions_msgraph_operations",
+    "functions_action_manifest",
 }
 
 
@@ -130,6 +131,29 @@ def manifests():
 def install_preflight(monkeypatch, runtime, callback):
     # The execution owner supplies this public hook; the loader never fabricates consent.
     monkeypatch.setattr(runtime.execution, "preflight_m365_manifests", callback)
+
+
+def test_m365_preflight_preserves_trusted_mcp_origin(loader_runtime, monkeypatch):
+    # The fixture establishes the isolated application import path first.
+    from functions_action_manifest import bind_action_origin, get_action_origin
+
+    runtime = loader_runtime
+    mcp = bind_action_origin({
+        "id": "remote", "name": "remote", "type": "mcp",
+        "endpoint": "https://mcp.example.invalid",
+        "additionalFields": {"transport": "sse"},
+    }, "global", "global")
+    preflight = Mock(side_effect=lambda effective: effective)
+    install_preflight(monkeypatch, runtime, preflight)
+    with runtime.execution.m365_execution_context(runtime.context):
+        overlaid = runtime.loader._apply_agent_plugin_runtime_overlays([mcp, manifests()[0]])
+        prepared = runtime.loader._prepare_plugin_manifests_for_runtime(overlaid, {})
+    origin = get_action_origin(prepared[0])
+    assert preflight.call_count == 1
+    assert origin.scope_type == origin.scope_id == "global"
+    assert origin.action_id == "remote"
+    assert prepared[1]["enabled_functions"] == ["get_my_timezone"]
+    assert "execution_status" not in mcp
 
 
 def _block_runtime_import(monkeypatch):

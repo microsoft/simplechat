@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP tool argument normalization.
-Version: 0.250.128
-Implemented in: 0.250.128
+Version: 0.261.029
+Implemented in: 0.250.128; 0.261.029
 
 This test ensures wrapped Semantic Kernel kwargs are normalized before outbound
 MCP tool validation and invocation, while legitimate kwargs tool fields remain
@@ -13,13 +13,13 @@ unchanged.
 import asyncio
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
-sys.path.insert(0, str(APP_DIR))
-sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 
 def _noop(*_args, **_kwargs):
@@ -54,52 +54,42 @@ def _kernel_function(*_args, **_kwargs):
     return decorator
 
 
-sys.modules.setdefault(
-    "functions_appinsights",
-    types.SimpleNamespace(
+_TEST_MODULES = {
+    "functions_appinsights": types.SimpleNamespace(
         log_event=_noop,
         get_appinsights_logger=_get_noop_logger,
     ),
-)
-sys.modules.setdefault(
-    "functions_authentication",
-    types.SimpleNamespace(get_current_user_id=lambda: "functional-test-user"),
-)
-sys.modules.setdefault(
-    "functions_debug",
-    types.SimpleNamespace(debug_print=lambda *args, **kwargs: None),
-)
-sys.modules.setdefault("semantic_kernel", types.SimpleNamespace())
-sys.modules.setdefault(
-    "semantic_kernel.functions",
-    types.SimpleNamespace(kernel_function=_kernel_function),
-)
-sys.modules.setdefault(
-    "semantic_kernel.functions.kernel_plugin",
-    types.SimpleNamespace(KernelPlugin=_KernelPlugin),
-)
-sys.modules.setdefault(
-    "semantic_kernel.connectors",
-    types.SimpleNamespace(),
-)
-sys.modules.setdefault(
-    "semantic_kernel.connectors.mcp",
-    types.SimpleNamespace(
+    "functions_authentication": types.SimpleNamespace(get_current_user_id=lambda: "functional-test-user"),
+    "functions_debug": types.SimpleNamespace(debug_print=_noop),
+    "semantic_kernel": types.SimpleNamespace(),
+    "semantic_kernel.functions": types.SimpleNamespace(kernel_function=_kernel_function),
+    "semantic_kernel.functions.kernel_plugin": types.SimpleNamespace(KernelPlugin=_KernelPlugin),
+    "semantic_kernel.connectors": types.SimpleNamespace(),
+    "semantic_kernel.connectors.mcp": types.SimpleNamespace(
         MCPSsePlugin=object,
-        MCPStdioPlugin=object,
         MCPStreamableHttpPlugin=object,
         MCPWebsocketPlugin=object,
     ),
-)
+}
 
-from functions_mcp_operations import (  # noqa: E402
-    MCP_PLUGIN_TYPE,
-    normalize_mcp_tool_call_arguments,
-    validate_mcp_tool_arguments,
-)
-from semantic_kernel_plugins.mcp_plugin import McpPlugin  # noqa: E402
-from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory  # noqa: E402
-from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+@contextmanager
+def _test_dependencies():
+    """Keep optional dependency stubs and lazy preset imports local to each test."""
+    paths = [str(APP_DIR), str(REPO_ROOT / "functional_tests"), *sys.path]
+    with patch.object(sys, "path", paths), patch.dict(sys.modules, _TEST_MODULES):
+        yield
+
+
+with _test_dependencies():
+    from functions_mcp_operations import (
+        MCP_PLUGIN_TYPE,
+        normalize_mcp_tool_call_arguments,
+        validate_mcp_tool_arguments,
+    )
+    from semantic_kernel_plugins.mcp_plugin import McpPlugin
+    from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
+    from test_support.versioning import assert_app_version_at_least
 
 
 def _splunk_type_tool():
@@ -134,6 +124,7 @@ def _mcp_manifest(tool, validate_arguments=True):
     }
 
 
+@_test_dependencies()
 def test_wrapped_kwargs_arguments_are_unwrapped_for_required_schema():
     """Validate the Splunk-style kwargs wrapper becomes top-level MCP arguments."""
     tool = _splunk_type_tool()
@@ -148,6 +139,7 @@ def test_wrapped_kwargs_arguments_are_unwrapped_for_required_schema():
     assert validate_mcp_tool_arguments(tool, normalized_arguments) == []
 
 
+@_test_dependencies()
 def test_direct_arguments_are_preserved():
     """Validate already-correct MCP arguments are left untouched."""
     tool = _splunk_type_tool()
@@ -158,6 +150,7 @@ def test_direct_arguments_are_preserved():
     assert normalized_arguments == direct_arguments
 
 
+@_test_dependencies()
 def test_legitimate_kwargs_tool_property_is_preserved():
     """Validate tools that define a real kwargs field do not get unwrapped."""
     tool = {
@@ -182,11 +175,13 @@ def test_legitimate_kwargs_tool_property_is_preserved():
     assert validate_mcp_tool_arguments(tool, normalized_arguments) == []
 
 
+@_test_dependencies()
 def test_none_arguments_normalize_to_empty_object():
     """Validate no-parameter MCP tool calls keep the standard empty object shape."""
     assert normalize_mcp_tool_call_arguments({}, None) == {}
 
 
+@_test_dependencies()
 def test_mcp_plugin_call_tool_normalizes_before_validation_and_invocation():
     """Validate McpPlugin.call_tool forwards normalized args to invoke_tool."""
     plugin = McpPlugin(_mcp_manifest(_splunk_type_tool()))
@@ -210,6 +205,7 @@ def test_mcp_plugin_call_tool_normalizes_before_validation_and_invocation():
     assert captured_call["arguments"] == {"type": "savedsearch", "count": 25}
 
 
+@_test_dependencies()
 def test_factory_call_tool_normalizes_cached_tool_arguments():
     """Validate direct factory callers also receive top-level MCP arguments."""
     captured_call = {}
@@ -217,7 +213,7 @@ def test_factory_call_tool_normalizes_cached_tool_arguments():
     async def fake_run_with_retries(cls, _config, _operation, operation_factory):
         return await operation_factory()
 
-    async def fake_call_tool_once(cls, _config, tool_name, arguments=None):
+    async def fake_call_tool_once(cls, _config, tool_name, arguments=None, *, origin=None):
         captured_call["tool_name"] = tool_name
         captured_call["arguments"] = arguments
         return {"success": True, "received_arguments": arguments}
@@ -243,6 +239,7 @@ def test_factory_call_tool_normalizes_cached_tool_arguments():
     assert captured_call["arguments"] == {"type": "savedsearch", "count": 25}
 
 
+@_test_dependencies()
 def test_factory_preserves_wrapper_without_cached_tool_metadata():
     """Validate factory normalization stays conservative without schema metadata."""
     captured_call = {}
@@ -253,7 +250,7 @@ def test_factory_preserves_wrapper_without_cached_tool_metadata():
     async def fake_run_with_retries(cls, _config, _operation, operation_factory):
         return await operation_factory()
 
-    async def fake_call_tool_once(cls, _config, tool_name, arguments=None):
+    async def fake_call_tool_once(cls, _config, tool_name, arguments=None, *, origin=None):
         captured_call["tool_name"] = tool_name
         captured_call["arguments"] = arguments
         return {"success": True, "received_arguments": arguments}

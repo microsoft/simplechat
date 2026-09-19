@@ -2,16 +2,18 @@
 
 """Group-level plugin/action management helpers."""
 
+import logging
 import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from functions_debug import debug_print
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
-from flask import current_app
 
 from config import cosmos_group_actions_container
+from functions_action_manifest import bind_action_origin, is_retired_mcp_stdio
+from functions_appinsights import log_event
+from functions_authentication import get_current_user_id
 from functions_keyvault import (
     SecretReturnType,
     keyvault_plugin_delete_helper,
@@ -26,6 +28,13 @@ from functions_workspace_identities import (
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
+from functions_legacy_action_management import (
+    authorize_scoped_mcp_secret_read,
+    prepare_scoped_action,
+    retired_action_management_view,
+    validate_scoped_mcp_action,
+)
+from functions_settings import get_settings
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -47,14 +56,18 @@ def get_group_actions(
                 partition_key=group_id,
             )
         )
-        return [_clean_action(action, group_id, return_type) for action in results]
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as exc:
-        debug_print(
-            "Error fetching group actions for %s: %s", group_id, exc
-        )
-        return []
+        log_event("[PLUGINS] Group action listing failed", level=logging.ERROR,
+                  extra={"group_id": group_id, "error_type": type(exc).__name__})
+        raise
+    try:
+        return [_clean_action(action, group_id, return_type) for action in results]
+    except Exception as exc:
+        log_event("[PLUGINS] Group action normalization failed", level=logging.WARNING,
+                  extra={"group_id": group_id, "error_type": type(exc).__name__})
+        raise
 
 
 def get_governed_group_actions(
@@ -64,7 +77,11 @@ def get_governed_group_actions(
 ) -> List[Dict[str, Any]]:
     """Return group actions that the user can access by action type governance."""
     actions = get_group_actions(group_id, return_type=return_type)
-    return filter_actions_by_action_type_access(user_id, actions, 'governance_group_actions', 'group')
+    active_actions = [action for action in actions if not is_retired_mcp_stdio(action)]
+    allowed_actions = filter_actions_by_action_type_access(
+        user_id, active_actions, 'governance_group_actions', 'group'
+    )
+    return [action for action in actions if is_retired_mcp_stdio(action) or action in allowed_actions]
 
 
 def get_group_action(
@@ -72,39 +89,51 @@ def get_group_action(
 ) -> Optional[Dict[str, Any]]:
     """Fetch a single group action by id or name."""
     try:
-        action = cosmos_group_actions_container.read_item(
-            item=action_id,
-            partition_key=group_id,
-        )
-    except exceptions.CosmosResourceNotFoundError:
-        query = "SELECT * FROM c WHERE c.group_id = @group_id AND c.name = @name"
-        parameters = [
-            {"name": "@group_id", "value": group_id},
-            {"name": "@name", "value": action_id},
-        ]
-        actions = list(
-            cosmos_group_actions_container.query_items(
-                query=query,
-                parameters=parameters,
+        try:
+            action = cosmos_group_actions_container.read_item(
+                item=action_id,
                 partition_key=group_id,
             )
-        )
-        if not actions:
-            return None
-        action = actions[0]
-    except Exception as exc:
-        debug_print(
-            "Error fetching group action %s for %s: %s", action_id, group_id, exc
-        )
+        except exceptions.CosmosResourceNotFoundError:
+            query = "SELECT * FROM c WHERE c.group_id = @group_id AND c.name = @name"
+            parameters = [
+                {"name": "@group_id", "value": group_id},
+                {"name": "@name", "value": action_id},
+            ]
+            actions = list(
+                cosmos_group_actions_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    partition_key=group_id,
+                )
+            )
+            if not actions:
+                return None
+            action = actions[0]
+    except exceptions.CosmosResourceNotFoundError:
         return None
+    except Exception as exc:
+        log_event("[PLUGINS] Group action lookup failed", level=logging.ERROR,
+                  extra={"group_id": group_id, "action_id": action_id, "error_type": type(exc).__name__})
+        raise
 
-    return _clean_action(action, group_id, return_type)
+    try:
+        return _clean_action(action, group_id, return_type)
+    except Exception as exc:
+        log_event("[PLUGINS] Group action normalization failed", level=logging.WARNING,
+                  extra={"group_id": group_id, "action_id": action_id, "error_type": type(exc).__name__})
+        raise
 
 
 def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
-    payload = normalize_m365_action_payload(dict(action_data))
+    submitted_action = action_data
+    payload = normalize_m365_action_payload(action_data)
+    payload = prepare_scoped_action(payload, "group", group_id)
+    user_id = user_id or get_current_user_id()
     action_id = payload.get("id") or str(uuid.uuid4())
+    if not isinstance(action_id, str):
+        raise ValueError("Action ID must be a string.")
 
     payload["id"] = action_id
     payload["group_id"] = group_id
@@ -120,8 +149,7 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
         )
     except exceptions.CosmosResourceNotFoundError:
         pass
-
-    validate_legacy_action_update(payload, existing_action, 'group_id', group_id)
+    validate_legacy_action_update(submitted_action, existing_action, 'group_id', group_id)
     legacy_type = is_legacy_msgraph_type(payload.get('type'))
     if legacy_type:
         payload['type'] = 'msgraph'
@@ -153,6 +181,9 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
         ensure_action_type_access('governance_group_actions', user_id, payload.get('type'), 'group')
 
     payload.pop("user_id", None)
+    payload = bind_action_origin(payload, "group", group_id)
+    if payload["type"] == "mcp":
+        validate_scoped_mcp_action(payload, user_id, get_settings())
 
     validate_action_identity_reference(
         payload,
@@ -180,9 +211,8 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
         bump_chat_bootstrap_global_cache_version(reason="group_action_saved")
         return _clean_action(stored, group_id, SecretReturnType.TRIGGER)
     except Exception as exc:
-        debug_print(
-            "Error saving group action %s for %s: %s", action_id, group_id, exc
-        )
+        log_event("[PLUGINS] Group action save failed", level=logging.ERROR,
+                  extra={"group_id": group_id, "action_id": action_id, "error_type": type(exc).__name__})
         raise
 
 
@@ -205,9 +235,8 @@ def delete_group_action(group_id: str, action_id: str) -> bool:
         bump_chat_bootstrap_global_cache_version(reason="group_action_deleted")
         return True
     except Exception as exc:
-        debug_print(
-            "Error deleting group action %s for %s: %s", action_id, group_id, exc
-        )
+        log_event("[PLUGINS] Group action deletion failed", level=logging.ERROR,
+                  extra={"group_id": group_id, "action_id": action_id, "error_type": type(exc).__name__})
         raise
 
 
@@ -264,7 +293,17 @@ def _clean_action(
     group_id: str,
     return_type: SecretReturnType,
 ) -> Dict[str, Any]:
+    retired_view = retired_action_management_view(action, "group", group_id)
+    if retired_view is not None:
+        return retired_view
     cleaned = {k: v for k, v in action.items() if not k.startswith("_")}
+    cleaned = bind_action_origin(cleaned, "group", group_id)
+    if return_type == SecretReturnType.NAME and cleaned["type"] == "mcp":
+        # Workspace identity hydration treats NAME like VALUE, so defer it until authorization.
+        return cleaned
+    if return_type == SecretReturnType.VALUE and cleaned["type"] == "mcp":
+        ensure_action_type_access("governance_group_actions", get_current_user_id(), "mcp", "group")
+        authorize_scoped_mcp_secret_read(cleaned, get_settings())
     cleaned = keyvault_plugin_get_helper(
         cleaned,
         scope_value=group_id,
@@ -277,7 +316,4 @@ def _clean_action(
         group_id,
         return_type=return_type,
     )
-    cleaned.setdefault("is_global", False)
-    cleaned.setdefault("is_group", True)
-    cleaned.setdefault("scope", "group")
-    return cleaned
+    return bind_action_origin(cleaned, "group", group_id)

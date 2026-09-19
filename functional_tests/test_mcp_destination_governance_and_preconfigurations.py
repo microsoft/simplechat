@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP destination governance and preconfigurations.
-Version: 0.250.204
-Implemented in: 0.250.064; 0.250.204
+Version: 0.261.029
+Implemented in: 0.250.064; 0.250.204; 0.261.029
 
 This test ensures MCP destination allowlisting and server preconfiguration catalog
 loading work without exposing secret-bearing defaults.
@@ -11,8 +11,10 @@ loading work without exposing secret-bearing defaults.
 
 import json
 import os
+import shutil
 import sys
-import tempfile
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -35,6 +37,17 @@ from functions_mcp_preconfigurations import (  # noqa: E402
 MCP_DESTINATION_SCOPE_GLOBAL = mcp_destinations.MCP_DESTINATION_SCOPE_GLOBAL
 MCP_DESTINATION_SCOPE_GROUP = mcp_destinations.MCP_DESTINATION_SCOPE_GROUP
 MCP_DESTINATION_SCOPE_PERSONAL = mcp_destinations.MCP_DESTINATION_SCOPE_PERSONAL
+
+
+@contextmanager
+def _workspace_catalog_directory():
+    """Keep generated catalog fixtures in the working directory and remove only this fixture."""
+    directory = Path(f".mcp-preconfiguration-fixture-{uuid.uuid4().hex}")
+    directory.mkdir()
+    try:
+        yield str(directory)
+    finally:
+        shutil.rmtree(directory)
 
 
 def _mcp_manifest(endpoint, preconfiguration_id="", server_profile="generic"):
@@ -175,7 +188,9 @@ def test_builtin_mcp_preconfiguration_catalog():
             assert "preconfiguration_policy" in enterprise_preconfiguration["requiredGovernanceGates"]
             assert enterprise_preconfiguration["additionalSettings"]["defaultAccessMode"] == "read_only"
 
-        personal_response = build_mcp_server_preconfigurations_response(MCP_DESTINATION_SCOPE_PERSONAL)
+        personal_response = build_mcp_server_preconfigurations_response(
+            MCP_DESTINATION_SCOPE_PERSONAL, scope_id="user-1", user_id="user-1"
+        )
         personal_response_ids = {item["id"] for item in personal_response["preconfigurations"]}
         assert personal_response["scope"] == MCP_DESTINATION_SCOPE_PERSONAL
         assert "microsoft_learn" in personal_response_ids
@@ -459,7 +474,7 @@ def test_enterprise_mcp_preconfigurations_require_explicit_policy():
 def test_custom_mcp_preconfiguration_path_loading_and_scope_filtering():
     """Validate org-authored preconfigurations can be loaded and scoped."""
     previous_paths = os.environ.get(MCP_PRECONFIGURATION_PATHS_ENV)
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with _workspace_catalog_directory() as temp_dir:
         implementation_dir = Path(temp_dir, "implementation_schemas")
         implementation_dir.mkdir()
         Path(implementation_dir, "contoso_docs.preconfiguration.schema.json").write_text(
@@ -543,11 +558,15 @@ def test_custom_mcp_preconfiguration_path_loading_and_scope_filtering():
         try:
             personal_ids = {
                 item["id"]
-                for item in build_mcp_server_preconfigurations_response(MCP_DESTINATION_SCOPE_PERSONAL)["preconfigurations"]
+                for item in build_mcp_server_preconfigurations_response(
+                    MCP_DESTINATION_SCOPE_PERSONAL, scope_id="user-1", user_id="user-1"
+                )["preconfigurations"]
             }
             group_ids = {
                 item["id"]
-                for item in build_mcp_server_preconfigurations_response(MCP_DESTINATION_SCOPE_GROUP)["preconfigurations"]
+                for item in build_mcp_server_preconfigurations_response(
+                    MCP_DESTINATION_SCOPE_GROUP, scope_id="group-1", user_id="user-1"
+                )["preconfigurations"]
             }
             assert "contoso_docs" in personal_ids
             assert "contoso_docs" not in group_ids

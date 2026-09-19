@@ -1,5 +1,7 @@
 # Action Test Connection
 
+Current documentation version: **0.261.029**
+
 ## Overview
 
 Configurable SimpleChat actions can now be validated from the action modal before they are saved. A **Test Connection** button authenticates with the credentials entered in Step 3 and performs one lightweight read against the configured resource, so a wrong warehouse ID, container name, subscription key, personal access token, or MCP endpoint is caught immediately instead of surfacing as a tool failure during a chat.
@@ -7,6 +9,10 @@ Configurable SimpleChat actions can now be validated from the action modal befor
 This extends the pattern already used by SQL, Cosmos DB, Yamcs, and RocksDB actions to eight more action types.
 
 **Implemented in version:** **0.250.217**
+
+MCP transport removal and authorization update implemented in version: **0.261.029**.
+
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 **Related issue:** [microsoft/simplechat#1267](https://github.com/microsoft/simplechat/issues/1267)
 
@@ -74,7 +80,7 @@ Routes stay thin: they only prepare and validate the transient manifest, then de
 | Blob Storage | Builds the `BlobServiceClient`, reads container properties, then lists one blob under the configured prefix to prove list permission. |
 | Databricks | Calls `GET {workspace_url}/api/2.0/sql/warehouses/{warehouse_id}` with the resolved token and reports the warehouse name and state. |
 | Log Analytics | Runs `print TestConnection = 1` against the workspace through `LogsQueryClient.query_workspace`. |
-| MCP | Runs the same `McpPluginFactory.probe_server_from_config` probe used by Discover Tools and reports transport, auth method, tool count, and any warnings. The cached tool metadata is **not** overwritten. |
+| MCP | Runs the same remote `McpPluginFactory.probe_server_from_config` probe used by Discover Tools and reports transport, auth method, tool count, and any warnings. Only streamable HTTP, SSE, and WebSocket are supported. Retired stdio configurations are rejected without connecting. The cached tool metadata is **not** overwritten. |
 | Snowflake | Opens a connection and runs `SELECT CURRENT_VERSION()`, then closes the cursor and connection. |
 | Tableau | Signs in to the configured server and site and reports the negotiated API version. |
 
@@ -121,7 +127,7 @@ Failures return `{"success": false, "error": "..."}` with an HTTP status that re
 - **Masked secrets resolve server-side.** Editing an existing action and pressing Test Connection without retyping a credential works: `_load_existing_plugin_for_test` resolves the stored Key Vault reference for the transient test only.
 - **Reusable identities are honored.** When an action uses a workspace identity, `hydrate_action_identity_reference` resolves it before the test runs.
 - **Scope is revalidated.** `_resolve_action_identity_context` re-checks group membership and the Admin role for group and global actions; a caller cannot test a global action without the Admin role.
-- **MCP keeps discovery parity.** The MCP route enforces `_reject_non_admin_mcp_stdio` (stdio remains admin/global only) and `_enforce_mcp_destination_policy` with the `mcp_connection_test` operation label, so it is not a weaker outbound path than `/api/plugins/mcp/discover`.
+- **MCP keeps discovery and runtime parity.** Connection testing, discovery, and execution use consistent MCP type resolution and server-established action scope, the current caller or established workflow identity, and current destination policy. Environment restrictions remain a non-overridable minimum; Admin Settings may tighten them. Stdio is rejected for every role and scope, including Admin/global, before credential resolution or connector activity.
 - Every route carries `@swagger_route(security=get_auth_security())`, `@login_required`, and `@user_required`.
 
 ### File structure
@@ -148,6 +154,12 @@ Failures return `{"success": false, "error": "..."}` with an HTTP status that re
 
 The test never changes the action. It is safe to run repeatedly, and it does not overwrite MCP discovered tool metadata.
 
+### Retired MCP stdio actions
+
+Existing stdio actions remain visible but non-executable. Their command, argument, and environment fields are no longer supported, and opening or cancelling the modal does not convert them to HTTP. **Test Connection**, **Discover Tools**, and saving a replacement require an explicit remote transport selection and a valid remote endpoint. Retired stdio is a configuration error, not a retryable network failure.
+
+An authorized owner can instead explicitly delete the retired action, even if MCP-usage governance denies execution. Group-management and Admin boundaries still apply; reconfiguration requires normal current governance. See [MCP stdio removal and migration](../fixes/MCP_STDIO_REMOVAL_AND_AUTHORIZATION_FIX.md).
+
 ### Log Analytics configuration section
 
 Log Analytics previously reused the generic endpoint and authentication form, with **Workspace ID** and **Cloud** rendered in Step 4 under *Advanced → Additional Fields*. It now has a dedicated Step 3 section:
@@ -168,18 +180,22 @@ Because Log Analytics is now a structured configuration type, Step 4 no longer r
 
 | Test | Coverage |
 | --- | --- |
-| `functional_tests/test_action_test_connection_endpoints.py` | All eight routes are registered on the `admin_plugins` Blueprint, accept only `POST`, carry the required decorator stack, delegate to a dedicated tester, the MCP route retains the stdio scope restriction and destination policy, and Key Vault references are resolved only within the owning action's scope. |
+| `functional_tests/test_action_test_connection_endpoints.py` | All eight routes are registered on the `admin_plugins` Blueprint, accept only `POST`, carry the required decorator stack, delegate to a dedicated tester, the MCP route enforces remote-only configuration and destination policy, and Key Vault references are resolved only within the owning action's scope. |
 | `functional_tests/test_action_connection_test_secret_redaction.py` | Manifest secrets, generic credential patterns, and base64-encoded credentials are stripped from error messages; result helpers and the timeout clamp behave correctly. |
 | `functional_tests/test_action_test_connection_modal_wiring.py` | The modal renders a button, result container, and alert for all eight types; each button maps to a registered route; results render without an `innerHTML` sink; the Log Analytics section exists, is a structured config type, and preserves `query_history`. |
+| `functional_tests/test_mcp_stdio_removal.py`, `functional_tests/test_mcp_authorization_context.py` | Remote-only connector behavior and consistent authorization for probes, discovery, connection tests, and runtime use, including current policy and the environment restriction floor. |
+| `functional_tests/test_mcp_action_route_security.py` | MCP authorization and retirement checks in selected actual route/helper bodies, using real Flask request dispatch with mocked I/O. |
 
 Run them with:
 
-```bash
-cd functional_tests
-python test_action_test_connection_endpoints.py
-python test_action_connection_test_secret_redaction.py
-python test_action_test_connection_modal_wiring.py
+```powershell
+python .\functional_tests\test_action_test_connection_endpoints.py
+python .\functional_tests\test_action_connection_test_secret_redaction.py
+python .\functional_tests\test_action_test_connection_modal_wiring.py
+python -m pytest .\functional_tests\test_mcp_stdio_removal.py .\functional_tests\test_mcp_action_route_security.py .\functional_tests\test_mcp_authorization_context.py
 ```
+
+These are validation commands and coverage descriptions, not recorded passing results for the 0.261.029 implementation.
 
 ### UI tests
 

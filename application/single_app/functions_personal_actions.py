@@ -7,24 +7,53 @@ This module handles all operations related to personal actions/plugins stored in
 personal_actions container with user_id partitioning.
 """
 
+import logging
 import uuid
 import hashlib
 from copy import deepcopy
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timezone
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
-from flask import current_app
-from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
-import functions_settings
+import functions_settings as user_settings_service
+from functions_action_manifest import (
+    McpConfigurationError,
+    McpStdioRemovedError,
+    bind_action_origin,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
+from functions_appinsights import log_event
+from functions_keyvault import (
+    SecretReturnType,
+    clean_name_for_keyvault,
+    keyvault_plugin_delete_helper,
+    keyvault_plugin_get_helper,
+    keyvault_plugin_save_helper,
+    redact_plugin_secret_values,
+)
+from functions_legacy_action_management import (
+    LEGACY_ACTION_PREFIX,
+    LegacyActionConflictError,
+    LegacyActionSecretConflictError,
+    LegacyActionSourceUpdateError,
+    action_snapshot_digest,
+    authorize_scoped_mcp_secret_read,
+    find_legacy_action_snapshot,
+    is_unchanged_legacy_action,
+    legacy_action_management_view,
+    legacy_action_snapshots,
+    prepare_scoped_action,
+    retired_action_management_view,
+    validate_action_configuration,
+    validate_scoped_mcp_action,
+)
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_PERSONAL,
     hydrate_action_identity_reference,
     validate_action_identity_reference,
 )
-from functions_debug import debug_print
 from config import cosmos_personal_actions_container, cosmos_user_settings_container
-import logging
-from functions_appinsights import log_event
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
 from json_schema_validation import (
@@ -50,7 +79,90 @@ def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER)
         list: List of action/plugin dictionaries
     """
     actions = get_personal_actions(user_id, return_type=return_type)
-    return filter_actions_by_action_type_access(user_id, actions, 'governance_user_actions', 'personal')
+    active_actions = [action for action in actions if not is_retired_mcp_stdio(action)]
+    allowed_actions = filter_actions_by_action_type_access(
+        user_id, active_actions, 'governance_user_actions', 'personal'
+    )
+    return [action for action in actions if is_retired_mcp_stdio(action) or action in allowed_actions]
+
+
+def _clean_action(action, user_id, return_type):
+    if return_type == SecretReturnType.NAME:
+        return bind_action_origin(
+            {key: value for key, value in action.items() if not key.startswith("_")},
+            "personal",
+            user_id,
+        )
+    retired_view = retired_action_management_view(action, "personal", user_id)
+    if retired_view is not None:
+        return retired_view
+    cleaned = {key: value for key, value in action.items() if not key.startswith("_")}
+    cleaned = bind_action_origin(cleaned, "personal", user_id)
+    if return_type == SecretReturnType.VALUE and cleaned["type"] == "mcp":
+        ensure_action_type_access("governance_user_actions", user_id, "mcp", "personal")
+        authorize_scoped_mcp_secret_read(cleaned, user_settings_service.get_settings())
+    cleaned = keyvault_plugin_get_helper(
+        cleaned, scope_value=user_id, scope="user", return_type=return_type
+    )
+    cleaned = hydrate_action_identity_reference(
+        cleaned,
+        WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+        user_id,
+        return_type=return_type,
+    )
+    return bind_action_origin(cleaned, "personal", user_id)
+
+
+def _clean_actions(actions, user_id, return_type):
+    try:
+        return [
+            _clean_action(action, user_id, return_type)
+            for action in actions if not _is_action_migration_record(action)
+        ]
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action normalization failed",
+                  level=logging.WARNING, extra={"user_id": user_id, "error_type": type(exc).__name__})
+        raise
+
+
+def _read_personal_action_record(user_id, action_id):
+    try:
+        return cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+
+
+def get_personal_action_record(user_id, action_id):
+    """Read an exact personal ID without secret hydration; never send this to a browser."""
+    action = _read_personal_action_record(user_id, action_id)
+    if action is None:
+        return None
+    if _is_action_migration_record(action):
+        log_event(
+            "[USER_SETTINGS] Internal action migration record excluded from action lookup.",
+            level=logging.WARNING, extra={"user_id": user_id},
+        )
+        return None
+    return bind_action_origin(action, "personal", user_id)
+
+
+def _find_personal_action_record(user_id, action_id):
+    action = get_personal_action_record(user_id, action_id)
+    if action is not None:
+        return action
+    actions = [
+        action for action in cosmos_personal_actions_container.query_items(
+            query="SELECT * FROM c WHERE c.user_id = @user_id AND c.name = @name",
+            parameters=[
+                {"name": "@user_id", "value": user_id},
+                {"name": "@name", "value": action_id},
+            ],
+            partition_key=user_id,
+        ) if not _is_action_migration_record(action)
+    ]
+    if len(actions) > 1:
+        raise LegacyActionConflictError()
+    return bind_action_origin(actions[0], "personal", user_id) if actions else None
 
 def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
@@ -61,6 +173,9 @@ def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
         
     Returns:
         list: List of action/plugin dictionaries
+
+    NAME returns internal originals without secret or identity hydration.
+    Browser callers must use TRIGGER or an explicit retired management projection.
     """
     try:
         query = "SELECT * FROM c WHERE c.user_id = @user_id"
@@ -72,27 +187,13 @@ def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
             partition_key=user_id
         ))
         
-        # Remove Cosmos metadata for cleaner response and resolve Key Vault references
-        cleaned_actions = []
-        for action in actions:
-            if _is_action_migration_record(action):
-                continue
-            cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
-            cleaned_action = hydrate_action_identity_reference(
-                cleaned_action,
-                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-                user_id,
-                return_type=return_type,
-            )
-            cleaned_actions.append(cleaned_action)
-        return cleaned_actions
-        
     except exceptions.CosmosResourceNotFoundError:
         return []
-    except Exception as e:
-        debug_print(f"Error fetching personal actions for user {user_id}: {e}")
-        return []
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action listing failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
+        raise
+    return _clean_actions(actions, user_id, return_type)
 
 def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER):
     """
@@ -106,51 +207,16 @@ def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER
         dict: Action dictionary or None if not found
     """
     try:
-        try:
-            action = cosmos_personal_actions_container.read_item(
-                item=action_id,
-                partition_key=user_id
-            )
-        except exceptions.CosmosResourceNotFoundError:
-            # If not found by ID, try to find by name
-            query = "SELECT * FROM c WHERE c.user_id = @user_id AND c.name = @name"
-            parameters = [
-                {"name": "@user_id", "value": user_id},
-                {"name": "@name", "value": action_id}
-            ]
-            
-            actions = list(cosmos_personal_actions_container.query_items(
-                query=query,
-                parameters=parameters,
-                partition_key=user_id
-            ))
-            
-            if not actions:
-                return None
-            action = actions[0]
-        
-        if _is_action_migration_record(action):
-            log_event(
-                "[USER_SETTINGS] Internal action migration record excluded from action lookup.",
-                level=logging.WARNING,
-                extra={"user_id": user_id},
-            )
-            return None
-
-        # Remove Cosmos metadata and resolve Key Vault references
-        cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-        cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
-        cleaned_action = hydrate_action_identity_reference(
-            cleaned_action,
-            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-            user_id,
-            return_type=return_type,
-        )
-        return cleaned_action
-        
-    except Exception as e:
-        debug_print(f"Error fetching action {action_id} for user {user_id}: {e}")
+        action = _find_personal_action_record(user_id, action_id)
+    except exceptions.CosmosResourceNotFoundError:
         return None
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action lookup failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "action_id": action_id, "error_type": type(exc).__name__})
+        raise
+    if action is None:
+        return None
+    return _clean_actions([action], user_id, return_type)[0]
 
 def save_personal_action(user_id, action_data, enforce_governance=True):
     """
@@ -163,29 +229,29 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
     Returns:
         dict: Saved action data with ID
     """
+    return _save_personal_action(user_id, action_data, enforce_governance=enforce_governance)
+
+
+def _save_personal_action(user_id, action_data, enforce_governance=True, migration_snapshot=None):
     try:
-        action_data = deepcopy(action_data)
+        submitted_action = action_data
         action_data = normalize_m365_action_payload(action_data)
+        action_data = prepare_scoped_action(action_data, "personal", user_id)
         legacy_type = is_legacy_msgraph_type(action_data.get('type'))
+        if action_data.get("id") and (
+            not isinstance(action_data["id"], str) or action_data["id"].startswith(LEGACY_ACTION_PREFIX)
+        ):
+            raise ValueError("Action ID is invalid.")
         existing_action = None
         if action_data.get('id'):
-            try:
-                existing_action = cosmos_personal_actions_container.read_item(
-                    item=action_data['id'],
-                    partition_key=user_id,
-                )
-            except exceptions.CosmosResourceNotFoundError:
-                # Absence may create a nonlegacy action; the validator rejects retired types.
-                pass
-        validate_legacy_action_update(action_data, existing_action, 'user_id', user_id)
+            existing_action = _read_personal_action_record(user_id, action_data['id'])
+        validate_legacy_action_update(submitted_action, existing_action, 'user_id', user_id)
         if legacy_type:
             action_data['type'] = 'msgraph'
-        if not legacy_type and 'name' in action_data and action_data['name']:
-            existing_action = existing_action or get_personal_action(
-                user_id,
-                action_data['name'],
-                return_type=SecretReturnType.NAME,
-            )
+        elif not action_data.get('id') and action_data.get('name'):
+            existing_action = _find_personal_action_record(user_id, action_data['name'])
+        if migration_snapshot is not None and existing_action is not None:
+            raise LegacyActionConflictError()
         
         # Preserve existing ID if updating, or generate new ID if creating
         now = datetime.utcnow().isoformat()
@@ -209,12 +275,6 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
         action_data['user_id'] = user_id
         action_data['last_updated'] = now
 
-        validate_action_identity_reference(
-            action_data,
-            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-            user_id,
-        )
-        
         # Validate required fields
         required_fields = ['name', 'displayName', 'type', 'description']
         for field in required_fields:
@@ -238,6 +298,19 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
 
         if enforce_governance:
             ensure_action_type_access('governance_user_actions', user_id, action_data.get('type'), 'personal')
+
+        action_data = bind_action_origin(action_data, "personal", user_id)
+        if action_data["type"] == "mcp":
+            validate_scoped_mcp_action(action_data, user_id, user_settings_service.get_settings())
+        if migration_snapshot is not None:
+            validate_action_configuration(action_data)
+        validate_action_identity_reference(
+            action_data,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+        )
+        _ensure_personal_secret_name_available(user_id, action_data, migration_snapshot)
+        configuration_digest = _action_configuration_digest(action_data)
         
         # Store secrets in Key Vault before upsert
         action_data = keyvault_plugin_save_helper(
@@ -253,15 +326,28 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
                 etag=existing_action['_etag'],
                 match_condition=MatchConditions.IfNotModified,
             )
+        elif migration_snapshot is not None:
+            action_data["_legacy_migration"] = {
+                "source_locator": migration_snapshot.locator,
+                "destination_digest": _stored_action_digest(action_data),
+                "configuration_digest": configuration_digest,
+            }
+            try:
+                result = cosmos_personal_actions_container.create_item(body=action_data)
+            except exceptions.CosmosHttpResponseError as exc:
+                if exc.status_code == 409:
+                    raise LegacyActionConflictError() from exc
+                raise
         else:
             result = cosmos_personal_actions_container.upsert_item(body=action_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
         bump_chat_bootstrap_user_cache_version(user_id, reason="personal_action_saved")
-        return cleaned_result
+        return bind_action_origin(cleaned_result, "personal", user_id)
         
-    except Exception as e:
-        debug_print(f"Error saving action for user {user_id}: {e}")
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action save failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
         raise
 
 def delete_personal_action(user_id, action_id):
@@ -278,11 +364,14 @@ def delete_personal_action(user_id, action_id):
     try:
         ensure_migration_complete(user_id)
         # Try to find the action first to get the correct ID
-        action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
+        if isinstance(action_id, str) and action_id.startswith(LEGACY_ACTION_PREFIX):
+            return delete_legacy_personal_action(user_id, action_id)
+        action = _find_personal_action_record(user_id, action_id)
         if not action:
             return False
 
-        ensure_action_type_access('governance_user_actions', user_id, action.get('type'), 'personal')
+        if not is_retired_mcp_stdio(action):
+            ensure_action_type_access('governance_user_actions', user_id, resolve_action_type(action), 'personal')
             
         # Delete secrets from Key Vault before deleting the action
         keyvault_plugin_delete_helper(action, scope_value=user_id, scope="user")
@@ -295,71 +384,32 @@ def delete_personal_action(user_id, action_id):
         
     except exceptions.CosmosResourceNotFoundError:
         return False
-    except Exception as e:
-        debug_print(f"Error deleting action {action_id} for user {user_id}: {e}")
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action deletion failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "action_id": action_id, "error_type": type(exc).__name__})
         raise
 
-def ensure_migration_complete(user_id):
-    """Migrate the authoritative historical settings snapshot without count heuristics."""
-    return migrate_actions_from_user_settings(user_id)
-
-def migrate_actions_from_user_settings(user_id):
-    """Migrate historical settings once; receipts survive deletion of an action.
-
-    Settings write/import ingress must use validate_legacy_plugin_settings_update.
-    Only this server-read historical boundary may create a combined Graph action.
-    Each legacy creation and receipt is atomic, so a retry cannot resurrect it.
-    """
-    try:
-        functions_settings.get_user_settings(user_id)
-        user_settings = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
-        plugins = user_settings.get('settings', {}).get('plugins') or []
-        if not plugins:
-            return 0
-        if not isinstance(plugins, list):
-            raise ValueError("Historical action settings must be an array.")
-
-        migrated_count = 0
-        for plugin in plugins:
-            if not isinstance(plugin, dict) or not plugin.get('name'):
-                raise ValueError("Historical action settings contain an invalid record.")
-            if is_legacy_msgraph_type(plugin.get('type')):
-                migrated_count += _migrate_historical_msgraph_action(user_id, plugin)
-            else:
-                existing = get_personal_action(
-                    user_id, plugin.get('id') or plugin['name'], return_type=SecretReturnType.NAME,
-                )
-                if not existing:
-                    save_personal_action(user_id, deepcopy(plugin), enforce_governance=False)
-                    migrated_count += 1
-
-        updated_settings = deepcopy(user_settings)
-        updated_settings['settings']['plugins'] = []
-        stored = cosmos_user_settings_container.replace_item(
-            item=user_id,
-            body=updated_settings,
-            etag=user_settings['_etag'],
-            match_condition=MatchConditions.IfNotModified,
+def _historical_msgraph_identity(user_id, plugin):
+    if not isinstance(plugin, dict) or not isinstance(plugin.get("name"), str) or not plugin["name"]:
+        raise ValueError("Historical action configuration is invalid.")
+    source_id = plugin.get("id")
+    if (
+        source_id and (
+            not isinstance(source_id, str)
+            or source_id.startswith((ACTION_MIGRATION_ID_PREFIX, LEGACY_ACTION_PREFIX))
         )
-        functions_settings._set_request_cached_user_settings(user_id, stored)
-        functions_settings._delete_user_ui_settings_cache(user_id)
-        bump_chat_bootstrap_user_cache_version(user_id, reason="personal_actions_migrated")
-        return migrated_count
-    except exceptions.CosmosResourceNotFoundError:
-        raise
-    except (ValueError, RuntimeError, exceptions.CosmosHttpResponseError, exceptions.CosmosBatchOperationError) as exc:
-        log_event(
-            "[USER_SETTINGS] Historical action migration requires retry or review; original settings were retained.",
-            level=logging.ERROR,
-            extra={"user_id": user_id, "error_type": type(exc).__name__},
-        )
-        raise
+        or plugin.get("_action_migration")
+    ):
+        raise ValueError("Historical action identity is invalid.")
+    source_key = source_id or plugin["name"]
+    digest = hashlib.sha256(source_key.encode('utf-8')).hexdigest()
+    receipt_id = f"{ACTION_MIGRATION_ID_PREFIX}{digest}"
+    action_id = source_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:legacy-action:{source_key}"))
+    return action_id, receipt_id
 
 
 def _migrate_historical_msgraph_action(user_id, plugin):
-    source_key = str(plugin.get('id') or plugin['name'])
-    digest = hashlib.sha256(source_key.encode('utf-8')).hexdigest()
-    receipt_id = f"{ACTION_MIGRATION_ID_PREFIX}{digest}"
+    action_id, receipt_id = _historical_msgraph_identity(user_id, plugin)
     try:
         cosmos_personal_actions_container.read_item(item=receipt_id, partition_key=user_id)
         return 0
@@ -367,7 +417,6 @@ def _migrate_historical_msgraph_action(user_id, plugin):
         # No receipt means this historical action has not been migrated yet.
         pass
 
-    action_id = plugin.get('id') or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:legacy-action:{source_key}"))
     existing = None
     try:
         existing = cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
@@ -412,6 +461,545 @@ def _migrate_historical_msgraph_action(user_id, plugin):
         return 0
     return 0 if existing else 1
 
+
+def _read_legacy_settings_document(user_id):
+    # The settings accessor remains the object-level authorization boundary.
+    # Its request cache cannot prove that a source is unchanged before deletion.
+    user_settings_service.get_user_settings(user_id)
+    try:
+        document = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        document = {"id": user_id, "settings": {"plugins": []}}
+    return deepcopy(document)
+
+
+def _read_legacy_settings_for_preflight(user_id):
+    # Reuse the settings accessor's authorization without its profile repair or
+    # default-document writes; rejecting an import must leave all stored data alone.
+    user_settings_service._authorize_user_settings_access(user_id, "update")
+    try:
+        document = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        document = {"id": user_id, "settings": {"plugins": []}}
+    return deepcopy(document)
+
+
+def _document_plugins(document):
+    settings = document.get("settings") or {}
+    plugins = settings.get("plugins", [])
+    return [] if plugins is None else plugins
+
+
+def _get_legacy_snapshot(user_id, locator):
+    document = _read_legacy_settings_document(user_id)
+    return find_legacy_action_snapshot(user_id, _document_plugins(document), locator)
+
+
+def _ensure_legacy_management_access(user_id, snapshot):
+    if not is_retired_mcp_stdio(snapshot.record):
+        ensure_action_type_access(
+            "governance_user_actions", user_id, resolve_action_type(snapshot.record), "personal"
+        )
+
+
+def list_legacy_personal_actions(user_id):
+    """List safe, management-only views without importing legacy actions."""
+    try:
+        document = _read_legacy_settings_document(user_id)
+        views = []
+        for snapshot in legacy_action_snapshots(user_id, _document_plugins(document)):
+            try:
+                _ensure_legacy_management_access(user_id, snapshot)
+            except PermissionError:
+                continue
+            views.append(legacy_action_management_view(snapshot))
+        return views
+    except Exception as exc:
+        log_event("[PLUGINS] Legacy action listing failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
+        raise
+
+
+def get_legacy_personal_action(user_id, locator):
+    """Resolve an authorized legacy locator to its credential-free management view."""
+    snapshot = _get_legacy_snapshot(user_id, locator)
+    _ensure_legacy_management_access(user_id, snapshot)
+    return legacy_action_management_view(snapshot)
+
+
+def get_legacy_personal_action_record(user_id, locator):
+    """Return an internal source copy for validation, never for browser serialization."""
+    snapshot = _get_legacy_snapshot(user_id, locator)
+    _ensure_legacy_management_access(user_id, snapshot)
+    return deepcopy(snapshot.record)
+
+
+def is_unchanged_legacy_personal_action(user_id, submitted):
+    """Qualify an authorized unchanged management view without importing its source."""
+    if not isinstance(submitted, dict):
+        return False
+    try:
+        snapshot = _get_legacy_snapshot(user_id, submitted.get("id"))
+    except LegacyActionConflictError:
+        return False
+    _ensure_legacy_management_access(user_id, snapshot)
+    return is_unchanged_legacy_action(submitted, snapshot)
+
+
+def prepare_legacy_personal_actions_update(user_id, submitted_plugins):
+    """Preflight a settings.plugins update without action, secret, or settings writes.
+
+    The returned ``plugins`` list contains authoritative raw source records and is
+    backend-only. Callers gate ``has_imports`` with allow_user_plugins before any
+    other mutations, and can omit the plugins update entirely when ``changed`` is
+    false. Existing legacy actions are reconfigured through the dedicated Actions
+    operation, which stores a destination before removing its exact source.
+    """
+    if not isinstance(submitted_plugins, list):
+        raise McpConfigurationError("Actions must be provided as a list.")
+    document = _read_legacy_settings_for_preflight(user_id)
+    originals = _document_plugins(document)
+    snapshots = legacy_action_snapshots(user_id, originals)
+    by_locator = {snapshot.locator: snapshot for snapshot in snapshots}
+    by_id = {}
+    for snapshot in snapshots:
+        if isinstance(snapshot.record, dict) and isinstance(snapshot.record.get("id"), str):
+            by_id.setdefault(snapshot.record["id"], []).append(snapshot)
+
+    replacements = {}
+    additions = []
+    imported = []
+    seen_ids = set()
+    for submitted in submitted_plugins:
+        if not isinstance(submitted, dict):
+            raise McpConfigurationError("Each action must be an object.")
+        submitted_id = submitted.get("id")
+        if submitted_id is not None and not isinstance(submitted_id, str):
+            raise McpConfigurationError("Action identifiers must be strings.")
+        if submitted_id:
+            if submitted_id in seen_ids:
+                raise McpConfigurationError("Each action identifier must occur only once.")
+            seen_ids.add(submitted_id)
+
+        if submitted_id and submitted_id.startswith(LEGACY_ACTION_PREFIX):
+            snapshot = by_locator.get(submitted_id)
+            if snapshot is None:
+                raise LegacyActionConflictError()
+            if is_unchanged_legacy_action(submitted, snapshot):
+                _ensure_legacy_management_access(user_id, snapshot)
+                if snapshot.index in replacements:
+                    raise LegacyActionConflictError()
+                replacements[snapshot.index] = deepcopy(snapshot.record)
+                continue
+            if is_retired_mcp_stdio(submitted):
+                raise McpStdioRemovedError()
+            raise McpConfigurationError("Use Actions to reconfigure an existing legacy action.")
+
+        if is_retired_mcp_stdio(submitted):
+            raise McpStdioRemovedError()
+        if any(field in submitted for field in (
+            "is_legacy", "legacy_source", "legacy_locator", "execution_status",
+        )):
+            raise McpConfigurationError("Legacy management fields require a current action locator.")
+
+        matches = by_id.get(submitted_id, []) if submitted_id else [
+            snapshot for snapshot in snapshots if snapshot.record == submitted
+        ]
+        if len(matches) > 1:
+            raise LegacyActionConflictError()
+        snapshot = matches[0] if matches else None
+        if snapshot is not None:
+            if snapshot.index in replacements:
+                raise LegacyActionConflictError()
+            if is_retired_mcp_stdio(snapshot.record):
+                raise McpConfigurationError("Use Actions to reconfigure an existing legacy action.")
+            if is_legacy_msgraph_type(resolve_action_type(snapshot.record)) and submitted == snapshot.record:
+                _ensure_legacy_management_access(user_id, snapshot)
+                replacements[snapshot.index] = deepcopy(snapshot.record)
+                continue
+
+        payload = _prepare_personal_action_configuration(user_id, submitted)
+        _ensure_personal_secret_name_available(
+            user_id, payload, snapshot, legacy_sources=snapshots
+        )
+        if snapshot is not None and submitted == snapshot.record:
+            replacements[snapshot.index] = deepcopy(snapshot.record)
+        else:
+            imported.append(payload)
+            if snapshot is None:
+                additions.append(payload)
+            else:
+                replacements[snapshot.index] = payload
+
+    prepared = []
+    for snapshot in snapshots:
+        if snapshot.index in replacements:
+            prepared.append(replacements[snapshot.index])
+        elif is_retired_mcp_stdio(snapshot.record):
+            prepared.append(deepcopy(snapshot.record))
+        else:
+            _ensure_legacy_management_access(user_id, snapshot)
+    prepared.extend(additions)
+    for payload in imported:
+        sentinel = object()
+        if redact_plugin_secret_values(payload, redaction_value=sentinel) == payload:
+            continue
+        secret_name = clean_name_for_keyvault(payload.get("name", "")).lower()
+        for other in prepared:
+            if other is payload or not isinstance(other, dict):
+                continue
+            name = other.get("name")
+            if isinstance(name, str) and clean_name_for_keyvault(name).lower() == secret_name:
+                raise LegacyActionSecretConflictError()
+    return {
+        "plugins": deepcopy(prepared),
+        "has_imports": bool(imported),
+        "changed": prepared != originals,
+        "source_etag": document.get("_etag"),
+    }
+
+
+def prepare_legacy_personal_action_reconfiguration(user_id, locator, replacement):
+    """Preflight conversion without writes; commit through the reconfiguration API.
+
+    The result is an internal validated manifest with the destination's real ID.
+    Keep the management locator separately for the later commit operation.
+    """
+    document = _read_legacy_settings_for_preflight(user_id)
+    plugins = _document_plugins(document)
+    snapshots = legacy_action_snapshots(user_id, plugins)
+    snapshot = find_legacy_action_snapshot(user_id, plugins, locator)
+    payload = _legacy_destination_payload(
+        user_id, snapshot, replacement=replacement, legacy_sources=snapshots
+    )
+    _verified_legacy_destination(user_id, snapshot, payload)
+    return payload
+
+
+def prepare_legacy_action_settings_update(user_id, incoming_plugins):
+    """Return backend-only plugins, has_imports, changed, and source_etag without writes."""
+    return prepare_legacy_personal_actions_update(user_id, incoming_plugins)
+
+
+def validate_legacy_personal_action_reconfiguration(user_id, locator, replacement):
+    """Return the validated destination manifest without committing the conversion."""
+    return prepare_legacy_personal_action_reconfiguration(user_id, locator, replacement)
+
+
+def _remove_legacy_snapshot(user_id, snapshot):
+    document = _read_legacy_settings_document(user_id)
+    plugins = _document_plugins(document)
+    current = find_legacy_action_snapshot(user_id, plugins, snapshot.locator)
+    if current.owner_id != snapshot.owner_id or current.record != snapshot.record:
+        raise LegacyActionConflictError()
+    if not document.get("_etag"):
+        raise LegacyActionSourceUpdateError()
+
+    updated = deepcopy(document)
+    updated["settings"]["plugins"] = plugins[:current.index] + plugins[current.index + 1:]
+    updated["lastUpdated"] = datetime.now(timezone.utc).isoformat()
+    try:
+        stored = cosmos_user_settings_container.replace_item(
+            item=user_id,
+            body=updated,
+            etag=document["_etag"],
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except exceptions.CosmosHttpResponseError as exc:
+        if exc.status_code == 412:
+            raise LegacyActionConflictError() from exc
+        raise LegacyActionSourceUpdateError() from exc
+    except Exception as exc:
+        raise LegacyActionSourceUpdateError() from exc
+    if not isinstance(stored, dict) or _document_plugins(stored) != updated["settings"]["plugins"]:
+        raise LegacyActionSourceUpdateError()
+
+    try:
+        user_settings_service._set_request_cached_user_settings(user_id, stored)
+        user_settings_service._delete_user_ui_settings_cache(user_id)
+        bump_chat_bootstrap_user_cache_version(user_id, reason="legacy_action_removed")
+    except Exception as exc:
+        log_event("[PLUGINS] Legacy action cache refresh failed after verified source update",
+                  level=logging.WARNING, extra={"user_id": user_id, "error_type": type(exc).__name__})
+
+
+def delete_legacy_personal_action(user_id, locator):
+    """Explicitly remove one exact source; retired cleanup is not MCP usage."""
+    snapshot = _get_legacy_snapshot(user_id, locator)
+    _ensure_legacy_management_access(user_id, snapshot)
+    _remove_legacy_snapshot(user_id, snapshot)
+    return True
+
+
+def _stored_action_digest(action):
+    return action_snapshot_digest({
+        key: value for key, value in action.items() if not key.startswith("_")
+    })
+
+
+def _action_configuration_digest(action):
+    audit_fields = {
+        "created_by", "created_at", "modified_by", "modified_at", "last_updated", "updated_at",
+    }
+    return action_snapshot_digest({
+        key: value for key, value in action.items()
+        if not key.startswith("_") and key not in audit_fields
+    })
+
+
+def _ensure_personal_secret_name_available(user_id, payload, snapshot=None, *, legacy_sources=None):
+    """Prevent distinct IDs from sharing Key Vault's scope-and-name secret keys."""
+    sentinel = object()
+    redacted = redact_plugin_secret_values(payload, redaction_value=sentinel)
+    if redacted == payload:
+        return
+    secret_name = clean_name_for_keyvault(payload.get("name", "")).lower()
+    existing = cosmos_personal_actions_container.query_items(
+        query="SELECT * FROM c WHERE c.user_id = @user_id",
+        parameters=[{"name": "@user_id", "value": user_id}],
+        partition_key=user_id,
+    )
+    for action in existing:
+        name = action.get("name")
+        if (
+            action.get("id") != payload.get("id")
+            and isinstance(name, str)
+            and clean_name_for_keyvault(name).lower() == secret_name
+        ):
+            raise LegacyActionSecretConflictError()
+    if legacy_sources is None:
+        document = _read_legacy_settings_document(user_id)
+        legacy_sources = legacy_action_snapshots(user_id, _document_plugins(document))
+    for other in legacy_sources:
+        if snapshot is not None and other.locator == snapshot.locator:
+            continue
+        if (
+            isinstance(other.record, dict)
+            and isinstance(other.record.get("name"), str)
+            and clean_name_for_keyvault(other.record["name"]).lower() == secret_name
+        ):
+            raise LegacyActionSecretConflictError()
+
+
+def _prepare_personal_action_configuration(user_id, incoming):
+    payload = normalize_m365_action_payload(incoming)
+    payload = prepare_scoped_action(payload, "personal", user_id)
+    existing = (
+        get_personal_action_record(user_id, payload["id"])
+        if is_legacy_msgraph_type(payload.get("type")) and payload.get("id") else None
+    )
+    validate_legacy_action_update(incoming, existing, "user_id", user_id)
+    payload.setdefault("displayName", payload.get("name", ""))
+    payload.setdefault("description", "")
+    payload.setdefault("endpoint", "")
+    payload.setdefault("auth", {"type": "NoAuth"})
+    payload.setdefault("metadata", {})
+    payload.setdefault("additionalFields", {})
+    ensure_action_type_access("governance_user_actions", user_id, payload["type"], "personal")
+    validate_action_configuration(payload)
+    if payload["type"] == "mcp":
+        validate_scoped_mcp_action(payload, user_id, user_settings_service.get_settings())
+    validate_action_identity_reference(payload, WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id)
+    return payload
+
+
+def _legacy_destination_payload(user_id, snapshot, replacement=None, *, legacy_sources=None):
+    original = snapshot.record
+    if not isinstance(original, dict):
+        raise ValueError("Legacy action configuration is invalid.")
+    incoming = deepcopy(original if replacement is None else replacement)
+    if not isinstance(incoming, dict):
+        raise ValueError("Action configuration must be an object.")
+    source_id = original.get("id")
+    if source_id and (not isinstance(source_id, str) or source_id.startswith(LEGACY_ACTION_PREFIX)):
+        raise LegacyActionConflictError()
+    incoming["id"] = source_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:{snapshot.locator}"))
+    if is_retired_mcp_stdio(original) and resolve_action_type(incoming) != "mcp":
+        raise ValueError("Reconfigure this action with a supported remote MCP server.")
+    payload = _prepare_personal_action_configuration(user_id, incoming)
+    _ensure_personal_secret_name_available(
+        user_id, payload, snapshot, legacy_sources=legacy_sources
+    )
+    return payload
+
+
+def _verified_legacy_destination(user_id, snapshot, payload):
+    existing = get_personal_action_record(user_id, payload["id"])
+    if existing is None:
+        return None
+    receipt = existing.get("_legacy_migration")
+    if not isinstance(receipt, dict) or (
+        receipt.get("source_locator") != snapshot.locator
+        or receipt.get("configuration_digest") != _action_configuration_digest(payload)
+        or receipt.get("destination_digest") != _stored_action_digest(existing)
+    ):
+        raise LegacyActionConflictError()
+    return existing
+
+
+def _store_legacy_replacement(user_id, snapshot, payload):
+    current = _get_legacy_snapshot(user_id, snapshot.locator)
+    if current.record != snapshot.record:
+        raise LegacyActionConflictError()
+    existing = _verified_legacy_destination(user_id, snapshot, payload)
+    if existing is None:
+        _save_personal_action(user_id, payload, migration_snapshot=snapshot)
+        existing = _verified_legacy_destination(user_id, snapshot, payload)
+        if existing is None:
+            raise LegacyActionSourceUpdateError()
+    _remove_legacy_snapshot(user_id, snapshot)
+    return existing
+
+
+def reconfigure_legacy_personal_action(user_id, locator, replacement):
+    """Store a validated replacement before conditionally removing its exact source."""
+    snapshot = _get_legacy_snapshot(user_id, locator)
+    payload = _legacy_destination_payload(user_id, snapshot, replacement=replacement)
+    stored = _store_legacy_replacement(user_id, snapshot, payload)
+    return _clean_action(stored, user_id, SecretReturnType.TRIGGER)
+
+
+def _migration_outcome(snapshot, code, retryable=False, action_id=None):
+    record = snapshot.record if isinstance(snapshot.record, dict) else {}
+    outcome = {
+        "id": snapshot.locator,
+        "name": record.get("name") if isinstance(record.get("name"), str) else "",
+        "code": code,
+        "retryable": retryable,
+    }
+    if action_id:
+        outcome["action_id"] = action_id
+    return outcome
+
+
+def _legacy_identity_counts(snapshots):
+    return Counter(
+        snapshot.record["id"] for snapshot in snapshots
+        if isinstance(snapshot.record, dict) and isinstance(snapshot.record.get("id"), str)
+        and snapshot.record["id"]
+    )
+
+
+def _prepare_legacy_migration(user_id, snapshot, identity_counts):
+    if is_retired_mcp_stdio(snapshot.record):
+        return None, "mcp_stdio_removed"
+    if (
+        not isinstance(snapshot.record, dict)
+        or not isinstance(snapshot.record.get("name"), str)
+        or not snapshot.record["name"].strip()
+    ):
+        return None, "invalid_action_configuration"
+    source_id = snapshot.record.get("id") if isinstance(snapshot.record, dict) else None
+    if snapshot.duplicate_count > 1 or (isinstance(source_id, str) and identity_counts[source_id] > 1):
+        return None, "legacy_identity_conflict"
+    try:
+        if isinstance(snapshot.record, dict) and is_legacy_msgraph_type(resolve_action_type(snapshot.record)):
+            _ensure_legacy_management_access(user_id, snapshot)
+            action_id, _receipt_id = _historical_msgraph_identity(user_id, snapshot.record)
+            return {**deepcopy(snapshot.record), "id": action_id, "type": "msgraph"}, None
+        payload = _legacy_destination_payload(user_id, snapshot)
+        _verified_legacy_destination(user_id, snapshot, payload)
+        return payload, None
+    except LegacyActionConflictError as exc:
+        return None, exc.code
+    except PermissionError:
+        return None, "action_governance_denied"
+    except ValueError:
+        return None, "invalid_action_configuration"
+
+
+def get_action_migration_status(user_id):
+    """Describe actionable work separately from records requiring manual changes."""
+    document = _read_legacy_settings_document(user_id)
+    snapshots = legacy_action_snapshots(user_id, _document_plugins(document))
+    identity_counts = _legacy_identity_counts(snapshots)
+    status = {
+        "pending_count": 0, "retained_count": 0, "retired_count": 0,
+        "failed_count": 0, "retained": [], "failed": [], "actions": [],
+    }
+    for snapshot in snapshots:
+        try:
+            _payload, reason = _prepare_legacy_migration(user_id, snapshot, identity_counts)
+            if reason:
+                status["retained"].append(_migration_outcome(snapshot, reason))
+                if reason == "mcp_stdio_removed":
+                    status["retired_count"] += 1
+            else:
+                status["pending_count"] += 1
+            try:
+                _ensure_legacy_management_access(user_id, snapshot)
+            except (PermissionError, ValueError):
+                continue
+            status["actions"].append(legacy_action_management_view(snapshot))
+        except Exception as exc:
+            status["failed"].append(_migration_outcome(snapshot, "migration_check_failed", retryable=True))
+            log_event("[PLUGINS] Legacy action migration inspection failed", level=logging.WARNING,
+                      extra={"user_id": user_id, "error_type": type(exc).__name__})
+    status["retained_count"] = len(status["retained"])
+    status["failed_count"] = len(status["failed"])
+    status["complete"] = status["pending_count"] == 0 and status["failed_count"] == 0
+    status["total_count"] = len(snapshots)
+    return status
+
+
+def ensure_migration_complete(user_id):
+    """Attempt only verified record-level migration; never clean up by counts."""
+    return migrate_actions_from_user_settings(user_id)
+
+
+def migrate_actions_from_user_settings(user_id):
+    """Migrate valid records independently and report retained/failed sources safely."""
+    result = {
+        "migrated_count": 0, "retained_count": 0, "failed_count": 0,
+        "migrated": [], "retained": [], "failed": [], "complete": False,
+    }
+    try:
+        document = _read_legacy_settings_document(user_id)
+        snapshots = legacy_action_snapshots(user_id, _document_plugins(document))
+        identity_counts = _legacy_identity_counts(snapshots)
+        for snapshot in snapshots:
+            try:
+                payload, reason = _prepare_legacy_migration(user_id, snapshot, identity_counts)
+                if reason:
+                    result["retained"].append(_migration_outcome(snapshot, reason))
+                    continue
+                if is_legacy_msgraph_type(payload.get("type")):
+                    current = _get_legacy_snapshot(user_id, snapshot.locator)
+                    created = _migrate_historical_msgraph_action(user_id, current.record)
+                    _remove_legacy_snapshot(user_id, snapshot)
+                    if created:
+                        result["migrated"].append(_migration_outcome(snapshot, "migrated", action_id=payload["id"]))
+                    continue
+                stored = _store_legacy_replacement(user_id, snapshot, payload)
+                result["migrated"].append(_migration_outcome(snapshot, "migrated", action_id=stored["id"]))
+            except LegacyActionConflictError as exc:
+                result["retained"].append(_migration_outcome(snapshot, exc.code))
+            except (PermissionError, ValueError):
+                result["retained"].append(_migration_outcome(snapshot, "action_validation_failed"))
+            except Exception as exc:
+                code = (
+                    "legacy_source_update_failed"
+                    if isinstance(exc, LegacyActionSourceUpdateError)
+                    else "action_migration_failed"
+                )
+                result["failed"].append(_migration_outcome(snapshot, code, retryable=True))
+                log_event("[PLUGINS] Legacy action migration failed", level=logging.WARNING,
+                          extra={"user_id": user_id, "error_type": type(exc).__name__})
+        remaining = get_action_migration_status(user_id)
+        result["complete"] = remaining["complete"] and not result["failed"]
+        result["pending_count"] = remaining["pending_count"]
+    except PermissionError:
+        raise
+    except Exception as exc:
+        result["failed"].append({
+            "code": "legacy_source_read_failed", "retryable": True,
+        })
+        log_event("[PLUGINS] Legacy action source inspection failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
+    for category in ("migrated", "retained", "failed"):
+        result[f"{category}_count"] = len(result[category])
+    return result
+
 def get_actions_by_names(user_id, action_names, return_type=SecretReturnType.TRIGGER):
     """
     Get multiple actions by their names.
@@ -441,20 +1029,13 @@ def get_actions_by_names(user_id, action_names, return_type=SecretReturnType.TRI
             partition_key=user_id
         ))
         
-        # Remove Cosmos metadata
-        cleaned_actions = []
-        for action in actions:
-            if _is_action_migration_record(action):
-                continue
-            cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
-            cleaned_actions.append(cleaned_action)
-            
-        return cleaned_actions
-        
-    except Exception as e:
-        debug_print(f"Error fetching actions by names for user {user_id}: {e}")
+    except exceptions.CosmosResourceNotFoundError:
         return []
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action name lookup failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
+        raise
+    return _clean_actions(actions, user_id, return_type)
 
 def get_actions_by_type(user_id, action_type, return_type=SecretReturnType.TRIGGER):
     """
@@ -468,11 +1049,15 @@ def get_actions_by_type(user_id, action_type, return_type=SecretReturnType.TRIGG
         list: List of action dictionaries
     """
     try:
+        effective_type = resolve_action_type({"type": action_type})
         query = "SELECT * FROM c WHERE c.user_id = @user_id AND c.type = @type"
         parameters = [
             {"name": "@user_id", "value": user_id},
-            {"name": "@type", "value": action_type}
+            {"name": "@type", "value": effective_type}
         ]
+        if effective_type == "mcp":
+            query = "SELECT * FROM c WHERE c.user_id = @user_id"
+            parameters = [{"name": "@user_id", "value": user_id}]
         
         actions = list(cosmos_personal_actions_container.query_items(
             query=query,
@@ -480,17 +1065,14 @@ def get_actions_by_type(user_id, action_type, return_type=SecretReturnType.TRIGG
             partition_key=user_id
         ))
         
-        # Remove Cosmos metadata
-        cleaned_actions = []
-        for action in actions:
-            if _is_action_migration_record(action):
-                continue
-            cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
-            cleaned_actions.append(cleaned_action)
-            
-        return cleaned_actions
-        
-    except Exception as e:
-        debug_print(f"Error fetching actions by type {action_type} for user {user_id}: {e}")
+    except exceptions.CosmosResourceNotFoundError:
         return []
+    except Exception as exc:
+        log_event("[PLUGINS] Personal action type lookup failed", level=logging.ERROR,
+                  extra={"user_id": user_id, "error_type": type(exc).__name__})
+        raise
+    matching_actions = (
+        action for action in actions
+        if effective_type != "mcp" or resolve_action_type(action) == effective_type
+    )
+    return _clean_actions(matching_actions, user_id, return_type)

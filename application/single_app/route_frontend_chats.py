@@ -868,7 +868,14 @@ def register_route_frontend_chats(bp):
         user_groups_raw = []
         try:
             user_groups_raw = get_user_groups(user_id)
-            user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
+            user_groups_simple = [
+                {
+                    'id': group['id'],
+                    'name': group.get('name', 'Unnamed'),
+                    'userRole': get_user_role_in_group(group, user_id),
+                }
+                for group in user_groups_raw
+            ]
         except Exception as e:
             logger.warning(f"Failed to load user groups for chats page: {e}")
 

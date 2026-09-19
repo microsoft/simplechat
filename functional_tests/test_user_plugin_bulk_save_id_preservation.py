@@ -1,309 +1,272 @@
-#!/usr/bin/env python3
 # test_user_plugin_bulk_save_id_preservation.py
+#!/usr/bin/env python3
 """
-Functional test for user plugin bulk-save ID preservation.
-Version: 0.240.019
+Functional tests for personal action bulk-save identity and preflight safety.
+Version: 0.261.036
 Implemented in: 0.240.019
+Updated in: 0.261.036
 
-This test ensures bulk user plugin saves preserve existing action IDs during
-rename flows so persisted actions are updated in place instead of deleted and
-recreated with new IDs.
+Runs the real bulk route body with Flask request dispatch and isolated storage.
+Preserves rename coverage and verifies invalid batches cause no writes/deletes.
+Blueprint authentication is independently covered by the route policy suite.
 """
 
-import importlib
-import os
+from copy import deepcopy
+import logging
+from pathlib import Path
 import sys
 import types
-from copy import deepcopy
+import unittest
+from unittest.mock import Mock, patch
+
+from flask import Flask, jsonify, request
 
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO_ROOT, 'application', 'single_app'))
+APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_DIR))
+
+import functions_action_manifest as manifests
+import functions_legacy_action_management as legacy
+import functions_mcp_operations as operations
+import json_schema_validation as schema_validation
+from test_mcp_action_route_security import load_route_functions
 
 
-def _passthrough_decorator(*decorator_args, **decorator_kwargs):
-    """Return the wrapped function unchanged for route/auth decorator stubs."""
-    if decorator_args and callable(decorator_args[0]) and len(decorator_args) == 1 and not decorator_kwargs:
-        return decorator_args[0]
-
-    def decorator(func):
-        return func
-
-    return decorator
-
-
-class DummyBlueprint:
-    """Minimal Flask Blueprint stub used for importing route modules."""
-
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
-    def route(self, *args, **kwargs):
-        return _passthrough_decorator
-
-
-def _restore_modules(original_modules):
-    for module_name, original_module in original_modules.items():
-        if original_module is None:
-            sys.modules.pop(module_name, None)
-        else:
-            sys.modules[module_name] = original_module
-
-
-def _load_route_module(state):
-    request_stub = types.SimpleNamespace(json=None)
-
-    flask_stub = types.ModuleType('flask')
-    flask_stub.Blueprint = DummyBlueprint
-    flask_stub.jsonify = lambda payload: payload
-    flask_stub.request = request_stub
-    flask_stub.current_app = types.SimpleNamespace(root_path=os.path.join(REPO_ROOT, 'application', 'single_app'))
-
-    plugin_loader_stub = types.ModuleType('semantic_kernel_plugins.plugin_loader')
-    plugin_loader_stub.get_all_plugin_metadata = lambda: []
-
-    plugin_health_checker_stub = types.ModuleType('semantic_kernel_plugins.plugin_health_checker')
-
-    class PluginHealthChecker:
-        @staticmethod
-        def validate_plugin_manifest(plugin, plugin_type):
-            return True, []
-
-    plugin_health_checker_stub.PluginHealthChecker = PluginHealthChecker
-    plugin_health_checker_stub.PluginErrorRecovery = object
-
-    base_plugin_stub = types.ModuleType('semantic_kernel_plugins.base_plugin')
-
-    class BasePlugin:
-        pass
-
-    base_plugin_stub.BasePlugin = BasePlugin
-
-    settings_stub = types.ModuleType('functions_settings')
-    settings_stub.get_settings = lambda: {}
-    settings_stub.is_tabular_processing_enabled = lambda: False
-    settings_stub.update_settings = lambda updates: True
-
-    auth_stub = types.ModuleType('functions_authentication')
-    auth_stub.login_required = _passthrough_decorator
-    auth_stub.user_required = _passthrough_decorator
-    auth_stub.admin_required = _passthrough_decorator
-    auth_stub.enabled_required = _passthrough_decorator
-    auth_stub.get_current_user_id = lambda: state['user_id']
-
-    appinsights_stub = types.ModuleType('functions_appinsights')
-    appinsights_stub.log_event = lambda *args, **kwargs: None
-
-    swagger_stub = types.ModuleType('swagger_wrapper')
-    swagger_stub.swagger_route = _passthrough_decorator
-    swagger_stub.get_auth_security = lambda: []
-
-    debug_stub = types.ModuleType('functions_debug')
-    debug_stub.debug_print = lambda *args, **kwargs: None
-
-    plugins_stub = types.ModuleType('functions_plugins')
-    plugins_stub.get_merged_plugin_settings = lambda *args, **kwargs: {}
-
-    global_actions_stub = types.ModuleType('functions_global_actions')
-    global_actions_stub.get_global_actions = lambda: []
-
-    personal_actions_stub = types.ModuleType('functions_personal_actions')
-
-    def get_personal_actions(user_id, return_type=None):
-        return [deepcopy(action) for action in state['current_actions']]
-
-    def save_personal_action(user_id, plugin):
-        plugin_to_save = deepcopy(plugin)
-        if not plugin_to_save.get('id'):
-            plugin_to_save['id'] = 'generated-new-id'
-        state['saved_plugins'].append({'user_id': user_id, 'plugin': plugin_to_save})
-        return plugin_to_save
-
-    def delete_personal_action(user_id, action_id):
-        state['deleted_actions'].append({'user_id': user_id, 'action_id': action_id})
-        return True
-
-    personal_actions_stub.get_personal_actions = get_personal_actions
-    personal_actions_stub.save_personal_action = save_personal_action
-    personal_actions_stub.delete_personal_action = delete_personal_action
-
-    group_stub = types.ModuleType('functions_group')
-    group_stub.require_active_group = lambda *args, **kwargs: None
-    group_stub.assert_group_role = lambda *args, **kwargs: None
-
-    group_actions_stub = types.ModuleType('functions_group_actions')
-    group_actions_stub.get_group_actions = lambda *args, **kwargs: []
-    group_actions_stub.get_group_action = lambda *args, **kwargs: None
-    group_actions_stub.save_group_action = lambda *args, **kwargs: None
-    group_actions_stub.delete_group_action = lambda *args, **kwargs: None
-    group_actions_stub.validate_group_action_payload = lambda *args, **kwargs: None
-
-    keyvault_stub = types.ModuleType('functions_keyvault')
-
-    class SecretReturnType:
-        NAME = 'name'
-        TRIGGER = 'trigger'
-
-    keyvault_stub.SecretReturnType = SecretReturnType
-    keyvault_stub.redact_plugin_secret_values = lambda plugin: plugin
-    keyvault_stub.retrieve_secret_from_key_vault_by_full_name = lambda *args, **kwargs: None
-    keyvault_stub.ui_trigger_word = 'Stored_In_KeyVault'
-    keyvault_stub.validate_secret_name_dynamic = lambda *args, **kwargs: True
-
-    validation_stub = types.ModuleType('json_schema_validation')
-    validation_stub.PLUGIN_STORAGE_MANAGED_FIELDS = {
-        'created_at',
-        'created_by',
-        'id',
-        'is_global',
-        'last_updated',
-        'modified_at',
-        'modified_by',
-        'updated_at',
-        'user_id',
+def action_fixture(name="original", action_id="existing-id"):
+    return {
+        "id": action_id,
+        "name": name,
+        "displayName": name,
+        "type": "mcp",
+        "description": "Offline bulk-save fixture",
+        "endpoint": "https://mcp.example.test/mcp",
+        "auth": {"type": "NoAuth"},
+        "metadata": {"type": "mcp"},
+        "additionalFields": {"transport": "sse", "auth_method": "none"},
     }
 
-    def validate_plugin(plugin):
-        state['validation_inputs'].append(deepcopy(plugin))
-        return None
 
-    validation_stub.validate_plugin = validate_plugin
+class UserPluginBulkSaveTests(unittest.TestCase):
+    def setUp(self):
+        self.current = [action_fixture()]
+        self.saved = []
+        self.deleted = []
+        self.validated = []
+        self.legacy_views = []
+        self.reconfigured = []
+        self.preflight_reconfiguration = Mock()
+        self.type_access = Mock()
+        presets = types.ModuleType("functions_mcp_presets")
+        presets.normalize_mcp_preset_id = lambda value: value or "generic"
+        presets.mcp_server_preset_exists = lambda value: True
+        module_patch = patch.dict(sys.modules, {"functions_mcp_presets": presets})
+        module_patch.start()
+        self.addCleanup(module_patch.stop)
 
-    activity_stub = types.ModuleType('functions_activity_logging')
-    activity_stub.log_action_creation = lambda *args, **kwargs: None
-    activity_stub.log_action_update = lambda *args, **kwargs: None
-    activity_stub.log_action_deletion = lambda *args, **kwargs: None
+        def validate_plugin(manifest):
+            self.validated.append(deepcopy(manifest))
+            return schema_validation.validate_plugin(manifest)
 
-    original_modules = {}
-    module_stubs = {
-        'flask': flask_stub,
-        'semantic_kernel_plugins.plugin_loader': plugin_loader_stub,
-        'semantic_kernel_plugins.plugin_health_checker': plugin_health_checker_stub,
-        'semantic_kernel_plugins.base_plugin': base_plugin_stub,
-        'functions_settings': settings_stub,
-        'functions_authentication': auth_stub,
-        'functions_appinsights': appinsights_stub,
-        'swagger_wrapper': swagger_stub,
-        'functions_debug': debug_stub,
-        'functions_plugins': plugins_stub,
-        'functions_global_actions': global_actions_stub,
-        'functions_personal_actions': personal_actions_stub,
-        'functions_group': group_stub,
-        'functions_group_actions': group_actions_stub,
-        'functions_keyvault': keyvault_stub,
-        'json_schema_validation': validation_stub,
-        'functions_activity_logging': activity_stub,
-    }
+        def save_personal_action(user_id, manifest):
+            saved = deepcopy(manifest)
+            self.saved.append(saved)
+            return saved
 
-    for module_name, module_stub in module_stubs.items():
-        original_modules[module_name] = sys.modules.get(module_name)
-        sys.modules[module_name] = module_stub
+        self.namespace = {
+            **vars(schema_validation),
+            **vars(manifests),
+            **vars(operations),
+            **vars(legacy),
+            "logging": logging,
+            "jsonify": jsonify,
+            "request": request,
+            "get_current_user_id": lambda: "current-user",
+            "get_global_actions": lambda *args, **kwargs: [],
+            "get_personal_actions": lambda *args, **kwargs: [
+                legacy.retired_action_management_view(action, "personal", "current-user") or deepcopy(action)
+                for action in self.current
+            ],
+            "get_personal_action_record": lambda user_id, action_id: next(
+                (deepcopy(action) for action in self.current if action.get("id") == action_id), None
+            ),
+            "list_legacy_personal_actions": lambda user_id: deepcopy(self.legacy_views),
+            "reconfigure_legacy_personal_action": lambda user_id, locator, manifest: self.reconfigured.append(
+                (user_id, locator, deepcopy(manifest))
+            ),
+            "prepare_legacy_personal_action_reconfiguration": self.preflight_reconfiguration,
+            "save_personal_action": save_personal_action,
+            "delete_personal_action": lambda user_id, action_id: self.deleted.append(action_id),
+            "SecretReturnType": types.SimpleNamespace(NAME="name"),
+            "PLUGIN_STORAGE_MANAGED_FIELDS": schema_validation.PLUGIN_STORAGE_MANAGED_FIELDS,
+            "CHART_PLUGIN_TYPE": "chart",
+            "MSGRAPH_PLUGIN_TYPE": "msgraph",
+            "WORKSPACE_IDENTITY_SCOPE_PERSONAL": "personal",
+            "_validate_action_identity_for_scope": Mock(),
+            "ensure_action_type_access": self.type_access,
+            "validate_plugin": validate_plugin,
+            "PluginHealthChecker": types.SimpleNamespace(validate_plugin_manifest=Mock(return_value=(True, []))),
+            "_enforce_mcp_destination_policy": Mock(),
+            "_redact_plugin_for_logging": lambda plugin: {"name": plugin.get("name")},
+            "debug_print": Mock(),
+            "log_event": Mock(),
+            "log_action_update": Mock(),
+            "log_action_creation": Mock(),
+            "log_action_deletion": Mock(),
+            "ACTION_VALIDATION_ERROR_MESSAGE": "Invalid action configuration.",
+            "ACTION_PERMISSION_ERROR_MESSAGE": "Not authorized.",
+            "ACTION_KEY_VAULT_ERROR_MESSAGE": "Unable to store secrets.",
+        }
+        load_route_functions(self.namespace, {
+            "_apply_plugin_runtime_defaults", "_handle_mcp_configuration_error",
+            "_handle_legacy_action_error", "set_user_plugins",
+        })
+        self.app = Flask(__name__)
+        self.app.config["TESTING"] = True
+        self.app.register_error_handler(manifests.McpConfigurationError, self.namespace["_handle_mcp_configuration_error"])
+        self.app.register_error_handler(legacy.LegacyActionConflictError, self.namespace["_handle_legacy_action_error"])
+        self.app.add_url_rule("/plugins", view_func=self.namespace["set_user_plugins"], methods=["POST"])
 
-    original_modules['route_backend_plugins'] = sys.modules.get('route_backend_plugins')
-    sys.modules.pop('route_backend_plugins', None)
+    def post(self, payload):
+        with self.app.test_request_context("/plugins", method="POST", json=payload):
+            return self.app.full_dispatch_request()
 
-    module = importlib.import_module('route_backend_plugins')
-    return module, request_stub, original_modules
+    def legacy_retired_view(self):
+        original = action_fixture("legacy", "legacy-original-id")
+        original["additionalFields"] = {"transport": "stdio", "command": "never-run"}
+        snapshot = legacy.legacy_action_snapshots("current-user", [original])[0]
+        view = legacy.legacy_action_management_view(snapshot)
+        self.legacy_views = [view]
+        return view
+
+    def test_legacy_conversion_conflicts_are_preflighted_before_other_writes(self):
+        for conflict in (legacy.LegacyActionConflictError, legacy.LegacyActionSecretConflictError):
+            with self.subTest(conflict=conflict):
+                view = self.legacy_retired_view()
+                self.preflight_reconfiguration.side_effect = conflict()
+                replacement = action_fixture("converted", view["id"])
+                response = self.post([action_fixture("ordinary_edit"), replacement])
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.get_json()["error_type"], conflict.code)
+                self.assertEqual(self.saved, [])
+                self.assertEqual(self.deleted, [])
+                self.assertEqual(self.reconfigured, [])
+
+    def test_valid_legacy_conversion_uses_its_locator_after_preflight(self):
+        view = self.legacy_retired_view()
+        replacement = action_fixture("converted", view["id"])
+        response = self.post([action_fixture(), replacement])
+        self.assertEqual(response.status_code, 200)
+        self.preflight_reconfiguration.assert_called_once()
+        self.assertEqual(self.preflight_reconfiguration.call_args.args[:2], ("current-user", view["id"]))
+        self.assertEqual(len(self.reconfigured), 1)
+        self.assertEqual(self.reconfigured[0][:2], ("current-user", view["id"]))
+        self.assertEqual([item["id"] for item in self.saved], ["existing-id"])
+        self.assertEqual(self.deleted, [])
+
+    def test_bulk_save_preserves_existing_id_on_rename(self):
+        for plugin_type in ("mcp", "sql_schema", "sql_query"):
+            with self.subTest(plugin_type=plugin_type):
+                self.saved.clear()
+                self.deleted.clear()
+                self.validated.clear()
+                renamed = action_fixture("renamed_plugin")
+                renamed.update(type=plugin_type, created_by="stale-user", modified_at="old", user_id="stale-user")
+                if plugin_type != "mcp":
+                    renamed["auth"] = {"type": "identity", "identity": "fixture-identity"}
+                    renamed["endpoint"] = f"sql://{plugin_type}"
+                response = self.post([renamed])
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json(), {"success": True})
+                self.assertEqual(len(self.saved), 1)
+                self.assertEqual(self.saved[0]["id"], "existing-id")
+                self.assertEqual(self.saved[0]["name"], "renamed_plugin")
+                self.assertEqual(self.validated[0]["id"], "existing-id")
+                self.assertEqual(self.deleted, [])
+                for field in ("created_by", "modified_at", "user_id"):
+                    self.assertNotIn(field, self.saved[0])
+                    self.assertNotIn(field, self.validated[0])
+
+    def test_metadata_type_is_resolved_before_retirement_and_validation(self):
+        invalid = action_fixture("new_stdio", "new-id")
+        invalid.pop("type")
+        invalid["metadata"]["type"] = "McpPlugin"
+        invalid["additionalFields"] = {"transport": "STDIO", "command": "never-run"}
+        response = self.post([action_fixture("valid_change"), invalid])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error_type"], "mcp_stdio_removed")
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_unknown_transport_does_not_default_to_http(self):
+        invalid = action_fixture()
+        invalid["additionalFields"]["transport"] = "not-a-transport"
+        response = self.post([invalid])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_non_list_request_cannot_delete_actions(self):
+        response = self.post({"unexpected": "object"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_governance_denial_is_checked_for_entire_batch_before_saving(self):
+        self.type_access.side_effect = [None, PermissionError("Denied fixture")]
+        response = self.post([action_fixture(), action_fixture("denied", "denied-id")])
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_unchanged_retired_action_does_not_block_a_remote_edit(self):
+        retired = action_fixture("retired", "retired-id")
+        retired["additionalFields"] = {"transport": "stdio", "command": "never-run", "env": {"PRIVATE": "not-in-view"}}
+        self.current.append(retired)
+        original = deepcopy(retired)
+        view = legacy.retired_action_management_view(retired, "personal", "current-user")
+        response = self.post([view, action_fixture("updated_remote")])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([action["name"] for action in self.saved], ["updated_remote"])
+        self.assertEqual(self.deleted, [])
+        self.assertEqual(retired, original)
+
+    def test_omitting_a_retired_action_does_not_delete_it(self):
+        retired = action_fixture("retired", "retired-id")
+        retired["additionalFields"]["transport"] = "stdio"
+        self.current.append(retired)
+        response = self.post([action_fixture("updated_remote")])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.deleted, [])
+
+    def test_retired_process_fields_cannot_be_changed_through_pass_through(self):
+        retired = action_fixture("retired", "retired-id")
+        retired["additionalFields"] = {"transport": "stdio", "command": "old-inert-command"}
+        self.current.append(retired)
+        view = legacy.retired_action_management_view(retired, "personal", "current-user")
+        view["additionalFields"]["command"] = "changed-inert-command"
+        response = self.post([action_fixture("valid_change"), view])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_unchanged_legacy_projection_is_not_saved_as_an_executable_action(self):
+        retired = action_fixture("legacy_stdio", "old-id")
+        retired["additionalFields"]["transport"] = "stdio"
+        snapshots = legacy.legacy_action_snapshots("current-user", [retired])
+        view = legacy.legacy_action_management_view(snapshots[0])
+        self.legacy_views.append(view)
+        response = self.post([view, action_fixture("updated_remote")])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.saved), 1)
+        self.assertEqual(self.reconfigured, [])
+        self.assertEqual(self.deleted, [])
+
+    def test_duplicate_identifiers_are_rejected_before_writes(self):
+        response = self.post([action_fixture("one"), action_fixture("two")])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
 
 
-def test_bulk_save_preserves_existing_id_on_rename():
-    """Bulk saves should keep the original ID when a personal plugin is renamed."""
-    print('🔍 Testing user plugin bulk-save ID preservation on rename...')
-
-    state = {
-        'user_id': 'test-user-plugin-rename',
-        'current_actions': [
-            {
-                'id': 'existing-plugin-id',
-                'name': 'legacy_plugin_name',
-                'description': 'Original plugin description',
-            }
-        ],
-        'saved_plugins': [],
-        'deleted_actions': [],
-        'validation_inputs': [],
-    }
-
-    module = None
-    original_modules = {}
-
-    try:
-        module, request_stub, original_modules = _load_route_module(state)
-        request_stub.json = [
-            {
-                'id': 'existing-plugin-id',
-                'name': 'renamed_plugin',
-                'displayName': 'Renamed Plugin',
-                'type': 'sql_schema',
-                'description': 'Updated plugin description',
-                'endpoint': 'sql://sql_schema',
-                'auth': {'type': 'identity'},
-                'metadata': {},
-                'additionalFields': {},
-                'created_by': 'stale-user',
-                'modified_at': '2026-04-02T12:00:00Z',
-                'user_id': 'stale-user',
-            }
-        ]
-
-        response = module.set_user_plugins()
-        if response != {'success': True}:
-            print(f'❌ Unexpected route response: {response}')
-            return False
-
-        if len(state['saved_plugins']) != 1:
-            print(f"❌ Expected 1 saved plugin, found {len(state['saved_plugins'])}")
-            return False
-
-        saved_plugin = state['saved_plugins'][0]['plugin']
-        if saved_plugin.get('id') != 'existing-plugin-id':
-            print(f"❌ Expected preserved ID 'existing-plugin-id', got {saved_plugin.get('id')}")
-            return False
-
-        if saved_plugin.get('name') != 'renamed_plugin':
-            print(f"❌ Expected renamed plugin name, got {saved_plugin.get('name')}")
-            return False
-
-        if state['deleted_actions']:
-            print(f"❌ Existing action should not be deleted during rename: {state['deleted_actions']}")
-            return False
-
-        validation_input = state['validation_inputs'][0]
-        if validation_input.get('id') != 'existing-plugin-id':
-            print(f"❌ Validation payload lost the existing ID: {validation_input}")
-            return False
-
-        leaked_fields = [field for field in ('created_by', 'modified_at', 'user_id') if field in validation_input or field in saved_plugin]
-        if leaked_fields:
-            print(f'❌ Storage-managed fields leaked through the route sanitization: {leaked_fields}')
-            return False
-
-        print('✅ Existing plugin ID was preserved during rename')
-        print('✅ Existing action was not deleted during rename')
-        print('✅ Storage-managed audit fields were stripped before validation/save')
-        return True
-    except Exception as exc:
-        print(f'❌ User plugin bulk-save ID preservation test failed: {exc}')
-        import traceback
-        traceback.print_exc()
-        return False
-    finally:
-        _restore_modules(original_modules)
-
-
-if __name__ == '__main__':
-    print('🧪 Running user plugin bulk-save ID preservation tests...\n')
-
-    tests = [
-        test_bulk_save_preserves_existing_id_on_rename,
-    ]
-    results = []
-
-    for test in tests:
-        print(f'\n🧪 Running {test.__name__}...')
-        results.append(test())
-
-    success = all(results)
-    print(f'\n📊 Results: {sum(results)}/{len(results)} tests passed')
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":
+    unittest.main()

@@ -1,7 +1,7 @@
 # test_m365_action_lifecycle.py
 """
 Functional regressions for Microsoft 365 action lifecycle and capability ceilings.
-Version: 0.261.030
+Version: 0.261.036
 Implemented in: 0.261.029
 
 Real action persistence modules run against scoped in-memory Cosmos/Key Vault
@@ -118,12 +118,16 @@ def lifecycle(monkeypatch):
             cosmos_user_settings_container=containers["settings"]),
         "functions_authentication": _module("functions_authentication", get_current_user_id=lambda: "owner"),
         "functions_keyvault": _module("functions_keyvault",
-            SecretReturnType=types.SimpleNamespace(TRIGGER="trigger", NAME="name"),
+            SecretReturnType=types.SimpleNamespace(TRIGGER="trigger", NAME="name", VALUE="value"),
+            clean_name_for_keyvault=lambda value: value,
+            redact_plugin_secret_values=unchanged,
             keyvault_plugin_save_helper=save_secret,
             keyvault_plugin_get_helper=unchanged,
             keyvault_plugin_delete_helper=lambda *args, **kwargs: None),
         "functions_settings": _module("functions_settings",
+            get_settings=lambda: {},
             get_user_settings=lambda user_id: containers["settings"].read_item(user_id, user_id),
+            _authorize_user_settings_access=lambda *args: None,
             update_user_settings=lambda *args, **kwargs: True,
             _set_request_cached_user_settings=lambda *args: None,
             _delete_user_ui_settings_cache=lambda *args: None),
@@ -275,7 +279,8 @@ def test_safe_historical_migration_and_stale_array_replay(lifecycle):
     settings.upsert_item(historical)
     migrated = lifecycle.modules["personal"].ensure_migration_complete("owner")
     actions = lifecycle.modules["personal"].get_personal_actions("owner")
-    assert migrated == 1
+    assert migrated["migrated_count"] == 1
+    assert migrated["complete"] is True
     assert len(actions) == 1
     assert actions[0]["type"] == "msgraph"
     assert not actions[0].get("_action_migration")
@@ -284,11 +289,51 @@ def test_safe_historical_migration_and_stale_array_replay(lifecycle):
     settings.upsert_item(historical)
     replayed = lifecycle.modules["personal"].ensure_migration_complete("owner")
     after = lifecycle.modules["personal"].get_personal_actions("owner")
-    assert replayed == 0
+    assert replayed["migrated_count"] == 0
+    assert replayed["complete"] is True
     assert after == []
     receipts = list(lifecycle.containers["personal"].records.values())
     assert len(receipts) == 1
     assert receipts[0]["_action_migration"] is True
+
+
+def test_graph_migration_retains_stdio_management_and_prevents_replay(lifecycle):
+    personal = lifecycle.modules["personal"]
+    settings = lifecycle.containers["settings"]
+    retired = {
+        **manifest("mcp", "retired-mcp"), "name": "retired_mcp",
+        "endpoint": "stdio://python", "auth": {"type": "NoAuth"},
+        "additionalFields": {"transport": "stdio", "command": "must-not-run"},
+    }
+    settings.upsert_item({"id": "owner", "settings": {"plugins": [manifest(), retired]}})
+    result = personal.ensure_migration_complete("owner")
+    persisted = settings.read_item("owner", "owner")
+    actions = personal.get_personal_actions("owner")
+    status = personal.get_action_migration_status("owner")
+    assert result["migrated_count"] == result["retained_count"] == 1
+    assert result["failed_count"] == 0
+    assert persisted["settings"]["plugins"] == [retired]
+    assert len(actions) == 1 and actions[0]["type"] == "msgraph"
+    assert status["retired_count"] == 1 and status["pending_count"] == 0
+    assert lifecycle.secret_writes == ["mail_tools"]
+    deleted = personal.delete_personal_action("owner", actions[0]["id"])
+    settings.upsert_item({"id": "owner", "settings": {"plugins": [manifest(), retired]}})
+    repeated = personal.ensure_migration_complete("owner")
+    remaining_actions = personal.get_personal_actions("owner")
+    remaining_sources = settings.read_item("owner", "owner")["settings"]["plugins"]
+    assert deleted is True
+    assert repeated["migrated_count"] == 0
+    assert remaining_actions == []
+    assert remaining_sources == [retired]
+
+
+def test_global_enable_keeps_the_original_etag_after_scope_preparation(lifecycle):
+    seed(lifecycle, "global", manifest(action_id="global-graph"))
+    result = lifecycle.modules["global"].update_global_action_enabled("global-graph", False, user_id="owner")
+    saved = lifecycle.containers["global"].read_item("global-graph", "global-graph")
+    assert result is not None
+    assert saved["is_enabled"] is False
+    assert lifecycle.containers["global"].writes[-1] == ("replace", "global-graph")
 
 
 def test_action_api_cannot_remove_receipt_to_recreate_deleted_legacy(lifecycle):
@@ -309,11 +354,11 @@ def test_action_api_cannot_remove_receipt_to_recreate_deleted_legacy(lifecycle):
     replayed = personal.ensure_migration_complete("owner")
     after = personal.get_personal_actions("owner")
     retained_receipt = lifecycle.containers["personal"].read_item(receipt["id"], "owner")
-    assert migrated == 1
+    assert migrated["migrated_count"] == 1
     assert hidden is None
     assert deleted is True
     assert receipt_deleted is False
-    assert replayed == 0
+    assert replayed["migrated_count"] == 0
     assert after == []
     assert retained_receipt["_action_migration"] is True
 
@@ -352,14 +397,16 @@ def test_regular_action_name_is_not_treated_as_a_reserved_record_id(lifecycle):
     assert deleted is True
 
 
-def test_failed_migration_keeps_historical_settings_and_successful_receipts(lifecycle):
+def test_independent_migration_retains_invalid_sources_and_successful_receipts(lifecycle):
     historical = [manifest(), {"name": ""}]
     lifecycle.containers["settings"].upsert_item({"id": "owner", "settings": {"plugins": historical}})
-    with pytest.raises(ValueError, match="invalid record"):
-        lifecycle.modules["personal"].ensure_migration_complete("owner")
+    result = lifecycle.modules["personal"].ensure_migration_complete("owner")
     preserved = lifecycle.containers["settings"].read_item("owner", "owner")
     actions = lifecycle.modules["personal"].get_personal_actions("owner")
-    assert preserved["settings"]["plugins"] == historical
+    assert preserved["settings"]["plugins"] == [historical[1]]
+    assert result["migrated_count"] == 1
+    assert result["retained_count"] == 1
+    assert result["failed_count"] == 0
     assert len(actions) == 1
 
 
@@ -373,14 +420,16 @@ def test_migration_does_not_overwrite_a_concurrent_settings_edit(lifecycle):
         settings.upsert_item(document)
 
     settings.before_replace = concurrent_edit
-    with pytest.raises(exceptions.CosmosHttpResponseError):
-        lifecycle.modules["personal"].ensure_migration_complete("owner")
+    conflicted = lifecycle.modules["personal"].ensure_migration_complete("owner")
     preserved = settings.read_item("owner", "owner")
     assert preserved["settings"]["other_preference"] is True
     assert len(preserved["settings"]["plugins"]) == 1
+    assert conflicted["retained_count"] == 1
+    assert conflicted["complete"] is False
     migrated = lifecycle.modules["personal"].ensure_migration_complete("owner")
     after = settings.read_item("owner", "owner")
-    assert migrated == 0
+    assert migrated["migrated_count"] == 0
+    assert migrated["complete"] is True
     assert after["settings"]["other_preference"] is True
     assert after["settings"]["plugins"] == []
 
@@ -452,6 +501,7 @@ def test_typed_actions_reject_auth_scope_and_capability_bypasses(lifecycle, chan
 
 
 def test_loader_intersects_saved_type_and_agent_limits(lifecycle):
+    from functions_action_manifest import copy_action_manifest
     import functions_m365_execution as execution
     import functions_m365_operations as m365
     import functions_msgraph_operations as legacy
@@ -468,6 +518,7 @@ def test_loader_intersects_saved_type_and_agent_limits(lifecycle):
         "SIMPLECHAT_PLUGIN_TYPE": "simplechat", "CHART_PLUGIN_TYPE": "chart",
         "BLOB_STORAGE_PLUGIN_TYPE": "blob_storage",
         "m365_execution": execution,
+        "copy_action_manifest": copy_action_manifest,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "semantic_kernel_loader.py", "exec"), namespace)
     original = manifest("m365_calendar", "calendar")

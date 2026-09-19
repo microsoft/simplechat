@@ -22,29 +22,35 @@ export async function checkMigrationStatus() {
         }
         
         const data = await response.json();
-        console.log('Migration status:', data);
-        
         if (data.migration_needed) {
-            const { legacy_data } = data;
-            const hasAgents = legacy_data.agents_count > 0;
-            const hasActions = legacy_data.actions_count > 0;
+            const legacyData = data.legacy_data;
+            const actionCount = legacyData.actions_pending_count + legacyData.actions_failed_count;
+            const hasAgents = legacyData.agents_count > 0;
+            const hasActions = actionCount > 0;
             
             // Update banner text based on what needs migration
             let itemText = '';
             if (hasAgents && hasActions) {
-                itemText = `${legacy_data.agents_count} agents and ${legacy_data.actions_count} actions`;
+                itemText = `${legacyData.agents_count} agents and ${actionCount} actions`;
             } else if (hasAgents) {
-                itemText = `${legacy_data.agents_count} agent${legacy_data.agents_count > 1 ? 's' : ''}`;
+                itemText = `${legacyData.agents_count} agent${legacyData.agents_count > 1 ? 's' : ''}`;
             } else if (hasActions) {
-                itemText = `${legacy_data.actions_count} action${legacy_data.actions_count > 1 ? 's' : ''}`;
+                itemText = `${actionCount} action${actionCount > 1 ? 's' : ''}`;
             }
             
-            const bannerText = migrationBanner.querySelector('small');
+            const bannerText = migrationBanner?.querySelector('small');
             if (bannerText) {
-                bannerText.textContent = `We've found ${itemText} in your old settings. Click to migrate them to the new improved storage system for better performance and reliability.`;
+                let message = `We've found ${itemText} ready to migrate or retry. Their original settings are kept until migration is verified.`;
+                if (legacyData.actions_retained_count > 0) {
+                    message += ` ${legacyData.actions_retained_count} other legacy actions need manual reconfiguration or deletion in Actions.`;
+                }
+                bannerText.textContent = message;
             }
             
             showMigrationBanner();
+        } else {
+            // Retired records stay visible in Actions, not in a recurring migration prompt.
+            hideMigrationBanner();
         }
     } catch (error) {
         console.error('Error checking migration status:', error);
@@ -56,7 +62,8 @@ export async function checkMigrationStatus() {
  */
 function showMigrationBanner() {
     if (migrationBanner) {
-        migrationBanner.style.display = 'block';
+        migrationBanner.style.removeProperty('display');
+        migrationBanner.classList.remove('d-none');
     }
 }
 
@@ -65,7 +72,8 @@ function showMigrationBanner() {
  */
 function hideMigrationBanner() {
     if (migrationBanner) {
-        migrationBanner.style.display = 'none';
+        migrationBanner.style.removeProperty('display');
+        migrationBanner.classList.add('d-none');
     }
 }
 
@@ -74,11 +82,16 @@ function hideMigrationBanner() {
  */
 function showMigrationProgress() {
     if (migrationProgress) {
-        migrationProgress.style.display = 'block';
+        migrationProgress.style.removeProperty('display');
+        migrationProgress.classList.remove('d-none');
     }
     if (migrateAllBtn) {
         migrateAllBtn.disabled = true;
-        migrateAllBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Migrating...';
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('role', 'status');
+        spinner.setAttribute('aria-hidden', 'true');
+        migrateAllBtn.replaceChildren(spinner, document.createTextNode('Migrating...'));
     }
 }
 
@@ -87,14 +100,18 @@ function showMigrationProgress() {
  */
 function hideMigrationProgress() {
     if (migrationProgress) {
-        migrationProgress.style.display = 'none';
+        migrationProgress.style.removeProperty('display');
+        migrationProgress.classList.add('d-none');
     }
     if (progressBar) {
         progressBar.style.width = '0%';
     }
     if (migrateAllBtn) {
         migrateAllBtn.disabled = false;
-        migrateAllBtn.innerHTML = '<i class="bi bi-arrow-up"></i> Migrate Now';
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-arrow-up';
+        icon.setAttribute('aria-hidden', 'true');
+        migrateAllBtn.replaceChildren(icon, document.createTextNode(' Migrate Now'));
     }
 }
 
@@ -134,29 +151,24 @@ async function performMigration() {
         const result = await response.json();
         updateMigrationProgress(90, 'Finalizing...');
         
-        // Small delay to show completion
-        setTimeout(() => {
-            updateMigrationProgress(100, 'Migration completed successfully!');
-            
-            // Hide progress and banner after a brief success display
-            setTimeout(() => {
-                hideMigrationProgress();
-                hideMigrationBanner();
-                
-                // Show success toast
-                showToast('Migration completed successfully! Your agents and actions are now using the improved storage system.', 'success');
-                
-                // Refresh the current tab's data
-                refreshCurrentTabData();
-            }, 1500);
-        }, 500);
+        const actionOutcome = result.action_migration;
+        hideMigrationProgress();
+        if (actionOutcome.failed_count > 0 || !actionOutcome.complete) {
+            showToast('Migration is incomplete. Unfinished actions remain in your settings; retry migration to finish them.', 'warning');
+        } else if (actionOutcome.retained_count > 0) {
+            showToast(`${actionOutcome.migrated_count} actions migrated. ${actionOutcome.retained_count} legacy actions were kept for manual reconfiguration or deletion in Actions. Stdio actions cannot run.`, 'warning');
+        } else {
+            showToast('Migration completed successfully. Your agents and actions now use the improved storage system.', 'success');
+        }
+        refreshCurrentTabData();
+        await checkMigrationStatus();
         
     } catch (error) {
         console.error('Migration error:', error);
         hideMigrationProgress();
         
         // Show error toast
-        showToast('Migration failed. Please try again or contact support if the issue persists.', 'error');
+        showToast('Migration could not finish. Original actions are kept until their migration is verified. Please retry.', 'error');
     }
 }
 
