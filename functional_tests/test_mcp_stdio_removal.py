@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for remote-only MCP configuration and manifest boundaries.
-Version: 0.261.030
+Version: 0.261.031
 Implemented in: 0.261.029
 Explicit payload equality regression coverage added in: 0.261.030
 
@@ -284,8 +284,7 @@ class McpStdioRemovalTests(unittest.TestCase):
         self.assertIs(inequality, NotImplemented)
         self.assertNotEqual(manifest, unrelated)
         self.assertNotEqual(unrelated, manifest)
-        with self.assertRaises(TypeError):
-            hash(manifest)
+        self.assertRaisesRegex(TypeError, "unhashable type", hash, manifest)
 
     def test_configuration_and_authorization_errors_are_non_retryable(self):
         cases = (

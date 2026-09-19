@@ -1,10 +1,10 @@
 # MCP Stdio Removal and Authorization Fix
 
-Current documentation version: **0.261.030**
+Current documentation version: **0.261.031**
 
 Fixed in version: **0.261.029**
 
-Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.030`. The transport and authorization fix was implemented in `0.261.029`; the review follow-up below was implemented in `0.261.030`.
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.031`. The transport and authorization fix was implemented in `0.261.029`; the initial review follow-up was implemented in `0.261.030`.
 
 ## Issue and Root Cause
 
@@ -80,7 +80,7 @@ See [MCP Server Presets](../features/MCP_SERVER_PRESETS.md) and [MCP Server Prec
 | `route_backend_users.py` | Legacy settings import preflight and sanitized, management-only action views in user-settings responses. |
 | MCP schemas and preset definitions, `functions_mcp_presets.py` | Remote-only configuration and older remote preset compatibility. |
 | Shared action modal and workspace action/migration JavaScript | Unsupported-state presentation and explicit owner choices. |
-| `application\single_app\config.py` | Application version update to `0.261.030`; no deployer version change. |
+| `application\single_app\config.py` | Application version update to `0.261.031`; no deployer version change. |
 
 Application paths above are relative to `application\single_app` unless written in full. Semantic Kernel remains a dependency for remote MCP.
 
@@ -138,3 +138,7 @@ Personal action persistence uses module-qualified settings access consistently, 
 Focused regressions cover both operand orders, distinct authorization origins, changed payloads, `NotImplemented` comparison dispatch, dictionary unhashability, global creation/update metadata, and non-not-found lookup failures. The existing legacy-management and settings-ingestion fixtures patch the settings module directly so their no-write and authorization checks continue to exercise the production boundary.
 
 The eight selected retirement, preset, legacy-management, settings-ingestion, bulk-save, runtime-authorization, route-security, and fresh-process import suites passed in normal and optimized Python: **161 tests and 266 subtests in each run**.
+
+## Regression Assertion Follow-Up in 0.261.031
+
+The unhashability regression expresses the expected failure through `unittest`'s callable exception assertion. It still invokes `hash` on the real manifest and requires a `TypeError`, now also checking the unhashable-type diagnostic. Production manifest behavior and the authorization boundary are unchanged.
