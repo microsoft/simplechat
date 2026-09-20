@@ -315,6 +315,8 @@ def check_retention_policy_once():
     from functions_retention_policy import execute_retention_policy
 
     try:
+        # Retention can run before the workflow scheduler initializes delivery.
+        configure_m365_pending_delivery_runtime(_get_workflow_runner_app().test_request_context)
         results = execute_retention_policy(manual_execution=False)
         if results.get('success'):
             print(

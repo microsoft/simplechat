@@ -231,7 +231,7 @@ def _build_fallback_activity(run_record, workflow):
 
 def _normalize_pending_action_activity_status(action_status):
     normalized_status = _normalize_text(action_status).lower()
-    if normalized_status in {'pending', 'scheduled', 'sending'}:
+    if normalized_status in {'pending', 'scheduled', 'sending', 'review_required'}:
         return 'running'
     if normalized_status in {'sent'}:
         return 'completed'
@@ -256,7 +256,9 @@ def _build_pending_action_activity(pending_action, order_index):
 
     auto_send_at = _normalize_text(action.get('auto_send_at_utc'))
     summary = subject or resource_label
-    if action_status in {'pending', 'scheduled'} and action_mode == 'manual':
+    if action_status == 'review_required':
+        detail = 'Delivery is paused until the data owner reviews the action.'
+    elif action_status in {'pending', 'scheduled'} and action_mode == 'manual':
         detail = 'Waiting for the user to send or cancel this Graph action.'
     elif action_status in {'pending', 'scheduled'} and auto_send_at:
         detail = f'Waiting until {auto_send_at} before sending unless the user sends now or cancels.'
@@ -370,6 +372,6 @@ def build_workflow_activity_snapshot(run_record=None, workflow=None, conversatio
         'lane_count': max(1, len(lane_order) or 1),
         'live': (
             _normalize_text((run_record or {}).get('status')).lower() in ({'running', 'cancelling'} | M365_ACTIVE_STATES)
-            or any(action.get('status') in {'pending', 'scheduled', 'sending'} for action in pending_actions)
+            or any(action.get('status') in {'pending', 'scheduled', 'sending', 'review_required'} for action in pending_actions)
         ),
     }

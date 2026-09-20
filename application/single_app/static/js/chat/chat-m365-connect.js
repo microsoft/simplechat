@@ -3,6 +3,7 @@
     'use strict';
 
     let callbackHandled = false;
+    let pendingReconnect = false;
 
     function makeElement(tag, className, text) {
         const element = document.createElement(tag);
@@ -173,5 +174,87 @@
         await resume();
     }
 
-    window.SimpleChatM365Connect = Object.freeze({ renderPrompt, handleCallback });
+    function reconnectPendingAction({ sources, signal } = {}) {
+        if (pendingReconnect || signal?.aborted) {
+            return Promise.reject(new Error('Finish the current sign-in window before reconnecting another action.'));
+        }
+        const selectedSources = Array.from(new Set(Array.isArray(sources) ? sources : []))
+            .filter(source => source === 'calendar' || source === 'email');
+        if (!selectedSources.length) {
+            return Promise.reject(new Error('Open Profile connection settings to select the Microsoft 365 source to reconnect.'));
+        }
+        const popup = window.open('about:blank', 'simplechat-m365-pending-reconnect',
+            'popup,width=720,height=780,resizable=yes,scrollbars=yes');
+        if (!popup) {
+            return Promise.reject(new Error('The sign-in popup was blocked. Allow it or use Profile connection settings. No action was sent.'));
+        }
+        pendingReconnect = true;
+        return new Promise((resolve, reject) => {
+            let finished = false;
+            let timer = null;
+            let timeout = null;
+            function finish(error) {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                pendingReconnect = false;
+                window.clearInterval(timer);
+                window.clearTimeout(timeout);
+                window.removeEventListener('message', onMessage);
+                signal?.removeEventListener('abort', onAbort);
+                if (!popup.closed) {
+                    popup.close();
+                }
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve();
+                }
+            }
+            function onMessage(event) {
+                if (event.origin === window.location.origin && event.source === popup
+                    && event.data?.type === 'm365-profile-reconnected') {
+                    finish();
+                }
+            }
+            function onAbort() {
+                finish(new Error('Sign-in was stopped when the action view closed. No action was sent.'));
+            }
+            window.addEventListener('message', onMessage);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            timer = window.setInterval(() => {
+                if (popup.closed) {
+                    finish(new Error('Microsoft 365 sign-in was not confirmed. No action was sent. Reconnect or use Profile settings.'));
+                }
+            }, 500);
+            timeout = window.setTimeout(() => {
+                finish(new Error('Microsoft 365 sign-in timed out. No action was sent.'));
+            }, 300000);
+            void (async () => {
+                try {
+                    const api = window.SimpleChatM365Approvals;
+                    if (!api) {
+                        throw new Error('Microsoft 365 controls are unavailable. Refresh before trying again.');
+                    }
+                    await api.requestJson('/api/m365/chat/connection');
+                    if (finished) {
+                        return;
+                    }
+                    // Profile reconnect saves credentials only; the saved-request connect/resume path would rerun the agent.
+                    const result = await api.requestJson('/api/m365/chat/connection/connect', {
+                        method: 'POST', body: { sources: selectedSources },
+                    });
+                    if (!finished) {
+                        popup.location.replace(authorizationUrl(result.authorization_url));
+                        popup.focus();
+                    }
+                } catch (error) {
+                    finish(error);
+                }
+            })();
+        });
+    }
+
+    window.SimpleChatM365Connect = Object.freeze({ renderPrompt, handleCallback, reconnectPendingAction });
 })();

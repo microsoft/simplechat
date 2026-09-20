@@ -703,6 +703,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     let persistedUserMessageId = String(initialPersistedUserMessageId || '').trim() || null;
     let lastChunkAt = null;
     let eventCount = 0;
+    const pendingActionConversationEpoch = window.SimpleChatM365PendingActions?.getConversationEpoch();
 
     function finalizePendingUserMessageMetadata() {
         if (persistedUserMessageId) {
@@ -732,6 +733,22 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (persistedUserMessageId) {
             setUserMessageStreamingActionsDisabled(persistedUserMessageId, false);
         }
+    }
+
+    function capturePendingActions(data) {
+        if (data?.type === 'm365_pending_action' || Array.isArray(data?.m365_pending_actions)) {
+            window.SimpleChatM365PendingActions?.handleChatPayload(data, {
+                conversationId: streamContext.conversationId || recoveryConversationId || data.conversation_id,
+                userMessageId: persistedUserMessageId || tempUserMessageId,
+                conversationEpoch: pendingActionConversationEpoch,
+            });
+        }
+    }
+
+    function recoverPendingActions() {
+        void window.SimpleChatM365PendingActions?.refreshConversation(
+            streamContext.conversationId || recoveryConversationId
+        );
     }
 
     function pauseForMicrosoft365SignIn(data) {
@@ -769,8 +786,31 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         }
         if (response.headers?.get('Content-Type')?.includes('application/json')) {
             return response.json().then(data => {
-                if (!pauseForMicrosoft365SignIn(data)) {
+                capturePendingActions(data);
+                if (pauseForMicrosoft365SignIn(data)) {
+                    recoverPendingActions();
+                    return;
+                }
+                const content = data.full_content ?? data.response ?? data.reply ?? data.content;
+                if (data.error || data.success === false
+                    || (typeof content !== 'string' && !Array.isArray(data.m365_pending_actions))) {
                     throw buildStreamingRequestError(data, response.status);
+                }
+                streamCompleted = true;
+                stopThoughtPolling();
+                clearStreamingThoughtSession(tempAiMessageId);
+                persistedUserMessageId = data.user_message_id || persistedUserMessageId;
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
+                const finalData = { ...data, full_content: typeof content === 'string' ? content : '' };
+                finalizeStreamingMessage(tempAiMessageId, tempUserMessageId, finalData, fallbackAgentInfo);
+                clearCurrentStreamController(abortController);
+                recoverPendingActions();
+                if (typeof onDone === 'function') {
+                    onDone(finalData);
+                }
+                if (typeof onFinally === 'function') {
+                    onFinally();
                 }
             });
         }
@@ -794,6 +834,13 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+
+            if (data.type === 'm365_pending_action') {
+                updateStreamContextConversation(streamContext, data.conversation_id);
+                capturePendingActions(data);
+                return false;
+            }
+            capturePendingActions(data);
 
             if (pauseForMicrosoft365SignIn(data)) {
                 return true;
@@ -840,6 +887,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
 
             if (data.error) {
+                recoverPendingActions();
                 if (data.user_message_id && data.message_persisted === true) {
                     persistedUserMessageId = String(data.user_message_id);
                 }
@@ -934,6 +982,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
 
             if (data.done) {
+                recoverPendingActions();
                 stopThoughtPolling();
                 streamCompleted = true;
                 clearStreamingThoughtSession(tempAiMessageId);
@@ -1030,6 +1079,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function readStream() {
             reader.read().then(async ({ done, value }) => {
                 if (done) {
+                    recoverPendingActions();
                     stopThoughtPolling();
 
                     sseBuffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
@@ -1095,6 +1145,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 
                 readStream(); // Continue reading
             }).catch(async err => {
+                recoverPendingActions();
                 if (abortController.signal.aborted) {
                     markInterruptedUserMessageMetadata();
                     void reportClientStreamEvent('stream_aborted', {
@@ -1158,6 +1209,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         readStream();
         
     }).catch(async error => {
+        capturePendingActions(getStreamErrorPayload(error));
+        recoverPendingActions();
         if (abortController.signal.aborted) {
             markInterruptedUserMessageMetadata();
             void reportClientStreamEvent('stream_aborted', {

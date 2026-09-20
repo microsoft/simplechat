@@ -305,6 +305,13 @@
 </div>
 {% endif %}
 {% include "_m365_approvals_modal.html" %}
+<section class="card mt-4" aria-labelledby="m365-outgoing-actions-heading">
+    <div class="card-body">
+        <h3 id="m365-outgoing-actions-heading">Outgoing email and invitations</h3>
+        <p class="text-muted">Review your saved Microsoft 365 deliveries, including scheduled actions. These are the same actions shown in chat and workflow activity, not separate approval requests.</p>
+        <div id="m365-outgoing-actions">Loading outgoing actions...</div>
+    </div>
+</section>
 <div class="card mt-4">
     <div class="card-body">
         <h3>Paused Microsoft 365 requests</h3>
@@ -317,6 +324,7 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
 <script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
+<script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/approvals/m365-approvals.js') }}"></script>
 <script src="{{ url_for('static', filename='js/approvals/m365-requests.js') }}"></script>
 <script>

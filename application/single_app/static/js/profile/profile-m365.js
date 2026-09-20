@@ -91,6 +91,7 @@
             currentUrl.searchParams.delete('m365_chat_connection');
             window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
             if (result === 'connected') {
+                window.opener?.postMessage({ type: 'm365-profile-reconnected' }, window.location.origin);
                 showStatus('m365-chat-connection-notice',
                     'Microsoft 365 sign-in completed. Return to your conversation and retry your original question. No past requests were retried.',
                     'success');

@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.034"
+version: "0.261.038"
 ---
 
 ## Choose the right action
@@ -32,6 +32,7 @@ walk; continuation and coverage results describe the available search window.
 | Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. |
 | Extended analysis | The selected files may receive additional staged processing beyond the fast windows. |
 | Workflow Run as approval | A specific workflow revision may use the selected person's connected account. |
+| Outgoing action review | The data owner may send the exact prepared email or invitation in manual mode, or stop a configured delayed delivery. |
 
 One decision does not substitute for another. An administrator who owns an
 action cannot approve another person's data disclosure.
@@ -69,6 +70,33 @@ The **workflow connection** status in Profile applies to unattended workflow
 access. A disconnected workflow account does not mean interactive chat is
 disabled. Reloading already-published file evidence also does not require a
 fresh source sign-in.
+
+## Review an email or meeting before delivery
+
+Chat shows a saved action card for manual or delayed Email and Calendar
+operations. You do not need to find an action hidden inside a citation or
+interpret the agent's wording. If the final response is interrupted, reload the
+conversation or open **Approvals** to recover the same outgoing action.
+
+Review the recipients, subject, and complete body; for a meeting, also check
+time, timezone, location, and Teams status. Only the data owner sees private
+recipient/body details and can select **Send**, **Send now**, or **Cancel**.
+Other authorized participants receive a read-only summary.
+
+If the card needs sign-in, reconnect and return to that card. Sign-in and
+sharing approval alone do not send it or repeat the original agent request.
+Changed content, permissions, audience, or an older unbound record can require
+preparing a new action instead.
+
+For email, SimpleChat checks the Outlook draft version and sends the immutable
+content reviewed on the card. The original draft remains after both Send and
+Cancel. Do not send it again. Successful email submission means Microsoft 365
+accepted it for sending; it is not a recipient-delivery receipt.
+
+Delayed chat uses a short in-process timer. A browser countdown is informational
+only. After a lost timer, review and send manually; after an uncertain remote
+send, check Outlook before preparing anything new. Immediate send mode and
+marking a message read do not gain a second confirmation.
 
 ## Reconnect without a pending request
 
@@ -150,8 +178,9 @@ and pauses affected work; it does not remove conversation evidence.
 
 Outgoing mail and calendar review is separate from permission to access a source.
 Manual outgoing actions notify the Run as user and appear in workflow activity;
-only that user can send or cancel them. Delayed workflow delivery rechecks the
-current account and approval when it sends, even after a server restart.
+The same records are available in Approvals. Only that user can send or cancel
+them. Delayed workflow delivery rechecks the current account and approval when
+it sends, even after a server restart.
 Cancelling a workflow delivery stops the send but leaves an existing Outlook draft
 in the user's mailbox. If an interrupted send has an unknown outcome, check Microsoft
 365 before starting another action.

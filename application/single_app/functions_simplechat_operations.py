@@ -87,6 +87,7 @@ from functions_group import (
     require_active_group,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_m365_action_cards import strip_pending_action_references
 from functions_personal_workflows import save_personal_workflow
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
@@ -561,6 +562,7 @@ def _build_fork_message_documents(
             for key, value in source_document.items()
             if key not in COSMOS_SYSTEM_FIELDS
         }
+        fork_document = strip_pending_action_references(fork_document)
         fork_document["id"] = message_id_map[source_message_id]
         fork_document["conversation_id"] = fork_conversation_id
         fork_document["fork_sequence"] = sequence

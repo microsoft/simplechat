@@ -55,6 +55,8 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_m365_action_cards import strip_pending_action_references
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from functions_notifications import create_collaboration_message_notification
 from functions_thoughts import (
     archive_thoughts_for_conversation,
@@ -927,6 +929,7 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
         if not collaboration_message:
             continue
 
+        collaboration_message = strip_pending_action_references(collaboration_message)
         metadata = collaboration_message.setdefault('metadata', {})
         metadata.setdefault('source_message_id', raw_message.get('id'))
         metadata.setdefault('source_conversation_id', source_conversation_id)
@@ -1104,6 +1107,7 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
         if not collaboration_message:
             continue
 
+        collaboration_message = strip_pending_action_references(collaboration_message)
         metadata = collaboration_message.setdefault('metadata', {})
         metadata.setdefault('source_message_id', raw_message.get('id'))
         metadata.setdefault('source_conversation_id', source_conversation_id)
@@ -2537,15 +2541,11 @@ def _cleanup_collaboration_thoughts(conversation_id, user_ids, archiving_enabled
             )
 
 
-def _cleanup_linked_collaboration_source(
+def _read_linked_collaboration_source(
     conversation_doc,
     source_field,
     source_container,
-    source_messages_container,
-    archiving_enabled,
-    retention_deletion,
     expected_user_id=None,
-    additional_thought_user_ids=None,
 ):
     source_conversation_id = str((conversation_doc or {}).get(source_field) or '').strip()
     if not source_conversation_id:
@@ -2564,6 +2564,44 @@ def _cleanup_linked_collaboration_source(
         return None
     if str(source_conversation.get('collaboration_conversation_id') or '').strip() != str(conversation_doc.get('id') or '').strip():
         return None
+    return source_conversation
+
+
+def _cancel_collaboration_pending_deliveries(conversation_doc):
+    """The authorized shared destination includes only reciprocally linked sources."""
+    cancel_m365_conversation_deliveries(conversation_doc['id'])
+    for source_field, source_container in (
+        ('source_conversation_id', cosmos_conversations_container),
+        ('legacy_source_conversation_id', cosmos_group_conversations_container),
+    ):
+        source_conversation = _read_linked_collaboration_source(
+            conversation_doc, source_field, source_container,
+        )
+        if source_conversation:
+            # Co-owners may remove the shared destination without permission to
+            # delete its creator's retained personal history.
+            cancel_m365_conversation_deliveries(source_conversation['id'])
+
+
+def _cleanup_linked_collaboration_source(
+    conversation_doc,
+    source_field,
+    source_container,
+    source_messages_container,
+    archiving_enabled,
+    retention_deletion,
+    expected_user_id=None,
+    additional_thought_user_ids=None,
+    deliveries_cancelled=False,
+):
+    source_conversation = _read_linked_collaboration_source(
+        conversation_doc, source_field, source_container, expected_user_id,
+    )
+    if source_conversation is None:
+        return None
+    source_conversation_id = source_conversation['id']
+    if not deliveries_cancelled:
+        cancel_m365_conversation_deliveries(source_conversation_id)
 
     source_messages = list(source_messages_container.query_items(
         query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
@@ -2668,7 +2706,15 @@ def _delete_collaboration_conversation_records(
             return live_conversation_doc
         conversation_doc = live_conversation_doc
     else:
-        conversation_doc = get_collaboration_conversation(conversation_id)
+        live_conversation_doc = get_collaboration_conversation(conversation_id)
+        if expected_source_user_id and (
+            expected_source_user_id not in set(live_conversation_doc.get('owner_user_ids', []) or [])
+            or _collaboration_retention_identity(live_conversation_doc) != _collaboration_retention_identity(conversation_doc)
+        ):
+            raise PermissionError('The shared conversation changed before it could be deleted.')
+        conversation_doc = live_conversation_doc
+
+    _cancel_collaboration_pending_deliveries(conversation_doc)
 
     if is_personal_collaboration_conversation(conversation_doc):
         revocation_conversation_doc = deepcopy(conversation_doc)
@@ -2763,6 +2809,7 @@ def _delete_collaboration_conversation_records(
         retention_deletion,
         expected_user_id=expected_source_user_id,
         additional_thought_user_ids=source_thought_user_ids,
+        deliveries_cancelled=True,
     )
     _cleanup_linked_collaboration_source(
         conversation_doc,
@@ -2773,6 +2820,7 @@ def _delete_collaboration_conversation_records(
         retention_deletion,
         expected_user_id=expected_source_user_id,
         additional_thought_user_ids=source_thought_user_ids,
+        deliveries_cancelled=True,
     )
 
     log_conversation_deletion(

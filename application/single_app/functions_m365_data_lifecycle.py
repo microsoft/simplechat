@@ -1,6 +1,7 @@
 # functions_m365_data_lifecycle.py
 """Exclude live delegated authority and retired actions from data transfers."""
 
+from functions_m365_action_cards import strip_pending_action_references
 from json_schema_validation import (
     ACTION_MIGRATION_ID_PREFIX,
     is_legacy_msgraph_type,
@@ -59,7 +60,7 @@ def validate_m365_admin_record_edit(original, document):
 
 
 def strip_m365_runtime_references(document, *, log_event=None):
-    result = dict(document)
+    result = strip_pending_action_references(document)
     if "m365_binding_approval_id" in result:
         result["m365_binding_approval_id"] = None
     if "m365_run_as_user_id" in result:

@@ -586,7 +586,10 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
             run_id=_normalize_identifier((run_record or {}).get('id')),
             limit=100,
         )
-        pending_actions = [sanitize_msgraph_pending_action_for_client(action) for action in raw_pending_actions]
+        pending_actions = [
+            sanitize_msgraph_pending_action_for_client(action, viewer_user_id=user_id)
+            for action in raw_pending_actions
+        ]
 
     return build_workflow_activity_snapshot(
         run_record=run_record,

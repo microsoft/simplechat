@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+from azure.core.exceptions import AzureError
+
 from functions_authentication import get_current_user_info
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_m365_operations import (
@@ -704,7 +706,9 @@ class MSGraphPlugin(BasePlugin):
             "delivery_mode": delivery_mode,
             status_key: pending_action.get("status") or MSGRAPH_PENDING_STATUS_PENDING,
             "pending_user_action": True,
-            "pending_action": sanitize_msgraph_pending_action_for_client(pending_action),
+            "pending_action": sanitize_msgraph_pending_action_for_client(
+                pending_action, viewer_user_id=get_m365_context().actor_user_id, include_preview=False,
+            ),
             "message": message,
         }
 
@@ -715,6 +719,7 @@ class MSGraphPlugin(BasePlugin):
         action_mode: str,
         auto_send_at_utc: str = "",
         delay_seconds: Optional[int] = None,
+        save_to_sent_items: bool = True,
     ) -> Dict[str, Any]:
         denial = self._authorize_operation("send_mail")
         if denial:
@@ -723,24 +728,52 @@ class MSGraphPlugin(BasePlugin):
         user_id = execution_context.get("user_id")
         if not user_id:
             return self._invalid_parameter_error("send_mail", "Signed-in user context is required to track the pending mail action.")
+        draft_id = str(draft_result.get("id") or "").strip()
+        draft_version = str(draft_result.get("changeKey") or "").strip()
+        if not draft_id:
+            return self._invalid_parameter_error("send_mail", "Microsoft 365 did not return a saved draft identifier.")
+        if not draft_version:
+            current_draft = self._perform_graph_request(
+                "send_mail", "GET", f"/v1.0/me/messages/{quote(draft_id, safe='')}",
+                ["Mail.ReadWrite"], params={"$select": "id,changeKey,isDraft"},
+            )
+            if current_draft.get("error"):
+                return current_draft
+            draft_version = str(current_draft.get("changeKey") or "").strip()
+            if not draft_version or current_draft.get("isDraft") is not True:
+                return self._invalid_parameter_error("send_mail", "The saved Outlook draft could not be prepared for safe review.")
 
-        pending_action = create_msgraph_pending_action(
-            user_id,
-            operation=MSGRAPH_PENDING_OPERATION_SEND_MAIL,
-            graph_resource_type=MSGRAPH_PENDING_RESOURCE_MAIL,
-            action_mode=action_mode,
-            status=MSGRAPH_PENDING_STATUS_SCHEDULED if action_mode == MSGRAPH_PENDING_ACTION_DELAYED else MSGRAPH_PENDING_STATUS_PENDING,
-            graph_message_id=draft_result.get("id") or "",
-            summary=build_mail_pending_action_summary(message_payload),
-            conversation_id=execution_context.get("conversation_id", ""),
-            workflow_id=execution_context.get("workflow_id", ""),
-            run_id=execution_context.get("run_id", ""),
-            auto_send_at_utc=auto_send_at_utc,
-            delay_seconds=delay_seconds,
-            graph_endpoint=self._endpoint,
-            web_link=draft_result.get("webLink") or "",
-            m365_action_id=self.manifest.get("id") or self.manifest.get("name"),
-        )
+        if action_mode == MSGRAPH_PENDING_ACTION_DELAYED:
+            auto_send_at_utc = self._build_deferred_delivery_time(delay_seconds)
+        try:
+            pending_action = create_msgraph_pending_action(
+                user_id,
+                operation=MSGRAPH_PENDING_OPERATION_SEND_MAIL,
+                graph_resource_type=MSGRAPH_PENDING_RESOURCE_MAIL,
+                action_mode=action_mode,
+                status=MSGRAPH_PENDING_STATUS_SCHEDULED if action_mode == MSGRAPH_PENDING_ACTION_DELAYED else MSGRAPH_PENDING_STATUS_PENDING,
+                graph_message_id=draft_id,
+                graph_draft_version=draft_version,
+                graph_payload={"message": message_payload, "saveToSentItems": save_to_sent_items},
+                summary=build_mail_pending_action_summary(message_payload),
+                conversation_id=execution_context.get("conversation_id", ""),
+                workflow_id=execution_context.get("workflow_id", ""),
+                run_id=execution_context.get("run_id", ""),
+                auto_send_at_utc=auto_send_at_utc,
+                delay_seconds=delay_seconds,
+                graph_endpoint=self._endpoint,
+                web_link=draft_result.get("webLink") or "",
+                m365_action_id=self.manifest.get("id") or self.manifest.get("name"),
+            )
+        except AzureError:
+            log_m365_failure("pending_action_storage_failed", source="email", operation="send_mail")
+            return {
+                "error": "pending_action_storage_failed", "operation": "send_mail",
+                "message": (
+                    "An Outlook draft was created, but saving its review action did not return a confirmed result. "
+                    "Check Outgoing actions in Approvals and the Outlook draft before trying again."
+                ),
+            }
         return pending_action
 
     def _create_calendar_pending_action(
@@ -758,6 +791,8 @@ class MSGraphPlugin(BasePlugin):
         if not user_id:
             return self._invalid_parameter_error("create_calendar_invite", "Signed-in user context is required to track the pending calendar invite.")
 
+        if action_mode == MSGRAPH_PENDING_ACTION_DELAYED:
+            auto_send_at_utc = self._build_deferred_delivery_time(delay_seconds)
         pending_action = create_msgraph_pending_action(
             user_id,
             operation=MSGRAPH_PENDING_OPERATION_CREATE_CALENDAR_INVITE,
@@ -1252,6 +1287,7 @@ class MSGraphPlugin(BasePlugin):
                 return pending_action
             if token:
                 schedule_msgraph_pending_action_auto_commit(pending_action, token)
+            scheduled_send_time = pending_action.get("auto_send_at_utc") or ""
 
             result = self._build_pending_action_tool_result(
                 operation_name,
@@ -1457,7 +1493,9 @@ class MSGraphPlugin(BasePlugin):
             return send_result
 
         if self._mail_send_mode == MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED:
-            scheduled_send_time = self._build_deferred_delivery_time(self._mail_delay_seconds)
+            token, _, token_error = self._get_token("send_mail_delayed_delivery", ["Mail.Send", "Mail.ReadWrite"])
+            if token_error:
+                return token_error
             draft_result = self._perform_graph_request(
                 operation_name,
                 "POST",
@@ -1475,16 +1513,12 @@ class MSGraphPlugin(BasePlugin):
                     "Microsoft Graph created the mail draft but did not return a message id for delayed delivery.",
                 )
 
-            token, _, token_error = self._get_token("send_mail_delayed_delivery", ["Mail.Send"])
-            if token_error:
-                return token_error
-
             pending_action = self._create_mail_pending_action(
                 message_payload,
                 draft_result,
                 MSGRAPH_PENDING_ACTION_DELAYED,
-                auto_send_at_utc=scheduled_send_time,
                 delay_seconds=self._mail_delay_seconds,
+                save_to_sent_items=bool(normalized_save_to_sent_items),
             )
             if pending_action.get("error"):
                 return pending_action
@@ -1496,9 +1530,11 @@ class MSGraphPlugin(BasePlugin):
                 "mail_send_status": "scheduled_pending",
                 "message_id": message_id,
                 "delay_seconds": self._mail_delay_seconds,
-                "scheduled_send_time_utc": scheduled_send_time,
+                "scheduled_send_time_utc": pending_action["auto_send_at_utc"],
                 "pending_user_action": True,
-                "pending_action": sanitize_msgraph_pending_action_for_client(pending_action),
+                "pending_action": sanitize_msgraph_pending_action_for_client(
+                    pending_action, viewer_user_id=get_m365_context().actor_user_id, include_preview=False,
+                ),
                 "message": "Mail draft is waiting for the delayed send window. It can be cancelled or sent now before the timer ends.",
             }
 
@@ -1516,6 +1552,7 @@ class MSGraphPlugin(BasePlugin):
             message_payload,
             draft_result,
             MSGRAPH_PENDING_ACTION_MANUAL,
+            save_to_sent_items=bool(normalized_save_to_sent_items),
         )
         if pending_action.get("error"):
             return pending_action

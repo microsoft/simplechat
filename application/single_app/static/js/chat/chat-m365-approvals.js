@@ -41,7 +41,8 @@
 
     async function requestJson(path, options = {}, csrfRetried = false) {
         const target = new URL(path, window.location.origin);
-        if (target.origin !== window.location.origin || !target.pathname.startsWith('/api/m365/')) {
+        const pendingActionApi = /^\/api\/msgraph\/pending-actions(?:\/|$)/.test(target.pathname);
+        if (target.origin !== window.location.origin || (!target.pathname.startsWith('/api/m365/') && !pendingActionApi)) {
             throw new Error('Microsoft 365 requests must use the local authenticated API.');
         }
         const headers = { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
@@ -55,6 +56,7 @@
             method: options.method || 'GET',
             credentials: 'same-origin',
             headers,
+            ...(options.signal ? { signal: options.signal } : {}),
             ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {})
         });
         const contentType = response.headers.get('Content-Type') || '';
@@ -75,6 +77,7 @@
             const error = new Error(result.message || 'The Microsoft 365 request could not be completed. Refresh before trying again.');
             error.status = response.status;
             error.code = result.error;
+            error.payload = result;
             throw error;
         }
         if (typeof result.csrf_token === 'string' && result.csrf_token.length >= 32) {
@@ -299,7 +302,9 @@
         }
         const button = document.getElementById('m365-approvals-apply');
         button.disabled = state.invalid || state.busy || state.finishing || (!state.result && !state.approvals.some(canDecide));
-        button.textContent = state.result ? 'Retry resume' : 'Apply choices';
+        button.textContent = state.result
+            ? (state.options.refreshOnly ? 'Retry refresh' : 'Retry resume')
+            : 'Apply choices';
     }
 
     function confirmedTimezone() {
@@ -335,7 +340,9 @@
     }
 
     async function finish(state) {
-        const callback = state.options.onResume || resumeHandler;
+        const callback = state.options.refreshOnly
+            ? state.options.onRefresh
+            : state.options.onResume || resumeHandler;
         if (callback) {
             await callback(state.result);
         }
@@ -376,7 +383,9 @@
                 window.dispatchEvent(new CustomEvent('m365-approval-updated', { detail: saved }));
             }
             state.result = { status: 'decided', approvals: state.approvals };
-            document.getElementById('m365-approvals-status').textContent = 'Decisions saved. Execution may be queued or require sign-in; approval is not execution success.';
+            document.getElementById('m365-approvals-status').textContent = state.options.refreshOnly
+                ? 'Decisions saved. Refreshing the saved action only; this dialog did not request a send.'
+                : 'Decisions saved. Execution may be queued or require sign-in; approval is not execution success.';
             await finish(state);
         } catch (error) {
             if (error.status === 409) {
@@ -405,6 +414,9 @@
         }
         if (active) {
             const sameRecords = approvals.length === active.approvals.length && approvals.every(item => active.approvals.some(current => current.id === item.id));
+            if (sameRecords && options.refreshOnly === true) {
+                active.options = { ...active.options, ...options };
+            }
             return sameRecords ? active.promise : active.promise.then(() => openApprovals(payload, options));
         }
         const element = document.getElementById('m365ApprovalsModal');

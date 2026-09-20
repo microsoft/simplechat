@@ -565,10 +565,16 @@ function decorateReplyMessage(message = {}) {
 
 function buildEventKey(eventEnvelope = {}) {
     const payload = eventEnvelope.payload || {};
+    const pendingActionKey = eventEnvelope.event_type === 'collaboration.m365.pending_action'
+        ? JSON.stringify([
+            payload.metadata?.m365_pending_action_ids || payload.m365_pending_action_ids || [],
+            payload.request_id || payload.m365_request_id || payload.metadata?.m365_request_id || '',
+        ])
+        : '';
     return [
         eventEnvelope.conversation_id || payload.conversation?.id || '',
         eventEnvelope.event_type || '',
-        payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
+        pendingActionKey || payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
         eventEnvelope.occurred_at || '',
     ].join('|');
 }
@@ -984,6 +990,7 @@ function reapplyPendingSearchHighlight() {
 }
 
 async function loadConversationMessages(conversationId) {
+    window.SimpleChatM365PendingActions?.setConversation(conversationId);
     clearSearchHighlight();
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`);
     const chatbox = document.getElementById('chatbox');
@@ -991,6 +998,7 @@ async function loadConversationMessages(conversationId) {
         return [];
     }
 
+    window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
     chatbox.innerHTML = '';
     clearTypingState();
     clearMessageCache();
@@ -1019,6 +1027,7 @@ async function loadConversationMessages(conversationId) {
         renderCollaborationMessage(decoratedMessage);
         cacheCollaborationMessage(message);
     });
+    void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
     reapplyPendingSearchHighlight();
     return messages;
 }
@@ -1086,6 +1095,15 @@ function handleConversationEvent(eventEnvelope = {}) {
     }
 
     const payload = eventEnvelope.payload || {};
+    if (eventEnvelope.event_type === 'collaboration.m365.pending_action') {
+        const conversationId = String(eventEnvelope.conversation_id || payload.conversation_id || '').trim();
+        if (conversationId && conversationId === activeCollaborativeConversationId
+            && conversationId === window.currentConversationId
+            && (!payload.conversation_id || payload.conversation_id === conversationId)) {
+            void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
+        }
+        return;
+    }
     if (payload.conversation) {
         const normalizedConversation = cacheCollaborationConversation(payload.conversation);
         setConversationDataset(normalizedConversation.id, normalizedConversation);

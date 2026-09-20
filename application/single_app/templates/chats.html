@@ -322,6 +322,7 @@
             </div>
 
             <div id="chat-messages-container" class="position-relative flex-grow-1" style="overflow-y: auto;">
+                <section id="chat-m365-pending-actions" class="px-3 pt-3 d-none" aria-label="Conversation outgoing Microsoft 365 actions"></section>
                 <div id="chatbox" class="flex-grow-1 p-3">
                     <!-- Chat messages will be dynamically loaded here -->
                 </div>
@@ -1582,6 +1583,7 @@
 {% include "_m365_approvals_modal.html" %}
 <script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
 <script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
+<script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>
 <script>
     // Ensure global variables are still accessible if needed by older scripts
     window.enableUserFeedback = {{ enable_user_feedback|tojson }};

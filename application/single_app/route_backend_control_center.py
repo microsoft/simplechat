@@ -22,6 +22,7 @@ from functions_activity_logging import *
 from functions_approvals import *
 from functions_approvals import _can_user_approve, _can_user_deny
 from functions_m365_approvals import is_m365_approval
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from route_backend_m365 import m365_approval_decision_response
 from functions_documents import update_document, delete_document, delete_document_chunks
 from functions_group import delete_group
@@ -7826,21 +7827,35 @@ def register_route_backend_control_center(bp):
         """Execute delete entire group action."""
         try:
             group_id = approval['group_id']
-            
-            # First delete all documents
-            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
-            
-            # Delete group conversations (optional - could keep for audit)
+
             try:
                 query = "SELECT * FROM c WHERE c.group_id = @group_id"
                 parameters = [{"name": "@group_id", "value": group_id}]
-                
                 conversations = list(cosmos_group_conversations_container.query_items(
                     query=query,
                     parameters=parameters,
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 ))
-                
+                for conversation in conversations:
+                    if conversation.get('group_id') != group_id:
+                        raise PermissionError('Conversation is outside the approved group.')
+                    cancel_m365_conversation_deliveries(conversation['id'])
+            except Exception as error:
+                log_event(
+                    "[CONTROL_CENTER] Unable to stop outgoing Microsoft 365 actions before group deletion.",
+                    extra={"group_id": group_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
+                return {
+                    'success': False,
+                    'message': 'Pending Microsoft 365 actions could not be stopped. The group was not deleted.',
+                }
+
+            # First delete all documents
+            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+
+            # Delete group conversations (optional - could keep for audit)
+            try:
                 for conv in conversations:
                     cosmos_group_conversations_container.delete_item(
                         item=conv['id'],

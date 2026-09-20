@@ -4,6 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
+version: "0.261.038"
 ---
 
 ## How to use this reference
@@ -69,6 +70,32 @@ being presented as a model answer that no documents exist.
 | `scroll-to-bottom-btn` | Jumps the message pane to the newest message when you are scrolled upward. | Use it to return to an in-progress response or the latest turn. | Always available |
 | `chat-mobile-tools-toggle` | Opens the mobile tools panel containing quick actions, voice controls, and selectors. | Use it on smaller screens when desktop toolbar controls move into the offcanvas panel. | Always available |
 | `chat-tutorial-btn` | Launches the guided chat walkthrough. | Use it when onboarding users or when you want a reminder of the main chat workflow. | Always available |
+
+## Microsoft 365 outgoing action cards
+
+Implemented in version: **0.261.038** (`application/single_app/config.py`).
+Manual and delayed email/invitation tools display a saved review card separately
+from the agent's text and citations. Cards remain available after reload and
+through **Approvals** and workflow activity.
+
+| Control | Purpose and limits |
+| --- | --- |
+| Send | Sends a manually prepared message or invitation after checking the current owner, permissions, and reviewed revision. |
+| Send now | Claims an eligible delayed action before its scheduled delivery. It is not a retry for an uncertain remote outcome. |
+| Cancel | Stops an unclaimed delivery without mailbox authentication. It leaves Outlook drafts and does not recall sent messages. |
+| Full review | Loads the complete owner-only body when the initial preview is truncated. Send stays unavailable until that detail is loaded. |
+| Reconnect | Renews sign-in and returns to the same saved card. It does not resend the agent request or automatically confirm the action. |
+| Refresh | Retrieves current server state after an interrupted request or a change in another tab. It never sends merely by refreshing. |
+
+Only the data owner receives send/cancel controls and private body/recipient
+details. Shared viewers get a read-only summary. The countdown is informational;
+loading an overdue card never submits a send. Check Outlook before preparing a
+replacement when delivery has an unknown outcome. Immediate operations keep
+their existing tool-result receipts without a second Send button.
+
+For email, Send submits the reviewed content and leaves the original Outlook
+draft. **Do not send the retained draft again.** See
+[Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
 
 ## Prompt, model, agent, and reasoning selectors
 

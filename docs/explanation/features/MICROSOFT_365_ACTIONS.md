@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.035)
+# Microsoft 365 actions and conversation evidence (v0.261.038)
 
 Implemented in version: **0.261.029**
 
@@ -23,6 +23,10 @@ independently of pending requests or workflow setup. See the
 Verified model token limits and selected-endpoint budget propagation were added
 in **0.261.035**. See the
 [model token-budget fix](../fixes/MODEL_CATALOG_TOKEN_BUDGET_FIX.md).
+
+Chat mail/invitation review cards, current-state recovery, and claimed
+interactive delivery were added in **0.261.038**. See the
+[action-card repair](../fixes/M365_CHAT_ACTION_CARDS_FIX.md).
 
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.
@@ -162,6 +166,49 @@ and archival. A conversation-level inventory marker is persisted before memory
 writes so full cleanup does not depend on message-artifact registration completing.
 Tokens never belong in these files.
 
+## Review outgoing email and invitations
+
+Manual Email and Calendar operations save a reviewable action before announcing
+that it is ready. Chat receives the card independently of the model's prose,
+including while an answer is streaming. Reloading the conversation or opening
+**Approvals** recovers the same saved action if a stream or model response failed.
+Workflow activity uses the same controls and authoritative record.
+
+Only the data owner can **Send**, **Send now**, or **Cancel**. Other authorized
+conversation participants receive a read-only summary without the private body,
+recipient lists, or BCC identities. The owner reviews the subject, actual
+recipients, and body; invitations also show time, timezone, location, and Teams
+status. Bodies longer than 4,000 characters require loading the complete review
+before the card exposes Send. Model tool results omit body previews and BCC
+identities; executable controls are resolved on the server, not from tool prose.
+
+Send verifies the current subject, tenant, cloud, conversation audience, selected
+agent/action, enabled operation, and record revision. Concurrent confirmations
+claim the same saved action conditionally; they do not create independent sends.
+An expired sign-in returns to the same card after reconnect. Reconnecting or
+approving source sharing does not send the action or rerun the original agent.
+
+Email confirmation checks that the Outlook draft is still an unchanged draft,
+then sends the immutable content reviewed in SimpleChat through `me/sendMail`.
+The original Outlook draft remains so concurrent edits are not overwritten or
+deleted. **Do not send that retained draft again.** Graph acceptance does not
+prove delivery to every recipient. Cancel stops SimpleChat's pending delivery
+locally and also leaves the draft. It cannot recall an already-claimed or sent
+message or invitation.
+
+Delayed chat delivery retains the existing short, in-process timer, not a
+durable credential cache. The countdown only displays/refreshes state. After a
+lost timer or restart, an overdue interactive action requires manual review
+rather than a surprise background send. A timeout after a possible Graph write
+requires checking Outlook; SimpleChat never blindly repeats an uncertain send.
+Legacy actions without a trustworthy binding remain cancellable but must be
+prepared again before sending.
+
+Immediate delivery and marking mail as read keep their configured behavior.
+Their tool results report completion or failure; they do not produce a second
+Send button. Source-sharing, deeper-analysis, and workflow Run as decisions keep
+their own approval flows.
+
 ## Workflows
 
 Manual and scheduled runs use an explicitly selected, consenting Run as user.
@@ -189,7 +236,7 @@ Workflow mail and calendar deliveries retain identity and approval references,
 not bearer tokens. Scheduled delivery is recovered by the workflow scheduler
 and rechecks the Run as connection, current workflow revision, and destination
 before calling Graph. Manual outgoing actions notify the Run as user and are
-reviewed in workflow activity. Other group viewers cannot operate those controls.
+reviewed in workflow activity or Approvals. Other group viewers cannot operate those controls.
 Cancellation stops automatic delivery without needing remote permissions; a
 previously created Outlook draft remains in the user's mailbox. Unknown delivery
 outcomes are not retried automatically.

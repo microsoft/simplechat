@@ -1,10 +1,11 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.034
+Version: 0.261.038
 Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
 Independent Profile chat reconnect coverage implemented in: 0.261.034
+Shared pending-action renderer coverage implemented in: 0.261.038
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -125,6 +126,7 @@ class ApiFixture:
         self.stream_pending = False
         self.queue_stream_on_resume = False
         self.auto_chat_start = False
+        self.include_chat_styles = False
         self.stream_status_requests = []
         self.reattach_requests = []
         self.message_loads = []
@@ -200,6 +202,8 @@ class ApiFixture:
             self.respond(route, {"items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"], "continuation_token": None})
         elif path == "/api/m365/requests":
             self.respond(route, {"items": self.waiting_requests, "continuation_token": None, "csrf_token": self.csrf_token})
+        elif path == "/api/msgraph/pending-actions":
+            self.respond(route, {"success": True, "pending_actions": [], "continuation_token": None})
         elif path.startswith("/api/m365/requests/") and path.endswith("/connect"):
             self.chat_connect_requests.append((path, body))
             self.respond(route, {"success": True, "authorization_url": self.authorization_url})
@@ -336,12 +340,15 @@ def ui(m365_browser, monkeypatch):
     admin_start = admin_actions.index('<div class="card p-3 mb-4" id="m365-retrieval-configuration">')
     admin_end = admin_actions.index('<div class="card p-3 mb-4" id="document-action-capabilities-card">')
     admin_m365 = environment.from_string(admin_actions[admin_start:admin_end]).render(settings={})
+    approvals_template = (APP_ROOT / "templates" / "approvals.html").read_text(encoding="utf-8")
+    outgoing_start = approvals_template.index('<section class="card mt-4" aria-labelledby="m365-outgoing-actions-heading">')
+    outgoing_section = approvals_template[outgoing_start:approvals_template.index("</section>", outgoing_start) + len("</section>")]
     harnesses = {
         "/modal": f'<button type="button" id="open">Open approvals</button>{modal}',
         "/profile": profile_html,
         "/plugin": environment.get_template("_plugin_modal.html").render(settings={}),
         "/agent": environment.get_template("_agent_modal.html").render(settings={}),
-        "/approvals": f'<table id="approvalsTable"><tbody id="approvalsTableBody"></tbody></table>{modal}',
+        "/approvals": f'<table id="approvalsTable"><tbody id="approvalsTableBody"></tbody></table>{modal}{outgoing_section}',
         "/workflow-m365": '<div><div id="workflow-anchor"></div></div>',
         "/audit-m365": '<div id="conversation-details"></div>',
         "/requests-m365": '<div id="m365-waiting-requests"></div>',
@@ -353,10 +360,12 @@ def ui(m365_browser, monkeypatch):
             '<textarea id="user-input"></textarea><button type="button" id="send-btn">Send</button>'
             '<select id="prompt-select"></select><div id="prompt-selection-container"></div>'
             '<select id="model-select"><option value="test-model">Test model</option></select></main>'
+            f'{modal}'
         ),
         "/workflow-controls": (
             '<div id="workflow-activity-pending-action-controls"></div>'
             '<button id="workflow-activity-cancel-btn" class="d-none"><span>Cancel run</span></button>'
+            f'{modal}'
         ),
     }
 
@@ -402,8 +411,10 @@ def ui(m365_browser, monkeypatch):
             route.fulfill(status=404, body="")
             return
         scripts = '<script src="/static/js/chat/chat-m365-approvals.js"></script>'
-        if path in ("/chats", "/requests-m365"):
+        if path in ("/chats", "/requests-m365", "/workflow-controls", "/approvals"):
             scripts += '<script src="/static/js/chat/chat-m365-connect.js"></script>'
+        if path in ("/chats", "/workflow-controls", "/approvals"):
+            scripts += '<script src="/static/js/m365-pending-actions.js"></script>'
         if path == "/chats":
             scripts += (
                 '<script src="/static/js/toast.js"></script>'
@@ -422,8 +433,10 @@ def ui(m365_browser, monkeypatch):
         if path == "/requests-m365":
             scripts += '<script src="/static/js/approvals/m365-requests.js"></script>'
         html = (
-            '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1" />'
-            '<link rel="stylesheet" href="/static/css/bootstrap.min.css" /></head><body>'
+            '<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />'
+            '<link rel="stylesheet" href="/static/css/bootstrap.min.css" />'
+            + ('<link rel="stylesheet" href="/static/css/chats.css" />' if path == "/chats" and api.include_chat_styles else '')
+            + '</head><body>'
             f'{harnesses[path]}<script src="/static/js/bootstrap/bootstrap.bundle.min.js"></script>'
             f'{scripts}</body></html>'
         )
@@ -937,11 +950,13 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
     page.add_script_tag(url=f"{ORIGIN}/static/js/workflow/workflow-activity.js")
     action = {
         "id": "delivery", "type": "msgraph_pending_action", "status": "pending",
+        "version": "delivery-version-one", "workflow_id": "workflow",
         "action_mode": "manual", "can_send_now": False, "can_cancel": False,
     }
     page.evaluate("action => renderPendingActionControls({ pending_action: action })", action)
     controls = page.locator("#workflow-activity-pending-action-controls")
-    expect(controls.get_by_role("button")).to_have_count(0)
+    expect(controls.get_by_role("button", name="Send", exact=True)).to_have_count(0)
+    expect(controls.get_by_role("button", name="Cancel", exact=True)).to_have_count(0)
     expect(controls).to_contain_text("Only the selected Run as user")
     page.evaluate("action => renderPendingActionControls({ pending_action: action })", {
         **action, "can_send_now": True, "can_cancel": True,
@@ -951,7 +966,8 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
     page.evaluate("action => renderPendingActionControls({ pending_action: action })", {
         **action, "status": "recovery_required", "error": "Check Microsoft 365 before retrying.",
     })
-    expect(controls.get_by_role("button")).to_have_count(0)
+    expect(controls.get_by_role("button", name="Send", exact=True)).to_have_count(0)
+    expect(controls.get_by_role("button", name="Cancel", exact=True)).to_have_count(0)
     expect(controls).to_contain_text("Check Microsoft 365 before retrying.")
     page.evaluate("""() => updateWorkflowCancelButton(
         { id: 'workflow' }, { id: 'run', status: 'awaiting_approval' }

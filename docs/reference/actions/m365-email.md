@@ -4,7 +4,7 @@ title: "Microsoft 365 Email"
 description: "Read mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.032"
+version: "0.261.038"
 ---
 
 <!-- action-slug: m365-email -->
@@ -46,6 +46,37 @@ is reported separately; the app never substitutes its own identity.
 
 Workflows use the selected, consenting Run as account, not the person pressing
 Run. The account holder must approve material changes to that workflow.
+
+## Review and send a prepared message
+
+Implemented in version: **0.261.038** (`application/single_app/config.py`).
+
+Manual mode produces an action card in Chat with the recipients, subject, and
+body. Review the complete message before selecting **Send**; a long body offers
+a full-review control rather than silently approving truncated content.
+**Cancel** stops SimpleChat's delivery without needing a working mailbox token.
+The same saved action is available in **Approvals** and workflow activity.
+
+The sender alone can act on the card. Shared-conversation viewers do not receive
+the private body or recipient/BCC lists. Sign-in recovery refreshes the saved
+card and requires another explicit Send; it never generates a replacement draft
+or sends merely because sign-in succeeded.
+
+SimpleChat checks the draft's version, then sends the content reviewed on the
+card. The original Outlook draft remains after both Send and Cancel, so external
+edits are not deleted. **Do not send that retained draft again.** A successful
+send means Microsoft 365 accepted the message for sending, not that every
+recipient has received it.
+
+Delayed mode provides **Send now** and **Cancel** while delivery remains
+unclaimed. Opening a card or reaching zero on its countdown never submits a
+send. A lost chat timer requires renewed manual review. If delivery has an
+unknown outcome, check Outlook before preparing another message; the app will
+not automatically repeat the potentially successful send.
+
+Automatic send mode and **Mark message as read** keep their immediate behavior
+and do not create an extra confirmation. A legacy pending action without enough
+stored authorization context must be cancelled and prepared again.
 
 ## Related
 

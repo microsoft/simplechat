@@ -4,6 +4,7 @@ title: "Microsoft Graph"
 description: "Full guide for the Microsoft Graph SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.038"
 ---
 
 <!-- action-slug: msgraph -->
@@ -47,6 +48,19 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 - "Draft a reply to the latest unread message from Contoso and leave it for my review."
 - "Find free time tomorrow afternoon and create a Teams meeting invite for these attendees."
 - "Search the directory for Alex Chen and show the likely match with email address."
+
+## Outgoing action review
+
+From **0.261.038**, existing combined Graph actions use the same Chat,
+Approvals, and workflow review cards as the separate [Email](../m365-email/)
+and [Calendar](../m365-calendar/) actions. Manual operations require the data
+owner's Send; delayed operations expose Send now and Cancel until claimed.
+Reconnecting refreshes the existing action instead of creating another draft.
+
+Email Send uses the reviewed content and retains the original Outlook draft.
+Cancel also leaves the draft and cannot recall a completed send. Check Outlook
+before preparing another action when the card reports an unknown outcome.
+Historical actions with no trustworthy binding must be prepared again.
 
 ## Troubleshooting
 

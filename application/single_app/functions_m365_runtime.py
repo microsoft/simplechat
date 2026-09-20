@@ -2,6 +2,7 @@
 """Web/workflow ownership layer for Microsoft 365 execution and disclosures."""
 
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 import hashlib
 import json
 import logging
@@ -10,7 +11,7 @@ from uuid import uuid4
 
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from azure.core import MatchConditions
-from flask import g, has_request_context, request
+from flask import g, has_request_context, request, session
 
 from config import (
     TENANT_ID,
@@ -289,7 +290,9 @@ def attach_m365_message_provenance(message):
         grant["approval_id"] for grant in getattr(g, "m365_source_grants", {}).values()
         if grant.get("approval_id")
     ))
-    return message
+    # The reference collector is below runtime/bootstrap and contains no storage handles.
+    from functions_m365_action_cards import attach_pending_action_references
+    return attach_pending_action_references(message)
 
 
 def resolve_m365_workflow_binding(context, manifests, policies):
@@ -531,53 +534,137 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
     from config import cosmos_msgraph_pending_actions_container
     from functions_m365_pending_delivery import configure_m365_pending_delivery
     from functions_notifications import create_notification
+    from functions_m365_transport import get_m365_cloud_config
+
+    def capture_agent_reference(context, action_id):
+        selection = getattr(g, "m365_selected_agent_ref", None) if has_request_context() else None
+        if not isinstance(selection, dict) or not selection:
+            raise M365PolicyError("m365_delivery_context_invalid", "Select an authorized agent before preparing an outgoing action.")
+        if action_id not in resolve_m365_action_selection(context):
+            raise M365PolicyError("m365_action_not_selected", "This outgoing action is no longer selected.")
+        return {
+            key: deepcopy(selection[key])
+            for key in ("id", "name", "is_global", "is_group", "group_id")
+            if key in selection
+        }
+
+    def authorize_conversation(viewer, conversation_id):
+        return resolve_m365_audit_conversation_id(viewer, conversation_id)
+
+    def authorize_view(action, viewer):
+        if action.get("user_id") == viewer:
+            return True
+        delivery = action.get("m365_execution") or {}
+        if not isinstance(delivery, dict) or not isinstance(delivery.get("context"), dict):
+            return False
+        snapshot = delivery["context"]
+        if snapshot.get("tenant_id") != TENANT_ID:
+            return False
+        if not snapshot.get("shared") or not action.get("conversation_id"):
+            return False
+        try:
+            authorize_m365_conversation_audit(viewer, action["conversation_id"])
+            if snapshot.get("workflow_id"):
+                workflow = load_current_workflow(delivery["workflow_ref"])
+                conversation, _access, shared = workflow_destination_access(
+                    snapshot["actor_user_id"], workflow, action["conversation_id"],
+                )
+            else:
+                conversation, _access, shared = _conversation_access(viewer, action["conversation_id"])
+            return conversation is not None and _audience_version(conversation, shared) == snapshot.get("audience_version")
+        except (PermissionError, LookupError, M365PolicyError):
+            return False
 
     def notify_delivery(action):
-        context = action["m365_execution"]["context"]
-        query = {
-            "workflowId": action["workflow_id"], "runId": action["run_id"],
-            "scope": "group" if context.get("group_id") else "personal",
-        }
-        if context.get("group_id"):
-            query["groupId"] = context["group_id"]
+        delivery = action.get("m365_execution")
+        context = delivery.get("context") if isinstance(delivery, dict) else None
+        context = context if isinstance(context, dict) else {}
+        if action.get("workflow_id"):
+            query = {
+                "workflowId": action["workflow_id"], "runId": action["run_id"],
+                "scope": "group" if context.get("group_id") else "personal",
+            }
+            if context.get("group_id"):
+                query["groupId"] = context["group_id"]
+            link_url = f"/workflow-activity?{urlencode(query)}"
+        elif action.get("conversation_id"):
+            link_url = f"/chats?{urlencode({'conversationId': action['conversation_id'], 'm365_pending_action': action['id']})}"
+        else:
+            link_url = "/approvals"
         pending = action.get("status") == "pending"
         return create_notification(
             user_id=action["user_id"], notification_type="system_announcement",
             title="Microsoft 365 action awaiting review" if pending else "Microsoft 365 delivery needs attention",
             message=(
-                "Review the outgoing mail or calendar action in workflow activity. Only the Run as user can send or cancel it."
+                "Review the outgoing mail or calendar action. Only its data owner can send or cancel it."
                 if pending else "Delivery did not complete. Review its status before starting a new action."
             ),
-            link_url=f"/workflow-activity?{urlencode(query)}",
-            metadata={"m365_pending_action_id": action["id"], "workflow_id": action["workflow_id"]},
+            link_url=link_url,
+            metadata={
+                "m365_pending_action_id": action["id"],
+                "workflow_id": action.get("workflow_id"), "conversation_id": action.get("conversation_id"),
+            },
         )
 
     @contextmanager
-    def delivery_context(action):
+    def delivery_context(action, *, automatic=False):
         delivery = action["m365_execution"]
         context = M365ExecutionContext(**delivery["context"])
         with nullcontext() if has_request_context() else request_context_factory("/api/internal/m365-delivery"):
-            previous = getattr(g, "m365_workflow", None)
-            g.m365_workflow = load_current_workflow(delivery["workflow_ref"])
+            if context.tenant_id != TENANT_ID or context.data_user_id != action.get("user_id"):
+                raise M365PolicyError("m365_principal_mismatch", "The action belongs to a different tenant or data owner.")
+            current_endpoint = get_m365_cloud_config().graph_base_url.rstrip("/").removesuffix("/v1.0")
+            recorded_endpoint = str(action.get("graph_endpoint") or "").rstrip("/").removesuffix("/v1.0")
+            if current_endpoint != recorded_endpoint:
+                raise M365PolicyError("m365_context_changed", "The Microsoft 365 cloud changed. Prepare this action again.")
+            previous = {
+                name: value for name, value in vars(g).items()
+                if name.startswith("m365_")
+            }
             try:
+                if delivery.get("kind") == "workflow":
+                    g.m365_workflow = load_current_workflow(delivery["workflow_ref"])
+                else:
+                    if context.actor_user_id != context.data_user_id or not context.conversation_id:
+                        raise M365PolicyError("m365_principal_mismatch", "A direct action must use its original data owner.")
+                    if not automatic and (
+                        not isinstance(session.get("user"), dict)
+                        or session["user"].get("oid") != context.data_user_id
+                        or session["user"].get("tid") != context.tenant_id
+                    ):
+                        raise M365PolicyError("m365_principal_mismatch", "Sign in as the owner of this outgoing action.")
+                    conversation, _access, shared = _conversation_access(context.actor_user_id, context.conversation_id)
+                    if conversation is None or _audience_version(conversation, shared) != context.audience_version:
+                        raise M365PolicyError("m365_context_changed", "The conversation or audience changed. Prepare the action again.")
+                    g.m365_selected_agent_ref = deepcopy(delivery.get("agent_ref") or {})
                 with m365_execution_context(context):
-                    if not validate_m365_workflow_execution(context):
+                    if context.workflow_id and not validate_m365_workflow_execution(context):
                         raise M365PolicyError("m365_workflow_changed", "The workflow or destination changed after this delivery was prepared.")
-                    request_record = cosmos_m365_execution_runs_container.read_item(
-                        context.request_id, partition_key=context.data_user_id,
+                    source = "email" if action.get("operation") == "send_mail" else "calendar"
+                    current_action = resolve_m365_action_config(
+                        context, delivery["action_id"], source,
                     )
-                    if request_record.get("status") in {"cancelled", "recovery_required", "failed"}:
-                        raise M365PolicyError("m365_execution_stopped", "This workflow execution no longer permits delivery.")
+                    if delivery.get("action_type") != current_action.get("type"):
+                        raise M365PolicyError("m365_action_changed", "The outgoing action changed type. Prepare it again.")
+                    if context.workflow_id or automatic:
+                        request_record = cosmos_m365_execution_runs_container.read_item(
+                            context.request_id, partition_key=context.data_user_id,
+                        )
+                        if request_record.get("status") in {"cancelled", "recovery_required", "failed"}:
+                            raise M365PolicyError("m365_execution_stopped", "This execution no longer permits automatic delivery.")
                     yield context
             finally:
-                if previous is None:
-                    delattr(g, "m365_workflow")
-                else:
-                    g.m365_workflow = previous
+                for name in list(vars(g)):
+                    if name.startswith("m365_"):
+                        delattr(g, name)
+                for name, value in previous.items():
+                    setattr(g, name, value)
 
     configure_m365_pending_delivery(
         container=cosmos_msgraph_pending_actions_container,
         context_scope=delivery_context, log_event=log_event, notification_sender=notify_delivery,
+        capture_agent_reference=capture_agent_reference, view_authorizer=authorize_view,
+        conversation_authorizer=authorize_conversation,
     )
 
 

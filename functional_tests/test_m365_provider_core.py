@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for source-bounded Microsoft 365 providers and file evidence.
-Version: 0.261.034
+Version: 0.261.038
 Implemented in: 0.261.029
 
 External Graph, authentication, logging, and storage I/O is mocked. The tests
@@ -621,7 +621,7 @@ def graph_plugins(monkeypatch, execution):
     pending.build_calendar_pending_action_summary = lambda payload: {"subject": payload["subject"]}
     pending.build_mail_pending_action_summary = lambda payload: {"subject": payload["subject"]}
     pending.create_msgraph_pending_action = Mock(side_effect=lambda user_id, **kwargs: {"id": "pending-1", "user_id": user_id, **kwargs})
-    pending.sanitize_msgraph_pending_action_for_client = lambda action: action
+    pending.sanitize_msgraph_pending_action_for_client = lambda action, **kwargs: action
     pending.schedule_msgraph_pending_action_auto_commit = Mock()
     dependencies = {
         "functions_authentication": types.SimpleNamespace(get_current_user_info=lambda: {"userId": execution.actor_user_id}),
@@ -1467,7 +1467,9 @@ def test_legacy_mail_pagination_preserves_result_shapes_and_delegated_scopes(exe
 ])
 def test_typed_email_reuses_manual_and_auto_delivery_business_operations(execution, graph_plugins, mode, expected_scope):
     modules, pending = graph_plugins
-    response = FakeResponse({"id": "draft-1", "subject": "Subject"}, status=201) if mode == "draft_manual" else FakeResponse(body=b"", status=202)
+    response = FakeResponse(
+        {"id": "draft-1", "subject": "Subject", "changeKey": "draft-v1", "isDraft": True}, status=201,
+    ) if mode == "draft_manual" else FakeResponse(body=b"", status=202)
     request = Mock(return_value=response)
     token_provider = Mock(return_value={"access_token": "unit-test-token"})
     client = M365Transport(

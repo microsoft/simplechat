@@ -5,6 +5,7 @@ import threading
 import time
 
 import app_settings_cache
+from azure.core.exceptions import AzureError
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
 from config import *
@@ -61,6 +62,7 @@ from functions_notifications import mark_collaboration_message_notifications_rea
 from functions_message_artifacts import make_json_serializable
 from functions_m365_runtime import read_pending_m365_chat_request
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_msgraph_pending_actions import get_chat_pending_action_cards, hydrate_m365_pending_action_cards
 from functions_simplechat_operations import (
     attach_generated_file_approval_state,
     list_pending_generated_file_approvals_for_user,
@@ -250,12 +252,79 @@ def get_user_state_or_none(user_id, conversation_id):
 
 
 def _build_collaboration_event(conversation_id, event_type, payload):
+    payload = dict(payload)
+    if isinstance(payload.get('message'), dict):
+        message = dict(payload['message'])
+        message.pop('m365_pending_actions', None)
+        if isinstance(message.get('metadata'), dict):
+            message['metadata'] = dict(message['metadata'])
+            message['metadata'].pop('m365_pending_actions', None)
+        payload['message'] = message
     return {
         'conversation_id': conversation_id,
         'event_type': event_type,
         'occurred_at': utc_now_iso(),
         'payload': payload,
     }
+
+
+def _hydrate_collaboration_stream_actions(payload, viewer_user_id, conversation_id):
+    """Resolve only record IDs, then remap the UI to the visible shared conversation."""
+    creation = payload.get('type') == 'm365_pending_action'
+    snapshots = [payload.get('pending_action')] if creation else payload.get('m365_pending_actions')
+    if snapshots is None and not creation:
+        return payload
+    if not isinstance(snapshots, list):
+        raise ValueError('Invalid Microsoft 365 action references.')
+    action_ids = [card.get('id') if isinstance(card, dict) else None for card in snapshots]
+    cards = {}
+    for offset in range(0, len(action_ids), 100):
+        resolved = get_chat_pending_action_cards(
+            viewer_user_id, conversation_id,
+            request_id=payload.get('request_id') or None,
+            action_ids=action_ids[offset:offset + 100],
+        )
+        cards.update((card['id'], {**card, 'conversation_id': conversation_id}) for card in resolved)
+    result = {**payload, 'conversation_id': conversation_id, 'conversation_kind': COLLABORATION_KIND}
+    if creation:
+        if not cards:
+            return None
+        result['pending_action'] = next(iter(cards.values()))
+    else:
+        result['m365_pending_actions'] = list(cards.values())
+    return result
+
+
+def _collaboration_events_for_viewer(events, viewer_user_id, conversation_id):
+    """Shared caches carry references; private action details are resolved per subscriber."""
+    for event_text in events:
+        data_lines = [line[5:].lstrip() for line in event_text.splitlines() if line.startswith('data:')]
+        if not data_lines:
+            yield event_text
+            continue
+        event = json.loads('\n'.join(data_lines))
+        payload = event.get('payload')
+        if isinstance(payload, dict) and isinstance(payload.get('message'), dict):
+            try:
+                messages = hydrate_m365_pending_action_cards(
+                    [payload['message']], viewer_user_id, conversation_id,
+                )
+            except (M365PolicyError, PermissionError, AzureError, ValueError) as error:
+                log_event(
+                    '[COLLABORATION] Shared Microsoft 365 action cards could not be projected.',
+                    extra={'conversation_id': conversation_id, 'exception_type': type(error).__name__},
+                    level=logging.WARNING,
+                )
+                failure = _build_collaboration_event(
+                    conversation_id, 'collaboration.m365.pending_action',
+                    {'error': 'm365_pending_actions_unavailable'},
+                )
+                yield f'data: {json.dumps(failure)}\n\n'
+                return
+            event = {**event, 'payload': {**payload, 'message': messages[0]}}
+            yield f'data: {json.dumps(make_json_serializable(event))}\n\n'
+        else:
+            yield event_text
 
 
 def _require_collaboration_feature_enabled():
@@ -1281,6 +1350,7 @@ def register_route_backend_collaboration(bp):
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
             attach_generated_file_approval_state(messages, current_user['user_id'])
+            messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
             return jsonify({'messages': messages}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
@@ -1591,6 +1661,8 @@ def register_route_backend_collaboration(bp):
                 message_content,
             )
             stream_request_payload['m365_collaboration_message_id'] = user_message_doc['id']
+            pending_cards = {}
+            pending_request_id = None
 
             def collaboration_stream_error(error_message, **extra_fields):
                 """Serialize a stream error that stays attributed to this shared conversation.
@@ -1606,6 +1678,8 @@ def register_route_backend_collaboration(bp):
                     message_persisted=True,
                     conversation_id=conversation_id,
                     conversation_kind=COLLABORATION_KIND,
+                    m365_pending_actions=list(pending_cards.values()) or None,
+                    request_id=pending_request_id,
                     **extra_fields,
                 )
 
@@ -1645,6 +1719,7 @@ def register_route_backend_collaboration(bp):
                             return
 
                         def transform_event_block(event_block):
+                            nonlocal pending_request_id
                             normalized_event_block = str(event_block or '')
                             if not normalized_event_block.strip():
                                 return None
@@ -1664,6 +1739,34 @@ def register_route_backend_collaboration(bp):
                                 stream_payload = json.loads(json_text)
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
+
+                            if stream_payload.get('type') == 'm365_pending_action' or 'm365_pending_actions' in stream_payload:
+                                stream_payload = _hydrate_collaboration_stream_actions(
+                                    stream_payload, current_user['user_id'], conversation_id,
+                                )
+                                if stream_payload is None:
+                                    return None
+                                pending_request_id = stream_payload.get('request_id') or pending_request_id
+                                cards = (
+                                    [stream_payload['pending_action']]
+                                    if stream_payload.get('type') == 'm365_pending_action'
+                                    else stream_payload['m365_pending_actions']
+                                )
+                                pending_cards.update((card['id'], card) for card in cards)
+                                if stream_payload.get('type') == 'm365_pending_action':
+                                    stream_payload['m365_source_user_message_id'] = stream_payload.get('user_message_id')
+                                    stream_payload['user_message_id'] = serialized_user_message.get('id')
+                                    COLLABORATION_EVENT_REGISTRY.publish(
+                                        conversation_id,
+                                        _build_collaboration_event(
+                                            conversation_id, 'collaboration.m365.pending_action',
+                                            {
+                                                'm365_pending_action_ids': [card['id'] for card in cards],
+                                                'request_id': pending_request_id,
+                                            },
+                                        ),
+                                    )
+                                    return f'data: {json.dumps(make_json_serializable(stream_payload))}\n\n'
 
                             if stream_payload.get('type') in {'m365_approval_required', 'm365_sign_in_required'}:
                                 pending_payload = {
@@ -1693,7 +1796,7 @@ def register_route_backend_collaboration(bp):
                                 return None
 
                             if not stream_payload.get('done'):
-                                return normalized_event_block + '\n\n'
+                                return f'data: {json.dumps(make_json_serializable(stream_payload))}\n\n'
 
                             source_message_id = str(stream_payload.get('message_id') or '').strip()
                             if stream_payload.get('cancelled') or stream_payload.get('canceled'):
@@ -1786,6 +1889,9 @@ def register_route_backend_collaboration(bp):
                                     },
                                 ),
                             )
+                            serialized_assistant_message = hydrate_m365_pending_action_cards(
+                                [serialized_assistant_message], current_user['user_id'], conversation_id,
+                            )[0]
 
                             transformed_payload = {
                                 **stream_payload,
@@ -1812,6 +1918,9 @@ def register_route_backend_collaboration(bp):
                                 'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
                                 'image_url': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
                                 'reload_messages': bool(stream_payload.get('error')),
+                                'm365_pending_actions': serialized_assistant_message.get(
+                                    'm365_pending_actions', list(pending_cards.values()),
+                                ),
                             }
                             return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 
@@ -2063,9 +2172,11 @@ def register_route_backend_collaboration(bp):
             )
 
             start_index = request.args.get('start_index', 0)
-            session = COLLABORATION_EVENT_REGISTRY.get_session(conversation_id)
+            event_session = COLLABORATION_EVENT_REGISTRY.get_session(conversation_id)
             return Response(
-                stream_with_context(session.iter_events(start_index=start_index)),
+                stream_with_context(_collaboration_events_for_viewer(
+                    event_session.iter_events(start_index=start_index), current_user['user_id'], conversation_id,
+                )),
                 mimetype='text/event-stream',
                 headers={
                     'Cache-Control': 'no-cache',

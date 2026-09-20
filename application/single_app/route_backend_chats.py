@@ -90,6 +90,7 @@ import builtins
 import asyncio, types
 import ast
 import csv
+from functools import wraps
 import io
 import inspect
 import json
@@ -210,6 +211,10 @@ from functions_citation_tracking import (
     resolve_citation_location,
 )
 from functions_collaboration import build_conversation_participation_context
+from functions_m365_action_cards import (
+    get_request_pending_action_references,
+    m365_action_card_events,
+)
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_m365_execution import get_m365_execution_context
 from functions_m365_runtime import (
@@ -221,6 +226,7 @@ from functions_m365_runtime import (
     workflow_m365_manifests,
     record_m365_auth_wait,
 )
+import functions_msgraph_pending_actions
 from m365_interaction import M365SignInRequired
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
@@ -8382,6 +8388,75 @@ class BackgroundStreamBridge:
                 break
 
 
+def _attach_request_m365_pending_action_cards(payload, viewer_user_id):
+    """Resolve creation references through the viewer-authorized record service."""
+    references = get_request_pending_action_references()
+    if not references:
+        return payload
+    conversation_id = references[0]["conversation_id"]
+    request_id = references[0]["request_id"]
+    cards = []
+    for offset in range(0, len(references), 100):
+        cards.extend(functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id,
+            conversation_id,
+            request_id=request_id,
+            action_ids=[reference["id"] for reference in references[offset:offset + 100]],
+        ))
+    return {
+        **payload,
+        "conversation_id": payload.get("conversation_id") or conversation_id,
+        "request_id": request_id,
+        "m365_pending_actions": cards,
+    }
+
+
+def _m365_pending_action_cards_error(error):
+    """A projection failure must not look like an empty pending-action inbox."""
+    log_event(
+        "[STREAMING] Saved Microsoft 365 action cards could not be loaded.",
+        extra={"exception_type": type(error).__name__},
+        level=logging.ERROR,
+    )
+    return {
+        "error": "m365_pending_actions_unavailable",
+        "message": (
+            "Microsoft 365 actions were saved, but their cards could not be loaded. "
+            "Reload the conversation to recover them. Do not repeat the request."
+        ),
+    }
+
+
+def _with_m365_pending_action_cards(view):
+    """Keep JSON successes, errors, and consent waits on the same card contract."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        result = view(*args, **kwargs)
+        references = get_request_pending_action_references()
+        if not references:
+            return result
+        response = current_app.make_response(result)
+        payload = response.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return result
+        try:
+            payload = _attach_request_m365_pending_action_cards(payload, get_current_user_id())
+        except Exception as error:
+            failure = _m365_pending_action_cards_error(error)
+            payload.pop("m365_pending_actions", None)
+            payload["m365_pending_actions_error"] = failure
+            if not payload.get("error"):
+                payload["error"] = failure["message"]
+            payload["conversation_id"] = payload.get("conversation_id") or references[0]["conversation_id"]
+            payload["request_id"] = payload.get("request_id") or references[0]["request_id"]
+            if response.status_code < 400:
+                response.status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+        response.set_data(current_app.json.dumps(payload))
+        return response
+
+    return wrapped
+
+
 def _extract_sse_event_payload(event_text):
     """Parse JSON data lines from a raw SSE event string."""
     if not isinstance(event_text, str):
@@ -8399,6 +8474,40 @@ def _extract_sse_event_payload(event_text):
         return json.loads('\n'.join(data_lines))
     except (TypeError, ValueError):
         return None
+
+
+def _refresh_m365_pending_action_event(event_text, viewer_user_id, conversation_id):
+    """Replay IDs through current authorization/state, not cached card snapshots."""
+    payload = _extract_sse_event_payload(event_text)
+    if not isinstance(payload, dict):
+        return event_text
+    is_creation = payload.get("type") == "m365_pending_action"
+    if is_creation:
+        snapshots = [payload.get("pending_action")]
+    elif "m365_pending_actions" in payload:
+        snapshots = payload.get("m365_pending_actions")
+    else:
+        return event_text
+    if not isinstance(snapshots, list):
+        raise ValueError("Invalid cached Microsoft 365 action-card event.")
+    action_ids = [card.get("id") if isinstance(card, dict) else None for card in snapshots]
+    cards = {}
+    for offset in range(0, len(action_ids), 100):
+        resolved = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id, conversation_id,
+            request_id=payload.get("request_id") or None,
+            action_ids=action_ids[offset:offset + 100],
+        )
+        cards.update((card["id"], card) for card in resolved)
+    if is_creation:
+        if not cards:
+            return None
+        payload["pending_action"] = next(iter(cards.values()))
+        payload.pop("m365_pending_actions", None)
+    else:
+        payload["m365_pending_actions"] = list(cards.values())
+    payload["conversation_id"] = conversation_id
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 class ActiveConversationStreamSession:
@@ -14643,65 +14752,108 @@ def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
+        viewer_user_id = get_current_user_id()
+        stream_user_message_id = None
 
         def publish_background_event(event_text):
+            nonlocal stream_user_message_id
             if event_text is None:
                 return False
+
+            payload = _extract_sse_event_payload(event_text)
+            if isinstance(payload, dict):
+                if payload.get('user_message_id'):
+                    stream_user_message_id = payload['user_message_id']
+                if payload.get('done') or payload.get('error') or payload.get('cancelled') or payload.get('canceled'):
+                    try:
+                        enriched = _attach_request_m365_pending_action_cards(payload, viewer_user_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        enriched = {**payload, 'm365_pending_actions_error': failure}
+                        enriched.pop('m365_pending_actions', None)
+                        if not enriched.get('error'):
+                            enriched['error'] = failure['message']
+                        references = get_request_pending_action_references()
+                        if references:
+                            enriched['conversation_id'] = enriched.get('conversation_id') or references[0]['conversation_id']
+                            enriched['request_id'] = enriched.get('request_id') or references[0]['request_id']
+                    if enriched is not payload:
+                        event_text = f"data: {json.dumps(enriched)}\n\n"
 
             if stream_session:
                 stream_session.publish(event_text)
 
             return stream_bridge.push(event_text)
 
+        def publish_pending_action(reference):
+            cards = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+                viewer_user_id,
+                reference['conversation_id'],
+                request_id=reference['request_id'],
+                action_ids=[reference['id']],
+            )
+            for card in cards:
+                payload = {
+                    'type': 'm365_pending_action',
+                    'pending_action': card,
+                    'conversation_id': reference['conversation_id'],
+                    'request_id': reference['request_id'],
+                }
+                if stream_user_message_id:
+                    payload['user_message_id'] = stream_user_message_id
+                publish_background_event(f"data: {json.dumps(payload)}\n\n")
+
         @copy_current_request_context
         def stream_worker():
-            try:
-                generator_signature = inspect.signature(event_generator_factory)
-                if 'publish_background_event' in generator_signature.parameters:
-                    event_iterator = event_generator_factory(
-                        publish_background_event=publish_background_event
-                    )
-                else:
-                    event_iterator = event_generator_factory()
+            with m365_action_card_events(publish_pending_action):
+                event_iterator = None
+                try:
+                    generator_signature = inspect.signature(event_generator_factory)
+                    if 'publish_background_event' in generator_signature.parameters:
+                        event_iterator = event_generator_factory(
+                            publish_background_event=publish_background_event
+                        )
+                    else:
+                        event_iterator = event_generator_factory()
 
-                terminal_success = False
-                for event in event_iterator:
-                    publish_background_event(event)
-                    if isinstance(event, str) and event.startswith("data:"):
-                        try:
-                            payload = json.loads(event[5:].strip())
-                        except json.JSONDecodeError:
-                            continue
+                    terminal_success = False
+                    for event in event_iterator:
+                        publish_background_event(event)
+                        payload = _extract_sse_event_payload(event)
                         if isinstance(payload, dict) and payload.get("done"):
                             terminal_success = not (
                                 payload.get("error") or payload.get("cancelled") or payload.get("canceled")
                             )
-                complete_m365_request(success=terminal_success)
-            except M365ApprovalRequired as error:
-                publish_background_event(
-                    f"data: {json.dumps(record_m365_pending(error))}\n\n"
-                )
-            except Exception as e:
-                debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
-                stream_status = stream_session.get_status_snapshot() if stream_session else {}
-                log_event(
-                    f"[STREAMING] Background worker error: {e}",
-                    extra={
-                        'conversation_id': stream_status.get('conversation_id'),
-                        'user_id': stream_status.get('user_id'),
-                        'status': stream_status.get('status'),
-                        'event_count': stream_status.get('event_count'),
-                        'content_event_count': stream_status.get('content_event_count'),
-                    },
-                    level=logging.ERROR,
-                    exceptionTraceback=True,
-                )
-                error_event = build_stream_error_event()
-                publish_background_event(error_event)
-            finally:
-                if stream_session:
-                    stream_session.close()
-                stream_bridge.finish()
+                    complete_m365_request(success=terminal_success)
+                except M365ApprovalRequired as error:
+                    publish_background_event(
+                        f"data: {json.dumps(record_m365_pending(error))}\n\n"
+                    )
+                except Exception as e:
+                    debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
+                    stream_status = stream_session.get_status_snapshot() if stream_session else {}
+                    log_event(
+                        f"[STREAMING] Background worker error: {e}",
+                        extra={
+                            'conversation_id': stream_status.get('conversation_id'),
+                            'user_id': stream_status.get('user_id'),
+                            'status': stream_status.get('status'),
+                            'event_count': stream_status.get('event_count'),
+                            'content_event_count': stream_status.get('content_event_count'),
+                        },
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    error_event = build_stream_error_event()
+                    publish_background_event(error_event)
+                finally:
+                    try:
+                        if event_iterator is not None and callable(getattr(event_iterator, 'close', None)):
+                            event_iterator.close()
+                    finally:
+                        if stream_session:
+                            stream_session.close()
+                        stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
         if executor:
@@ -15663,7 +15815,7 @@ def register_route_backend_chats(bp):
         title_updated = _set_initial_conversation_title(conversation_item, user_message)
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
             if callable(publish_background_event):
                 publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
@@ -16258,7 +16410,7 @@ def register_route_backend_chats(bp):
             conversation_item,
             document_action_citation_tracking['cited_hybrid_citations'],
         )
-        cosmos_conversations_container.upsert_item(conversation_item)
+        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
             '[CHAT_DOCUMENT_ACTION] Execution completed | '
@@ -16319,6 +16471,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_document_action_api():
         payload, status_code = execute_document_action_chat_request()
         return jsonify(payload), status_code
@@ -16407,6 +16560,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_analyze_api():
         payload, status_code = execute_analyze_chat_request()
         return jsonify(payload), status_code
@@ -16549,7 +16703,7 @@ def register_route_backend_chats(bp):
             )
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
@@ -16621,6 +16775,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_api():
         publish_background_event = getattr(
             g,
@@ -17807,7 +17962,7 @@ def register_route_backend_chats(bp):
                 _set_initial_conversation_title(conversation_item, user_message)
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                 invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
@@ -17907,7 +18062,7 @@ def register_route_backend_chats(bp):
 
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                         # Return a normal 200 with a special field: blocked=True
@@ -18909,7 +19064,7 @@ def register_route_backend_chats(bp):
                         response_image_url = generated_image_url
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_generated")
 
                     return jsonify({
@@ -20911,7 +21066,7 @@ def register_route_backend_chats(bp):
                 citation_tracking['cited_hybrid_citations'],
             )
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
 
             # ---------------------------------------------------------------------
@@ -21090,6 +21245,9 @@ def register_route_backend_chats(bp):
                 'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
                 'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
+                'm365_pending_actions': payload.get('m365_pending_actions', []),
+                'request_id': payload.get('request_id'),
+                'metadata': payload.get('metadata', {}),
                 'agent_display_name': payload.get('agent_display_name'),
                 'agent_name': payload.get('agent_name'),
                 'full_content': payload.get('reply', ''),
@@ -22374,7 +22532,7 @@ def register_route_backend_chats(bp):
                     title_updated = _set_initial_conversation_title(conversation_item, user_message)
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
                     if title_updated:
                         yield _build_conversation_metadata_stream_event(conversation_item)
@@ -22535,7 +22693,7 @@ def register_route_backend_chats(bp):
                             cosmos_messages_container.upsert_item(safety_doc)
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                            cosmos_conversations_container.upsert_item(conversation_item)
+                            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                             invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                             final_data = make_json_serializable({
@@ -24208,7 +24366,7 @@ def register_route_backend_chats(bp):
                             conversation_item,
                             partial_citation_tracking['cited_hybrid_citations'],
                         )
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
 
@@ -25089,7 +25247,7 @@ def register_route_backend_chats(bp):
                             f"Skipping personal chat completion notification for conversation {conversation_id} because chat_type={conversation_item.get('chat_type')}"
                         )
 
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_completed")
 
                     # Send final message with metadata
@@ -25293,8 +25451,8 @@ def register_route_backend_chats(bp):
                                     'cited_hybrid_citations'
                                 ],
                             )
-                            cosmos_conversations_container.upsert_item(
-                                conversation_item
+                            cosmos_conversations_container.replace_item(
+                                item=conversation_item['id'], body=conversation_item,
                             )
                             invalidate_conversation_cache_for_item(
                                 conversation_item,
@@ -25489,7 +25647,18 @@ def register_route_backend_chats(bp):
             detach_recorded = False
             try:
                 for event in stream_session.iter_events():
-                    yield event
+                    try:
+                        event = _refresh_m365_pending_action_event(event, user_id, conversation_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        yield build_stream_error_event(
+                            failure["message"],
+                            conversation_id=conversation_id,
+                            m365_pending_actions_error=failure,
+                        )
+                        return
+                    if event is not None:
+                        yield event
                 stream_consumed = True
             except GeneratorExit:
                 detach_status = stream_session.mark_consumer_detached(reason='reattach_disconnect') or {}
