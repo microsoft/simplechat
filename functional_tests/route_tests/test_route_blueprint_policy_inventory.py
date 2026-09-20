@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.113
+Version: 0.261.121
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 
@@ -121,6 +121,12 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_workflows.py", "get_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "get_group_workflow_flow"): ("login_required", "user_required"),
+    ("route_backend_workflows.py", "get_user_workflow_run_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "get_group_workflow_run_flow"): ("login_required", "user_required"),
+    ("route_backend_workflows.py", "preview_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "preview_group_workflow_flow"): ("login_required", "user_required"),
     ("route_backend_analysis_results.py", "get_saved_analysis_result"): ("login_required", "user_required"),
     ("app.py", "session_heartbeat"): ("login_required",),
     ("app.py", "list_semantic_kernel_plugins"): ("login_required", "admin_required"),

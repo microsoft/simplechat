@@ -73,11 +73,41 @@ Declare promised deliverables under **Final outputs**. This prevents a run from
 reporting completion when a selected path did not produce the required result.
 Structured definitions require durable execution and preserve their choices
 across waits and restarts. For each and Collect are added in **0.261.117** below.
-Repeat until is added in **0.261.120** below. M5A read-only Flow and M5B visual
-authoring remain separate later milestones.
+Repeat until is added in **0.261.120** below. Version **0.261.121** adds the
+read-only Flow inspection described next. Direct visual authoring remains a
+separate later milestone; executable edits still happen in List.
 
 See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for condition semantics, execution identity, limits, and compatibility.
+
+## Preview the structure without changing execution
+
+In **0.261.121**, choose **View Flow for ...** beside a saved structured
+workflow to see its branches, joins, routes, and single loop templates.
+This is independent of Edit, so an authorized reader can inspect a saved
+definition while it has an active run.
+
+While authoring, choose **Show Flow preview** to check List changes before
+saving. The preview starts off. It appears alongside List on a wide screen;
+on a narrow screen, **Hide Flow preview** returns to List. **Unsaved draft**
+means the picture reflects the editor, not a saved workflow or a past run.
+Invalid structural edits keep your draft and replace the outdated picture
+with an error. A valid diagram is not permission to execute.
+
+Select a node to read its configuration, condition, contracts, or source
+selection. Solid arrows describe execution order. Dashed arrows describe
+declared data connections for the selected detail page, not extra execution
+paths. Expand a loop to see its template once, not one box per item or round.
+
+Use **Structure list** for a textual view of the same definition. In the
+diagram, arrow keys move focus, Enter selects, and **Inspect selected node**
+opens the inspection focus target. **Return to selected node** takes focus
+back. Pan, zoom, fit, collapse, and moving a box are temporary viewing choices:
+they do not make the draft dirty, save it, invalidate approval, or restart work.
+
+Saved Flow has no historical run coloring. To see what a run actually used,
+open its [frozen-definition Flow]({{ '/guides/trigger-a-workflow/' | relative_url }}#inspect-a-runs-frozen-flow)
+rather than comparing it with today's edited definition.
 
 ## Process a frozen collection
 
