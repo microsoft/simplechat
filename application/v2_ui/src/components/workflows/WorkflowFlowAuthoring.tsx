@@ -268,7 +268,7 @@ export function WorkflowFlowAuthoring({
                 onSelect={onSelect} onCollapse={collapse} onInspect={inspect}
                 helpText="Arrow keys navigate; Enter selects a block. Configure selected block moves focus to its fields. Solid execution arrows appear only for the current compiler-validated draft. Dashed lines are declared relationships, not execution paths. Add, move, remove, and binding controls change the draft; dragging and view buttons change layout only. Touch scrolling and browser zoom remain available." />
             <section ref={configurationRef} tabIndex={-1} className="min-w-0 space-y-3 rounded-xl border border-edge p-3"
-                aria-label="Selected block configuration">
+                aria-label="Selected block configuration" data-workflow-authoring-id={selected.id}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                         <h4 className="text-sm font-semibold text-text-1">{selected.label}</h4>

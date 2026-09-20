@@ -1,8 +1,9 @@
 // test_workflow_field_drafts.js
 /*
 Offline regression tests for session-scoped workflow authoring field buffers.
-Version: 0.261.122
+Version: 0.261.123
 Implemented in: 0.261.122
+History snapshots added in: 0.261.123
 
 Executes the exported production store using the existing TypeScript resolver
 and V2 compiler dependency. No browser, API requests, or workflow execution.
@@ -346,4 +347,66 @@ test('field buffers and UI row IDs never enter the original definition or its sa
     const serialized = JSON.stringify(definition);
     assert.ok(rowIds.every((id) => !serialized.includes(id)));
     assert.equal(serialized.includes('unfinished_task_field'), false);
+});
+
+test('capture and restore retain raw values, diagnostics and baselines independently of later writes', () => {
+    const store = new WorkflowFieldDraftStore();
+    const owner = ['task', 'constructor'];
+    store.field(owner, schemaPath, initialSchema).setValue('{', parseError);
+    store.field(owner, [...decisionPath, 'type'], 'boolean').setValue('enum');
+    store.accept(owner, [...decisionPath, 'type']);
+    const snapshot = store.capture();
+    store.field(owner, schemaPath, initialSchema).setValue('{"type":"object"}');
+    store.clear(owner, decisionPath);
+    store.retainOwners(new Set());
+    assert.equal(snapshot.fields.size, 2);
+    store.restore(snapshot);
+    assert.equal(store.field(owner, schemaPath, '').value, '{');
+    assert.equal(store.field(owner, schemaPath, '').error, parseError);
+    assert.equal(store.field(owner, [...decisionPath, 'type'], 'boolean').value, 'enum');
+    store.clear(owner, schemaPath);
+    assert.equal(store.summary(ownerKeys(owner)).pending, false);
+    assert.equal(snapshot.fields.size, 2, 'Restored state must still use copy-on-write mutations.');
+});
+
+test('a batch publishes one complete buffer state and a default-only blur creates no buffer', () => {
+    const store = new WorkflowFieldDraftStore();
+    const owner = ['task', 'seed'];
+    const observed = [];
+    store.subscribe(() => observed.push(store.capture()));
+    store.field(owner, schemaPath, initialSchema).setValue(initialSchema);
+    assert.equal(store.capture().fields.size, 0);
+    assert.equal(observed.length, 0);
+    store.beginBatch();
+    store.field(owner, schemaPath, initialSchema).setValue('{', parseError);
+    store.field(owner, [...decisionPath, 'name'], '').setValue('pending');
+    assert.equal(observed.length, 0);
+    store.endBatch();
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].fields.size, 2);
+    store.field(owner, schemaPath, initialSchema).setValue(initialSchema);
+    assert.equal(store.capture().fields.size, 1, 'Returning to the original raw default removes the no-op field.');
+    assert.throws(() => store.endBatch(), /No workflow field transaction/);
+});
+
+test('restoring Repeat rows never rewinds allocation or mixes surviving row buffers', () => {
+    const store = new WorkflowFieldDraftStore();
+    const owner = ['node', 'repeat'];
+    const rows = store.repeatStateRowIds(owner, 2);
+    const pathFor = (id) => ['state', id, 'decision', 'name'];
+    store.field(owner, pathFor(rows[0]), '').setValue('first');
+    store.field(owner, pathFor(rows[1]), '').setValue('second');
+    const before = store.capture();
+    store.removeRepeatStateRow(owner, rows[0]);
+    const after = store.capture();
+    const newRow = store.repeatStateRowIds(owner, 2)[1];
+    store.restore(before);
+    assert.deepEqual(store.repeatStateRowIds(owner, 2), rows);
+    assert.equal(store.field(owner, pathFor(rows[0]), '').value, 'first');
+    store.restore(after);
+    assert.equal(store.field(owner, pathFor(rows[1]), '').value, 'second');
+    assert.equal(store.field(owner, pathFor(rows[0]), '').value, '');
+    const another = store.repeatStateRowIds(owner, 2)[1];
+    assert.ok(![...rows, newRow].includes(another));
+    assert.deepEqual(before.repeatRows.values().next().value.ids, rows);
 });

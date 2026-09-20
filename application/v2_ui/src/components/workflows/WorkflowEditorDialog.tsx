@@ -2,14 +2,15 @@
 // Native V2 workflow create/edit dialog.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { AlertTriangle, Plus } from 'lucide-react';
+import { AlertTriangle, Plus, Redo2, Undo2 } from 'lucide-react';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Modal } from '../ui/Modal';
 import { GlassButton, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowAgentPicker, WorkflowModelPicker, WorkflowTaskFields } from './WorkflowTaskFields';
-import { WorkflowFieldDraftsProvider, useWorkflowFieldDraftStore } from './WorkflowFieldDrafts';
+import { WorkflowFieldDraftsProvider, workflowDraftOwners } from './WorkflowFieldDrafts';
+import { WorkflowHistoryBoundary, useWorkflowAuthoringHistory } from './WorkflowAuthoringHistory';
 import { WorkflowStructuredList } from './WorkflowStructuredList';
 import { WorkflowFlowAuthoring } from './WorkflowFlowAuthoring';
 import { WorkflowFlowLimitFields } from './WorkflowStructuredFields';
@@ -94,7 +95,8 @@ export function WorkflowEditorDialog({
     const [baseline, setBaseline] = useState<WorkflowDefinition>(() =>
         workflow ? structuredClone(workflow) : newWorkflowDefinition(scope),
     );
-    const [draft, setDraft] = useState<WorkflowDefinition>(() => structuredClone(baseline));
+    const history = useWorkflowAuthoringHistory(baseline);
+    const draft = history.draft;
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [confirmClose, setConfirmClose] = useState(false);
@@ -103,7 +105,10 @@ export function WorkflowEditorDialog({
     const [surface, setSurface] = useState<'list' | 'flow'>('list');
     const authoringRef = useRef<HTMLDivElement>(null);
     const scopeKey = workflowScopeKey(scope);
-    const fieldDrafts = useWorkflowFieldDraftStore(draft);
+    const fieldDrafts = useMemo(() => ({
+        store: history.session.fields,
+        ...history.session.fields.summary(workflowDraftOwners(draft)),
+    }), [history.session, history.revision, draft]);
     const schemaFieldErrors = fieldDrafts.taskSchemaErrors;
     const unsupportedFlow = flowUnsupportedReason(draft, options);
     const unsupported = !(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version) || Boolean(unsupportedFlow);
@@ -139,18 +144,45 @@ export function WorkflowEditorDialog({
     }, [surface, readOnly, allErrors, draft, original, scopeKey]);
     const setWorkflow: Dispatch<SetStateAction<WorkflowDefinition>> = (update) => {
         setError('');
-        setDraft((current) => typeof update === 'function' ? update(current) : update);
+        history.session.changeDraft(update);
     };
     const authoring = useWorkflowAuthoring({
-        draft, options, readOnly, saving, onChange: (next) => setWorkflow(next), onError: setError,
+        draft, options, readOnly, saving, onError: setError,
+        getDraft: () => history.session.draft,
+        onRejected: () => history.session.reject(),
+        onChange: (next, command, selectedId) => {
+            const structural = command.type === 'add' || command.type === 'move' || command.type === 'remove';
+            const affectedId = command.type === 'move' || command.type === 'remove' ? command.nodeId : selectedId;
+            const accepted = history.session.changeDraft(next, structural ? {
+                label: command.type === 'add' ? `Add ${command.kind.replaceAll('_', ' ')}`
+                    : command.type === 'move' ? 'Move block' : 'Remove block',
+                targetId: affectedId,
+            } : undefined);
+            history.session.target(affectedId);
+            return accepted;
+        },
     });
+    history.session.configure({
+        options, readOnly, saving, commandPending: Boolean(authoring.pending), selectionId: authoring.selectedId, onError: setError,
+        onRestore: (before, after, targetId) => authoring.recover(before, after, targetId,
+            !document.activeElement?.closest('[data-workflow-history-controls]')),
+        onRollback: (before, after, targetId) => authoring.recover(before, after, targetId, false),
+    });
+    const historyBlockedReason = saving ? 'Workflow history is unavailable while saving.'
+        : authoring.pending || history.pending ? 'Finish or cancel the current confirmation first.' : '';
     const onAccessLost = useCallback((status: number) => {
         setAccessLost(true);
-        fieldDrafts.store.retainOwners(new Set());
+        history.session.invalidate();
+        authoring.reset();
         setError(status === 404
             ? 'This workflow is no longer available. Cached authoring details were removed. Close this editor before reopening a workflow.'
             : 'Current authoring access could not be confirmed. Cached authoring details were removed. Close and reopen after access is restored.');
-    }, [fieldDrafts.store]);
+    }, [history.session, authoring.reset]);
+    const hadManagementAccess = useRef(options.can_manage);
+    useEffect(() => {
+        if (hadManagementAccess.current && !options.can_manage) onAccessLost(403);
+        hadManagementAccess.current = options.can_manage;
+    }, [options.can_manage, onAccessLost]);
 
     useEffect(() => {
         if (surface !== 'list' || !authoring.focusRequest || accessLost) return;
@@ -164,6 +196,7 @@ export function WorkflowEditorDialog({
     }, [surface, authoring.focusRequest, accessLost]);
 
     const switchSurface = (next: 'list' | 'flow') => {
+        history.session.closeGroup();
         setSurface(next);
         const id = authoring.selectedId ?? (isFlowRegion(draft.flow) ? draft.flow.id : null);
         if (id) authoring.requestFocus(id);
@@ -187,39 +220,57 @@ export function WorkflowEditorDialog({
     }, [dirty, readOnly]);
 
     const close = () => {
-        if (saving) return;
+        if (saving || history.session.saving) return;
+        history.session.closeGroup();
+        const current = history.session.getSnapshot();
+        if (current.pending) {
+            history.session.cancel();
+            return;
+        }
         if (authoring.pending) {
             authoring.cancel();
             return;
         }
-        if (dirty && !readOnly) {
+        const pendingChanges = !sameWorkflowDefinition(baseline, current.draft) ||
+            history.session.fields.summary(workflowDraftOwners(current.draft)).pending;
+        if (pendingChanges && !readOnly) {
             setConfirmClose(true);
         } else {
+            history.session.invalidate();
             onClose();
         }
     };
 
     const save = async () => {
-        if (saving || readOnly || authoring.pending) {
+        history.session.closeGroup();
+        if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending) {
             return;
         }
-        if (allErrors.length) {
-            setError(allErrors.join(' '));
+        const savingDraft = history.session.draft;
+        const currentErrors = [
+            ...workflowValidationErrors(savingDraft, options),
+            ...history.session.fields.summary(workflowDraftOwners(savingDraft)).taskSchemaErrors.values(),
+        ];
+        if (currentErrors.length) {
+            setError(currentErrors.join(' '));
             return;
         }
+        history.session.setSaving(true);
         setSaving(true);
         setError('');
         try {
-            const response = await saveWorkflowDefinition(scope, draft, original);
-            const saved = response.workflow ? normalizeWorkflowDefinition(response.workflow, scope) : workflowForSave(draft, original, scope);
+            const response = await saveWorkflowDefinition(scope, savingDraft, original);
+            if (!history.session.active) return;
+            const saved = response.workflow ? normalizeWorkflowDefinition(response.workflow, scope) : workflowForSave(savingDraft, original, scope);
             setBaseline(saved);
-            setDraft(saved);
-            fieldDrafts.store.acceptSavedFields();
+            history.session.saved(saved);
             onSaved(saved);
         } catch (cause: unknown) {
+            if (!history.session.active) return;
             if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) onAccessLost(cause.status);
             else setError(workflowErrorMessage(cause, 'Could not save the workflow. Your draft has been retained.'));
         } finally {
+            history.session.setSaving(false);
             setSaving(false);
         }
     };
@@ -272,13 +323,14 @@ export function WorkflowEditorDialog({
                             {readOnly ? 'Close' : 'Cancel'}
                         </GlassButton>
                         {!readOnly ? (
-                            <GlassButton type="button" variant="primary" disabled={saving || Boolean(authoring.pending)} onClick={() => void save()}>
+                            <GlassButton type="button" variant="primary" disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)} onClick={() => void save()}>
                                 {saving ? 'Saving…' : 'Save workflow'}
                             </GlassButton>
                         ) : null}
                     </>
                 }
             >
+                <WorkflowHistoryBoundary session={history.session}>
                 <div className="space-y-5 p-1">
                     {unsupported ? (
                         <div role="alert" className="flex gap-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
@@ -314,10 +366,25 @@ export function WorkflowEditorDialog({
                         </div>
                     ) : null}
                     {draft.definition_version === 3 && !readOnly ? <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2" role="group" aria-label="Workflow edit history" data-workflow-history-controls>
+                            <GlassButton size="sm" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.undoLabel}
+                                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                                aria-label="Undo workflow edit" title={historyBlockedReason || (history.undoLabel ? `Undo: ${history.undoLabel}` : 'No workflow edits to undo')}
+                                onClick={() => { if (history.undoLabel) history.session.request('undo'); }}><Undo2 size={14} /> Undo</GlassButton>
+                            <GlassButton size="sm" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.redoLabel}
+                                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                                aria-label="Redo workflow edit" title={historyBlockedReason || (history.redoLabel ? `Redo: ${history.redoLabel}` : 'No workflow edits to redo')}
+                                onClick={() => { if (history.redoLabel) history.session.request('redo'); }}><Redo2 size={14} /> Redo</GlassButton>
+                            <span className="self-center text-xs text-text-3">
+                                {history.undoLabel ? `Undo: ${history.undoLabel}. ` : 'No earlier retained edits. '}
+                                Text fields keep native undo.
+                            </span>
+                        </div>
+                        {history.notice ? <p role="status" className="rounded-lg bg-warn-soft p-3 text-xs text-warn">{history.notice}</p> : null}
                         <div className="flex flex-wrap gap-2" role="group" aria-label="Workflow authoring surface">
-                            <GlassButton size="sm" aria-pressed={surface === 'list'} disabled={saving || Boolean(authoring.pending)}
+                            <GlassButton size="sm" aria-pressed={surface === 'list'} disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
                                 onClick={() => switchSurface('list')}>List authoring</GlassButton>
-                            <GlassButton size="sm" aria-pressed={surface === 'flow'} disabled={saving || Boolean(authoring.pending)}
+                            <GlassButton size="sm" aria-pressed={surface === 'flow'} disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
                                 onClick={() => switchSurface('flow')}>Flow authoring</GlassButton>
                         </div>
                         <p className="text-xs text-text-3">
@@ -325,7 +392,7 @@ export function WorkflowEditorDialog({
                         </p>
                     </div> : null}
                     {!accessLost ? <div ref={authoringRef} className="min-w-0">
-                    <fieldset disabled={readOnly || saving} className="min-w-0 space-y-5">
+                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending)} className="min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <label className="text-sm text-text-2">
@@ -542,13 +609,19 @@ export function WorkflowEditorDialog({
                                     {flowPreview.error ? <p role="alert" className="text-sm text-danger">{flowPreview.error}</p> : null}
                                     <WorkflowFlowAuthoring workflow={draft} options={options} scope={scope}
                                         previewDefinition={flowPreview.definition} selectedId={authoring.selectedId}
-                                        onSelect={authoring.setSelectedId} onEdit={authoring.execute} renderTask={renderStructuredTask}
+                                        onSelect={(id) => {
+                                            if (id !== authoring.selectedId) history.session.closeGroup();
+                                            authoring.setSelectedId(id);
+                                        }} onEdit={authoring.execute} renderTask={renderStructuredTask}
                                         positions={authoring.positions} setPositions={authoring.setPositions}
                                         collapsed={authoring.collapsed} setCollapsed={authoring.setCollapsed}
-                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving} onAccessLost={onAccessLost} />
+                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending)} onAccessLost={onAccessLost} />
                                 </> : <WorkflowStructuredList workflow={draft} options={options} scope={scope}
                                     onEdit={authoring.execute} selectedId={authoring.selectedId}
-                                    onSelect={authoring.setSelectedId} renderTask={renderStructuredTask} />
+                                    onSelect={(id) => {
+                                        if (id !== authoring.selectedId) history.session.closeGroup();
+                                        authoring.setSelectedId(id);
+                                    }} renderTask={renderStructuredTask} />
                             ) : draft.tasks.map((task, index) => (
                                 <WorkflowTaskFields
                                     key={task.id}
@@ -567,8 +640,10 @@ export function WorkflowEditorDialog({
                         </section>
                     </fieldset>
                     {authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
+                    {history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
                     </div> : null}
                 </div>
+                </WorkflowHistoryBoundary>
             </Modal>
             {!accessLost && authoring.pending ? <ConfirmDialog
                 title={authoring.pending.command.type === 'remove' ? 'Remove this flow block?' : 'Move this flow block?'}
@@ -579,7 +654,22 @@ export function WorkflowEditorDialog({
                     {authoring.pending.impact.map((impact, index) => <li key={index} className="break-words">
                         {impact.nodeId ? <strong>{impact.nodeId}: </strong> : null}{impact.message}
                     </li>)}
-                </ul> : <p className="text-xs text-text-2">No outside references are affected. This draft edit has no undo history.</p>}
+                </ul> : <p className="text-xs text-text-2">No outside references are affected. This changes only the unsaved draft; retained edits can be undone before saving or closing.</p>}
+            </ConfirmDialog> : null}
+            {!accessLost && history.pending ? <ConfirmDialog
+                title={history.pending.kind === 'overflow' ? 'Apply edit and clear history?' : `${history.pending.direction === 'undo' ? 'Undo' : 'Redo'} workflow edit?`}
+                description={history.pending.message}
+                confirmLabel={history.pending.kind === 'overflow' ? 'Apply and clear history' : history.pending.direction === 'undo' ? 'Undo change' : 'Redo change'}
+                cancelLabel="Keep draft unchanged" onClose={() => history.session.cancel()} onConfirm={() => history.session.confirm()}>
+                <p className="mb-2 text-sm text-text-2">{history.pending.label}</p>
+                {history.pending.impact.length ? <ul className="space-y-2 text-xs text-text-2" aria-label="Affected history references">
+                    {history.pending.impact.map((impact, index) => <li key={index} className="break-words">
+                        {impact.nodeId ? <strong>{impact.nodeId}: </strong> : null}{impact.message}
+                    </li>)}
+                </ul> : <p className="text-xs text-text-2">
+                    {history.pending.kind === 'overflow' ? 'The complete edit will be kept, but cleared history cannot be recovered.'
+                        : 'No outside references are affected. This changes only the unsaved draft.'}
+                </p>}
             </ConfirmDialog> : null}
             {confirmStructured ? (
                 <ConfirmDialog title="Enable structured control flow?"
@@ -605,6 +695,7 @@ export function WorkflowEditorDialog({
                     onClose={() => setConfirmClose(false)}
                     onConfirm={() => {
                         setConfirmClose(false);
+                        history.session.invalidate();
                         onClose();
                     }}
                 />

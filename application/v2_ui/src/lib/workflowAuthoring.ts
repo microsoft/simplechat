@@ -254,7 +254,7 @@ function referenceObservations(workflow: WorkflowDefinition): Map<string, string
     }));
 }
 
-function editImpact(before: WorkflowDefinition, after: WorkflowDefinition): WorkflowEditImpact[] {
+export function workflowEditImpact(before: WorkflowDefinition, after: WorkflowDefinition): WorkflowEditImpact[] {
     const previous = referenceObservations(before);
     const current = referenceObservations(after);
     const impact = draftReferences(after).filter((reference) => {
@@ -314,6 +314,61 @@ function sameNodeStructure(left: WorkflowFlowNode, right: WorkflowFlowNode): boo
     return true;
 }
 
+export function workflowAuthoringEligibility(workflow: WorkflowDefinition, options: WorkflowEditorOptions): string {
+    if (options.can_manage !== true) return 'You do not have permission to edit workflows in this scope.';
+    if (options.scope.type === 'group' && (!options.scope.id || workflow.group_id !== options.scope.id) ||
+        options.scope.type === 'personal' && Boolean(workflow.group_id)) {
+        return 'The editor options do not belong to this workflow scope. Reopen the workflow in its authorized workspace.';
+    }
+    if (!Number.isSafeInteger(options.max_tasks) || options.max_tasks < 1) return 'The workspace task limit is unavailable.';
+    if (workflow.active_run_id) return 'Wait for the active run to finish or cancel it before editing.';
+    if (workflow.definition_version !== 3 || !(options.supported_definition_versions ?? [1, 2]).includes(3)) {
+        return 'Flow authoring requires an explicitly enabled, supported definition-v3 draft.';
+    }
+    return flowUnsupportedReason(workflow, options) ||
+        structuralError(workflow, { ...options, max_tasks: Math.max(options.max_tasks, workflow.tasks.length) });
+}
+
+export function workflowCandidateEligibility(
+    current: WorkflowDefinition,
+    candidate: WorkflowDefinition,
+    options: WorkflowEditorOptions,
+): string {
+    const eligibility = workflowAuthoringEligibility(current, options);
+    if (eligibility) return eligibility;
+    for (const key of ['id', 'definition_version', 'definition_revision', 'group_id', 'user_id', 'active_run_id']) {
+        if (!sameEditorValue(current[key], candidate[key])) return 'Workflow edits cannot change identity, scope, saved revision, or runtime state.';
+    }
+    const invalid = structuralError(candidate, { ...options, max_tasks: Math.max(options.max_tasks, current.tasks.length) }) ||
+        flowUnsupportedReason(candidate, options);
+    if (invalid) return invalid;
+    if (!isFlowRegion(current.flow) || !isFlowRegion(candidate.flow) || current.flow.id !== candidate.flow.id) {
+        return 'Workflow edits must retain the workflow root identity.';
+    }
+    return '';
+}
+
+export function evaluateWorkflowRestore(
+    current: WorkflowDefinition,
+    candidate: WorkflowDefinition,
+    options: WorkflowEditorOptions,
+    confirmed = false,
+): WorkflowEditResult {
+    const invalid = workflowCandidateEligibility(current, candidate, options);
+    if (invalid) return { status: 'rejected', message: invalid };
+    if (!isFlowRegion(candidate.flow)) return { status: 'rejected', message: 'This draft has no supported flow.' };
+    const after = indexWorkflowDraft(candidate);
+    const removesBlock = [...indexWorkflowDraft(current).keys()].some((id) => !after.has(id));
+    const impact = workflowEditImpact(current, candidate);
+    if (!confirmed && (removesBlock || impact.length)) return {
+        status: 'confirmation_required', impact,
+        message: removesBlock
+            ? 'This history step removes blocks from the unsaved draft. Existing references keep their exact selectors.'
+            : 'This history step changes reference availability or declared outputs. Resolve resulting errors before saving.',
+    };
+    return { status: 'applied', workflow: candidate, selectedId: candidate.flow.id, impact };
+}
+
 export function applyWorkflowEdit(
     workflow: WorkflowDefinition,
     command: WorkflowEditCommand,
@@ -321,22 +376,10 @@ export function applyWorkflowEdit(
     confirmed = false,
 ): WorkflowEditResult {
     const reject = (message: string): WorkflowEditResult => ({ status: 'rejected', message });
-    if (options.can_manage !== true) return reject('You do not have permission to edit workflows in this scope.');
-    if (options.scope.type === 'group' && (!options.scope.id || workflow.group_id !== options.scope.id) ||
-        options.scope.type === 'personal' && Boolean(workflow.group_id)) {
-        return reject('The editor options do not belong to this workflow scope. Reopen the workflow in its authorized workspace.');
-    }
-    if (!Number.isSafeInteger(options.max_tasks) || options.max_tasks < 1) return reject('The workspace task limit is unavailable.');
-    if (workflow.active_run_id) return reject('Wait for the active run to finish or cancel it before editing.');
-    if (workflow.definition_version !== 3 || !(options.supported_definition_versions ?? [1, 2]).includes(3)) {
-        return reject('Flow authoring requires an explicitly enabled, supported definition-v3 draft.');
-    }
-    const unsupported = flowUnsupportedReason(workflow, options);
-    if (unsupported) return reject(unsupported);
+    const eligibility = workflowAuthoringEligibility(workflow, options);
+    if (eligibility) return reject(eligibility);
     // A lowered workspace ceiling must still allow an author to remove excess tasks.
     const mutationOptions = { ...options, max_tasks: Math.max(options.max_tasks, workflow.tasks.length) };
-    const existingError = structuralError(workflow, mutationOptions);
-    if (existingError) return reject(existingError);
     if (!isFlowRegion(workflow.flow)) return reject('This draft has no supported flow.');
     const targets = indexWorkflowDraft(workflow);
     const flow = workflow.flow;
@@ -451,7 +494,7 @@ export function applyWorkflowEdit(
     }
     const invalid = structuralError(next, mutationOptions) || flowUnsupportedReason(next, options);
     if (invalid) return reject(invalid);
-    const impact = command.type === 'remove' || command.type === 'move' ? editImpact(workflow, next) : [];
+    const impact = command.type === 'remove' || command.type === 'move' ? workflowEditImpact(workflow, next) : [];
     if (!confirmed && (command.type === 'remove' || command.type === 'move' && impact.length)) {
         return { status: 'confirmation_required', impact, message: command.type === 'remove'
             ? 'This removes the block and its contained tasks. Consumers retain their exact references; resolve resulting errors before saving.'
