@@ -7,6 +7,7 @@ import { GlassButton } from '../ui/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
 import { WorkflowDecisionFields } from './WorkflowConditionEditor';
+import { useWorkflowFieldDrafts } from './WorkflowFieldDrafts';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     analyzeWorkflowFlow,
@@ -40,13 +41,17 @@ function scopeKey(scope: WorkflowLoopScope): string {
     return `${scope.scope_type}:${scope.scope_id ?? ''}`;
 }
 
-function QueryFields({ value, scope, limit, onChange }: {
+function QueryFields({ nodeId, value, scope, limit, onChange }: {
+    nodeId: string;
     value: WorkflowQueryIterable;
     scope: WorkflowScope;
     limit: number;
     onChange: (value: WorkflowQueryIterable) => void;
 }) {
-    const [tagsText, setTagsText] = useState(() => (value.filters.tags ?? []).join(', '));
+    const drafts = useWorkflowFieldDrafts();
+    const { value: tagsText, setValue: setTagsText } = drafts.field(
+        ['node', nodeId], ['query', 'tags'], (value.filters.tags ?? []).join(', '),
+    );
     const groups = useBootstrapStore((state) => state.data?.scope?.groups ?? []);
     const publicWorkspaces = useBootstrapStore((state) => state.data?.scope?.public_workspaces ?? []);
     const sources: { label: string; scope: WorkflowLoopScope }[] = scope.type === 'group'
@@ -290,7 +295,7 @@ export function WorkflowForEachFields({ node, workflow, scope, options, onChange
                 <p className="text-xs text-text-3">Reads the complete immutable records or document results in saved order, not a byte excerpt. Equal-looking records remain distinct. A document ID in model-generated JSON does not grant document access.</p>
                 {binding?.source.kind === 'repeat_state' ? <p className="text-xs text-text-3">Uses the named state saved at the start of this Repeat round. This For each instance freezes its membership from that state and requires complete eligible output.</p> : null}
             </fieldset> : null}
-            {iterable.kind === 'workspace_query' ? <QueryFields key={`${node.id}:${iterable.kind}`} value={iterable} scope={scope} limit={limit}
+            {iterable.kind === 'workspace_query' ? <QueryFields key={`${node.id}:${iterable.kind}`} nodeId={node.id} value={iterable} scope={scope} limit={limit}
                 onChange={(next) => onChange({ ...node, iterable: next })} /> : null}
             {errors.map((message) => <p key={message} role="alert" className="rounded-lg bg-danger-soft p-3 text-xs text-danger">{message}</p>)}
             {iterable.kind !== 'input' ? <GlassButton size="sm" disabled={loading || errors.length > 0} onClick={() => void previewSelection()}>
@@ -355,7 +360,7 @@ export function WorkflowCollectFields({ node, workflow, onChange }: {
                 </select>
             </label>
             <p className="text-xs text-text-2">Preserved output kind: {node.output_contract.kind.replaceAll('_', ' ')}</p>
-            <WorkflowDecisionFields contract={node.output_contract} onChange={(contract) =>
+            <WorkflowDecisionFields draftOwner={['node', node.id]} contract={node.output_contract} onChange={(contract) =>
                 onChange({ ...node, output_contract: { ...contract, kind: node.output_contract.kind } })} />
             <label className="block text-xs text-text-2">Expected total record count (optional)
                 <input className={inputClass} type="number" min={0} aria-label="Collect expected count" value={node.output_contract.expected_count ?? ''}
