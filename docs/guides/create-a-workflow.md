@@ -29,7 +29,8 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 
 Starting in **0.261.108**, open `/v2/workspace/workflows` for personal workflows,
 or select a group under `/v2/groups`. Choose **Create workflow** or edit an
-existing workflow in the native List editor.
+existing workflow in the native V2 editor. Ordered drafts still use List;
+explicitly structured drafts also offer Flow authoring as described below.
 
 Choose a runner and manual or interval trigger, then add tasks in execution
 order. Task details separate document-action evidence from shared reference
@@ -74,25 +75,84 @@ reporting completion when a selected path did not produce the required result.
 Structured definitions require durable execution and preserve their choices
 across waits and restarts. For each and Collect are added in **0.261.117** below.
 Repeat until is added in **0.261.120** below. Version **0.261.121** adds the
-read-only Flow inspection described next. Direct visual authoring remains a
-separate later milestone; executable edits still happen in List.
+read-only saved/run Flow inspection described below. Version **0.261.122**
+adds **List authoring** and **Flow authoring** for the same structured draft.
 
 See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
 for condition semantics, execution identity, limits, and compatibility.
+
+## Edit with List or Flow
+
+In **0.261.122**, the structured editor offers **List authoring** and
+**Flow authoring** over one draft. List is the default, including on small
+screens. Use Flow when seeing branches, joins, and loop boundaries helps you
+place work in the right region; use List when a compact sequence of forms is
+easier to follow. Switching does not convert an ordered workflow or create a
+different saved definition.
+
+1. Open the structured workflow in Edit, then choose **Flow authoring**.
+   Workflow basics, runner, schedule, shared references, limits, and Save
+   remain common to both surfaces.
+2. Select the block you want to configure. Tasks retain their instructions,
+   runner, approval, document-action, reporting, publication, and typed-input
+   fields. If/else, Forward route, For each, Repeat until, and Collect use the
+   same forms as List. Select the owning structure to edit join, body, or
+   final outputs.
+3. Add a block with an explicit destination region and a position before or
+   after a sibling, or at the end. For example, add a review task inside
+   **Else**, not after the entire If/else, when only that branch needs review.
+   A new Repeat maximum stays unset until you choose it.
+4. To change execution order or move work into another region, use the move
+   controls and choose the destination and position. Dragging a box only
+   rearranges your view. You cannot create a dependency, reconnect a route,
+   or reparent work by drawing or dragging a connector.
+5. Before confirming a reference-breaking move or removal, review the listed
+   consumers and exact selectors. Confirming retains those references, even
+   if they now point to a missing or out-of-scope producer. Repair them before
+   saving; the editor does not cascade removal into consumers or silently
+   select a replacement source. Cancel the confirmation to keep the draft
+   unchanged.
+6. Finish required fields and use **Save workflow**. The same validation,
+   active-run protection, and saved-revision checks apply in either surface.
+   Saving does not start the workflow.
+
+Incomplete supported boxes stay selectable as **Unvalidated draft**, including
+an empty task, an unfinished schema, or a Repeat with no maximum yet.
+Executable control arrows appear only after the server compiler accepts that
+exact current draft. Old successful arrows cannot describe newer invalid
+edits. Typed bindings are authored relationships, not extra execution paths.
+An unknown executable shape stays intact and read-only rather than being
+silently converted.
+
+List/Flow switches and selecting another node preserve unfinished schema text,
+field errors, and other in-progress fields. They also preserve the current
+selection and unsaved-change/discard protection. A stale-save conflict or
+ordinary network error retains your draft; it does not overwrite someone
+else's saved changes or automatically rebase your work.
+
+All editing operations have keyboard/button alternatives. Use the controls
+that focus the selected configuration form and return to its block. Selection
+is revealed when switching surfaces; after removal, focus recovers to a
+surviving sibling or its parent/root. Flow's panel stacks on narrow screens,
+and page scrolling and browser zoom remain available.
+
+Pan, zoom, collapse, and temporary box positions are not executable edits and
+are not saved. There is no autosave or implicit execution, Analyze invocation,
+publication, or readiness check when switching or configuring blocks.
+Cross-surface undo/redo is deferred to a future milestone-5 slice; ordinary
+text-field undo remains native.
 
 ## Preview the structure without changing execution
 
 In **0.261.121**, choose **View Flow for ...** beside a saved structured
 workflow to see its branches, joins, routes, and single loop templates.
 This is independent of Edit, so an authorized reader can inspect a saved
-definition while it has an active run.
-
-While authoring, choose **Show Flow preview** to check List changes before
-saving. The preview starts off. It appears alongside List on a wide screen;
-on a narrow screen, **Hide Flow preview** returns to List. **Unsaved draft**
-means the picture reflects the editor, not a saved workflow or a past run.
-Invalid structural edits keep your draft and replace the outdated picture
-with an error. A valid diagram is not permission to execute.
+definition while it has an active run. This viewer remains read-only in
+**0.261.122**. The List/Flow authoring switch replaces only the old preview-only
+control inside Edit; it does not change the saved or historical Flow entries.
+For unsaved changes, return to the editor and choose **Flow authoring**.
+A compiler-checked draft picture is not a saved definition or permission to
+execute.
 
 Select a node to read its configuration, condition, contracts, or source
 selection. Solid arrows describe execution order. Dashed arrows describe
@@ -103,7 +163,8 @@ Use **Structure list** for a textual view of the same definition. In the
 diagram, arrow keys move focus, Enter selects, and **Inspect selected node**
 opens the inspection focus target. **Return to selected node** takes focus
 back. Pan, zoom, fit, collapse, and moving a box are temporary viewing choices:
-they do not make the draft dirty, save it, invalidate approval, or restart work.
+they do not reorder executable work, save it, invalidate approval, or restart
+it.
 
 Saved Flow has no historical run coloring. To see what a run actually used,
 open its [frozen-definition Flow]({{ '/guides/trigger-a-workflow/' | relative_url }}#inspect-a-runs-frozen-flow)
@@ -238,7 +299,7 @@ coverage, accepted findings, and validation.
 
 ## Publish an existing analysis artifact
 
-In the V2 List editor, enable **Publish a workflow file** on a later task and
+In the V2 editor, enable **Publish a workflow file** on a later task and
 choose **Existing Analyze file** as its **Publication source**. Servers without
 the new source options retain **Publish an existing analysis artifact**.
 Choose an **Existing artifact format** and **Destination scope**. A group or
@@ -325,6 +386,8 @@ for readiness proof, screening and recovery limitations.
 | --- | --- | --- |
 | The Workflows section is missing | Workflows are disabled for the scope | Ask an admin to enable personal or group workflows. |
 | No agents are available as runners | No authorized agents exist for this workspace | Create an agent first or use a direct model runner. |
+| Flow shows Unvalidated draft without execution arrows | The current draft has not passed its compiler preview | Keep editing the visible blocks and repair the reported fields or selectors; do not interpret old topology as the current draft. |
+| Save is blocked after moving or removing a block | A retained reference is now missing or out of scope | Use the affected-selector diagnostics to repair each consumer explicitly. |
 
 ## Related
 

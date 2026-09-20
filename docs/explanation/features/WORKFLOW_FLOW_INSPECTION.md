@@ -2,22 +2,26 @@
 
 Implemented in version: **0.261.121**
 
+Updated in version: **0.261.122** for the separate authoring surface.
+
 Application version tracking: `application/single_app/config.py`.
 
 ## Purpose and boundaries
 
 M5A adds a read-only diagram to personal and group V2 structured workflows.
 Use it to understand branch order, loop boundaries, declared data dependencies,
-and the exact configuration behind a historical run. Author executable changes
-in List; the diagram cannot add, connect, delete, reorder, or save steps.
+and the exact configuration behind a historical run. Saved-definition and
+frozen-run diagrams cannot add, connect, delete, reorder, or save steps.
+M5B in **0.261.122** adds **List authoring** and **Flow authoring** inside the
+editor; those shared-draft editing surfaces are separate from these viewers.
 
 The existing version-3 definition and Python compiler remain authoritative.
 There is no second stored executable graph, scheduler, result store, exporter,
 or publication ledger. Version-1/version-2 List and history remain unchanged.
 Viewing a workflow does not convert it to version 3.
 
-M5B direct visual authoring and the separately requested personal/group Control
-Center Workflow Monitoring capability are not part of this release.
+Personal/group Control Center Workflow Monitoring remains deferred. M5B
+authoring does not add a monitoring surface or change inspection permissions.
 
 ## Dependencies and architecture
 
@@ -45,18 +49,25 @@ execution identities, or persistent browser storage.
 | Source label | Definition shown | Run evidence |
 | --- | --- | --- |
 | Saved definition | Currently authorized saved structured definition | None |
-| Unsaved draft | Compiler-checked preview of current List edits | None |
+| Unsaved draft | Compiler-checked preview of the current List/Flow editor draft | None |
 | Run's frozen definition | The selected run's validated admitted snapshot | Only matching execution, mixed path, and attempt |
 
 The viewer always identifies its source and revision or preview digest. Draft
 digests carry a `DRAFT:` prefix and never replace the editor's saved
-`definition_revision` concurrency baseline. Preview is opt-in and debounced;
-it performs no save, model call, document selection, input freezing, or run.
+`definition_revision` concurrency baseline. Choosing **Flow authoring**
+activates debounced preview of eligible edits; it performs no save, model call,
+document selection, input freezing, or run.
 
-Invalid or unsupported drafts retain the List edits and clear the outdated
-diagram. A structurally valid preview is not proof of save/admission eligibility.
+M5B also renders current supported draft boxes before compilation, labelled
+**Unvalidated draft**. These boxes are not an inspection DTO. Incomplete fields
+stay editable, but executable-path arrows are withheld until the server
+compiler accepts that exact draft generation. Failed or stale previews cannot
+leave old arrows under new labels. Unknown executable shapes retain their
+original definition and read-only warning rather than being converted.
+
+A structurally valid preview is not proof of save/admission eligibility.
 Missing, corrupt, or unsupported frozen snapshots fail explicitly; run Flow
-never substitutes the current saved definition.
+never substitutes the current saved definition or authoring draft.
 
 ## Read-only APIs and authorization
 
@@ -113,13 +124,17 @@ or empty success.
    count labels; their complete meanings remain in the relationship lists.
 4. Expand For each or Repeat to see its single body template. Use the control
    relationship and declared-data lists to follow exact producer/boundary IDs.
-5. While editing in List, choose **Show Flow preview**. On wider screens List
-   and preview appear together; on narrow screens **Hide Flow preview** returns
-   to List. Preview starts off and does not make an unchanged draft dirty.
 
-Saving and running remain separate explicit operations outside Flow. Pan,
-zoom, fit, collapse, temporary box movement, and **Reset layout** do not save
-or affect execution.
+To edit an unsaved draft in **0.261.122**, open the workflow editor and choose
+**List authoring** or **Flow authoring**. List remains the default, including
+on narrow screens. This switch replaces only the old editable-dialog preview
+entry; **View Flow for ...** and **Show Flow for this run** remain read-only.
+See the [Create a workflow guide](https://microsoft.github.io/simplechat/guides/create-a-workflow/)
+for supported editing and reference-repair procedures.
+
+Saved and frozen-run viewers have no Save or run actions. Their pan, zoom,
+fit, collapse, temporary box movement, and **Reset layout** do not save or
+affect execution.
 
 ## Inspect a selected run
 

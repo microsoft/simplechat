@@ -1,4 +1,4 @@
-/* WorkflowFlowView.css - Local, theme-aware, read-only workflow inspection. */
+/* WorkflowFlowView.css - Local, theme-aware workflow diagrams. */
 .workflow-flow {
     --xy-background-color: var(--surface-sunken);
     --xy-node-color: var(--text-1);
@@ -161,12 +161,6 @@
     .workflow-flow-canvas {
         height: 24rem;
         min-height: 18rem;
-    }
-}
-
-@media (max-width: 1023px) {
-    .workflow-authoring-preview .workflow-authoring-list {
-        display: none;
     }
 }
 

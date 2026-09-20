@@ -1,12 +1,13 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.120
+Version: 0.261.122
 Implemented in: 0.261.117
 
 Loads the real built local SPA and validates authoring payloads with production
 normalization. Source previews and immutable paged history are fake network
 responses; the tests never invoke paid services, a model, or a live workspace.
+Reference-breaking List moves require explicit M5B impact confirmation.
 """
 
 import copy
@@ -402,6 +403,10 @@ def test_move_and_delete_keep_invalid_consumers_in_the_draft(workflow_loops_ui):
     loop = open_loop(ui)
     task = task_block(page, "Analyze current source")
     task.get_by_label("Move Analyze current source to region", exact=True).select_option("root")
+    confirmation = page.get_by_role("dialog", name="Move this flow block?", exact=True)
+    expect(confirmation.get_by_role("list", name="Affected draft references")).to_contain_text(LOOP_ID)
+    expect(page.get_by_role("button", name="Save workflow", exact=True)).to_be_disabled()
+    confirmation.get_by_role("button", name="Move block", exact=True).click()
     details(task_block(page, "Analyze current source"))
     expect(page.get_by_label("Analyze current source inputs input 1 loop", exact=True)).to_have_value(LOOP_ID)
     expect(page.get_by_label("Analyze current source inputs input 1 loop", exact=True)).to_contain_text("Unavailable")
@@ -542,6 +547,7 @@ def test_hosted_runner_is_unavailable_only_inside_loop_work(workflow_loops_ui):
     expect(hosted).to_have_attribute("disabled", "")
     expect(task.get_by_text("Hosted agents are unavailable", exact=False)).to_be_visible()
     task.get_by_label("Move Analyze current source to region", exact=True).select_option("root")
+    page.get_by_role("dialog", name="Move this flow block?", exact=True).get_by_role("button", name="Move block", exact=True).click()
     task = task_block(page, "Analyze current source")
     details(task)
     expect(task.get_by_label("Task agent", exact=True).locator("option").filter(has_text="Hosted reviewer")).not_to_have_attribute("disabled", "")

@@ -1,7 +1,13 @@
 // workflowFlowLayout.ts
 // Deterministic display geometry; never writes an executable workflow definition.
 
-import type { WorkflowFlowProjection, WorkflowInspectionEdge, WorkflowInspectionNode } from './workflowInspection';
+import type { WorkflowInspectionEdge, WorkflowInspectionNode } from './workflowInspection';
+
+export interface WorkflowFlowStructure {
+    root_region_id: string;
+    nodes: WorkflowInspectionNode[];
+    edges: WorkflowInspectionEdge[];
+}
 
 export interface WorkflowFlowBox {
     id: string;
@@ -30,7 +36,7 @@ function childrenByParent(nodes: WorkflowInspectionNode[]): Map<string, Workflow
     return children;
 }
 
-export function layoutWorkflowFlow(projection: WorkflowFlowProjection, collapsed: ReadonlySet<string>): WorkflowFlowBox[] {
+export function layoutWorkflowFlow(projection: WorkflowFlowStructure, collapsed: ReadonlySet<string>): WorkflowFlowBox[] {
     const children = childrenByParent(projection.nodes);
     const byId = new Map(projection.nodes.map((node) => [node.id, node]));
     const sizes = new Map<string, { width: number; height: number }>();
@@ -93,7 +99,7 @@ export function visibleWorkflowNode(
 }
 
 export function visibleWorkflowEdges(
-    projection: WorkflowFlowProjection,
+    projection: WorkflowFlowStructure,
     collapsed: ReadonlySet<string>,
 ): WorkflowInspectionEdge[] {
     const nodes = new Map(projection.nodes.map((node) => [node.id, node]));

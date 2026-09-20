@@ -1,9 +1,9 @@
 // WorkflowConditionEditor.tsx
 // Typed input and condition controls; predicates are never evaluated in the browser.
 
-import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
+import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
 import {
     analyzeWorkflowFlow,
     defaultFlowPredicate,
@@ -422,15 +422,20 @@ export function WorkflowConditionEditor({
 }
 
 export function WorkflowDecisionFields({
+    draftOwner,
+    draftPath = ['output', 'decision'],
     contract,
     onChange,
 }: {
+    draftOwner: WorkflowFieldDraftOwner;
+    draftPath?: readonly string[];
     contract: WorkflowOutputContract;
     onChange: (contract: WorkflowOutputContract) => void;
 }) {
-    const [name, setName] = useState('');
-    const [type, setType] = useState('boolean');
-    const [enumText, setEnumText] = useState('');
+    const drafts = useWorkflowFieldDrafts();
+    const { value: name, setValue: setName } = drafts.field(draftOwner, [...draftPath, 'name'], '');
+    const { value: type, setValue: setType } = drafts.field(draftOwner, [...draftPath, 'type'], 'boolean');
+    const { value: enumText, setValue: setEnumText } = drafts.field(draftOwner, [...draftPath, 'enum'], '');
     const collection = ['records', 'document_results'].includes(contract.kind);
     const schema = collection
         ? isRecord(contract.schema?.items) ? contract.schema.items : { type: 'object' }
@@ -499,6 +504,7 @@ export function WorkflowDecisionFields({
                 });
                 setName('');
                 setEnumText('');
+                drafts.accept(draftOwner, [...draftPath, 'type']);
             }}><Plus size={14} /> Add {fieldLabel.toLowerCase()} field</GlassButton>
             {name && !validName ? <p role="status" className="text-xs text-warn">Use a unique field name starting with a letter.</p> : null}
             {!validEnum ? <p role="status" className="text-xs text-warn">Add at least one unique enum value.</p> : null}

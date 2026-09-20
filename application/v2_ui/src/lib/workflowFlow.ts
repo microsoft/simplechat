@@ -906,14 +906,16 @@ function withProducer(available: Availability, id: string, definite: boolean): A
 export interface WorkflowFlowAnalysis {
     errors: string[];
     available: Map<string, Set<string>>;
+    definite: Map<string, Set<string>>;
     branchEnds: Map<string, Set<string>>;
 }
 
 export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowAnalysis {
     const errors: string[] = [];
     const available = new Map<string, Set<string>>();
+    const definite = new Map<string, Set<string>>();
     const branchEnds = new Map<string, Set<string>>();
-    const result = { errors, available, branchEnds };
+    const result = { errors, available, definite, branchEnds };
     if (workflow.definition_version !== 3) return result;
     const unsupported = flowUnsupportedReason(workflow);
     if (unsupported || !isFlowRegion(workflow.flow)) {
@@ -1057,6 +1059,7 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
         region.nodes.forEach((node, index) => {
             current = combineAvailability([current, ...(inputs.get(index) ?? [])]);
             available.set(node.id, new Set(current.possible));
+            definite.set(node.id, new Set(current.definite));
             if (node.kind === 'task') {
                 const task = tasks.get(node.task_id);
                 if (!task) return;
@@ -1209,6 +1212,7 @@ export function analyzeWorkflowFlow(workflow: WorkflowDefinition): WorkflowFlowA
         const end = combineAvailability([current, ...exits]);
         branchEnds.set(region.id, end.possible);
         available.set(region.id, end.possible);
+        definite.set(region.id, end.definite);
         return end;
     };
     const end = walk(root, { possible: new Set(), definite: new Set() });

@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.121**.
+Updated in version: **0.261.122**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -24,16 +24,17 @@ definition version and journal. Version **0.261.119** adds
 Version **0.261.120** adds [Repeat until](WORKFLOW_REPEAT_UNTIL.md), with saved
 typed state and explicit manual grants after finite automatic batches.
 Version **0.261.121** adds [M5A read-only Flow inspection](WORKFLOW_FLOW_INSPECTION.md)
-over the same compiler and runtime. M5B accessible visual authoring remains
-separate. M4A itself did not admit loops.
+over the same compiler and runtime. Version **0.261.122** adds M5B accessible
+List/Flow authoring of the same supported draft, without changing saved or
+frozen-run inspection into an editor. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 
 Structured control flow uses the existing workflow runner, durable execution
 lease, private result store, source-authorized readers, native Analyze adapter,
 and artifact publication service. There is no second scheduler or Cosmos
-container. The later read-only Flow renderer uses locally bundled React Flow;
-it does not introduce a stored executable graph or change the runtime model.
+container. Flow inspection and authoring reuse locally bundled React Flow;
+they do not introduce a stored executable graph or change the runtime model.
 
 Definition version **3** is an explicit opt-in and requires durable execution.
 Existing version-1 and version-2 definitions keep their previous behavior.
@@ -69,6 +70,33 @@ workflow with automatic previous-successful inputs must choose explicit inputs
 before conversion: selecting one fixed predecessor would otherwise change its
 failure behavior. Shared references and the first task's legacy document action
 are retained explicitly.
+
+### Choose List or Flow authoring
+
+In **0.261.122**, **List authoring** is the default, including on narrow
+screens. **Flow authoring** offers the same task, If/else, Forward route,
+For each, Repeat until, Collect, and typed-binding forms over one version-3
+draft. Select a block to configure it; use explicit add/move/remove controls
+and choose its destination region and sibling position. Dragging a box changes
+temporary layout only, not executable order or containment. Opening Flow
+neither converts a workflow nor generates replacement IDs.
+
+Current supported boxes remain editable as **Unvalidated draft** while
+configuration is incomplete. Executable arrows require a server compiler
+preview matched to the current draft generation; authored relationships are
+not proof of an executable path. Unknown executable shapes stay read-only
+without losing their original fields.
+
+Surface and selection changes preserve unfinished schema text, field errors,
+typed bindings, and the original saved revision. A reference-breaking move or
+removal confirms concrete affected selectors, then retains those references
+until the author repairs them; it never silently cascades or retargets.
+Save remains explicit and blocked by unresolved errors. Cross-surface
+undo/redo is deferred to a future milestone-5 slice.
+
+See the published [Create a workflow guide](https://microsoft.github.io/simplechat/guides/create-a-workflow/)
+for the editing procedure. `WORKFLOW_FLOW_AUTHORING.md` records the M5B
+architecture, offline coverage objectives, and deferred design work.
 
 ### Skip an optional task
 
@@ -223,11 +251,13 @@ become Completed.
 
 ### Read-only Flow inspection
 
-In **0.261.121**, saved definitions, live List draft previews, and selected
-runs' verified frozen definitions have separate Flow views. Run evidence is
-never overlaid on a newer saved definition or an unsaved draft. Exact
-node-and-mixed-path lookup uses the frozen revision rather than guessing the
-latest task with a matching name.
+M5A in **0.261.121** introduced separate Flow sources for saved definitions,
+compiler-checked List draft previews, and selected runs' verified frozen
+definitions. M5B in **0.261.122** replaces only the editor's preview-only
+entry with List/Flow authoring. Saved and run viewers remain read-only.
+Run evidence is never overlaid on a newer saved definition or an unsaved draft.
+Exact node-and-mixed-path lookup uses the frozen revision rather than guessing
+the latest task with a matching name.
 
 The layout follows normalized region order, preserves explicit joins and
 boundary IDs, and represents each loop body once. Selected-page typed bindings
@@ -235,8 +265,8 @@ are distinct from control connections. Shared inspectors retain exact attempts,
 frozen items, Repeat state, complete records, and publication observations.
 
 Layout is temporary viewing state, excluded from executable definitions and
-revision hashes. Viewing, expanding, moving, and refreshing cannot approve,
-resume, continue, publish, or restart a run. See
+revision hashes. Viewing, expanding, moving a box, and refreshing cannot
+approve, resume, continue, publish, or restart a run. See
 [the inspection contract](WORKFLOW_FLOW_INSPECTION.md) for APIs, bounds, source
 isolation, accessibility, and offline coverage.
 
@@ -308,6 +338,13 @@ outputs retaining their `document_results` type in legacy and structured reads.
 `functional_tests/test_workflow_structured_publication.py` passes genuine native
 Analyze records through a saved join and the existing publication service,
 including restart without duplicate publication and later source revocation.
+
+M5B coverage objectives add shared-command and compiler parity in
+`functional_tests/test_workflow_flow_authoring_commands.js` and
+`functional_tests/test_workflow_flow_authoring.py`, plus real-bundle
+List/Flow, buffer, focus, save, and request-isolation scenarios in
+`ui_tests/test_v2_workflow_flow_authoring.py`. These objectives are not a
+claim of fresh passing results.
 
 Local regression fixtures do not deploy the application, run private production
 workflows, or publish documents. Live acceptance requires a separately

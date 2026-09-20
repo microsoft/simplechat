@@ -1,0 +1,295 @@
+{
+    "version": "0.261.122",
+    "description": "Offline M5B contract. Merge expected over initial to obtain the canonical edited definition; options and commands are never saved.",
+    "options": {
+        "definition_version": 2,
+        "supported_definition_versions": [1, 2, 3],
+        "supported_node_kinds": ["task", "if", "route", "for_each", "repeat_until", "collect"],
+        "supported_iterable_kinds": ["documents", "workspace_query", "input"],
+        "supported_query_modes": ["all_matches", "best_n"],
+        "supported_binding_sources": ["node_output", "loop_item", "repeat_state"],
+        "supported_input_processing_modes": ["full", "saved_record_report"],
+        "supported_publication_completion_policies": ["submitted", "approved", "indexed_ready"],
+        "publication_source_capabilities": [
+            {"source_kind": "native_analysis", "output_kinds": ["records", "document_results"], "artifact_formats": ["md", "csv", "json"]},
+            {"source_kind": "saved_output", "output_kinds": ["records"], "artifact_formats": ["json"]}
+        ],
+        "flow_limits": {
+            "max_nodes": 256, "max_depth": 4, "max_predicate_nodes": 100, "max_predicate_depth": 8,
+            "max_executions": 5000, "deadline_seconds": 86400, "max_loop_items": 500,
+            "max_repeat_iterations": 1000, "hard_repeat_iterations": 1000
+        },
+        "can_manage": true,
+        "max_tasks": 100,
+        "agents": [],
+        "models": [],
+        "default_model": {"label": "Offline local model", "valid": true, "loop_eligible": true},
+        "scope": {"type": "personal"}
+    },
+    "initial": {
+        "id": "m5b-offline-authoring",
+        "user_id": "offline-owner",
+        "definition_version": 3,
+        "definition_revision": "original-saved-cas-revision",
+        "durable_execution": true,
+        "name": "Offline structured authoring",
+        "description": "Fictional definition; never execute.",
+        "runner_type": "model",
+        "model_endpoint_id": "",
+        "model_id": "",
+        "chat_capabilities_enabled": false,
+        "trigger_type": "manual",
+        "schedule": {"unit": "minutes", "value": 15},
+        "is_enabled": false,
+        "error_handling": {"strategy": "halt", "retry_count": 0},
+        "reference_inputs": [],
+        "metadata": {"legacy": {"retained": true, "values": [false, 0, null, "雪"]}},
+        "future_envelope": {"opaque": ["keep", {"nested": true}]},
+        "limits": {"max_executions": 5000, "deadline_seconds": 86400},
+        "tasks": [
+            {
+                "id": "report-task", "type": "instructions", "name": "Report", "instructions": "Use the joined result.",
+                "order": 1, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [],
+                "inputs": [
+                    {"name": "verdict", "source": {"kind": "node_output", "node_id": "choice-join", "output": "verdict", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "yes-task", "type": "instructions", "name": "Accept", "instructions": "Record acceptance.",
+                "order": 2, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "each-task", "type": "instructions", "name": "Read document", "instructions": "Return exact document records.",
+                "order": 3, "runner": {"type": "inherit"}, "reference_ids": [],
+                "document_action": {"type": "analyze", "target_mode": "current_item", "loop_id": "each-node", "analysis_mode": "combined"},
+                "inputs": [
+                    {"name": "document", "source": {"kind": "loop_item", "loop_id": "each-node", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "records", "schema": {"type": "array", "items": {"type": "object", "properties": {"amount": {"type": "number"}}}}, "require_complete_coverage": true, "allow_partial": false}
+            },
+            {
+                "id": "seed-task", "type": "instructions", "name": "Decide", "instructions": "Return a validated decision.",
+                "order": 4, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "no-task", "type": "instructions", "name": "Review", "instructions": "Record required review.",
+                "order": 5, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "repeat-task", "type": "instructions", "name": "Refine", "instructions": "Produce the next typed decision.",
+                "order": 6, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [],
+                "inputs": [
+                    {"name": "current", "source": {"kind": "repeat_state", "loop_id": "repeat-node", "state_name": "review", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "spare-task", "type": "instructions", "name": "Optional note", "instructions": "Record an independent note.",
+                "order": 7, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            }
+        ],
+        "flow": {
+            "id": "root",
+            "nodes": [
+                {"id": "seed-node", "kind": "task", "task_id": "seed-task"},
+                {
+                    "id": "choice", "kind": "if",
+                    "inputs": [{"name": "decision", "source": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}],
+                    "condition": {"op": "eq", "left": {"input": "decision", "path": "/ready"}, "right": {"literal": true}},
+                    "then": {"id": "then-region", "nodes": [{"id": "yes-node", "kind": "task", "task_id": "yes-task"}]},
+                    "else": {"id": "else-region", "nodes": [{"id": "no-node", "kind": "task", "task_id": "no-task"}]},
+                    "join": {"id": "choice-join", "exports": [{"name": "verdict", "expected_kind": "text", "required": true, "then": {"node_id": "yes-node", "output": "text"}, "else": {"node_id": "no-node", "output": "text"}}]}
+                },
+                {
+                    "id": "each-node", "kind": "for_each", "inputs": [],
+                    "iterable": {"kind": "documents", "documents": [{"document_id": "fictional-document", "scope_type": "personal"}]},
+                    "item_key": "source_identity", "max_items": 500,
+                    "body": {
+                        "id": "each-body", "nodes": [{"id": "each-task-node", "kind": "task", "task_id": "each-task"}],
+                        "outputs": [{"name": "rows", "source": {"kind": "node_output", "node_id": "each-task-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false}]
+                    }
+                },
+                {
+                    "id": "collect-node", "kind": "collect", "source": {"loop_id": "each-node", "output": "rows"},
+                    "output_contract": {"kind": "records", "schema": {"type": "array", "items": {"type": "object", "properties": {"amount": {"type": "number"}}}}, "require_complete_coverage": true, "allow_partial": false}
+                },
+                {
+                    "id": "repeat-node", "kind": "repeat_until", "max_iterations": 25,
+                    "state": [{
+                        "name": "review", "initial": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "next": "decision_after",
+                        "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+                    }],
+                    "body": {
+                        "id": "repeat-body", "nodes": [{"id": "repeat-task-node", "kind": "task", "task_id": "repeat-task"}],
+                        "outputs": [{"name": "decision_after", "source": {"kind": "node_output", "node_id": "repeat-task-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}]
+                    },
+                    "until": {"op": "eq", "left": {"input": "review", "path": "/ready"}, "right": {"literal": true}},
+                    "exports": [{"name": "final_decision", "output": "decision_after"}]
+                },
+                {
+                    "id": "route-node", "kind": "route",
+                    "inputs": [{"name": "decision", "source": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}],
+                    "condition": {"op": "eq", "left": {"input": "decision", "path": "/ready"}, "right": {"literal": true}},
+                    "target": {"node_id": "report-node"}
+                },
+                {"id": "constructor", "kind": "task", "task_id": "spare-task"},
+                {"id": "report-node", "kind": "task", "task_id": "report-task"}
+            ],
+            "outputs": [{"name": "report", "source": {"kind": "node_output", "node_id": "report-node", "output": "text", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false}]
+        }
+    },
+    "commands": [
+        {"type": "move", "nodeId": "constructor", "targetRegionId": "root", "beforeId": "choice"},
+        {"type": "move", "nodeId": "constructor", "targetRegionId": "then-region", "beforeId": "yes-node"},
+        {
+            "type": "task", "taskId": "report-task",
+            "value": {
+                "id": "report-task", "type": "instructions", "name": "Report", "instructions": "Use the exact joined, collected, and final Repeat results.",
+                "order": 1, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [],
+                "inputs": [
+                    {"name": "verdict", "source": {"kind": "node_output", "node_id": "choice-join", "output": "verdict", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false},
+                    {"name": "rows", "source": {"kind": "node_output", "node_id": "collect-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false},
+                    {"name": "decision", "source": {"kind": "node_output", "node_id": "repeat-node", "output": "final_decision", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false},
+                "approval": {"required": true, "message": "Review the exact result before continuing."}
+            }
+        },
+        {
+            "type": "node", "nodeId": "route-node",
+            "value": {
+                "id": "route-node", "kind": "route",
+                "inputs": [{"name": "decision", "source": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}],
+                "condition": {"op": "not", "condition": {"op": "eq", "left": {"input": "decision", "path": "/ready"}, "right": {"literal": false}}},
+                "target": {"node_id": "report-node"}
+            }
+        },
+        {
+            "type": "join", "nodeId": "choice",
+            "value": {"id": "choice-join", "exports": [
+                {"name": "verdict", "expected_kind": "text", "required": true, "then": {"node_id": "yes-node", "output": "text"}, "else": {"node_id": "no-node", "output": "text"}},
+                {"name": "audit", "expected_kind": "text", "required": true, "then": {"node_id": "yes-node", "output": "text"}, "else": {"node_id": "no-node", "output": "text"}}
+            ]}
+        },
+        {
+            "type": "outputs", "regionId": "root",
+            "value": [
+                {"name": "report", "source": {"kind": "node_output", "node_id": "report-node", "output": "text", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false},
+                {"name": "rows", "source": {"kind": "node_output", "node_id": "collect-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false}
+            ]
+        },
+        {"type": "limits", "value": {"max_executions": 64, "deadline_seconds": 3600}}
+    ],
+    "expected": {
+        "limits": {"max_executions": 64, "deadline_seconds": 3600},
+        "tasks": [
+            {
+                "id": "report-task", "type": "instructions", "name": "Report", "instructions": "Use the exact joined, collected, and final Repeat results.",
+                "order": 1, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [],
+                "inputs": [
+                    {"name": "verdict", "source": {"kind": "node_output", "node_id": "choice-join", "output": "verdict", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false},
+                    {"name": "rows", "source": {"kind": "node_output", "node_id": "collect-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false},
+                    {"name": "decision", "source": {"kind": "node_output", "node_id": "repeat-node", "output": "final_decision", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false},
+                "approval": {"required": true, "message": "Review the exact result before continuing."}
+            },
+            {
+                "id": "yes-task", "type": "instructions", "name": "Accept", "instructions": "Record acceptance.",
+                "order": 2, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "each-task", "type": "instructions", "name": "Read document", "instructions": "Return exact document records.",
+                "order": 3, "runner": {"type": "inherit"}, "reference_ids": [],
+                "document_action": {"type": "analyze", "target_mode": "current_item", "loop_id": "each-node", "analysis_mode": "combined"},
+                "inputs": [
+                    {"name": "document", "source": {"kind": "loop_item", "loop_id": "each-node", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "records", "schema": {"type": "array", "items": {"type": "object", "properties": {"amount": {"type": "number"}}}}, "require_complete_coverage": true, "allow_partial": false}
+            },
+            {
+                "id": "seed-task", "type": "instructions", "name": "Decide", "instructions": "Return a validated decision.",
+                "order": 4, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "no-task", "type": "instructions", "name": "Review", "instructions": "Record required review.",
+                "order": 5, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "repeat-task", "type": "instructions", "name": "Refine", "instructions": "Produce the next typed decision.",
+                "order": 6, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [],
+                "inputs": [
+                    {"name": "current", "source": {"kind": "repeat_state", "loop_id": "repeat-node", "state_name": "review", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}
+                ],
+                "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+            },
+            {
+                "id": "spare-task", "type": "instructions", "name": "Optional note", "instructions": "Record an independent note.",
+                "order": 7, "runner": {"type": "inherit"}, "document_action": {"type": "none"}, "reference_ids": [], "inputs": [],
+                "output_contract": {"kind": "text", "require_complete_coverage": false, "allow_partial": false}
+            }
+        ],
+        "flow": {
+            "id": "root",
+            "nodes": [
+                {"id": "seed-node", "kind": "task", "task_id": "seed-task"},
+                {
+                    "id": "choice", "kind": "if",
+                    "inputs": [{"name": "decision", "source": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}],
+                    "condition": {"op": "eq", "left": {"input": "decision", "path": "/ready"}, "right": {"literal": true}},
+                    "then": {"id": "then-region", "nodes": [{"id": "constructor", "kind": "task", "task_id": "spare-task"}, {"id": "yes-node", "kind": "task", "task_id": "yes-task"}]},
+                    "else": {"id": "else-region", "nodes": [{"id": "no-node", "kind": "task", "task_id": "no-task"}]},
+                    "join": {"id": "choice-join", "exports": [
+                        {"name": "verdict", "expected_kind": "text", "required": true, "then": {"node_id": "yes-node", "output": "text"}, "else": {"node_id": "no-node", "output": "text"}},
+                        {"name": "audit", "expected_kind": "text", "required": true, "then": {"node_id": "yes-node", "output": "text"}, "else": {"node_id": "no-node", "output": "text"}}
+                    ]}
+                },
+                {
+                    "id": "each-node", "kind": "for_each", "inputs": [],
+                    "iterable": {"kind": "documents", "documents": [{"document_id": "fictional-document", "scope_type": "personal"}]},
+                    "item_key": "source_identity", "max_items": 500,
+                    "body": {
+                        "id": "each-body", "nodes": [{"id": "each-task-node", "kind": "task", "task_id": "each-task"}],
+                        "outputs": [{"name": "rows", "source": {"kind": "node_output", "node_id": "each-task-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false}]
+                    }
+                },
+                {
+                    "id": "collect-node", "kind": "collect", "source": {"loop_id": "each-node", "output": "rows"},
+                    "output_contract": {"kind": "records", "schema": {"type": "array", "items": {"type": "object", "properties": {"amount": {"type": "number"}}}}, "require_complete_coverage": true, "allow_partial": false}
+                },
+                {
+                    "id": "repeat-node", "kind": "repeat_until", "max_iterations": 25,
+                    "state": [{
+                        "name": "review", "initial": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "next": "decision_after",
+                        "output_contract": {"kind": "json", "schema": {"type": "object", "properties": {"ready": {"type": "boolean"}, "amount": {"type": "number"}}, "required": ["ready"]}, "require_complete_coverage": false, "allow_partial": false}
+                    }],
+                    "body": {
+                        "id": "repeat-body", "nodes": [{"id": "repeat-task-node", "kind": "task", "task_id": "repeat-task"}],
+                        "outputs": [{"name": "decision_after", "source": {"kind": "node_output", "node_id": "repeat-task-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}]
+                    },
+                    "until": {"op": "eq", "left": {"input": "review", "path": "/ready"}, "right": {"literal": true}},
+                    "exports": [{"name": "final_decision", "output": "decision_after"}]
+                },
+                {
+                    "id": "route-node", "kind": "route",
+                    "inputs": [{"name": "decision", "source": {"kind": "node_output", "node_id": "seed-node", "output": "json", "scope": "current"}, "required": true, "expected_kind": "json", "allow_partial": false}],
+                    "condition": {"op": "not", "condition": {"op": "eq", "left": {"input": "decision", "path": "/ready"}, "right": {"literal": false}}},
+                    "target": {"node_id": "report-node"}
+                },
+                {"id": "report-node", "kind": "task", "task_id": "report-task"}
+            ],
+            "outputs": [
+                {"name": "report", "source": {"kind": "node_output", "node_id": "report-node", "output": "text", "scope": "current"}, "required": true, "expected_kind": "text", "allow_partial": false},
+                {"name": "rows", "source": {"kind": "node_output", "node_id": "collect-node", "output": "records", "scope": "current"}, "required": true, "expected_kind": "records", "allow_partial": false}
+            ]
+        }
+    }
+}
