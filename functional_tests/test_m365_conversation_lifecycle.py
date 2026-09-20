@@ -1,9 +1,10 @@
 # test_m365_conversation_lifecycle.py
 """
 Functional regressions for Microsoft 365 conversation deletion and copying.
-Version: 0.261.038
+Version: 0.261.039
 Implemented in: 0.261.038
-Date: 2026-09-19
+Updated in: 0.261.039 (approved group document cleanup regression)
+Date: 2026-09-20
 
 Real cancellation, fork/copy, Flask deletion, and retention code run against
 isolated storage. No Graph request, credential acquisition, or deployment occurs.
@@ -14,7 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 import subprocess
 import sys
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from azure.cosmos.exceptions import CosmosHttpResponseError
 import pytest
@@ -413,6 +414,61 @@ def run_lifecycle_scenarios(runtime):
     require(result["success"] is False, "Approved group deletion ignored a delivery cancellation outage.")
     require(state(admin_intent) == "scheduled", "A failed group deletion misreported a cancellation.")
     require("admin-group-conversation" in config.cosmos_group_conversations_container.items, "Group cleanup deleted records before stopping their intents.")
+
+    approval = {
+        "id": "delete-group-approval", "group_id": "admin-group", "group_name": "Admin group",
+        "requester_id": "owner", "requester_email": "owner@example.test",
+    }
+    documents = config.cosmos_group_documents_container
+    documents.upsert_item({
+        "id": "admin-group-document", "group_id": "admin-group", "type": "document_metadata",
+    })
+    config.cosmos_group_messages_container.upsert_item({
+        "id": "admin-group-message", "group_id": "admin-group",
+        "conversation_id": "admin-group-conversation",
+    })
+    cleanup = Mock()
+    cleanup.delete_document.return_value = {"success": True}
+    with patch.dict(delete_group.__globals__, {
+        "delete_document": cleanup.delete_document,
+        "delete_document_chunks": cleanup.delete_document_chunks,
+        "invalidate_group_search_cache": cleanup.invalidate_group_search_cache,
+        "delete_group": cleanup.delete_group,
+    }), runtime.web.test_request_context():
+        session["user"] = {"oid": "admin", "tid": "tenant", "roles": ["Admin"]}
+        result = delete_group(approval, "admin", "admin@example.test", "Admin")
+        require(result == {"success": True, "message": "Group completely deleted"}, f"Approved group cleanup failed: {result}")
+        require(cleanup.mock_calls == [
+            call.delete_document(user_id=None, document_id="admin-group-document", group_id="admin-group"),
+            call.delete_document_chunks(document_id="admin-group-document", group_id="admin-group"),
+            call.invalidate_group_search_cache("admin-group"),
+            call.delete_group("admin-group"),
+        ], "Approved group deletion skipped or reordered document cleanup side effects.")
+        require(state(admin_intent) == "cancelled", "Approved group cleanup left its pending intent active.")
+        require("admin-group-conversation" not in config.cosmos_group_conversations_container.items, "Approved group cleanup retained its conversation.")
+        require("admin-group-message" not in config.cosmos_group_messages_container.items, "Approved group cleanup retained its message.")
+        document_activity = [
+            row for row in config.cosmos_activity_logs_container.items.values()
+            if row.get("type") == "group_documents_deletion" and row.get("group_id") == "admin-group"
+        ]
+        require(len(document_activity) == 1, "Approved group cleanup lost its document deletion audit.")
+        require(
+            document_activity[0]["documents_deleted"] == 1
+            and document_activity[0]["approval_id"] == approval["id"]
+            and document_activity[0]["approver_id"] == "admin"
+            and document_activity[0]["approver_email"] == "admin@example.test",
+            "Document cleanup lost its deletion count or approval context.",
+        )
+
+        cleanup.reset_mock()
+        with patch.object(documents, "query_items", side_effect=RuntimeError("Offline document lookup failure")) as document_query:
+            result = delete_group(approval, "admin", "admin@example.test", "Admin")
+        document_query.assert_called_once()
+        require(
+            result == {"success": True, "message": "Group completely deleted"}
+            and cleanup.mock_calls == [call.delete_group("admin-group")],
+            "Approved group deletion changed its existing handling of a failed document cleanup result.",
+        )
     require(len(runtime.graph_calls) == calls_before_cleanup, "Copying, cancellation, archival, or retention called Graph.")
 
 

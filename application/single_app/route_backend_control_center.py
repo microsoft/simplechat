@@ -7852,7 +7852,7 @@ def register_route_backend_control_center(bp):
                 }
 
             # First delete all documents
-            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+            _execute_delete_documents(approval, executor_id, executor_email, executor_name)
 
             # Delete group conversations (optional - could keep for audit)
             try:

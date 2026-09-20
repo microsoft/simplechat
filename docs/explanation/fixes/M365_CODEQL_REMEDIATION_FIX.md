@@ -1,4 +1,4 @@
-# Microsoft 365 CodeQL remediation (v0.261.037)
+# Microsoft 365 CodeQL remediation (v0.261.039)
 
 Fixed in version: **0.261.030**
 
@@ -6,6 +6,29 @@ Application version: `application/single_app/config.py`, updated from
 `0.261.029` to `0.261.030`. No deployment logic or deployer version changed.
 Related work: [PR #1497](https://github.com/microsoft/simplechat/pull/1497)
 and [issue #1493](https://github.com/microsoft/simplechat/issues/1493).
+
+## Group deletion review follow-up in 0.261.039
+
+Fixed/Implemented in version: **0.261.039**. This follow-up updates
+`application/single_app/config.py` from `0.261.038` to `0.261.039`.
+
+[1942: unused local variable](https://github.com/microsoft/simplechat/security/code-scanning/1942)
+identified the unused `doc_result` binding in `_execute_delete_group()`.
+`route_backend_control_center.py` now calls `_execute_delete_documents()`
+directly, with the same arguments and ordering. Document/chunk deletion, search
+cache invalidation, and audit logging still run before group cleanup. The
+previously ignored return value remains ignored; no legacy error handling changes.
+
+`test_m365_conversation_lifecycle.py` exercises the real approved-group operation
+and document helper against isolated storage. It verifies cleanup calls and their
+order, document audit context, pending-action cancellation, conversation/message
+deletion, and the unchanged handling of a failed document-cleanup result.
+The regression blocks external network access and makes no live Graph/Azure writes.
+
+Focused validation passed **5 lifecycle tests in normal Python and 5 in optimized
+Python**, **12 route-policy tests**, and **13 documentation checks**. All three
+changed Python files passed syntax checks. CodeQL was not rerun for this local
+follow-up.
 
 ## Review follow-up in 0.261.037
 
