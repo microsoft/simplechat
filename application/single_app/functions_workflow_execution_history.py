@@ -1,8 +1,11 @@
 # functions_workflow_execution_history.py
 """Authorized safe projections of the schema-2 execution journal."""
 
-from functions_analysis_access import authorize_analysis_sources, build_analysis_access
-from functions_workflow_identity import workflow_node_identity
+from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources, build_analysis_access
+from functions_workflow_flow import compile_workflow_flow
+from functions_workflow_identity import normalize_workflow_iteration_path, workflow_execution_id, workflow_node_identity
+from functions_workflow_inspection import authorize_workflow_flow_sources
+from functions_workflow_journal import public_workflow_journal_entry
 from functions_workflow_limits import WORKFLOW_MAX_EXECUTION_ADMISSIONS
 from functions_workflow_node_results import (
     WorkflowLineageAuthorization, authorize_workflow_node_result_read, load_node_result, result_selectors,
@@ -41,12 +44,50 @@ def authorize_execution_payload(workflow, run_id, payload, *, reader_user_id, au
 
 
 def workflow_execution_history(workflow, run_id, *, reader_user_id, kind="execution", execution_id=None,
-                               cursor=None, limit=50, authorization=None):
+                               cursor=None, limit=50, authorization=None, node_id=None, iteration_path=None):
+    exact = node_id is not None or iteration_path is not None
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Execution history pages require a limit between 1 and 100.")
+    if exact and (
+        not isinstance(node_id, str) or not node_id or not isinstance(iteration_path, list)
+        or kind != "execution" or execution_id is not None or cursor is not None
+    ):
+        raise ValueError("An exact execution requires only a paired node and iteration path.")
     store = workflow_runtime_store(workflow, run_id)
     if store.read().get("schema_version") != 2:
         raise ValueError("Execution history is available only for structured workflow runs.")
     workflow = store.run_definition()
     authorization = authorization or WorkflowLineageAuthorization(workflow, run_id, reader_user_id=reader_user_id, store=store)
+    if exact:
+        compiled = compile_workflow_flow(workflow)
+        entry = compiled["nodes"].get(node_id)
+        if node_id == compiled["flow"]["id"]:
+            entry = {"node": {"id": node_id, "kind": "root"}, "region_id": node_id}
+        if entry is None:
+            raise ValueError("The selected structural node has no execution identity.")
+        path = normalize_workflow_iteration_path(iteration_path)
+        selected_id = workflow_execution_id(workflow, run_id, node_id, path)
+        row = store.journal_read("execution", selected_id)
+        if row is None:
+            authorize_workflow_flow_sources(workflow, reader_user_id=reader_user_id)
+            # No payload exists to supply receipts: prove membership from the
+            # frozen items and sealed admissions, never from the requested path alone.
+            authorization.walk([("path", {
+                "node_id": node_id, "execution_id": selected_id, "iteration_path": path,
+            }, None)])
+            if authorization.access()["source_snapshot_changed"]:
+                raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
+            return {"executions": [], "next_cursor": None, "total_count": 0}
+        payload = row["payload"]
+        expected = {
+            "execution_id": selected_id, "node_id": node_id, "iteration_path": path,
+            "node_kind": entry["node"]["kind"], "region_id": entry["region_id"],
+            "task_id": entry["node"].get("task_id"),
+        }
+        if any(payload.get(name) != value for name, value in expected.items()):
+            raise ValueError("The execution payload does not match the frozen node and path.")
+        authorize_execution_payload(workflow, run_id, payload, reader_user_id=reader_user_id, authorization=authorization)
+        return {"executions": [public_workflow_journal_entry(row, "execution")], "next_cursor": None, "total_count": 1}
     if execution_id:
         execution = store.journal_read("execution", execution_id)
         if execution is None:

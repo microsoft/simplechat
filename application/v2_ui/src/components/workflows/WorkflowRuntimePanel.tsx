@@ -214,6 +214,7 @@ export function WorkflowRuntimePanel({
     structuredRun = false,
     onRuntimeChanged,
     onAccessLost,
+    onRuntimeSnapshot,
 }: {
     scope: WorkflowScope;
     workflowId: string;
@@ -222,6 +223,7 @@ export function WorkflowRuntimePanel({
     structuredRun?: boolean;
     onRuntimeChanged?: () => void;
     onAccessLost?: (status: number) => void;
+    onRuntimeSnapshot?: (runId: string, runtime: WorkflowRuntimeProjection | null) => void;
 }) {
     const scopeKey = workflowScopeKey(scope);
     const [enabled, setEnabled] = useState(durable);
@@ -237,6 +239,10 @@ export function WorkflowRuntimePanel({
     const abortRef = useRef<AbortController | null>(null);
     const requestToken = useRef(0);
     const retryRequest = useRef<{ key: string; requestId: string } | null>(null);
+
+    useEffect(() => {
+        onRuntimeSnapshot?.(runId, runtime);
+    }, [onRuntimeSnapshot, runId, runtime]);
 
     useEffect(() => {
         setEnabled(durable);

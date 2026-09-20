@@ -106,6 +106,10 @@ from functions_workflow_runtime import (
 )
 from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 from functions_workflow_execution_history import workflow_execution_history, workflow_execution_result_page
+from functions_workflow_inspection import (
+    WorkflowFlowDetailTooLarge, WorkflowFlowUnsupported, authorize_workflow_flow_sources, preview_workflow_flow,
+    workflow_flow_inspection, workflow_run_flow_inspection,
+)
 from functions_workflow_node_results import WorkflowRecordPageTooLarge
 from functions_workflow_loop_history import (
     workflow_execution_records_page, workflow_execution_provenance_page, workflow_loop_items_page,
@@ -341,10 +345,111 @@ def _workflow_runtime_response(workflow_id, run_id, *, group=False, action=None)
         return jsonify({'error': 'Workflow progress is temporarily unavailable.'}), 503
 
 
+def _assert_workflow_flow_reader_scope(workflow, workflow_id, user_id, *, group_id=None, run=None, run_id=None):
+    if not isinstance(workflow, dict) or workflow.get('id') != workflow_id or workflow.get('deleting'):
+        raise LookupError('Workflow not found.')
+    if group_id:
+        if workflow.get('group_id') != group_id:
+            raise LookupError('Workflow not found.')
+    elif workflow.get('user_id') != user_id or workflow.get('group_id'):
+        raise LookupError('Workflow not found.')
+    if run_id is not None:
+        if not isinstance(run, dict) or run.get('id') != run_id or run.get('workflow_id') != workflow_id:
+            raise LookupError('Workflow run not found.')
+        if group_id:
+            if run.get('group_id') != group_id:
+                raise LookupError('Workflow run not found.')
+        elif run.get('user_id') != user_id or run.get('group_id'):
+            raise LookupError('Workflow run not found.')
+
+
+def _workflow_inspection_cache_response(response):
+    """Prevent cached inspection responses from bypassing current access checks."""
+    endpoint = (request.endpoint or '').rsplit('.', 1)[-1]
+    prefix, _, operation = endpoint.partition('_workflow_')
+    if (
+        prefix in {'get_user', 'get_group'} and operation in {
+            'flow', 'run_flow', 'executions', 'execution_attempts', 'execution_result',
+            'execution_records', 'execution_provenance', 'loop_items',
+            'repeat_iterations', 'repeat_state', 'decisions', 'runtime',
+        }
+        or prefix in {'preview_user', 'preview_group'} and operation == 'flow'
+    ):
+        response.headers['Cache-Control'] = 'no-store, private'
+    return response
+
+
+def _workflow_flow_response(workflow_id=None, run_id=None, *, group=False, preview=False):
+    user_id = get_current_user_id()
+    try:
+        if group and not request.args.get('group_id'):
+            raise ValueError('An explicit group scope is required.')
+        group_id = None
+        if group:
+            resolver = _resolve_active_group_for_workflow_management if preview else _resolve_group_workflow_request_group
+            group_id, _ = resolver(user_id)
+        elif preview:
+            _assert_personal_workflow_draft_access(get_settings())
+        allowed = {'node_id', 'section', 'revision', 'cursor', 'limit'}
+        if preview:
+            if set(request.args) - {'group_id'} or any(len(values) != 1 for _, values in request.args.lists()):
+                raise ValueError('Invalid preview query.')
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict) or data.keys() - (allowed | {'definition'}) or 'definition' not in data:
+                raise ValueError('Invalid Flow preview.')
+            selectors = {key: data[key] for key in allowed if key in data}
+            response = preview_workflow_flow(data['definition'], user_id=user_id, group_id=group_id, **selectors)
+        else:
+            if set(request.args) - (allowed | {'group_id'}) or any(len(values) != 1 for _, values in request.args.lists()):
+                raise ValueError('Invalid Flow query.')
+            selectors = {key: request.args[key] for key in allowed if key in request.args}
+            if 'limit' in selectors:
+                selectors['limit'] = int(selectors['limit'])
+            workflow = get_group_workflow(group_id, workflow_id) if group else get_personal_workflow(user_id, workflow_id)
+            run = (
+                get_group_workflow_run(group_id, run_id) if group else get_personal_workflow_run(user_id, run_id)
+            ) if run_id is not None else None
+            _assert_workflow_flow_reader_scope(
+                workflow, workflow_id, user_id, group_id=group_id, run=run, run_id=run_id,
+            )
+            if run_id is not None:
+                if run.get('durable_execution') is not True:
+                    raise WorkflowFlowUnsupported()
+                response = workflow_run_flow_inspection(workflow, run_id, reader_user_id=user_id, **selectors)
+            else:
+                authorize_workflow_flow_sources(workflow, reader_user_id=user_id)
+                response = workflow_flow_inspection(workflow, **selectors)
+        return jsonify(response)
+    except WorkflowFlowDetailTooLarge as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code}), 413
+    except WorkflowFlowUnsupported as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code}), 409
+    except WorkflowDefinitionConflict as exc:
+        return jsonify({'error': exc.public_message, 'code': 'workflow_flow_revision_changed'}), 409
+    except WorkflowDefinitionError as exc:
+        return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
+    except WorkflowRuntimeConflict as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code}), 409
+    except (PermissionError, AnalysisResultUnavailable):
+        return jsonify({'error': 'Current access to this workflow definition or its sources could not be confirmed.'}), 403
+    except (LookupError, CosmosResourceNotFoundError):
+        return jsonify({'error': 'The selected workflow definition, run or structural node was not found.'}), 404
+    except (ValueError, TypeError, RecursionError):
+        return jsonify({'error': 'Invalid Flow definition or inspection request.'}), 400
+    except (AzureError, RuntimeUnavailable, WorkflowResultStorageUnavailableError) as exc:
+        log_event(
+            '[WORKFLOW_ROUTES] Flow definition inspection failed',
+            extra={'workflow_id': workflow_id, 'run_id': run_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        return jsonify({'error': 'Workflow Flow inspection is temporarily unavailable.'}), 503
+
+
 def _workflow_execution_history_response(workflow_id, run_id, *, group=False, kind='execution',
                                          execution_id=None, attempt=None, representation=None, iteration=None):
     user_id = get_current_user_id()
     try:
+        group_id = None
         if group:
             group_id, _ = _resolve_group_workflow_request_group(user_id)
             workflow = get_group_workflow(group_id, workflow_id)
@@ -354,6 +459,23 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
             run = get_personal_workflow_run(user_id, run_id)
         if not workflow or not run or run.get('workflow_id') != workflow_id:
             return jsonify({'error': 'Workflow run not found.'}), 404
+        selectors = {}
+        if 'node_id' in request.args or 'iteration_path' in request.args:
+            if (
+                kind != 'execution' or execution_id is not None or attempt is not None
+                or 'node_id' not in request.args or 'iteration_path' not in request.args
+                or set(request.args) - {'node_id', 'iteration_path', 'limit', 'group_id'}
+                or any(len(values) != 1 for _, values in request.args.lists())
+                or group and not request.args.get('group_id')
+                or len(request.args['iteration_path']) > 2048
+            ):
+                raise ValueError('Invalid exact execution selector.')
+            _assert_workflow_flow_reader_scope(
+                workflow, workflow_id, user_id, group_id=group_id, run=run, run_id=run_id,
+            )
+            selectors = {'node_id': request.args['node_id'], 'iteration_path': json.loads(request.args['iteration_path'])}
+            if not isinstance(selectors['iteration_path'], list):
+                raise ValueError('An exact iteration path must be a JSON list.')
         if kind == 'iterations':
             response = workflow_repeat_iterations_page(
                 workflow, run_id, execution_id, reader_user_id=user_id,
@@ -389,6 +511,7 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
             response = workflow_execution_history(
                 workflow, run_id, reader_user_id=user_id, kind=kind, execution_id=execution_id,
                 cursor=request.args.get('cursor'), limit=int(request.args.get('limit', '50')),
+                **selectors,
             )
         return jsonify(response)
     except WorkflowRuntimeConflict as exc:
@@ -399,7 +522,7 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
         return jsonify({'error': 'Workflow execution or attempt not found.'}), 404
     except WorkflowRecordPageTooLarge as exc:
         return jsonify({'error': exc.public_message, 'code': exc.code, 'record_offset': exc.record_offset}), 413
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return jsonify({'error': 'Invalid execution, attempt or page request.'}), 400
     except (AzureError, RuntimeUnavailable, WorkflowResultStorageUnavailableError) as exc:
         log_event('[WORKFLOW_ROUTES] Execution history read failed',
@@ -1084,6 +1207,8 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
 
 
 def register_route_backend_workflows(bp):
+    bp.after_request(_workflow_inspection_cache_response)
+
     @bp.route('/api/workflows/m365-run-as-users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1132,6 +1257,60 @@ def register_route_backend_workflows(bp):
             except LookupError:
                 return jsonify({'error': 'Group not found.'}), 404
         return jsonify({'users': list(users.values())})
+
+    @bp.route('/api/user/workflows/<workflow_id>/flow', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_flow(workflow_id):
+        return _workflow_flow_response(workflow_id)
+
+    @bp.route('/api/group/workflows/<workflow_id>/flow', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_flow(workflow_id):
+        return _workflow_flow_response(workflow_id, group=True)
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/flow', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_run_flow(workflow_id, run_id):
+        return _workflow_flow_response(workflow_id, run_id)
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/flow', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_run_flow(workflow_id, run_id):
+        return _workflow_flow_response(workflow_id, run_id, group=True)
+
+    @bp.route('/api/user/workflows/flow-preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def preview_user_workflow_flow():
+        return _workflow_flow_response(preview=True)
+
+    @bp.route('/api/group/workflows/flow-preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def preview_group_workflow_flow():
+        return _workflow_flow_response(group=True, preview=True)
 
     @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/iterations', methods=['GET'])
     @swagger_route(security=get_auth_security())
