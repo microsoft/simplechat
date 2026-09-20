@@ -9,8 +9,9 @@ Application version source: `application\single_app\config.py`.
 ## 1. Current status and delivery record
 
 **M5C implementation and scoped offline validation are complete.**
-Commit, push, PR creation and this handover have been authorized; delivery is
-being finalized. A PR is not a merged release or a deployed application.
+The implementation is committed and pushed, and its PR is open for review.
+This handover is included in that PR. A PR is not a merged release or a
+deployed application.
 
 This is the current workflow-programme handover. It supersedes
 [the M5B handover](WORKFLOW_M5B_COMPLETION_AND_NEXT_STEPS.md) as a starting
@@ -23,8 +24,9 @@ point, without rewriting that document's historical checkpoint.
 | Verified starting merge | `a0b178c8cbf85bc2229e5e2697ecb78d09a16f86` |
 | Prerequisite | M5B #1506 merged into the V2 integration branch at `2026-09-20T19:18:47Z` |
 | Remote base refresh | The integration branch still matched that starting merge when delivery preparation began |
-| M5C implementation commit | Recorded during PR publication below |
-| M5C PR | Recorded during PR publication below |
+| M5C implementation commit | [`a474dcd4ca947a7cf070541b6ee41b5772c6160b`](https://github.com/microsoft/simplechat/commit/a474dcd4ca947a7cf070541b6ee41b5772c6160b) |
+| M5C PR | [#1507](https://github.com/microsoft/simplechat/pull/1507), open and targeting the V2 integration branch; not merged |
+| Remote publication checks | Branch-flow and CLA checks passed on the implementation commit. Refresh the latest head before merging; these are not a full application-CI result. |
 | Application version | `0.261.123`; only the patch segment changed |
 | Release notes | M5C-only entry added for `0.261.123`; earlier backfill remains O6 |
 | Issue association | Session-only M5C tracking; no new issue requested or created |
