@@ -1,7 +1,7 @@
 # test_retention_policy_conversation_scope_coverage.py
 """
 Functional test for retention policy conversation scope coverage.
-Version: 0.250.103
+Version: 0.261.038
 Implemented in: 0.250.103
 
 This test verifies the retention ownership matrix, timestamp safeguards,
@@ -305,6 +305,7 @@ def build_collaboration_cleanup_namespace(
         'cache_invalidations': [],
         'archival_logs': [],
         'deletion_logs': [],
+        'cancelled_delivery_conversations': [],
     }
 
     namespace = {
@@ -324,6 +325,7 @@ def build_collaboration_cleanup_namespace(
         'cosmos_archived_conversations_container': archived_conversations,
         'cosmos_archived_messages_container': archived_messages,
         'log_event': lambda *args, **kwargs: None,
+        'cancel_m365_conversation_deliveries': effects['cancelled_delivery_conversations'].append,
         'log_conversation_archival': (
             lambda **kwargs: effects['archival_logs'].append(copy.deepcopy(kwargs))
         ),
@@ -331,7 +333,7 @@ def build_collaboration_cleanup_namespace(
             lambda **kwargs: effects['deletion_logs'].append(copy.deepcopy(kwargs))
         ),
         '_delete_blob_backed_collaboration_files': (
-            lambda messages: effects['blob_message_ids'].extend(
+            lambda messages, conversation=None: effects['blob_message_ids'].extend(
                 message.get('id')
                 for message in messages
             )
@@ -374,6 +376,8 @@ def build_collaboration_cleanup_namespace(
             '_collaboration_retention_identity',
             '_read_collaboration_conversation_for_retention',
             '_cleanup_collaboration_thoughts',
+            '_read_linked_collaboration_source',
+            '_cancel_collaboration_pending_deliveries',
             '_cleanup_linked_collaboration_source',
             '_delete_collaboration_conversation_records',
             'delete_collaboration_conversation_for_retention',
@@ -611,7 +615,7 @@ def test_collaboration_revalidation_and_cleanup_failure_safety():
 
     containers['collaboration'].upsert_item(collaboration_item)
     namespace['_delete_blob_backed_collaboration_files'] = (
-        lambda messages: (_ for _ in ()).throw(RuntimeError('blob cleanup failed'))
+        lambda messages, conversation=None: (_ for _ in ()).throw(RuntimeError('blob cleanup failed'))
     )
     try:
         namespace['delete_collaboration_conversation_for_retention'](

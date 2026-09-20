@@ -9,6 +9,7 @@ personal_actions container with user_id partitioning.
 
 import logging
 import uuid
+import hashlib
 from copy import deepcopy
 from collections import Counter
 from datetime import datetime, timezone
@@ -55,6 +56,16 @@ from functions_workspace_identities import (
 from config import cosmos_personal_actions_container, cosmos_user_settings_container
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
+from json_schema_validation import (
+    ACTION_MIGRATION_ID_PREFIX,
+    is_legacy_msgraph_type,
+    normalize_m365_action_payload,
+    validate_legacy_action_update,
+)
+
+
+def _is_action_migration_record(action):
+    return bool(action.get('_action_migration')) or str(action.get('id') or '').startswith(ACTION_MIGRATION_ID_PREFIX)
 
 
 def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
@@ -104,18 +115,33 @@ def _clean_action(action, user_id, return_type):
 
 def _clean_actions(actions, user_id, return_type):
     try:
-        return [_clean_action(action, user_id, return_type) for action in actions]
+        return [
+            _clean_action(action, user_id, return_type)
+            for action in actions if not _is_action_migration_record(action)
+        ]
     except Exception as exc:
         log_event("[PLUGINS] Personal action normalization failed",
                   level=logging.WARNING, extra={"user_id": user_id, "error_type": type(exc).__name__})
         raise
 
 
+def _read_personal_action_record(user_id, action_id):
+    try:
+        return cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+
+
 def get_personal_action_record(user_id, action_id):
     """Read an exact personal ID without secret hydration; never send this to a browser."""
-    try:
-        action = cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
-    except exceptions.CosmosResourceNotFoundError:
+    action = _read_personal_action_record(user_id, action_id)
+    if action is None:
+        return None
+    if _is_action_migration_record(action):
+        log_event(
+            "[USER_SETTINGS] Internal action migration record excluded from action lookup.",
+            level=logging.WARNING, extra={"user_id": user_id},
+        )
         return None
     return bind_action_origin(action, "personal", user_id)
 
@@ -124,14 +150,16 @@ def _find_personal_action_record(user_id, action_id):
     action = get_personal_action_record(user_id, action_id)
     if action is not None:
         return action
-    actions = list(cosmos_personal_actions_container.query_items(
-        query="SELECT * FROM c WHERE c.user_id = @user_id AND c.name = @name",
-        parameters=[
-            {"name": "@user_id", "value": user_id},
-            {"name": "@name", "value": action_id},
-        ],
-        partition_key=user_id,
-    ))
+    actions = [
+        action for action in cosmos_personal_actions_container.query_items(
+            query="SELECT * FROM c WHERE c.user_id = @user_id AND c.name = @name",
+            parameters=[
+                {"name": "@user_id", "value": user_id},
+                {"name": "@name", "value": action_id},
+            ],
+            partition_key=user_id,
+        ) if not _is_action_migration_record(action)
+    ]
     if len(actions) > 1:
         raise LegacyActionConflictError()
     return bind_action_origin(actions[0], "personal", user_id) if actions else None
@@ -206,15 +234,21 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
 
 def _save_personal_action(user_id, action_data, enforce_governance=True, migration_snapshot=None):
     try:
+        submitted_action = action_data
+        action_data = normalize_m365_action_payload(action_data)
         action_data = prepare_scoped_action(action_data, "personal", user_id)
+        legacy_type = is_legacy_msgraph_type(action_data.get('type'))
         if action_data.get("id") and (
             not isinstance(action_data["id"], str) or action_data["id"].startswith(LEGACY_ACTION_PREFIX)
         ):
             raise ValueError("Action ID is invalid.")
         existing_action = None
         if action_data.get('id'):
-            existing_action = get_personal_action_record(user_id, action_data['id'])
-        elif action_data.get('name'):
+            existing_action = _read_personal_action_record(user_id, action_data['id'])
+        validate_legacy_action_update(submitted_action, existing_action, 'user_id', user_id)
+        if legacy_type:
+            action_data['type'] = 'msgraph'
+        elif not action_data.get('id') and action_data.get('name'):
             existing_action = _find_personal_action_record(user_id, action_data['name'])
         if migration_snapshot is not None and existing_action is not None:
             raise LegacyActionConflictError()
@@ -285,7 +319,14 @@ def _save_personal_action(user_id, action_data, enforce_governance=True, migrati
             scope="user",
             existing_plugin=existing_action,
         )
-        if migration_snapshot is not None:
+        if legacy_type:
+            result = cosmos_personal_actions_container.replace_item(
+                item=existing_action['id'],
+                body=action_data,
+                etag=existing_action['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        elif migration_snapshot is not None:
             action_data["_legacy_migration"] = {
                 "source_locator": migration_snapshot.locator,
                 "destination_digest": _stored_action_digest(action_data),
@@ -321,6 +362,7 @@ def delete_personal_action(user_id, action_id):
         bool: True if deleted, False if not found
     """
     try:
+        ensure_migration_complete(user_id)
         # Try to find the action first to get the correct ID
         if isinstance(action_id, str) and action_id.startswith(LEGACY_ACTION_PREFIX):
             return delete_legacy_personal_action(user_id, action_id)
@@ -346,6 +388,79 @@ def delete_personal_action(user_id, action_id):
         log_event("[PLUGINS] Personal action deletion failed", level=logging.ERROR,
                   extra={"user_id": user_id, "action_id": action_id, "error_type": type(exc).__name__})
         raise
+
+def _historical_msgraph_identity(user_id, plugin):
+    if not isinstance(plugin, dict) or not isinstance(plugin.get("name"), str) or not plugin["name"]:
+        raise ValueError("Historical action configuration is invalid.")
+    source_id = plugin.get("id")
+    if (
+        source_id and (
+            not isinstance(source_id, str)
+            or source_id.startswith((ACTION_MIGRATION_ID_PREFIX, LEGACY_ACTION_PREFIX))
+        )
+        or plugin.get("_action_migration")
+    ):
+        raise ValueError("Historical action identity is invalid.")
+    source_key = source_id or plugin["name"]
+    digest = hashlib.sha256(source_key.encode('utf-8')).hexdigest()
+    receipt_id = f"{ACTION_MIGRATION_ID_PREFIX}{digest}"
+    action_id = source_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:legacy-action:{source_key}"))
+    return action_id, receipt_id
+
+
+def _migrate_historical_msgraph_action(user_id, plugin):
+    action_id, receipt_id = _historical_msgraph_identity(user_id, plugin)
+    try:
+        cosmos_personal_actions_container.read_item(item=receipt_id, partition_key=user_id)
+        return 0
+    except exceptions.CosmosResourceNotFoundError:
+        # No receipt means this historical action has not been migrated yet.
+        pass
+
+    existing = None
+    try:
+        existing = cosmos_personal_actions_container.read_item(item=action_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        # Only this trusted migration may create an absent historical action.
+        pass
+    payload = deepcopy(plugin)
+    payload['id'] = action_id
+    payload['user_id'] = user_id
+    payload['type'] = 'msgraph'
+    if existing:
+        validate_legacy_action_update(payload, existing, 'user_id', user_id)
+    else:
+        name_conflicts = list(cosmos_personal_actions_container.query_items(
+            query="SELECT c.id FROM c WHERE c.user_id = @user_id AND c.name = @name",
+            parameters=[{"name": "@user_id", "value": user_id}, {"name": "@name", "value": plugin['name']}],
+            partition_key=user_id,
+        ))
+        if name_conflicts:
+            raise ValueError("Historical action ID conflicts require administrator review.")
+        validate_action_identity_reference(payload, WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id)
+        payload = keyvault_plugin_save_helper(payload, scope_value=user_id, scope="user")
+
+    receipt = {
+        'id': receipt_id,
+        'user_id': user_id,
+        '_action_migration': True,
+        'action_id': action_id,
+        'version': '0.261.029',
+    }
+    operations = [('create', (receipt,))]
+    if not existing:
+        operations.append(('create', (payload,)))
+    try:
+        cosmos_personal_actions_container.execute_item_batch(
+            batch_operations=operations, partition_key=user_id,
+        )
+    except exceptions.CosmosBatchOperationError as exc:
+        if exc.status_code != 409:
+            raise
+        cosmos_personal_actions_container.read_item(item=receipt_id, partition_key=user_id)
+        return 0
+    return 0 if existing else 1
+
 
 def _read_legacy_settings_document(user_id):
     # The settings accessor remains the object-level authorization boundary.
@@ -498,6 +613,10 @@ def prepare_legacy_personal_actions_update(user_id, submitted_plugins):
                 raise LegacyActionConflictError()
             if is_retired_mcp_stdio(snapshot.record):
                 raise McpConfigurationError("Use Actions to reconfigure an existing legacy action.")
+            if is_legacy_msgraph_type(resolve_action_type(snapshot.record)) and submitted == snapshot.record:
+                _ensure_legacy_management_access(user_id, snapshot)
+                replacements[snapshot.index] = deepcopy(snapshot.record)
+                continue
 
         payload = _prepare_personal_action_configuration(user_id, submitted)
         _ensure_personal_secret_name_available(
@@ -663,7 +782,13 @@ def _ensure_personal_secret_name_available(user_id, payload, snapshot=None, *, l
 
 
 def _prepare_personal_action_configuration(user_id, incoming):
-    payload = prepare_scoped_action(incoming, "personal", user_id)
+    payload = normalize_m365_action_payload(incoming)
+    payload = prepare_scoped_action(payload, "personal", user_id)
+    existing = (
+        get_personal_action_record(user_id, payload["id"])
+        if is_legacy_msgraph_type(payload.get("type")) and payload.get("id") else None
+    )
+    validate_legacy_action_update(incoming, existing, "user_id", user_id)
     payload.setdefault("displayName", payload.get("name", ""))
     payload.setdefault("description", "")
     payload.setdefault("endpoint", "")
@@ -758,10 +883,20 @@ def _legacy_identity_counts(snapshots):
 def _prepare_legacy_migration(user_id, snapshot, identity_counts):
     if is_retired_mcp_stdio(snapshot.record):
         return None, "mcp_stdio_removed"
+    if (
+        not isinstance(snapshot.record, dict)
+        or not isinstance(snapshot.record.get("name"), str)
+        or not snapshot.record["name"].strip()
+    ):
+        return None, "invalid_action_configuration"
     source_id = snapshot.record.get("id") if isinstance(snapshot.record, dict) else None
     if snapshot.duplicate_count > 1 or (isinstance(source_id, str) and identity_counts[source_id] > 1):
         return None, "legacy_identity_conflict"
     try:
+        if isinstance(snapshot.record, dict) and is_legacy_msgraph_type(resolve_action_type(snapshot.record)):
+            _ensure_legacy_management_access(user_id, snapshot)
+            action_id, _receipt_id = _historical_msgraph_identity(user_id, snapshot.record)
+            return {**deepcopy(snapshot.record), "id": action_id, "type": "msgraph"}, None
         payload = _legacy_destination_payload(user_id, snapshot)
         _verified_legacy_destination(user_id, snapshot, payload)
         return payload, None
@@ -827,6 +962,13 @@ def migrate_actions_from_user_settings(user_id):
                 payload, reason = _prepare_legacy_migration(user_id, snapshot, identity_counts)
                 if reason:
                     result["retained"].append(_migration_outcome(snapshot, reason))
+                    continue
+                if is_legacy_msgraph_type(payload.get("type")):
+                    current = _get_legacy_snapshot(user_id, snapshot.locator)
+                    created = _migrate_historical_msgraph_action(user_id, current.record)
+                    _remove_legacy_snapshot(user_id, snapshot)
+                    if created:
+                        result["migrated"].append(_migration_outcome(snapshot, "migrated", action_id=payload["id"]))
                     continue
                 stored = _store_legacy_replacement(user_id, snapshot, payload)
                 result["migrated"].append(_migration_outcome(snapshot, "migrated", action_id=stored["id"]))

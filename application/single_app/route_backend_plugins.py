@@ -74,6 +74,11 @@ from json_schema_validation import (
     apply_plugin_validation_defaults,
     get_allowed_auth_types_for_plugin_type,
     normalize_plugin_definition_type,
+    normalize_m365_action_payload,
+    is_legacy_msgraph_type,
+    LegacyActionCreationError,
+    LEGACY_ACTION_CREATION_MESSAGE,
+    validate_legacy_action_update,
     validate_plugin,
 )
 from functions_activity_logging import (
@@ -151,11 +156,11 @@ from functions_mcp_preconfigurations import (
 from functions_mcp_presets import build_mcp_server_presets_response
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import (
-    MSGRAPH_DEFAULT_ENDPOINT,
     MSGRAPH_PLUGIN_TYPE,
     normalize_msgraph_calendar_send_options,
     normalize_msgraph_mail_send_options,
 )
+from functions_m365_operations import M365_PLUGIN_TYPES, get_m365_action_definition, get_m365_default_config
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
@@ -193,12 +198,24 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         raise McpConfigurationError("Action configuration must be an object.")
 
     try:
+        normalized = normalize_m365_action_payload(plugin_payload)
+    except ValueError as exc:
+        raise McpConfigurationError(ACTION_VALIDATION_ERROR_MESSAGE) from exc
+    if normalized is not plugin_payload:
+        plugin_payload.clear()
+        plugin_payload.update(normalized)
+    try:
         plugin_type = resolve_action_type(plugin_payload)
     except ValueError as exc:
         raise McpConfigurationError("Invalid action type.") from exc
     plugin_payload['type'] = plugin_type
     if is_retired_mcp_stdio(plugin_payload):
         raise McpStdioRemovedError()
+    if plugin_type in M365_PLUGIN_TYPES:
+        return plugin_payload
+    if is_legacy_msgraph_type(plugin_type):
+        plugin_type = MSGRAPH_PLUGIN_TYPE
+        plugin_payload['type'] = plugin_type
     if plugin_type in ['sql_schema', 'sql_query']:
         if not str(plugin_payload.get('endpoint') or '').strip():
             plugin_payload['endpoint'] = f'sql://{plugin_type}'
@@ -210,13 +227,17 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         plugin_payload['auth'] = auth
     elif plugin_type == MSGRAPH_PLUGIN_TYPE:
         if not str(plugin_payload.get('endpoint') or '').strip():
-            plugin_payload['endpoint'] = MSGRAPH_DEFAULT_ENDPOINT
+            plugin_payload['endpoint'] = get_graph_base_url()
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
         additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
         additional_fields.update(normalize_msgraph_mail_send_options(additional_fields))
         additional_fields.update(normalize_msgraph_calendar_send_options(additional_fields))
+        policy = additional_fields.get('maximum_sharing_acknowledgement', 'always')
+        if policy not in ('request', 'today', 'always'):
+            raise ValueError("Invalid sharing acknowledgement policy.")
+        additional_fields['maximum_sharing_acknowledgement'] = policy
         plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == MCP_PLUGIN_TYPE:
         additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
@@ -337,13 +358,15 @@ def _apply_plugin_runtime_defaults(plugin_payload):
 
     return plugin_payload
 
-def discover_plugin_types():
+def discover_plugin_types(include_legacy=False):
     # Dynamically discover allowed plugin types from available plugin classes.
     plugintypes_dir = os.path.join(current_app.root_path, 'semantic_kernel_plugins')
     types = set()
     for fname in os.listdir(plugintypes_dir):
-        if fname.endswith('_plugin.py') and fname != 'base_plugin.py':
+        if fname.endswith('_plugin.py') and fname != 'base_plugin.py' and not fname.startswith('_'):
             module_name = fname[:-3]
+            if not include_legacy and is_legacy_msgraph_type(module_name):
+                continue
             file_path = os.path.join(plugintypes_dir, fname)
             try:
                 spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -357,6 +380,8 @@ def discover_plugin_types():
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
+                    and (module_name.replace('_plugin', '') not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and not getattr(obj, 'internal_only', False)
                 ):
                     # Use the type string as in the manifest (e.g., 'blob_storage')
                     # Try to get from class, fallback to module naming convention
@@ -372,7 +397,7 @@ def discover_plugin_types():
                             types.add(module_name.replace('_plugin', ''))
                     else:
                         types.add(module_name.replace('_plugin', ''))
-    return types
+    return types if include_legacy else {plugin_type for plugin_type in types if not is_legacy_msgraph_type(plugin_type)}
 
 def get_plugin_types(allowed_type_filter=None):
     # Path to the plugin types directory (semantic_kernel_plugins)
@@ -380,9 +405,11 @@ def get_plugin_types(allowed_type_filter=None):
     types = []
     debug_log = []
     for fname in os.listdir(plugintypes_dir):
-        if fname.endswith('_plugin.py') and fname != 'base_plugin.py':
+        if fname.endswith('_plugin.py') and fname != 'base_plugin.py' and not fname.startswith('_'):
             module_name = fname[:-3]
             module_type = module_name.replace('_plugin', '')
+            if is_legacy_msgraph_type(module_type):
+                continue
             file_path = os.path.join(plugintypes_dir, fname)
             debug_log.append(f"Checking plugin file: {fname}")
             try:
@@ -401,8 +428,22 @@ def get_plugin_types(allowed_type_filter=None):
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
+                    and (module_type not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and not getattr(obj, 'internal_only', False)
                 ):
                     found = True
+                    if module_type in M365_PLUGIN_TYPES:
+                        definition = get_m365_action_definition(module_type)
+                        types.append({
+                            'type': module_type,
+                            'class': definition['class_name'],
+                            'display': definition['display_name'],
+                            'description': definition['description'],
+                            'source': definition['source'],
+                            'capabilities': definition['capabilities'],
+                            'defaults': get_m365_default_config(module_type)['additionalFields'],
+                        })
+                        continue
                     # Special handling for OpenAPI plugin that requires spec path
                     if 'openapi' in module_name.lower():
                         display_name = "OpenAPI"
@@ -998,7 +1039,10 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 def get_user_plugins():
     user_id = get_current_user_id()
     # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_migration_complete(user_id)
+    try:
+        ensure_migration_complete(user_id)
+    except (ValueError, RuntimeError, azure_cosmos.exceptions.CosmosHttpResponseError, azure_cosmos.exceptions.CosmosBatchOperationError):
+        return jsonify({'error': 'Historical actions could not be migrated. They have been retained; retry or contact an administrator.'}), 409
     
     # Get plugins from the new personal_actions container
     plugins = get_governed_personal_actions(user_id)
@@ -1094,6 +1138,25 @@ def set_user_plugins():
             if global_action is not None and plugin == global_action:
                 continue
             raise McpStdioRemovedError()
+        if plugin.get('is_global') and submitted_id not in current_actions_by_id and any(
+            stored.get('id') == submitted_id
+            and stored.get('name') == plugin.get('name')
+            and stored.get('type') == plugin.get('type')
+            for stored in global_plugins
+        ):
+            continue
+        metadata = plugin.get('metadata') if isinstance(plugin.get('metadata'), dict) else {}
+        if is_legacy_msgraph_type(plugin.get('type') or metadata.get('type')):
+            existing = None
+            if submitted_id:
+                try:
+                    existing = cosmos_personal_actions_container.read_item(item=submitted_id, partition_key=user_id)
+                except azure_cosmos.exceptions.CosmosResourceNotFoundError:
+                    existing = None
+            try:
+                validate_legacy_action_update(plugin, existing, 'user_id', user_id)
+            except LegacyActionCreationError:
+                return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
         if (
             plugin.get('name', '').lower() in global_plugin_names
             and submitted_id not in current_actions_by_id
@@ -1197,6 +1260,8 @@ def set_user_plugins():
         for action in plugins_to_delete:
             delete_personal_action(user_id, action.get('id') or action.get('name'))
             
+    except LegacyActionCreationError:
+        return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
     except (LegacyActionConflictError, LegacyActionSourceUpdateError) as exc:
         return _handle_legacy_action_error(exc)
     except ValueError as e:
@@ -1347,6 +1412,8 @@ def create_group_action_route():
 
     payload = request.get_json(silent=True) or {}
     _apply_plugin_runtime_defaults(payload)
+    if is_legacy_msgraph_type(payload.get('type')):
+        return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
     try:
         validate_group_action_payload(payload, partial=False)
     except ValueError as exc:
@@ -1732,6 +1799,8 @@ def add_plugin():
         new_plugin = request.get_json(silent=True) or {}
         if not isinstance(new_plugin, dict):
             raise McpConfigurationError("Action configuration must be an object.")
+        if is_legacy_msgraph_type(resolve_action_type(new_plugin)):
+            return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
         governance_policy_payload = new_plugin.pop('governance_policy', None) if isinstance(new_plugin, dict) else None
         _apply_plugin_runtime_defaults(new_plugin)
         new_plugin = apply_plugin_validation_defaults(new_plugin)
@@ -1831,12 +1900,27 @@ def edit_plugin(plugin_name):
         updated_plugin = request.get_json(silent=True) or {}
         if not isinstance(updated_plugin, dict):
             raise McpConfigurationError("Action configuration must be an object.")
+        requested_id = updated_plugin.get('id')
+        if is_legacy_msgraph_type(resolve_action_type(updated_plugin)):
+            existing = None
+            if requested_id:
+                try:
+                    existing = cosmos_global_actions_container.read_item(item=requested_id, partition_key=requested_id)
+                except azure_cosmos.exceptions.CosmosResourceNotFoundError:
+                    # An absent exact ID must not be recovered through a name lookup.
+                    pass
+            try:
+                validate_legacy_action_update(updated_plugin, existing)
+            except LegacyActionCreationError:
+                return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
+            if existing.get('name') != plugin_name:
+                return jsonify({'error': 'Action not found.'}), 404
         governance_policy_payload = updated_plugin.pop('governance_policy', None) if isinstance(updated_plugin, dict) else None
         _apply_plugin_runtime_defaults(updated_plugin)
         updated_plugin = apply_plugin_validation_defaults(updated_plugin)
         
         # Strict validation with dynamic allowed types
-        allowed_types = discover_plugin_types()
+        allowed_types = discover_plugin_types(include_legacy=True)
         validation_error = validate_plugin(updated_plugin)
         if validation_error:
             log_event("Edit plugin failed: validation error", level=logging.WARNING, extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "error": validation_error})
@@ -1889,6 +1973,8 @@ def edit_plugin(plugin_name):
                 break
         
         if found_plugin:
+            if is_legacy_msgraph_type(updated_plugin.get('type')) and requested_id != found_plugin.get('id'):
+                return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
             duplicate_name = updated_plugin.get('name', '').lower()
             if duplicate_name and any(
                 p.get('name', '').lower() == duplicate_name and p.get('id') != found_plugin.get('id')
@@ -2010,10 +2096,14 @@ def get_plugin_auth_types(plugin_type):
     allowed_auth_types = sorted(get_allowed_auth_types_for_plugin_type(plugin_type))
     source = "definition" if os.path.exists(definition_path) else "schema"
 
-    return jsonify({
+    result = {
         "allowedAuthTypes": allowed_auth_types,
         "source": source
-    })
+    }
+    if safe_type in M365_PLUGIN_TYPES:
+        result['m365'] = get_m365_action_definition(safe_type)
+        result['defaults'] = get_m365_default_config(safe_type)['additionalFields']
+    return jsonify(result)
 
 
 @bpap.route('/api/plugins/mcp/presets', methods=['GET'])

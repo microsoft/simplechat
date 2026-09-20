@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for chat upload group workspace handoff.
-Version: 0.261.029
+Version: 0.261.036
 Implemented in: 0.261.029
 
 This test ensures group-scoped chat uploads are queued into group workspaces,
@@ -11,8 +11,12 @@ unique filenames, and use a group-only upload target picker without a personal
 workspace fallback.
 """
 
+import ast
+import re
 import sys
 from pathlib import Path
+
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +80,11 @@ def test_frontend_group_upload_picker_contract():
     """Validate the frontend derives group targets and never offers personal workspace as a group upload destination."""
     chat_input_actions = read_repo_file("application/single_app/static/js/chat/chat-input-actions.js")
 
-    assert_contains(chat_input_actions, "import { getEffectiveScopes } from \"./chat-documents.js\";", "effective scope import")
+    scope_import = re.search(
+        r'import\s*\{[^}]*\bgetEffectiveScopes\b[^}]*\}\s*from\s*"\./chat-documents\.js"',
+        chat_input_actions,
+    )
+    assert scope_import is not None, "The group upload picker must import the shared scope resolver."
     assert_contains(chat_input_actions, "const GROUP_UPLOAD_ROLES = new Set([\"Owner\", \"Admin\", \"DocumentManager\"])", "client role allowlist")
     assert_contains(chat_input_actions, "window.activeChatTabType === \"group\"", "active group tab detection")
     assert_contains(chat_input_actions, "getCollaborationGroupId()", "group collaboration context detection")
@@ -100,14 +108,29 @@ def test_group_uploaded_documents_are_linked_to_chat_search_and_delete_contract(
     assert_contains(functions_documents, "'workspace_scope': document_item.get('workspace_scope')", "linked document serializer scope field")
     assert_contains(functions_documents, "'group_id': document_item.get('group_id')", "linked document serializer group id")
     assert_contains(functions_documents, "group_id=document_item.get('group_id')", "conversation delete passes group id to document deletion")
-    assert_contains(route_backend_chats, "linked_document_scopes.add('group' if document_item.get('group_id') else 'personal')", "chat search detects group linked docs")
-    assert_contains(route_backend_chats, "if normalized_scope == 'group' or linked_document_scopes == {'group'}", "chat search preserves group scope")
+    helpers = {
+        "_get_chat_upload_workspace_document_scope",
+        "_merge_document_scope_with_conversation_task_documents",
+    }
+    tree = ast.parse(route_backend_chats)
+    definitions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helpers
+    ]
+    assert len(definitions) == len(helpers)
+    namespace = {}
+    exec(compile(ast.Module(body=definitions, type_ignores=[]), "route_backend_chats.py", "exec"), namespace)
+    document = {"id": "uploaded-file", "group_id": "authorized-group"}
+    actual_scope = namespace["_get_chat_upload_workspace_document_scope"](document)
+    group_scope = namespace["_merge_document_scope_with_conversation_task_documents"]("group", [document])
+    mixed_scope = namespace["_merge_document_scope_with_conversation_task_documents"]("personal", [document])
+    assert actual_scope == group_scope == "group"
+    assert mixed_scope == "all"
 
 
 def test_version_contract():
     """Validate the implementation version was bumped consistently."""
-    config = read_repo_file("application/single_app/config.py")
-    assert_contains(config, 'VERSION = "0.261.029"', "application version bump")
+    assert_app_version_at_least("0.261.029")
 
 
 def main():

@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for personal action bulk-save identity and preflight safety.
-Version: 0.261.029
+Version: 0.261.037
 Implemented in: 0.240.019
-Updated in: 0.261.029
+Updated in: 0.261.037
 
 Runs the real bulk route body with Flask request dispatch and isolated storage.
 Preserves rename coverage and verifies invalid batches cause no writes/deletes.
@@ -20,6 +20,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from flask import Flask, jsonify, request
+from azure.cosmos import exceptions as cosmos_exceptions
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -73,6 +74,7 @@ class UserPluginBulkSaveTests(unittest.TestCase):
             return saved
 
         self.namespace = {
+            **vars(schema_validation),
             **vars(manifests),
             **vars(operations),
             **vars(legacy),
@@ -149,6 +151,38 @@ class UserPluginBulkSaveTests(unittest.TestCase):
                 self.assertEqual(self.saved, [])
                 self.assertEqual(self.deleted, [])
                 self.assertEqual(self.reconfigured, [])
+
+    def test_missing_legacy_graph_id_is_rejected_before_batch_mutations(self):
+        point_read = Mock(side_effect=cosmos_exceptions.CosmosResourceNotFoundError(status_code=404))
+        self.namespace["cosmos_personal_actions_container"] = types.SimpleNamespace(read_item=point_read)
+        self.namespace["azure_cosmos"] = types.SimpleNamespace(exceptions=cosmos_exceptions)
+        submitted = {
+            **action_fixture("legacy_graph", "missing-legacy-id"),
+            "type": "msgraph", "metadata": {"type": "msgraph"},
+        }
+        response = self.post([submitted])
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"], schema_validation.LEGACY_ACTION_CREATION_MESSAGE)
+        point_read.assert_called_once_with(item="missing-legacy-id", partition_key="current-user")
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
+        self.assertEqual(self.validated, [])
+
+    def test_non_missing_storage_errors_are_not_treated_as_absent_legacy_actions(self):
+        submitted = {**action_fixture("legacy_graph", "legacy-id"), "type": "msgraph"}
+        self.namespace["azure_cosmos"] = types.SimpleNamespace(exceptions=cosmos_exceptions)
+        for status in (403, 429, 500):
+            with self.subTest(status=status):
+                failure = cosmos_exceptions.CosmosHttpResponseError(status_code=status)
+                point_read = Mock(side_effect=failure)
+                self.namespace["cosmos_personal_actions_container"] = types.SimpleNamespace(read_item=point_read)
+                with self.assertRaises(cosmos_exceptions.CosmosHttpResponseError) as caught:
+                    self.post([submitted])
+                self.assertIs(caught.exception, failure)
+                point_read.assert_called_once_with(item="legacy-id", partition_key="current-user")
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.deleted, [])
 
     def test_valid_legacy_conversion_uses_its_locator_after_preflight(self):
         view = self.legacy_retired_view()

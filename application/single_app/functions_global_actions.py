@@ -9,6 +9,7 @@ global_actions container with id partitioning.
 import logging
 import uuid
 from datetime import datetime
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 from config import cosmos_global_actions_container
 from functions_action_manifest import McpConfigurationError, bind_action_origin
@@ -21,6 +22,7 @@ from functions_workspace_identities import (
     validate_action_identity_reference,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
 from functions_legacy_action_management import (
     authorize_scoped_mcp_secret_read,
     prepare_scoped_action,
@@ -130,6 +132,8 @@ def save_global_action(action_data, user_id=None):
         dict: Saved action data or None if failed
     """
     try:
+        submitted_action = action_data
+        action_data = normalize_m365_action_payload(action_data)
         action_data = prepare_scoped_action(action_data, "global", "global")
         if user_id is None:
             user_id = get_current_user_id()
@@ -155,6 +159,10 @@ def save_global_action(action_data, user_id=None):
         except exceptions.CosmosResourceNotFoundError:
             existing_action = None
 
+        validate_legacy_action_update(submitted_action, existing_action)
+        legacy_type = is_legacy_msgraph_type(action_data.get('type'))
+        if legacy_type:
+            action_data['type'] = 'msgraph'
         if existing_action:
             action_data['created_by'] = existing_action.get('created_by') or user_id
             action_data['created_at'] = existing_action.get('created_at') or now
@@ -185,7 +193,15 @@ def save_global_action(action_data, user_id=None):
             scope="global",
             existing_plugin=existing_action,
         )
-        result = cosmos_global_actions_container.upsert_item(body=action_data)
+        if legacy_type:
+            result = cosmos_global_actions_container.replace_item(
+                item=action_data['id'],
+                body=action_data,
+                etag=existing_action['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            result = cosmos_global_actions_container.upsert_item(body=action_data)
         bump_chat_bootstrap_global_cache_version(reason="global_action_saved")
         return bind_action_origin(
             {key: value for key, value in result.items() if not key.startswith("_")},
@@ -246,11 +262,11 @@ def update_global_action_enabled(action_id, is_enabled, user_id=None):
         if not user_id:
             user_id = "system"
 
-        action = cosmos_global_actions_container.read_item(
+        existing_action = cosmos_global_actions_container.read_item(
             item=action_id,
             partition_key=action_id
         )
-        action = prepare_scoped_action(action, "global", "global")
+        action = prepare_scoped_action(existing_action, "global", "global")
         if action["type"] == "mcp":
             validate_scoped_mcp_action(action, actor_user_id, get_settings())
         now = datetime.utcnow().isoformat()
@@ -258,7 +274,12 @@ def update_global_action_enabled(action_id, is_enabled, user_id=None):
         action['modified_by'] = user_id
         action['modified_at'] = now
         action['updated_at'] = now
-        result = cosmos_global_actions_container.upsert_item(body=action)
+        result = cosmos_global_actions_container.replace_item(
+            item=action_id,
+            body=action,
+            etag=existing_action['_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
         bump_chat_bootstrap_global_cache_version(reason="global_action_enabled_updated")
         return bind_action_origin(result, "global", "global")
     except (McpConfigurationError, PermissionError):

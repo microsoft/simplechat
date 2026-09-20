@@ -2129,6 +2129,7 @@ export function groupGeneratedImageProposalMessages(messages = []) {
 }
 
 export function loadMessages(conversationId) {
+    window.SimpleChatM365PendingActions?.setConversation(conversationId);
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
@@ -2153,6 +2154,7 @@ export function loadMessages(conversationId) {
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
 
+        window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
@@ -2249,6 +2251,7 @@ export function loadMessages(conversationId) {
       }
     })
     .finally(() => {
+        void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
@@ -6001,6 +6004,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
@@ -6510,6 +6514,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
     // Attach safe image element and error handler for generated/uploaded images
@@ -7678,6 +7683,7 @@ export function updateUserMessageId(tempId, realId, options = {}) {
   if (messageDiv) {
     // Update the data-message-id attribute
     messageDiv.setAttribute('data-message-id', realId);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, { id: realId });
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency

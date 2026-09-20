@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 
-from config import cosmos_settings_container, exceptions
+from config import cosmos_m365_execution_runs_container, cosmos_settings_container
 from functions_appinsights import log_event
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
@@ -52,7 +52,27 @@ from functions_group_workflows import (
     update_group_workflow_runtime_fields,
 )
 from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
-from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
+from functions_m365_workflow_binding import (
+    M365_ACTIVE_STATES,
+    workflow_result_is_waiting,
+    workflow_result_runtime_status,
+)
+from functions_m365_approvals import get_m365_approval_service
+from functions_m365_connections import configure_m365_connection_authorization, get_m365_connection_service
+from functions_m365_continuations import resume_pending_workflows
+from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
+from functions_m365_file_runtime import configure_m365_file_runtime
+from functions_m365_runtime import (
+    configure_m365_pending_delivery_runtime,
+    load_current_workflow,
+    resolve_m365_action_config,
+    resolve_m365_action_selection,
+    resolve_m365_workflow_binding,
+    validate_m365_approval_decision,
+    validate_m365_workflow_execution,
+)
+from functions_workflow_runner import _get_workflow_runner_app, create_workflow_run_id, run_group_workflow, run_personal_workflow
+from functions_m365_pending_delivery import dispatch_due_m365_deliveries
 
 
 def _get_lock_holder_id():
@@ -295,6 +315,8 @@ def check_retention_policy_once():
     from functions_retention_policy import execute_retention_policy
 
     try:
+        # Retention can run before the workflow scheduler initializes delivery.
+        configure_m365_pending_delivery_runtime(_get_workflow_runner_app().test_request_context)
         results = execute_retention_policy(manual_execution=False)
         if results.get('success'):
             print(
@@ -527,10 +549,83 @@ def run_cosmos_throughput_autoscale_loop():
         time.sleep(sleep_seconds)
 
 
+def check_m365_workflow_continuations_once():
+    approval_service = get_m365_approval_service()
+    approval_service.decision_validator = validate_m365_approval_decision
+    configure_m365_execution(
+        workflow_validator=validate_m365_workflow_execution,
+        action_config_resolver=resolve_m365_action_config,
+        workflow_binding_resolver=resolve_m365_workflow_binding,
+        action_selection_resolver=resolve_m365_action_selection,
+    )
+    configure_m365_connection_authorization(validate_m365_workflow_context)
+    configure_m365_file_runtime()
+    configure_m365_pending_delivery_runtime(_get_workflow_runner_app().test_request_context)
+    dispatch_due_m365_deliveries()
+
+    def can_resume(job, approval):
+        workflow = load_current_workflow(job["workflow_ref"])
+        return (
+            workflow.get("active_run_id") == job.get("run_id")
+            and workflow.get("status") in M365_ACTIVE_STATES
+            and workflow.get("m365_run_as_user_id") == job.get("user_id")
+            and (approval is None or approval.get("subject_user_id") == job.get("user_id"))
+        )
+
+    def connection_ready(job):
+        from config import TENANT_ID
+        connection = get_m365_connection_service().current_connection(job["user_id"], TENANT_ID)
+        if not connection or connection.get("status") != "connected":
+            return False
+        granted = {scope.rsplit("/", 1)[-1].lower() for scope in connection.get("authorized_scopes") or []}
+        return all(scope.rsplit("/", 1)[-1].lower() in granted for scope in job.get("required_scopes") or [])
+
+    def execute(job):
+        workflow = load_current_workflow(job["workflow_ref"])
+        settings = get_settings()
+        group_id = workflow.get("group_id")
+        if group_id:
+            if not is_group_workflows_enabled_for_group(settings, group_id):
+                raise PermissionError("Group workflows are no longer enabled for this group.")
+            lock_name = f"group_workflow_run_{group_id}_{workflow['id']}"
+        else:
+            if not settings.get("allow_user_workflows", False):
+                raise PermissionError("Personal workflows are no longer enabled.")
+            lock_name = f"workflow_run_{workflow['id']}"
+        lock = acquire_distributed_task_lock(lock_name, lease_seconds=900)
+        if not lock:
+            raise RuntimeError("The workflow is already executing.")
+        try:
+            runner = run_group_workflow if group_id else run_personal_workflow
+            result = runner(
+                workflow, trigger_source="m365_approval",
+                actor_user_id=job.get("actor_user_id"), run_id=job["run_id"],
+            )
+            updates = dict(result.get("workflow_updates") or {})
+            updates["status"] = workflow_result_runtime_status(result)
+            if not workflow_result_is_waiting(result):
+                updates["next_run_at"] = compute_next_run_at(
+                    workflow, from_time=datetime.now(timezone.utc),
+                )
+            if group_id:
+                update_group_workflow_runtime_fields(group_id, workflow["id"], updates)
+            else:
+                update_personal_workflow_runtime_fields(workflow["user_id"], workflow["id"], updates)
+            return result
+        finally:
+            release_distributed_task_lock(lock)
+
+    return resume_pending_workflows(
+        cosmos_m365_execution_runs_container, approval_service,
+        execute=execute, can_resume=can_resume, log_event=log_event,
+        connection_ready=connection_ready,
+    )
+
+
 def check_due_workflows_once():
     """Execute scheduled personal and group workflows that are due."""
     settings = get_settings()
-    results = []
+    results = check_m365_workflow_continuations_once()
 
     if settings.get('allow_user_workflows', False):
         due_workflows = get_due_personal_workflows(limit=20)
@@ -548,6 +643,8 @@ def check_due_workflows_once():
             try:
                 refreshed_workflow = get_personal_workflow(user_id, workflow_id)
                 if not refreshed_workflow:
+                    continue
+                if refreshed_workflow.get('status') in M365_ACTIVE_STATES:
                     continue
                 trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
                 if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
@@ -584,8 +681,9 @@ def check_due_workflows_once():
                     run_id=active_run_id,
                 )
                 update_fields = dict(result.get('workflow_updates') or {})
-                update_fields['status'] = 'idle'
-                update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
+                update_fields['status'] = workflow_result_runtime_status(result)
+                if not workflow_result_is_waiting(result):
+                    update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
                 update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
                 results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:
@@ -633,6 +731,8 @@ def check_due_workflows_once():
                 refreshed_workflow = get_group_workflow(group_id, workflow_id)
                 if not refreshed_workflow:
                     continue
+                if refreshed_workflow.get('status') in M365_ACTIVE_STATES:
+                    continue
                 trigger_type = str(refreshed_workflow.get('trigger_type') or '').strip().lower()
                 if trigger_type not in {'interval', 'file_sync'} or not refreshed_workflow.get('is_enabled', False):
                     continue
@@ -668,8 +768,9 @@ def check_due_workflows_once():
                     run_id=active_run_id,
                 )
                 update_fields = dict(result.get('workflow_updates') or {})
-                update_fields['status'] = 'idle'
-                update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
+                update_fields['status'] = workflow_result_runtime_status(result)
+                if not workflow_result_is_waiting(result):
+                    update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
                 update_group_workflow_runtime_fields(group_id, workflow_id, update_fields)
                 results.append({'scope': 'group', 'group_id': group_id, 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:

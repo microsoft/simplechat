@@ -1,189 +1,115 @@
 # test_msgraph_pending_actions.py
-#!/usr/bin/env python3
 """
-Functional test for Microsoft Graph pending actions.
-Version: 0.241.179
+Functional tests for pending Microsoft Graph summaries, selection and timers.
+Version: 0.261.038
 Implemented in: 0.241.179
 
-This test ensures user-owned pending Microsoft Graph mail and calendar actions
-can be sanitized for the browser, approved, sent, and cancelled without exposing
-stored Graph request payloads to the frontend.
+The shared API harness executes the real pending store and dispatcher with scoped
+external I/O seams. Assertions fail both pytest and standalone runs; obsolete
+unclaimed-send and token-helper mocks are deliberately not retained.
 """
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
-import types
+
+import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = ROOT / "application" / "single_app"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
-
-if "olefile" not in sys.modules:
-    sys.modules["olefile"] = types.ModuleType("olefile")
+# Reuse the scoped external-I/O fixture rather than mocking the delivery boundary.
+from test_m365_action_card_api import cards
 
 
-import functions_msgraph_pending_actions as pending_module  # noqa: E402
+def test_owner_summary_matches_saved_material_and_anonymous_projection_is_read_only(cards):
+    created = cards.create("send_mail")
+    owner = cards.service.sanitize_msgraph_pending_action_for_client(created, viewer_user_id="owner")
+    anonymous = cards.service.sanitize_msgraph_pending_action_for_client(created)
+    model = cards.service.sanitize_msgraph_pending_action_for_client(
+        created, viewer_user_id="owner", include_preview=False,
+    )
+    assert owner["summary"]["to_recipients"] == ["reviewed@example.test"]
+    assert owner["summary"]["bcc_recipients"] == ["private@example.test"]
+    assert owner["summary"]["body_preview"] == created["graph_payload"]["message"]["body"]["content"]
+    assert owner["can_send_now"] and owner["can_cancel"]
+    assert not anonymous["can_send_now"] and not anonymous["can_cancel"]
+    assert "body_preview" not in anonymous["summary"] and "bcc_recipients" not in anonymous["summary"]
+    assert "body_preview" not in model["summary"] and "bcc_recipients" not in model["summary"]
+    assert "graph_payload" not in owner and "m365_execution" not in owner
 
 
-class FakePendingActionContainer:
-    def __init__(self):
-        self.items = {}
-
-    def upsert_item(self, body):
-        item = dict(body)
-        self.items[(item["user_id"], item["id"])] = item
-        return dict(item)
-
-    def read_item(self, item, partition_key):
-        return dict(self.items[(partition_key, item)])
-
-    def query_items(self, query, parameters=None, partition_key=None):
-        del query
-        filters = {parameter["name"]: parameter["value"] for parameter in parameters or []}
-        results = []
-        for (user_id, _), item in self.items.items():
-            if partition_key and user_id != partition_key:
-                continue
-            if filters.get("@user_id") and item.get("user_id") != filters.get("@user_id"):
-                continue
-            if filters.get("@type") and item.get("type") != filters.get("@type"):
-                continue
-            if filters.get("@conversation_id") and item.get("conversation_id") != filters.get("@conversation_id"):
-                continue
-            if filters.get("@workflow_id") and item.get("workflow_id") != filters.get("@workflow_id"):
-                continue
-            if filters.get("@run_id") and item.get("run_id") != filters.get("@run_id"):
-                continue
-            results.append(dict(item))
-        return sorted(results, key=lambda action: action.get("created_at") or "")
+def test_owner_filters_and_limits_are_applied_in_storage(cards):
+    created = cards.create()
+    selected = cards.service.list_msgraph_pending_actions("owner", conversation_id="conversation", limit=1)
+    other_owner = cards.service.list_msgraph_pending_actions("viewer")
+    other_run = cards.service.list_msgraph_pending_actions("owner", run_id="unrelated")
+    assert [item["id"] for item in selected] == [created["id"]]
+    assert other_owner == other_run == []
+    assert all("TOP @limit" in query and "ORDER BY c.created_at DESC" in query for query in cards.container.queries)
+    with pytest.raises(cards.service.M365PolicyError):
+        cards.service.list_msgraph_pending_actions("owner", limit=101)
 
 
-class FakeResponse:
-    def __init__(self, status_code, payload=None, text=""):
-        self.status_code = status_code
-        self._payload = payload
-        self.text = text
+def test_cancellation_removes_local_timer_without_deleting_outlook_draft(cards, monkeypatch):
+    created = cards.create("send_mail")
+    cancelled_timers = []
+    timer = type("Timer", (), {"cancel": lambda self: cancelled_timers.append(created["id"])})()
+    monkeypatch.setattr(cards.service, "_scheduled_timers", {created["id"]: timer})
+    stopped, error = cards.service.cancel_msgraph_pending_action(
+        "owner", created["id"], expected_version=created["version"],
+    )
+    assert error is None and stopped["status"] == "cancelled"
+    assert cancelled_timers == [created["id"]]
+    assert cards.service._scheduled_timers == {}
+    assert cards.writes == []
 
-    def json(self):
-        if self._payload is None:
-            raise ValueError("No JSON payload")
-        return self._payload
+
+def test_short_timer_is_ephemeral_and_never_runs_when_rendering_a_card(cards, monkeypatch):
+    created = cards.create()
+    scheduled = {
+        **created, "status": "scheduled", "action_mode": "delayed", "delay_seconds": 10,
+        "auto_send_at_utc": (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat(),
+    }
+    timers = []
+
+    class Timer:
+        def __init__(self, seconds, callback):
+            self.seconds = seconds
+            self.callback = callback
+            self.daemon = False
+
+        def start(self):
+            timers.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(cards.service.threading, "Timer", Timer)
+    monkeypatch.setattr(cards.service, "_scheduled_timers", {})
+    scheduled_ok = cards.service.schedule_msgraph_pending_action_auto_commit(scheduled, "ephemeral-test-token")
+    card = cards.service.sanitize_msgraph_pending_action_for_client(scheduled, viewer_user_id="owner")
+    assert scheduled_ok and len(timers) == 1
+    assert 0 < timers[0].seconds <= 10 and timers[0].daemon
+    assert card["status"] == "scheduled"
+    assert "ephemeral-test-token" not in str(cards.container.items)
+    assert cards.writes == []
 
 
-def test_msgraph_pending_action_send_and_cancel():
-    """Verify send-now and cancel paths update user-owned pending actions."""
-    print("Testing Microsoft Graph pending action send/cancel behavior...")
-
-    fake_container = FakePendingActionContainer()
-    original_container = pending_module.cosmos_msgraph_pending_actions_container
-    original_request = pending_module.requests.request
-    original_token_helper = pending_module.get_valid_access_token_for_plugins
-
-    request_log = []
-
-    def fake_token_helper(scopes=None):
-        request_log.append({"scopes": scopes})
-        return {"access_token": "fake-token"}
-
-    def fake_request(method, url, headers=None, json=None, timeout=None):
-        request_log.append({
-            "method": method,
-            "url": url,
-            "headers": headers,
-            "json": json,
-            "timeout": timeout,
-        })
-        if method == "POST" and url.endswith("/v1.0/me/messages/draft-123/send"):
-            return FakeResponse(202)
-        if method == "DELETE" and url.endswith("/v1.0/me/messages/draft-cancel"):
-            return FakeResponse(204)
-        if method == "POST" and url.endswith("/v1.0/me/events"):
-            return FakeResponse(201, {"id": "event-123", "webLink": "https://calendar.example.test/event"})
-        return FakeResponse(500, text="Unexpected request")
-
-    try:
-        pending_module.cosmos_msgraph_pending_actions_container = fake_container
-        pending_module.requests.request = fake_request
-        pending_module.get_valid_access_token_for_plugins = fake_token_helper
-
-        mail_action = pending_module.create_msgraph_pending_action(
-            "user-1",
-            operation=pending_module.MSGRAPH_PENDING_OPERATION_SEND_MAIL,
-            graph_resource_type=pending_module.MSGRAPH_PENDING_RESOURCE_MAIL,
-            action_mode=pending_module.MSGRAPH_PENDING_ACTION_MANUAL,
-            graph_message_id="draft-123",
-            graph_payload={"subject": "Hidden draft payload"},
-            summary={"subject": "Visible subject", "to_recipients": ["ada@example.com"]},
-            conversation_id="conversation-1",
-        )
-        sanitized = pending_module.sanitize_msgraph_pending_action_for_client(mail_action)
-        if "graph_payload" in sanitized or sanitized.get("subject") != "Visible subject":
-            print(f"Expected browser-safe pending action summary, got: {sanitized}")
-            return False
-
-        sent_action, send_error = pending_module.approve_msgraph_pending_action("user-1", mail_action["id"])
-        if send_error or sent_action.get("status") != pending_module.MSGRAPH_PENDING_STATUS_SENT:
-            print(f"Expected sent pending mail action, got action={sent_action}, error={send_error}")
-            return False
-        if request_log[0].get("scopes") != ["Mail.Send"] or request_log[1].get("method") != "POST":
-            print(f"Expected Mail.Send POST for pending mail action, got: {request_log[:2]}")
-            return False
-
-        cancel_action = pending_module.create_msgraph_pending_action(
-            "user-1",
-            operation=pending_module.MSGRAPH_PENDING_OPERATION_SEND_MAIL,
-            graph_resource_type=pending_module.MSGRAPH_PENDING_RESOURCE_MAIL,
-            action_mode=pending_module.MSGRAPH_PENDING_ACTION_DELAYED,
-            graph_message_id="draft-cancel",
-            summary={"subject": "Cancel me"},
-        )
-        cancelled_action, cancel_error = pending_module.cancel_msgraph_pending_action("user-1", cancel_action["id"])
-        if cancel_error or cancelled_action.get("status") != pending_module.MSGRAPH_PENDING_STATUS_CANCELLED:
-            print(f"Expected cancelled pending mail action, got action={cancelled_action}, error={cancel_error}")
-            return False
-        if request_log[2].get("scopes") != ["Mail.ReadWrite"] or request_log[3].get("method") != "DELETE":
-            print(f"Expected Mail.ReadWrite DELETE for pending mail cancellation, got: {request_log[2:4]}")
-            return False
-
-        calendar_action = pending_module.create_msgraph_pending_action(
-            "user-1",
-            operation=pending_module.MSGRAPH_PENDING_OPERATION_CREATE_CALENDAR_INVITE,
-            graph_resource_type=pending_module.MSGRAPH_PENDING_RESOURCE_CALENDAR,
-            action_mode=pending_module.MSGRAPH_PENDING_ACTION_MANUAL,
-            graph_payload={"subject": "Planning", "start": {"dateTime": "2025-05-01T09:00:00"}},
-            summary={"subject": "Planning"},
-            workflow_id="workflow-1",
-            run_id="run-1",
-        )
-        committed_calendar, calendar_error = pending_module.approve_msgraph_pending_action("user-1", calendar_action["id"])
-        if calendar_error or committed_calendar.get("graph_event_id") != "event-123":
-            print(f"Expected created pending calendar event, got action={committed_calendar}, error={calendar_error}")
-            return False
-        if request_log[4].get("scopes") != ["Calendars.ReadWrite"] or request_log[5].get("json", {}).get("subject") != "Planning":
-            print(f"Expected Calendars.ReadWrite POST for pending calendar action, got: {request_log[4:6]}")
-            return False
-
-        listed = pending_module.list_msgraph_pending_actions("user-1", workflow_id="workflow-1", run_id="run-1")
-        if len(listed) != 1 or listed[0].get("id") != calendar_action["id"]:
-            print(f"Expected filtered pending calendar action list, got: {listed}")
-            return False
-
-        print("Microsoft Graph pending actions send, cancel, sanitize, and filter correctly")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
-    finally:
-        pending_module.cosmos_msgraph_pending_actions_container = original_container
-        pending_module.requests.request = original_request
-        pending_module.get_valid_access_token_for_plugins = original_token_helper
+def test_shared_pagination_uses_a_streamable_cross_partition_query(cards):
+    for _ in range(3):
+        cards.create(shared=True)
+    cards.sign_in("viewer")
+    first = cards.client.get("/api/msgraph/pending-actions?conversation_id=conversation&limit=2")
+    payload = first.get_json()
+    second = cards.client.get("/api/msgraph/pending-actions", query_string={
+        "conversation_id": "conversation", "limit": 2, "continuation_token": payload["continuation_token"],
+    })
+    assert len(payload["pending_actions"]) == 2
+    assert len(second.get_json()["pending_actions"]) == 1
+    assert all("ORDER BY" not in query for query in cards.container.queries)
+    assert all(not card["can_send_now"] for card in payload["pending_actions"])
 
 
 if __name__ == "__main__":
-    success = test_msgraph_pending_action_send_and_cancel()
-    sys.exit(0 if success else 1)
+    sys.exit(pytest.main([str(Path(__file__).resolve())]))

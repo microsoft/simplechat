@@ -7,6 +7,7 @@ from functions_authentication import *
 from functions_governance import ensure_governance_access
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
+from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
@@ -910,9 +911,17 @@ def register_route_backend_models(bp):
         user_settings = get_user_settings(user_id)
         existing = user_settings.get("settings", {}).get("personal_model_endpoints", [])
 
-        merged = merge_model_endpoints_with_existing(incoming, existing)
-
-        normalized, _ = normalize_model_endpoints(merged)
+        try:
+            merged = merge_model_endpoints_with_existing(incoming, existing)
+            normalized, _ = normalize_model_endpoints(merged)
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Personal model token-budget validation failed",
+                exc,
+                extra={"scope": "user", "code": exc.code},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
         try:
             validate_custom_model_endpoints(normalized, get_settings())
         except ModelEndpointValidationError as exc:
@@ -1027,9 +1036,17 @@ def register_route_backend_models(bp):
 
         existing = get_group_model_endpoints(group_id)
 
-        merged = merge_model_endpoints_with_existing(incoming, existing)
-
-        normalized, _ = normalize_model_endpoints(merged)
+        try:
+            merged = merge_model_endpoints_with_existing(incoming, existing)
+            normalized, _ = normalize_model_endpoints(merged)
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Group model token-budget validation failed",
+                exc,
+                extra={"scope": "group", "code": exc.code},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
         try:
             validate_custom_model_endpoints(normalized, get_settings())
         except ModelEndpointValidationError as exc:
