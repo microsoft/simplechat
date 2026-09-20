@@ -260,12 +260,13 @@ Continuation resets only batch usage, not lifetime identity or the original
 Collect order/lineage, native Analyze identity, accepted-partial limitations,
 `exact_records_v1` JSON, and publication completion observations are unchanged.
 
-## Deferred future milestone-5 slice: undo/redo
+## Planned M5C: cross-surface undo/redo
 
-Cross-surface undo/redo is explicitly deferred, not implemented in M5B.
-There is no structural undo shortcut in this slice; text-input undo remains
-native. The future slice needs a design for the following decisions before
-implementation:
+M5B visual authoring is implemented in **0.261.122**. Cross-surface undo/redo
+was deliberately outside that completed scope and is now named **M5C**.
+M5C is a plan, not an implemented feature or an approval to begin coding.
+M5B has no structural undo shortcut; text-input undo remains native.
+The M5C design must settle the following decisions before implementation:
 
 | Design consideration | Required decision or boundary |
 | --- | --- |
@@ -278,8 +279,9 @@ implementation:
 | Selection and focus | Restore or recover a canonical selection and its configuration focus, including when undo removes the selected block |
 | View state | Keep geometry, viewport, and other temporary presentation choices out of executable-edit history |
 
-No milestone number beyond this future milestone-5 slice, delivery date, or
-runtime rollback capability is promised.
+The detailed M5C plan and completed M5B handoff are in
+`WORKFLOW_M5B_COMPLETION_AND_NEXT_STEPS.md`. M5C's detailed scope still needs
+approval; no delivery date or runtime rollback capability is promised.
 
 ## Other deferred work
 

@@ -1,20 +1,35 @@
-# SimpleChat M5B completion and next-milestone handoff
+# SimpleChat M5C plan and completed M5B handoff
 
 Prepared: **2026-09-20**. Repository: **microsoft/simplechat**.
 
-M5B implemented in version: **0.261.122**.
+Completed M5B implementation version: **0.261.122**.
 Version source: `application\single_app\config.py`.
 
-**M5B is implemented and verified. The next milestone is a proposal, not
-approved implementation.** This handoff supersedes the old
-`WORKFLOW_M5B_AND_OPEN_ITEMS_HANDOFF.md` statements that M5A was unmerged and
-M5B was not implemented.
+**M5B visual authoring is complete, verified, committed, and pushed.**
+**This document is the plan for M5C: cross-surface authoring undo/redo.**
+M5C is the next implementation milestone; its code has not been written and
+its detailed scope still needs approval.
+
+| Milestone | Implementation status | What remains |
+| --- | --- | --- |
+| M5A: read-only Flow inspection | Implemented and merged through #1505 | Preserve its saved/run inspection contracts |
+| M5B: List/Flow visual authoring | Implemented, verified, committed, and pushed in `0.261.122` | PR/review/merge and release decisions, separate from implementation |
+| M5C: cross-surface undo/redo | Planned in this document; implementation has not started | Approve the design, then implement and validate the M5C plan in section 4 |
+
+Undo/redo was deliberately outside M5B. M5C adds it to the finished M5B editor;
+it does not rebuild visual authoring. Sections 1-3 record the completed M5B
+baseline and delivery gates. Section 4 is the M5C development plan. Section 5
+carries separately scoped future work and open actions.
+
+This supersedes the earlier `WORKFLOW_M5B_AND_OPEN_ITEMS_HANDOFF.md` planning
+handoff. The existing filename is retained so previously shared file paths
+remain usable.
 
 The owner authorized committing, pushing, and preparing this handoff.
 That does not authorize a new feature implementation, PR creation, merge,
 deployment, permission changes, live workflow execution, or live publication.
 
-## 1. Start here
+## 1. Completed M5B baseline and M5C starting point
 
 | Item | Verified checkpoint |
 | --- | --- |
@@ -28,7 +43,7 @@ deployment, permission changes, live workflow execution, or live publication.
 | Application version | `0.261.122` |
 | Application commit scope | 30 files; 6,596 insertions and 1,805 deletions, including extracted forms and tests |
 | Issue association | Session-only tracking; the owner's no-new-issue choice remains in effect |
-| Next milestone | Proposed next M5 slice: cross-surface authoring undo/redo |
+| Next milestone | M5C: cross-surface authoring undo/redo; design proposed, implementation pending approval |
 
 The handoff is committed separately from the implementation so the feature
 commit above remains a stable reference. Refresh remote state before relying
@@ -38,22 +53,23 @@ on branch or PR status; a pushed branch is not a merged release.
    `origin/paullizer-workflow-visual-authoring`.
 2. Check whether a PR for the M5B branch now exists and whether it has landed.
    Do not create a duplicate PR or recreate M5B.
-3. If M5B is unmerged, perform only authorized closeout or obtain explicit
-   approval to stack the next slice on its feature branch.
+3. If M5B is unmerged, its implementation is still complete. Perform only
+   authorized delivery closeout or obtain explicit approval to stack M5C on
+   its feature branch.
 4. If merged, verify the actual merge/squash commit and implemented code on the
    fetched V2 integration branch. A squash merge is not a reason to cherry-pick
    the old implementation again.
-5. Start the next implementation from a worktree containing that verified
+5. Start M5C implementation from a worktree containing that verified
    code. Do not silently use `Development`, a stale M4/M5A checkout, or the
    main checkout.
 6. Read current repository instructions and the actual version. Obtain
-   approval for the next slice before code changes.
+   approval for the M5C design before code changes.
 
 The integration history already includes M4A #1496, M4B #1498, M4C-1 #1499,
 M4C-2 #1501, M4C-3 #1504, and M5A #1505. There is no approved unfinished M4
 implementation slice to restart.
 
-## 2. What M5B delivered
+## 2. Completed M5B functionality
 
 Authorized authors can edit the same supported definition-v3 workflow from
 **List authoring** or **Flow authoring** inside the existing editor.
@@ -108,9 +124,12 @@ application Python change was the application version.
 - Both modal layers receive Escape. The editor's close handler must cancel a
   pending impact dialog rather than open an unrelated discard dialog.
 
-## 3. Delivery work still to do
+## 3. Remaining M5B PR, merge, and release work
 
-These are release/coordination gates, not unfinished M5B implementation.
+**There is no remaining M5B implementation work identified at this checkpoint.**
+The following are delivery and release gates for code that already exists,
+not requirements to build visual authoring again. A later review may identify
+specific follow-up fixes; those do not restart the completed milestone.
 
 | Work | Required next action |
 | --- | --- |
@@ -126,7 +145,7 @@ The documentation inventory was regenerated and verified current, with no
 content delta. No issue, PR, merge, deployment, card/media publication, or live
 workflow operation was created/performed by the M5B implementation session.
 
-## 4. Proposed next milestone: cross-surface authoring undo/redo
+## 4. M5C development plan: cross-surface authoring undo/redo
 
 ### Intended outcome and scope
 
@@ -134,10 +153,10 @@ Let a definition-v3 author undo and redo unsaved semantic edits and unfinished
 field work across List and Flow, without changing canonical identities, the
 saved CAS baseline, or any historical execution.
 
-This is the recommended **next M5 slice**, following the owner's explicit
-request to carry undo/redo forward. No M5C/M6 label, delivery date, or new
-implementation approval is implied. Confirm the label and scope with the
-owner rather than presenting this proposal as an existing commitment.
+This next slice is named **M5C**, following the owner's clarification.
+The milestone name is settled; the detailed design and implementation approval
+are not. The plan below describes work to add on top of completed M5B, not work
+already delivered in `0.261.122`. No M5C delivery date is promised.
 
 Recommended scope includes the common workflow fields as well as structured
 commands: name/description, runner/schedule, shared references, limits, task
@@ -149,7 +168,7 @@ Exclude saved/run viewers, server rollback, workflow execution, persistent
 history, collaborative editing, v1/v2 history, layout history, direct connection
 gestures, and O1-O9/spend-cap implementation.
 
-### Decisions to approve before implementation
+### Decisions to approve before M5C implementation
 
 | Decision | Recommended proposal / unresolved detail |
 | --- | --- |
@@ -164,7 +183,7 @@ gestures, and O1-O9/spend-cap implementation.
 | Keyboard behavior | Native text undo stays native inside text controls; propose editor Undo/Redo shortcuts outside them and equivalent common toolbar buttons |
 | Selection/focus | Restore the affected canonical selection where possible, otherwise a surviving sibling/parent/root; expand ancestors without recording view-only actions |
 
-### Proposed design
+### Proposed M5C design
 
 Keep a single editor-session history controller beside the canonical draft and
 field store. The original saved definition/revision must remain outside the
@@ -211,7 +230,7 @@ Preserve the current preview contract: invalidate old topology immediately,
 debounce only eligible current candidates, reject late responses, and never
 replace the draft or saved revision with `DRAFT:` data.
 
-### Implementation sequence after approval
+### M5C implementation sequence after approval
 
 1. Verify the landed/explicitly approved base and settle the decision table.
    Add before/after fixtures for valid, invalid, buffer-only, and structural
@@ -234,7 +253,7 @@ replace the draft or saved revision with `DRAFT:` data.
 Planning alone must not change executable code, install dependencies, or bump
 the application version. Do not preallocate `0.261.123` from this document.
 
-### Acceptance matrix for the proposed slice
+### M5C acceptance matrix
 
 | Area | Required evidence |
 | --- | --- |
@@ -253,9 +272,10 @@ the application version. Do not preallocate `0.261.123` from this document.
 
 ## 5. Future workstreams and open actions
 
-These are separate, unapproved workstreams, not automatic dependencies of
-undo/redo and not newly created issues. The owner chooses their priority and
-one coherent slice at a time. No M6-or-later milestone numbering is assigned.
+These are separate, unapproved workstreams outside M5C, not automatic
+dependencies of undo/redo and not newly created issues. The owner chooses their
+priority and one coherent slice at a time. No M6-or-later milestone numbering
+is assigned.
 
 | ID | Open action | Work still needed / acceptance boundary |
 | --- | --- | --- |
@@ -269,15 +289,15 @@ one coherent slice at a time. No M6-or-later milestone numbering is assigned.
 | O8 | Non-production live acceptance / rollout | Obtain explicit environment, identity/roles, scope, sources, destinations, allowed paid/runtime/publication operations, budgets, cleanup and success criteria. Offline passes do not establish Azure performance or production readiness |
 | O9 | Personal/group Control Center Workflow Monitoring | Define reader/manager/admin visibility, current role policy, scope isolation, queries, paging/retention, refresh and permitted actions. Reuse durable journal facts; do not create another ledger or assume a new monitoring role/setting already exists |
 
-A possible sequencing discussion is: M5B delivery, the proposed undo/redo
-slice, individually selected test/documentation hygiene, then a separately
+A possible sequencing discussion is: M5B delivery closeout, M5C undo/redo,
+individually selected test/documentation hygiene, then a separately
 approved monitoring or producer/export/aggregate slice. This is a recommendation,
 not authority to start those workstreams or change their priority.
 
 ### Separate cumulative run-token/spend cap
 
 This remains an additional deferred requirement, not a new numbered O-item or
-part of the proposed undo/redo slice. Existing local metering and admission/time
+part of M5C. Existing local metering and admission/time
 limits are **not** an enforced cumulative token/spend cap.
 
 Before implementation, define the authoritative accounting scope and units;
@@ -288,7 +308,7 @@ Usage must not silently become zero when unavailable, and continuation must not
 reset lifetime consumption. Define tests and administrative/user documentation
 with the selected policy before advertising enforcement.
 
-## 6. Runtime contracts that remain unchanged
+## 6. Existing runtime contracts M5C must preserve
 
 - For each is serial: default **500 actual inputs**, administrator range
   **1-5,000**. All matches is not ranked Best N; frozen selection is not a
@@ -321,7 +341,7 @@ with the selected policy before advertising enforcement.
   No cursor draining, inferred execution success, or fallback from a run's
   frozen definition to today's saved definition.
 
-## 7. Code starting points
+## 7. Existing M5B code to reuse for M5C
 
 Frontend paths below are relative to `application\v2_ui\src\`.
 
@@ -350,9 +370,10 @@ Related documentation:
 `WORKFLOW_FLOW_INSPECTION.md`, `WORKFLOW_STRUCTURED_CONTROL_FLOW.md`,
 `docs\guides\create-a-workflow.md`, and `docs\guides\trigger-a-workflow.md`.
 
-## 8. Recorded verification and reproduction
+## 8. Completed M5B verification and the M5C regression baseline
 
-These are **completed M5B results**, not tests run by the future conversation.
+These are **completed M5B results**, not evidence that M5C is implemented or
+tested. M5C must add its own coverage and rerun the affected baseline.
 Selections overlap; do not add them into a unique total or claim a full
 repository/live-environment pass.
 
@@ -428,26 +449,29 @@ For affected runtime/export work, retained selectors include:
 and `test_workflow_repeat_execution.py::test_real_thousand_round_batch_then_lifetime_round_1001`,
 all under `functional_tests\`.
 
-## 9. Copy-paste kickoff for a new conversation
+## 9. Copy-paste M5C planning kickoff for a new conversation
 
 ```text
-Continue SimpleChat workflow planning from the attached
+Plan SimpleChat M5C cross-surface authoring undo/redo using the attached
 WORKFLOW_M5B_COMPLETION_AND_NEXT_STEPS.md.
 
 M5B is implemented in 0.261.122 at
 e25e70209eeb7065da73ae9a420f7c1560d62ef2 on
-paullizer-workflow-visual-authoring. Do not recreate it. M5A #1505 already
+paullizer-workflow-visual-authoring. M5B implementation is complete; do not
+plan or build visual authoring again. M5A #1505 already
 merged as befdb6e6e370dc4a0c322f04c1f85386217f01d7.
 
 First refresh M5B branch/PR status and origin/paullizer-react-v2-ui.
 The integration/PR base is that V2 branch, not default Development.
-If M5B is unmerged, perform only authorized closeout or obtain explicit
-approval to stack on its branch. If merged, verify actual merge/squash code
+If M5B is unmerged, that is a delivery gate, not missing implementation.
+Perform only authorized closeout or obtain explicit approval to stack M5C
+on its branch. If merged, verify actual merge/squash code
 before starting a dependent slice. Do not merge, create a PR, deploy, or invoke
 live services merely because this handoff exists.
 
-Develop a detailed proposal for the next M5 slice: cross-surface authoring
-undo/redo. The milestone label and implementation scope are not yet approved.
+Develop the detailed M5C design and implementation plan for cross-surface
+authoring undo/redo. M5C is the agreed milestone name, but implementation has
+not started and the detailed scope still needs approval.
 Cover common workflow fields, shared commands and unfinished field buffers,
 not only structural buttons. Define transaction/coalescing rules, measured
 history limits, exact ID/buffer restoration, current permission/active-run
