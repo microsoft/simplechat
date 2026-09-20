@@ -25,6 +25,7 @@ import {
 import {
     formatWorkflowIterationPath,
     workflowErrorMessage,
+    workflowScopeKey,
     type WorkflowConsumedInput,
     type WorkflowIterationFrame,
     type WorkflowResultReference,
@@ -160,13 +161,16 @@ function decisionSummary(decision: WorkflowExecutionDecisionPreview | WorkflowRu
 }
 
 function historyErrorMessage(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError && cause.status === 403) {
-        return 'You no longer have access to this workflow run. Reload or ask an owner to restore access.';
-    }
-    if (cause instanceof ApiError && cause.status === 404) {
-        return 'This workflow run history is no longer available.';
+    if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+        return historyAccessLostMessage(cause.status);
     }
     return workflowErrorMessage(cause, fallback);
+}
+
+function historyAccessLostMessage(status: number): string {
+    return status === 403
+        ? 'You no longer have access to this workflow run. Reload or ask an owner to restore access.'
+        : 'This workflow run history is no longer available.';
 }
 
 function usePagedResource<T>(
@@ -510,6 +514,7 @@ function AttemptHistory({
     runId,
     executionId,
     onAccessLost,
+    onSelectIteration,
     inspectBoundary = false,
 }: {
     scope: WorkflowScope;
@@ -517,6 +522,7 @@ function AttemptHistory({
     runId: string;
     executionId: string;
     onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
     inspectBoundary?: boolean;
 }) {
     const [boundaryOpen, setBoundaryOpen] = useState(false);
@@ -550,8 +556,10 @@ function AttemptHistory({
                 </GlassButton>
                 {boundaryOpen && !page.loading && !page.error ? boundary.node_kind === 'repeat_until' ? <RepeatIterations
                     scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
-                    finalOutputAvailable={Boolean(boundary.workflow_result?.result_ref)} onAccessLost={onAccessLost} /> : <LoopItems
-                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} onAccessLost={onAccessLost} /> : null}
+                    finalOutputAvailable={Boolean(boundary.workflow_result?.result_ref)} onAccessLost={onAccessLost}
+                    onSelectIteration={onSelectIteration} /> : <LoopItems
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                    onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} /> : null}
             </div> : null}
             <ul className="space-y-2" aria-label={`Attempts for execution ${executionId}`}>
                 {page.items.map((attempt) => {
@@ -685,9 +693,10 @@ function ContributorPages({ scope, workflowId, runId, executionId, attempt, onAc
     );
 }
 
-function IterationExecutions({ executionIds, scope, workflowId, runId, onAccessLost, iterationLabel = 'item' }: {
+function IterationExecutions({ executionIds, scope, workflowId, runId, onAccessLost, onSelectIteration, iterationLabel = 'item' }: {
     executionIds?: string[]; scope: WorkflowScope; workflowId: string; runId: string;
     onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
     iterationLabel?: 'item' | 'round';
 }) {
     const [selected, setSelected] = useState<string | null>(null);
@@ -696,14 +705,15 @@ function IterationExecutions({ executionIds, scope, workflowId, runId, onAccessL
             {executionIds?.map((id) => <GlassButton key={id} size="sm" aria-label={`Inspect ${iterationLabel} execution ${id}`}
                 onClick={() => setSelected(selected === id ? null : id)}><span className="break-all">Inspect execution {id}</span></GlassButton>)}
             {selected ? <AttemptHistory key={selected} scope={scope} workflowId={workflowId} runId={runId}
-                executionId={selected} onAccessLost={onAccessLost} inspectBoundary /> : null}
+                executionId={selected} onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} inspectBoundary /> : null}
         </>
     );
 }
 
-function LoopItems({ scope, workflowId, runId, executionId, onAccessLost }: {
+function LoopItems({ scope, workflowId, runId, executionId, onAccessLost, onSelectIteration }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string;
     onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
 }) {
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
         fetchWorkflowLoopItemsPage(scope, workflowId, runId, executionId, cursor, 50, signal),
@@ -727,7 +737,12 @@ function LoopItems({ scope, workflowId, runId, executionId, onAccessLost }: {
                     <DetailLine label="Item ID">{item.item_id}</DetailLine>
                     <DetailLine label="Iteration path">{formatIterationPath(item.iteration_path)}</DetailLine>
                     {item.record_count !== undefined ? <DetailLine label="Output records">{item.record_count}</DetailLine> : null}
-                    <IterationExecutions executionIds={item.execution_ids} scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
+                    {onSelectIteration ? <GlassButton size="sm"
+                        onClick={() => onSelectIteration(item.iteration_path.map((frame) => ({ ...frame })))}>
+                        Use item {item.index + 1} in Flow
+                    </GlassButton> : null}
+                    <IterationExecutions executionIds={item.execution_ids} scope={scope} workflowId={workflowId} runId={runId}
+                        onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} />
                 </li>)}
             </ul> : null}
         </section>
@@ -787,9 +802,10 @@ function RepeatStatePages({ scope, workflowId, runId, executionId, iteration, ph
     </section>;
 }
 
-function RepeatRound({ round, scope, workflowId, runId, executionId, onAccessLost }: {
+function RepeatRound({ round, scope, workflowId, runId, executionId, onAccessLost, onSelectIteration }: {
     round: WorkflowRepeatIterationRecord; scope: WorkflowScope; workflowId: string; runId: string; executionId: string;
     onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
 }) {
     const [phase, setPhase] = useState<'before' | 'after' | null>(null);
     return <li className="min-w-0 space-y-3 rounded-lg border border-edge p-3">
@@ -804,6 +820,10 @@ function RepeatRound({ round, scope, workflowId, runId, executionId, onAccessLos
             {' '}State after: {round.after_available ? 'committed' : 'not committed'}.</p>
         {round.partial ? <p className="text-xs text-warn">This round retains partial coverage.</p> : null}
         <div className="flex flex-wrap gap-2">
+            {onSelectIteration ? <GlassButton size="sm"
+                onClick={() => onSelectIteration(round.iteration_path.map((frame) => ({ ...frame })))}>
+                Use round {round.iteration + 1} in Flow
+            </GlassButton> : null}
             {(['before', 'after'] as const).map((value) => <GlassButton key={value} size="sm" aria-pressed={phase === value}
                 onClick={() => setPhase(phase === value ? null : value)}>State {value} round {round.iteration + 1}</GlassButton>)}
         </div>
@@ -811,13 +831,14 @@ function RepeatRound({ round, scope, workflowId, runId, executionId, onAccessLos
             scope={scope} workflowId={workflowId} runId={runId} executionId={executionId} iteration={round.iteration}
             phase={phase} onAccessLost={onAccessLost} /> : null}
         <IterationExecutions executionIds={round.execution_ids} scope={scope} workflowId={workflowId} runId={runId}
-            onAccessLost={onAccessLost} iterationLabel="round" />
+            onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} iterationLabel="round" />
     </li>;
 }
 
-function RepeatIterations({ scope, workflowId, runId, executionId, finalOutputAvailable, onAccessLost }: {
+function RepeatIterations({ scope, workflowId, runId, executionId, finalOutputAvailable, onAccessLost, onSelectIteration }: {
     scope: WorkflowScope; workflowId: string; runId: string; executionId: string; finalOutputAvailable: boolean;
     onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
 }) {
     const [finalOpen, setFinalOpen] = useState(false);
     const loadPage = useCallback((cursor: string | null, signal: AbortSignal) =>
@@ -835,13 +856,13 @@ function RepeatIterations({ scope, workflowId, runId, executionId, finalOutputAv
         {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No rounds have been admitted for this Repeat execution.</p> : null}
         <ul className="space-y-3" aria-label="Repeat rounds">
             {page.items.map((round) => <RepeatRound key={round.iteration} round={round} scope={scope} workflowId={workflowId}
-                runId={runId} executionId={executionId} onAccessLost={onAccessLost} />)}
+                runId={runId} executionId={executionId} onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} />)}
         </ul>
         {finalOutputAvailable ? <GlassButton size="sm" onClick={() => setFinalOpen(!finalOpen)}>
             {finalOpen ? 'Close Repeat final outputs' : 'Inspect Repeat final outputs'}
         </GlassButton> : <p className="text-xs text-text-3">No final Repeat result has been committed. A batch-limit pause does not expose final exports.</p>}
         {finalOpen && !page.loading && !page.error ? <AttemptHistory scope={scope} workflowId={workflowId} runId={runId}
-            executionId={executionId} onAccessLost={onAccessLost} /> : null}
+            executionId={executionId} onAccessLost={onAccessLost} onSelectIteration={onSelectIteration} /> : null}
     </section>;
 }
 
@@ -922,6 +943,101 @@ function DecisionHistory({
     );
 }
 
+export interface WorkflowExecutionInspectorProps {
+    scope: WorkflowScope;
+    workflowId: string;
+    runId: string;
+    execution: WorkflowExecutionRecord;
+    onAccessLost?: (status: number) => void;
+    onSelectIteration?: (path: WorkflowIterationFrame[]) => void;
+    // History can collapse the paged panels without hiding the shared execution summary.
+    expanded?: boolean;
+    onToggle?: () => void;
+}
+
+function ScopedWorkflowExecutionInspector({
+    scope,
+    workflowId,
+    runId,
+    execution,
+    onAccessLost,
+    onSelectIteration,
+    expanded = true,
+    onToggle,
+}: WorkflowExecutionInspectorProps) {
+    const [accessLost, setAccessLost] = useState<number | null>(null);
+    const handleAccessLost = useCallback((status: number) => {
+        setAccessLost(status);
+        onAccessLost?.(status);
+    }, [onAccessLost]);
+    const executionId = execution.execution_id;
+    const validation = validationSummary(execution.workflow_validation);
+    const resultSummary = resultReferenceSummary(execution.workflow_result?.result_ref);
+    const inputs = execution.consumed_inputs ?? execution.workflow_result?.consumed_inputs;
+    const iterationPath = formatIterationPath(execution.iteration_path);
+    const decision = decisionSummary(execution.decision);
+
+    if (accessLost !== null) {
+        return <p role="alert" className="rounded-xl bg-danger-soft p-3 text-xs text-danger">
+            {historyAccessLostMessage(accessLost)}
+        </p>;
+    }
+
+    return (
+        <GlassPanel elevation="flat" className="space-y-3 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+                {onToggle ? <RowAction
+                    icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                    label={execution.node_kind === 'for_each'
+                        ? `${expanded ? 'Hide' : 'Show'} frozen items for ${executionId}`
+                        : execution.node_kind === 'repeat_until'
+                            ? `${expanded ? 'Hide' : 'Show'} Repeat rounds for ${executionId}`
+                            : `${expanded ? 'Hide' : 'Show'} execution attempts for ${executionId}`}
+                    onClick={onToggle}
+                /> : null}
+                <Pill tone={statusTone(execution.state)}>{execution.state || 'unknown'}</Pill>
+                <span className="min-w-0 break-words text-sm font-medium text-text-1">
+                    {text(execution.node_id) || 'Unsupported node'} · {text(execution.node_kind) || 'unsupported kind'}
+                </span>
+            </div>
+            <div className="grid gap-1 sm:grid-cols-2">
+                <DetailLine label="Execution">{executionId}</DetailLine>
+                <DetailLine label="Attempt">{Number.isFinite(Number(execution.attempt)) ? Number(execution.attempt) : 'unknown'}</DetailLine>
+                {text(execution.task_id) ? <DetailLine label="Task">{text(execution.task_id)}</DetailLine> : null}
+                {Number.isFinite(Number(execution.sequence)) ? <DetailLine label="Sequence">{Number(execution.sequence)}</DetailLine> : null}
+                {text(execution.region_id) ? <DetailLine label="Region">{text(execution.region_id)}</DetailLine> : null}
+                {iterationPath ? <DetailLine label="Iteration path">{iterationPath}</DetailLine> : null}
+                {text(execution.reason_code) ? <DetailLine label="Reason code">{text(execution.reason_code)}</DetailLine> : null}
+                {decision ? <DetailLine label="Selected branch or route">{decision}</DetailLine> : null}
+                {validation ? <DetailLine label="Validation"><Pill tone={validationTone(execution.workflow_validation)}>{validation}</Pill></DetailLine> : null}
+                {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
+            </div>
+            <ConsumedInputs inputs={inputs} />
+            <WorkflowPublicationDetails publication={execution.workflow_result?.publication}
+                label={`Publication for execution ${executionId}`} />
+            {expanded ? (
+                execution.node_kind === 'for_each' ? <LoopItems
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                    onAccessLost={handleAccessLost} onSelectIteration={onSelectIteration} /> : execution.node_kind === 'repeat_until' ? <RepeatIterations
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                    finalOutputAvailable={Boolean(execution.workflow_result?.result_ref)}
+                    onAccessLost={handleAccessLost} onSelectIteration={onSelectIteration} /> : <AttemptHistory
+                    scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
+                    onAccessLost={handleAccessLost} onSelectIteration={onSelectIteration} />
+            ) : null}
+        </GlassPanel>
+    );
+}
+
+export function WorkflowExecutionInspector(props: WorkflowExecutionInspectorProps) {
+    const { scope, workflowId, runId, execution } = props;
+    const identity = JSON.stringify([
+        workflowScopeKey(scope), workflowId, runId, execution.execution_id,
+        execution.node_id, execution.iteration_path, execution.attempt,
+    ]);
+    return <ScopedWorkflowExecutionInspector key={identity} {...props} />;
+}
+
 export function WorkflowExecutionHistory({
     scope,
     workflowId,
@@ -969,58 +1085,13 @@ export function WorkflowExecutionHistory({
                         {page.items.map((execution) => {
                             const executionId = execution.execution_id;
                             const expanded = expandedExecutionId === executionId;
-                            const validation = validationSummary(execution.workflow_validation);
-                            const resultSummary = resultReferenceSummary(execution.workflow_result?.result_ref);
-                            const inputs = execution.consumed_inputs ?? execution.workflow_result?.consumed_inputs;
-                            const iterationPath = formatIterationPath(execution.iteration_path);
-                            const decision = decisionSummary(execution.decision);
                             return (
                                 <li key={executionId}>
-                                    <GlassPanel elevation="flat" className="space-y-3 p-3">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <RowAction
-                                                icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                                                label={execution.node_kind === 'for_each'
-                                                    ? `${expanded ? 'Hide' : 'Show'} frozen items for ${executionId}`
-                                                    : execution.node_kind === 'repeat_until'
-                                                        ? `${expanded ? 'Hide' : 'Show'} Repeat rounds for ${executionId}`
-                                                    : `${expanded ? 'Hide' : 'Show'} execution attempts for ${executionId}`}
-                                                onClick={() => setExpandedExecutionId(expanded ? null : executionId)}
-                                            />
-                                            <Pill tone={statusTone(execution.state)}>{execution.state || 'unknown'}</Pill>
-                                            <span className="min-w-0 break-words text-sm font-medium text-text-1">
-                                                {text(execution.node_id) || 'Unsupported node'} · {text(execution.node_kind) || 'unsupported kind'}
-                                            </span>
-                                        </div>
-                                        <div className="grid gap-1 sm:grid-cols-2">
-                                            <DetailLine label="Execution">{executionId}</DetailLine>
-                                            <DetailLine label="Attempt">{Number.isFinite(Number(execution.attempt)) ? Number(execution.attempt) : 'unknown'}</DetailLine>
-                                            {text(execution.task_id) ? <DetailLine label="Task">{text(execution.task_id)}</DetailLine> : null}
-                                            {Number.isFinite(Number(execution.sequence)) ? <DetailLine label="Sequence">{Number(execution.sequence)}</DetailLine> : null}
-                                            {text(execution.region_id) ? <DetailLine label="Region">{text(execution.region_id)}</DetailLine> : null}
-                                            {iterationPath ? <DetailLine label="Iteration path">{iterationPath}</DetailLine> : null}
-                                            {text(execution.reason_code) ? <DetailLine label="Reason code">{text(execution.reason_code)}</DetailLine> : null}
-                                            {decision ? <DetailLine label="Selected branch or route">{decision}</DetailLine> : null}
-                                            {validation ? <DetailLine label="Validation"><Pill tone={validationTone(execution.workflow_validation)}>{validation}</Pill></DetailLine> : null}
-                                            {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
-                                        </div>
-                                        <ConsumedInputs inputs={inputs} />
-                                        <WorkflowPublicationDetails publication={execution.workflow_result?.publication}
-                                            label={`Publication for execution ${executionId}`} />
-                                        {expanded ? (
-                                            execution.node_kind === 'for_each' ? <LoopItems key={executionId}
-                                                scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
-                                                onAccessLost={onAccessLost} /> : execution.node_kind === 'repeat_until' ? <RepeatIterations
-                                                    key={executionId} scope={scope} workflowId={workflowId} runId={runId} executionId={executionId}
-                                                    finalOutputAvailable={Boolean(execution.workflow_result?.result_ref)} onAccessLost={onAccessLost} /> : <AttemptHistory
-                                                scope={scope}
-                                                workflowId={workflowId}
-                                                runId={runId}
-                                                executionId={executionId}
-                                                onAccessLost={onAccessLost}
-                                            />
-                                        ) : null}
-                                    </GlassPanel>
+                                    <WorkflowExecutionInspector
+                                        scope={scope} workflowId={workflowId} runId={runId} execution={execution}
+                                        onAccessLost={onAccessLost} expanded={expanded}
+                                        onToggle={() => setExpandedExecutionId(expanded ? null : executionId)}
+                                    />
                                 </li>
                             );
                         })}

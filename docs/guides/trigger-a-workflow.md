@@ -90,6 +90,41 @@ or deadline limit cannot be cleared by a normal Resume, and changing source
 data cannot silently choose a different branch. See
 [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
 
+## Inspect a run's frozen Flow
+
+In **0.261.121**, expand a version-3 run in V2 history and choose **Show Flow
+for this run**. **Run's frozen definition** is the exact configuration admitted
+for that run, even if someone later edited the saved workflow or reused a node
+name. Missing snapshots report an error instead of showing today's definition.
+**Hide Flow for this run** returns to the execution list.
+
+Select a node to inspect its exact execution and attempts. One bounded
+metadata page is loaded; **Not loaded** does not mean Pending or Completed.
+**No execution recorded** is an explicit lookup result, not an empty successful
+output. Configuration sections, result excerpts, full records, and contributor
+pages remain separate requests.
+
+Then/Else and body regions group the structure rather than having separate
+execution records. Inspect their enclosing control or a contained task for
+run evidence; a recorded If-path label comes from that exact instance's saved
+decision.
+
+Loops show one template. Inspect the enclosing loop's frozen item or Repeat
+round pages, then choose **Use item N in Flow** or **Use round N in Flow**.
+That selects the exact mixed instance path, including its outer item/round.
+An unselected template cannot stand in for its latest execution.
+
+The runtime panel keeps its own authorized approval, recovery, Resume, and
+continuation controls outside Flow. Its actual gate overrides retained Repeat
+counters. Inspect execution status, output validation, and saved publication
+observations separately: a submitted file is not necessarily approved or
+indexed-ready, and graph refresh does not perform a new readiness check.
+
+On narrow screens, **Structure list** is the initial read-only presentation;
+**Flow diagram** enables the optional picture. Both use the same inspector.
+For configuration without run evidence, use the
+[saved or unsaved-draft view]({{ '/guides/create-a-workflow/' | relative_url }}#preview-the-structure-without-changing-execution).
+
 ## Inspect loop progress
 
 For each runs introduced in **0.261.117** retain their frozen item count, order,

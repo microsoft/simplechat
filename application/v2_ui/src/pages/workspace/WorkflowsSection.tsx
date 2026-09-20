@@ -2,8 +2,9 @@
 // Personal and group workflows: list, author, run, cancel, inspect history and delete.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, ChevronDown, ChevronRight, Edit3, Play, Plus, Trash2, Workflow } from 'lucide-react';
+import { Ban, ChevronDown, ChevronRight, Edit3, GitBranch, Play, Plus, Trash2, Workflow } from 'lucide-react';
 import { WorkflowEditorDialog } from '../../components/workflows/WorkflowEditorDialog';
+import { WorkflowFlowDialog } from '../../components/workflows/WorkflowFlowDialog';
 import { WorkflowRunHistory } from '../../components/workflows/WorkflowRunHistory';
 import {
     ConfirmAction,
@@ -65,6 +66,7 @@ export function WorkflowsSection({
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
     const [editing, setEditing] = useState<WorkflowDefinition | null | 'new'>(null);
+    const [viewingFlow, setViewingFlow] = useState<{ workflowId: string; scopeKey: string } | null>(null);
     const [options, setOptions] = useState<WorkflowEditorOptions | null>(null);
     const [optionsLoading, setOptionsLoading] = useState(false);
     const [optionsError, setOptionsError] = useState('');
@@ -247,6 +249,12 @@ export function WorkflowsSection({
                                 }
                                 actions={
                                     <>
+                                        {workflow.definition_version === 3 ? <RowAction
+                                            icon={<GitBranch size={15} />}
+                                            label={`View Flow for ${workflow.name || 'workflow'}`}
+                                            disabled={!workflowId}
+                                            onClick={() => setViewingFlow({ workflowId, scopeKey })}
+                                        /> : null}
                                         <RowAction
                                             icon={<Edit3 size={15} />}
                                             label={running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
@@ -305,7 +313,7 @@ export function WorkflowsSection({
                             />
                             {expanded && workflowId ? (
                                 <WorkflowRunHistory
-                                    key={workflowId}
+                                    key={`${scopeKey}:${workflowId}`}
                                     scope={scope}
                                     workflowId={workflowId}
                                     refreshToken={historyRefreshToken}
@@ -316,6 +324,9 @@ export function WorkflowsSection({
                     );
                 }}
             />
+            {viewingFlow?.scopeKey === scopeKey ? <WorkflowFlowDialog
+                key={`${scopeKey}:${viewingFlow.workflowId}`} scope={scope} workflowId={viewingFlow.workflowId}
+                onClose={() => setViewingFlow(null)} /> : null}
             {editing && options ? (
                 <WorkflowEditorDialog
                     key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}`}

@@ -1,0 +1,180 @@
+/* WorkflowFlowView.css - Local, theme-aware, read-only workflow inspection. */
+.workflow-flow {
+    --xy-background-color: var(--surface-sunken);
+    --xy-node-color: var(--text-1);
+    --xy-edge-stroke: var(--text-2);
+    --xy-edge-label-color: var(--text-1);
+    --xy-edge-label-background-color: var(--surface-solid);
+    --xy-attribution-background-color: var(--surface-solid);
+    min-width: 0;
+}
+
+.workflow-flow-canvas {
+    height: min(58vh, 36rem);
+    min-height: 20rem;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--edge-strong);
+    border-radius: 0.75rem;
+    background: var(--surface-sunken);
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.workflow-flow-canvas .react-flow__pane {
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.workflow-flow-node {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    color: var(--text-1);
+    border: 1px solid var(--edge-strong);
+    border-radius: 0.65rem;
+    background: var(--surface-solid);
+}
+
+.workflow-flow-container {
+    background: var(--surface-sunken);
+    border-style: dashed;
+}
+
+.workflow-flow-selected {
+    border: 2px solid var(--accent);
+}
+
+.workflow-flow-node-header {
+    display: flex;
+    align-items: start;
+    gap: 0.4rem;
+    padding: 0.55rem;
+}
+
+/* React Flow's read-only wrappers disable pointer events; only view controls opt back in. */
+.workflow-flow-node-select {
+    min-width: 0;
+    flex: 0 1 18rem;
+    pointer-events: auto;
+    text-align: left;
+    border-radius: 0.35rem;
+}
+
+.workflow-flow-node-select:focus-visible,
+.workflow-flow-collapse:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.workflow-flow-kind,
+.workflow-flow-label,
+.workflow-flow-status {
+    display: block;
+}
+
+.workflow-flow-kind,
+.workflow-flow-status,
+.workflow-flow-node-note {
+    font-size: 0.7rem;
+    color: var(--text-2);
+}
+
+.workflow-flow-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.workflow-flow-status {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workflow-flow-node-note {
+    padding: 0 0.55rem 0.35rem;
+    overflow-wrap: anywhere;
+}
+
+.workflow-flow-collapse {
+    pointer-events: auto;
+    font-size: 0.65rem;
+    padding: 0.25rem;
+    color: var(--accent);
+    border: 1px solid var(--edge-strong);
+    border-radius: 0.3rem;
+    background: var(--surface-solid);
+}
+
+.workflow-flow .react-flow__handle {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.workflow-flow .workflow-flow-body-handle {
+    top: 76px;
+    bottom: auto;
+}
+
+.workflow-flow .workflow-flow-return-handle {
+    top: auto;
+    bottom: 18px;
+}
+
+.workflow-flow .workflow-flow-data-source {
+    top: 36px;
+}
+
+.workflow-flow .workflow-flow-data-target {
+    top: 60px;
+}
+
+.workflow-flow-boundary-note {
+    position: absolute;
+    bottom: 2px;
+    left: 8px;
+    font-size: 0.65rem;
+    color: var(--text-2);
+}
+
+.workflow-flow-control-edge .react-flow__edge-path {
+    stroke: var(--text-2);
+}
+
+.workflow-flow-recorded-edge .react-flow__edge-path {
+    stroke-width: 3;
+}
+
+.workflow-flow-data-edge .react-flow__edge-path {
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+}
+
+.workflow-flow .react-flow__attribution a {
+    color: var(--text-2);
+}
+
+@media (max-width: 639px) {
+    .workflow-flow-canvas {
+        height: 24rem;
+        min-height: 18rem;
+    }
+}
+
+@media (max-width: 1023px) {
+    .workflow-authoring-preview .workflow-authoring-list {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .workflow-flow *,
+    .workflow-flow *::before,
+    .workflow-flow *::after {
+        animation: none;
+        transition: none;
+    }
+}

@@ -200,7 +200,7 @@ export function isFlowBinding(value: unknown): value is WorkflowFlowBinding {
         FLOW_OUTPUT_KINDS.some((kind) => kind === value.expected_kind);
 }
 
-function isRepeatState(value: unknown): value is WorkflowRepeatState {
+export function isRepeatState(value: unknown): value is WorkflowRepeatState {
     if (!isRecord(value) || typeof value.name !== 'string' || typeof value.next !== 'string' ||
         !isRecord(value.initial) || value.initial.scope !== 'current' || !isRecord(value.output_contract)) return false;
     const source = value.initial;
@@ -272,7 +272,7 @@ function isJoinSource(value: unknown): value is WorkflowJoinSource {
     return isRecord(value) && typeof value.node_id === 'string' && typeof value.output === 'string';
 }
 
-function isJoinExport(value: unknown): value is WorkflowJoinExport {
+export function isJoinExport(value: unknown): value is WorkflowJoinExport {
     return isRecord(value) && typeof value.name === 'string' && typeof value.required === 'boolean' &&
         FLOW_OUTPUT_KINDS.some((kind) => kind === value.expected_kind) &&
         isJoinSource(value.then) && isJoinSource(value.else);
@@ -1231,7 +1231,10 @@ export function predicateSummary(condition: WorkflowPredicate): string {
     const operand = (value: WorkflowOperand) =>
         'literal' in value ? JSON.stringify(value.literal) : `${value.input || 'Choose input'}${value.path.replaceAll('/', '.')}`;
     if (condition.op === 'all' || condition.op === 'any') {
-        return condition.conditions.map(predicateSummary).join(condition.op === 'all' ? ' AND ' : ' OR ');
+        return condition.conditions.map((child) => {
+            const summary = predicateSummary(child);
+            return child.op === 'all' || child.op === 'any' ? `(${summary})` : summary;
+        }).join(condition.op === 'all' ? ' AND ' : ' OR ');
     }
     if (condition.op === 'not') return `NOT (${predicateSummary(condition.condition)})`;
     if (condition.op === 'exists') return `${operand(condition.value)} exists`;

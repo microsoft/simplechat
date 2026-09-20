@@ -42,6 +42,32 @@ def _public_journal_value(value):
     return deepcopy(value)
 
 
+def public_workflow_journal_entry(row, kind):
+    """Share the same safe projection between paged and exact journal reads."""
+    if kind not in {"execution", "attempt", "decision"}:
+        raise ValueError("Unsupported public workflow journal kind.")
+    fields = PUBLIC_DECISION_FIELDS if kind == "decision" else PUBLIC_EXECUTION_FIELDS
+    entry = {
+        name: _public_journal_value(value)
+        for name, value in {**row["payload"], "sequence": row["sequence"]}.items() if name in fields
+    }
+    decision = entry.get("decision")
+    if isinstance(decision, dict):
+        decision = {name: value for name, value in decision.items() if name in {"choice", "target"}}
+        target = decision.get("target")
+        if isinstance(target, dict):
+            decision["target"] = {name: value for name, value in target.items() if name in {"node_id", "exit_region_id"}}
+        entry["decision"] = decision
+        if kind == "decision":
+            entry["choice"] = decision.get("choice") or ("route" if target else "continue")
+            if decision.get("choice") in {"then", "else"}:
+                entry["selected_branch"] = decision["choice"]
+            if isinstance(target, dict):
+                entry["target_node_id"] = target.get("node_id")
+                entry["exit_region_id"] = target.get("exit_region_id")
+    return entry
+
+
 class WorkflowJournalMixin:
     """Atomic decision/cursor/admission updates; control does not grow per execution."""
 
@@ -278,25 +304,7 @@ class WorkflowJournalMixin:
         for row in rows:
             if any(row.get(name) != value for name, value in self.identity.items()) or row.get("record_kind") != kind:
                 self._journal_conflict("identity_mismatch")
-        fields = PUBLIC_DECISION_FIELDS if kind == "decision" else PUBLIC_EXECUTION_FIELDS
-        entries = []
-        for row in rows[:limit]:
-            entry = {name: _public_journal_value(value) for name, value in {**row["payload"], "sequence": row["sequence"]}.items() if name in fields}
-            decision = entry.get("decision")
-            if isinstance(decision, dict):
-                decision = {name: value for name, value in decision.items() if name in {"choice", "target"}}
-                target = decision.get("target")
-                if isinstance(target, dict):
-                    decision["target"] = {name: value for name, value in target.items() if name in {"node_id", "exit_region_id"}}
-                entry["decision"] = decision
-                if kind == "decision":
-                    entry["choice"] = decision.get("choice") or ("route" if target else "continue")
-                    if decision.get("choice") in {"then", "else"}:
-                        entry["selected_branch"] = decision["choice"]
-                    if isinstance(target, dict):
-                        entry["target_node_id"] = target.get("node_id")
-                        entry["exit_region_id"] = target.get("exit_region_id")
-            entries.append(entry)
+        entries = [public_workflow_journal_entry(row, kind) for row in rows[:limit]]
         next_cursor = None
         if len(rows) > limit:
             next_cursor = base64.urlsafe_b64encode(json.dumps(

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
 import { WorkflowExecutionHistory } from './WorkflowExecutionHistory';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
+import { WorkflowFlowView } from './WorkflowFlowView';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { useSectionResource } from '../workspace/useSectionResource';
@@ -17,6 +18,7 @@ import {
     type WorkflowRunItem,
     type WorkflowRunResultPage,
     type WorkflowRunSummary,
+    type WorkflowRuntimeProjection,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
 
@@ -309,9 +311,15 @@ export function WorkflowRunHistory({
         'Failed to load run history.',
     );
     const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+    const [showFlow, setShowFlow] = useState(false);
+    const [runtimeSnapshot, setRuntimeSnapshot] = useState<{ runId: string; runtime: WorkflowRuntimeProjection | null } | null>(null);
+    const onRuntimeSnapshot = useCallback((runId: string, runtime: WorkflowRuntimeProjection | null) => {
+        setRuntimeSnapshot((current) => current?.runId === runId && current.runtime === runtime ? current : { runId, runtime });
+    }, []);
     const [unavailableRun, setUnavailableRun] = useState<{ id: string | null; status: number } | null>(null);
     const onAccessLost = useCallback((status: number) => {
         setUnavailableRun({ id: expandedRunId, status });
+        setRuntimeSnapshot(null);
     }, [expandedRunId]);
     const shown = useMemo(() => items.slice(0, 10), [items]);
 
@@ -359,6 +367,8 @@ export function WorkflowRunHistory({
                                 onClick={() => {
                                     setExpandedRunId(expanded ? null : runId);
                                     setUnavailableRun(null);
+                                    setShowFlow(false);
+                                    setRuntimeSnapshot(null);
                                 }}
                             />
                             <Pill tone={statusTone(status)}>{status}</Pill>
@@ -386,18 +396,31 @@ export function WorkflowRunHistory({
                             ) : (
                                 <>
                                     <WorkflowRuntimePanel
+                                        key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`}
                                         scope={scope}
                                         workflowId={workflowId}
                                         runId={runId}
                                         durable={run.durable_execution === true}
                                         structuredRun={isStructuredRun}
                                         onAccessLost={isStructuredRun ? onAccessLost : undefined}
+                                        onRuntimeSnapshot={isStructuredRun ? onRuntimeSnapshot : undefined}
                                         onRuntimeChanged={() => {
                                             void refresh();
                                             onWorkflowRefresh?.();
                                         }}
                                     />
+                                    {isStructuredRun ? <div className="px-3 pb-3">
+                                        <GlassButton size="sm" aria-expanded={showFlow} onClick={() => setShowFlow((value) => !value)}>
+                                            {showFlow ? 'Hide Flow for this run' : 'Show Flow for this run'}
+                                        </GlassButton>
+                                    </div> : null}
                                     {isStructuredRun ? (
+                                        showFlow ? <div className="min-w-0 px-3 pb-3">
+                                            <WorkflowFlowView key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`}
+                                                scope={scope} target={{ kind: 'run', workflowId, runId }}
+                                                runtime={runtimeSnapshot?.runId === runId ? runtimeSnapshot.runtime : null}
+                                                onAccessLost={onAccessLost} />
+                                        </div> :
                                         <WorkflowExecutionHistory key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`}
                                             scope={scope} workflowId={workflowId} runId={runId} onAccessLost={onAccessLost} />
                                     ) : (

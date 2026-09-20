@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.120**.
+Updated in version: **0.261.121**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -22,16 +22,18 @@ This page describes the M4A foundation. Version **0.261.117** adds
 definition version and journal. Version **0.261.119** adds
 [saved-record JSON publication](WORKFLOW_SAVED_OUTPUT_PUBLICATION.md).
 Version **0.261.120** adds [Repeat until](WORKFLOW_REPEAT_UNTIL.md), with saved
-typed state and explicit manual grants after finite automatic batches. M5A
-read-only Flow and M5B accessible visual authoring remain separate subsequent
-milestones. M4A itself did not admit loops.
+typed state and explicit manual grants after finite automatic batches.
+Version **0.261.121** adds [M5A read-only Flow inspection](WORKFLOW_FLOW_INSPECTION.md)
+over the same compiler and runtime. M5B accessible visual authoring remains
+separate. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 
 Structured control flow uses the existing workflow runner, durable execution
 lease, private result store, source-authorized readers, native Analyze adapter,
-and artifact publication service. No second scheduler, Cosmos container, or
-external browser library is introduced.
+and artifact publication service. There is no second scheduler or Cosmos
+container. The later read-only Flow renderer uses locally bundled React Flow;
+it does not introduce a stored executable graph or change the runtime model.
 
 Definition version **3** is an explicit opt-in and requires durable execution.
 Existing version-1 and version-2 definitions keep their previous behavior.
@@ -218,6 +220,25 @@ Completion checks selected-path obligations and required final outputs, not
 whether every authored branch ran. Accepted partial work remains
 `completed_partial`. Exhausted limits and missing required results do not
 become Completed.
+
+### Read-only Flow inspection
+
+In **0.261.121**, saved definitions, live List draft previews, and selected
+runs' verified frozen definitions have separate Flow views. Run evidence is
+never overlaid on a newer saved definition or an unsaved draft. Exact
+node-and-mixed-path lookup uses the frozen revision rather than guessing the
+latest task with a matching name.
+
+The layout follows normalized region order, preserves explicit joins and
+boundary IDs, and represents each loop body once. Selected-page typed bindings
+are distinct from control connections. Shared inspectors retain exact attempts,
+frozen items, Repeat state, complete records, and publication observations.
+
+Layout is temporary viewing state, excluded from executable definitions and
+revision hashes. Viewing, expanding, moving, and refreshing cannot approve,
+resume, continue, publish, or restart a run. See
+[the inspection contract](WORKFLOW_FLOW_INSPECTION.md) for APIs, bounds, source
+isolation, accessibility, and offline coverage.
 
 ## Publication boundary
 
