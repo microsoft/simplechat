@@ -2,7 +2,7 @@
 // Paged V3 workflow execution-history API contracts and client helpers.
 
 import { api } from './apiClient';
-import { isRecord } from './workspaceAuthoring';
+import { isRecord, sameEditorValue } from './workspaceAuthoring';
 import {
     workflowUrl,
     workflowLoopSelection,
@@ -342,6 +342,37 @@ export async function fetchWorkflowExecutionsPage(
         signal,
     );
     return pageFromResponse(response, 'executions', isExecution, (item) => item.execution_id, limit);
+}
+
+export async function fetchWorkflowExecutionForNode(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    nodeId: string,
+    iterationPath: WorkflowIterationFrame[],
+    signal?: AbortSignal,
+): Promise<WorkflowExecutionRecord | null> {
+    if (!validIdentity(nodeId) || !validWorkflowIterationPath(iterationPath)) {
+        throw new Error('Select an exact workflow node and iteration path.');
+    }
+    const requestedPath = iterationPath.map((frame) => ({ ...frame }));
+    const params = pageParams(null, 1);
+    params.set('node_id', nodeId);
+    params.set('iteration_path', JSON.stringify(requestedPath));
+    const response = await api.get<unknown>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/executions`, params),
+        signal,
+    );
+    if (!isRecord(response) || response.next_cursor !== null || Object.keys(response).some((key) =>
+        !['executions', 'next_cursor', 'total_count'].includes(key))) {
+        throw new Error('The exact workflow execution lookup returned an unsupported response.');
+    }
+    const page = pageFromResponse(response, 'executions', isExecution, (item) => item.execution_id, 1);
+    if (page.total_count !== page.items.length || page.items.some((execution) =>
+        execution.node_id !== nodeId || !sameEditorValue(execution.iteration_path, requestedPath))) {
+        throw new Error('The workflow execution lookup does not match the selected node and iteration path.');
+    }
+    return page.items[0] ?? null;
 }
 
 export async function fetchWorkflowExecutionAttemptsPage(

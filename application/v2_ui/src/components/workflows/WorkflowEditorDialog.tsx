@@ -10,6 +10,7 @@ import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { WorkflowStructuredList } from './WorkflowStructuredList';
+import { WorkflowFlowView } from './WorkflowFlowView';
 import {
     convertToStructuredWorkflow,
     defaultFlowPredicate,
@@ -1383,6 +1384,7 @@ export function WorkflowEditorDialog({
     const [confirmClose, setConfirmClose] = useState(false);
     const [confirmStructured, setConfirmStructured] = useState(false);
     const [schemaFieldErrors, setSchemaFieldErrors] = useState<Record<string, string>>({});
+    const [showFlowPreview, setShowFlowPreview] = useState(false);
     const unsupportedFlow = flowUnsupportedReason(draft, options);
     const unsupported = !(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version) || Boolean(unsupportedFlow);
     const readOnly = unsupported || !options.can_manage;
@@ -1406,6 +1408,17 @@ export function WorkflowEditorDialog({
     }), [draft.tasks]);
     const visibleSchemaErrors = draft.tasks.map((task) => schemaFieldErrors[task.id]).filter(Boolean);
     const allErrors = [...validationErrors, ...schemaErrors, ...visibleSchemaErrors];
+    const flowPreview = useMemo(() => {
+        if (!showFlowPreview) return { definition: null, error: '' };
+        if (draft.tasks.some((task) => schemaFieldErrors[task.id])) {
+            return { definition: null, error: 'The current schema edit is invalid. Your List edits are retained; fix the schema before previewing this draft.' };
+        }
+        try {
+            return { definition: workflowForSave(draft, original, scope), error: '' };
+        } catch (cause: unknown) {
+            return { definition: null, error: workflowErrorMessage(cause, 'This draft cannot be previewed safely. Your List edits are retained.') };
+        }
+    }, [showFlowPreview, draft, original, scope, schemaFieldErrors]);
     const setWorkflow: Dispatch<SetStateAction<WorkflowDefinition>> = (update) => {
         setError('');
         setDraft((current) => typeof update === 'function' ? update(current) : update);
@@ -1558,7 +1571,14 @@ export function WorkflowEditorDialog({
                             </p>
                         </div>
                     ) : null}
-                    <fieldset disabled={readOnly || saving} className="space-y-5">
+                    {showFlowPreview || draft.definition_version === 3 && !readOnly ? <div className="flex flex-wrap items-center gap-3">
+                        <GlassButton size="sm" aria-expanded={showFlowPreview} onClick={() => setShowFlowPreview((value) => !value)}>
+                            {showFlowPreview ? 'Hide Flow preview' : 'Show Flow preview'}
+                        </GlassButton>
+                        <p className="text-xs text-text-3">Author in List; Flow is a read-only preview. On narrow screens, hide the preview to return to List.</p>
+                    </div> : null}
+                    <div className={showFlowPreview ? 'workflow-authoring-preview grid min-w-0 gap-4 lg:grid-cols-2' : 'min-w-0'}>
+                    <fieldset disabled={readOnly || saving} className="workflow-authoring-list min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <label className="text-sm text-text-2">
@@ -1797,6 +1817,12 @@ export function WorkflowEditorDialog({
                             ))}
                         </section>
                     </fieldset>
+                    {showFlowPreview ? <aside aria-label="Live List draft preview" className="min-w-0 self-start rounded-xl border border-edge p-3 lg:sticky lg:top-0">
+                        {flowPreview.error ? <p role="alert" className="text-sm text-danger">{flowPreview.error}</p> : null}
+                        {flowPreview.definition ? <WorkflowFlowView scope={scope}
+                            target={{ kind: 'draft', definition: flowPreview.definition }} /> : null}
+                    </aside> : null}
+                    </div>
                 </div>
             </Modal>
             {confirmStructured ? (
