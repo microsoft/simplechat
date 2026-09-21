@@ -35,6 +35,7 @@ Version: 0.261.104
 """
 
 import logging
+from contextlib import nullcontext
 from agent_execution_context import DelegationBudget
 import time
 from copy import deepcopy
@@ -437,14 +438,22 @@ def _run_single_step(step, context, settings, user_id, emit, step_cancel, get_ad
             error=f'Unknown capability: {capability_id}',
         )
     try:
-        result = adapter(
-            step,
-            context,
-            settings=settings,
-            user_id=user_id,
-            emit=emit,
-            cancel_requested=step_cancel,
-        )
+        binding_scope = getattr(context, 'step_model_scope', None)
+        with binding_scope(step) if binding_scope else nullcontext():
+            result = adapter(
+                step,
+                context,
+                settings=settings,
+                user_id=user_id,
+                emit=emit,
+                cancel_requested=step_cancel,
+            )
+            if isinstance(result, dict) and step.get('model_binding'):
+                result['model_binding'] = deepcopy(step['model_binding'])
+                model = getattr(context, 'step_model', None)
+                if model is not None:
+                    result['model_binding']['selection'] = model.answer_model_selection()
+                    result['model_binding']['reasoning'] = deepcopy(model.reasoning_resolution)
     except MixedSourceCancellationError:
         return build_step_result(status=STEP_STATUS_CANCELLED, summary='Step was cancelled.')
     except Exception as exc:
@@ -510,6 +519,8 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
     }
     if result.get('saved_analyses'):
         record['saved_analyses'] = deepcopy(result['saved_analyses'])
+    if result.get('model_binding'):
+        record['model_binding'] = deepcopy(result['model_binding'])
     return record
 
 
@@ -976,6 +987,7 @@ def execute_plan(
         _emit(emit, {'type': 'step', 'phase': status, 'step_id': step_id,
                      'capability_id': step.get('capability_id'), 'step_index': index,
                      'summary': record['summary'], 'failure': record['failure'],
+                     **({'model_binding': record['model_binding']} if record.get('model_binding') else {}),
                      'checkpoint_available': record['checkpoint_available'],
                      'completed': index + 1, 'total': total_units})
 

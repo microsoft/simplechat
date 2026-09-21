@@ -31,6 +31,7 @@ import {
     emptyPlanEdits,
     enableStep as narrowEnableStep,
     normalizePlan,
+    normalizeModelBinding,
     removeDocumentFromStep as narrowRemoveDocument,
     restoreDocumentToStep as narrowRestoreDocument,
 } from '../lib/orchestrationPlan';
@@ -80,6 +81,7 @@ function coerceStepStatus(value: unknown): StepStatus | null {
 
 /** One step's live runtime, driven by `orchestration_step` frames rather than the plan object. */
 export interface StepRuntime {
+    model_binding?: OrchestrationStep['model_binding'];
     status: StepStatus;
     summary: string;
     reused?: boolean;
@@ -855,6 +857,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return;
         }
         const patch: Partial<StepRuntime> = {};
+        if (event.model_binding) patch.model_binding = normalizeModelBinding(event.model_binding);
         if (typeof event.reused === 'boolean') patch.reused = event.reused;
         if (event.failure) patch.failure = normalizeOrchestrationFailure(event.failure);
         const status = coerceStepStatus(event.status);
@@ -1056,6 +1059,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 }
                 const status = coerceStepStatus(record.status) ?? runtime[stepId]?.status ?? 'pending';
                 runtime[stepId] = {
+                    model_binding: normalizeModelBinding(record.model_binding),
                     status,
                     summary: typeof record.summary === 'string' ? record.summary : '',
                     reused: record.reused === true,

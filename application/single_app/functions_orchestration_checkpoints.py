@@ -80,9 +80,9 @@ def fingerprint(value):
 
 def effective_plan(plan):
     return [
-        {key: deepcopy(step.get(key)) for key in (
+        {**{key: deepcopy(step.get(key)) for key in (
             'step_id', 'capability_id', 'arguments', 'depends_on', 'enabled', 'optional',
-        )}
+        )}, **({'model_binding': deepcopy(step['model_binding'])} if 'model_binding' in step else {})}
         for step in plan.get('steps') or []
     ]
 

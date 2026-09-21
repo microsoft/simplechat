@@ -122,6 +122,7 @@ def build_chat_bootstrap_cache_key(
             "enable_user_workspace",
             "allow_user_plugins",
             "allow_group_plugins",
+            "model_catalog",
         )
     }
     fingerprint = _stable_hash({

@@ -95,6 +95,7 @@ export interface ConnectionMigrationNotice {
 }
 
 export interface ConnectionModel {
+    catalogProfileId?: string;
     id?: string;
     deploymentName?: string;
     modelName?: string;

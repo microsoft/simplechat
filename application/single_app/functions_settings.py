@@ -1196,6 +1196,29 @@ def _get_app_settings_store():
         return app_settings_cache.get_settings_store()
 
 
+def save_model_catalog_change(payload, *, profile_id=None):
+    """Fence profile writes without swallowing conflict or publication failures."""
+    # The pure profile service does not import this settings owner.
+    from functions_model_catalog import change_catalog, ModelCatalogError
+
+    if not isinstance(payload, dict) or set(payload) - {"profile", "preferences", "etag"}:
+        raise ModelCatalogError("The catalog request contains unsupported fields.")
+    etag = payload.get("etag")
+    if not isinstance(etag, str) or not etag:
+        raise ModelCatalogError("Reload the catalog before saving.", "etag")
+    if "profile" not in payload and "preferences" not in payload:
+        raise ModelCatalogError("No profile changes were supplied.")
+    saved = _get_app_settings_store().write(
+        lambda current: change_catalog(
+            current, profile_id=profile_id, profile=payload.get("profile"),
+            preferences=payload.get("preferences"),
+        ),
+        expected_etag=etag,
+    )
+    log_event("[MODELS] Model catalog change saved.", extra={"profile_id": profile_id or "new"})
+    return saved
+
+
 def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_client_factory):
     """Supply runtime dependencies separately from the persisted settings object."""
     with _settings_store_init_lock:
@@ -2916,6 +2939,16 @@ def normalize_model_endpoints(endpoints):
             if not isinstance(model, dict):
                 continue
             model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            # Effective profile metadata is resolved from current settings, never accepted
+            # as a caller-supplied assertion or saved back as a deployment override.
+            model_copy.pop("_catalog_profile", None)
+            model_copy.pop("_catalog_effective_revision", None)
+            profile_id = model_copy.get("catalogProfileId")
+            if profile_id is not None and (
+                not isinstance(profile_id, str) or len(profile_id) > 160
+                or (profile_id and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]*", profile_id))
+            ):
+                raise ModelTokenBudgetError("invalid_model_profile", "Choose a valid catalog profile.")
             if model_copy != model:
                 changed = True
             for field_name, value in normalize_model_budget_overrides(model_copy).items():
@@ -3085,12 +3118,22 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True, catalog_settings=None):
     """Keep editable model metadata while stripping stored auth credentials."""
+    from functions_model_catalog import ModelCatalogError, apply_model_profile, get_effective_model_profiles
+
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
         return []
 
+    # Resolve tenant profiles only for linked deployments; unlinked callers keep
+    # the existing settings-independent projection.
+    if catalog_settings is None and any(
+        model.get("catalogProfileId") for endpoint in normalized
+        for model in endpoint.get("models", []) if isinstance(model, dict)
+    ):
+        catalog_settings = get_settings()
+    profiles = get_effective_model_profiles(catalog_settings) if catalog_settings is not None else None
     sanitized = []
     for endpoint in normalized:
         if not isinstance(endpoint, dict):
@@ -3115,8 +3158,15 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
         endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
+                effective_model = model
+                if profiles is not None:
+                    try:
+                        effective_model = apply_model_profile(model, endpoint, catalog_settings, profiles)
+                    except ModelCatalogError as exc:
+                        log_event("[MODELS] Linked catalog profile is unavailable.", level=logging.WARNING,
+                                  extra={"error_code": exc.code})
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider"), endpoint=endpoint,
+                    effective_model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
         if not include_connection_details:
             for field in ("auth", "connection", "management", "identity_header"):

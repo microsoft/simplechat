@@ -1042,6 +1042,7 @@
 
 
             {% include "admin/_panes/model-endpoints.html" %}
+            {% include "admin/_panes/model-catalog.html" %}
             {% include "admin/_panes/embeddings.html" %}
             {% include "admin/_panes/image-generation.html" %}
 
@@ -2400,6 +2401,7 @@
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_data_management.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_model_catalog.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_governance.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_card_links.js') }}?v={{ config['VERSION'] }}"></script>

@@ -26,6 +26,10 @@ from functions_appinsights import log_event
 from functions_image_api_route import is_image_capable_model_name
 from functions_ai_connections import AIConnectionError, describe_model_capabilities, supports_model_capability
 from functions_model_capabilities import get_model_catalog_capabilities, resolve_model_vision_support
+from functions_model_catalog import (
+    ModelCatalogError, TASKS, get_effective_model_profiles, apply_model_profile,
+)
+from app_settings_store import SettingsConflictError, SettingsUnavailableError
 from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -58,6 +62,85 @@ def register_route_backend_models(bp):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
+
+    def catalog_response(settings, *, admin=False):
+        profiles = get_effective_model_profiles(settings)
+        if not admin:
+            profiles = [profile for profile in profiles if not profile["archived"]]
+        payload = {"profiles": profiles, "tasks": TASKS}
+        if admin:
+            payload["etag"] = settings.get("_etag")
+            links = {profile["id"]: [] for profile in profiles}
+            for endpoint in settings.get("model_endpoints") or []:
+                for model in endpoint.get("models") or []:
+                    identity = str(model.get("modelName") or model.get("deploymentName") or "").casefold()
+                    profile = next((
+                        item for item in profiles if item["id"] == model.get("catalogProfileId")
+                        or (not model.get("catalogProfileId") and item["origin"] == "built_in"
+                            and identity in {str(value).casefold() for value in [item["id"], *item["aliases"]]})
+                    ), None)
+                    if profile is not None:
+                        effective = apply_model_profile(model, endpoint, settings, profiles)
+                        links[profile["id"]].append({
+                            "connection": endpoint.get("name") or endpoint.get("id"),
+                            "model": model.get("displayName") or model.get("deploymentName") or model.get("modelName"),
+                            "enabled": bool(endpoint.get("enabled", True) and model.get("enabled", True)),
+                            "capabilities": {key: value for key, value in effective.get("capabilities", {}).items()
+                                             if type(value) is bool},
+                        })
+            for profile in profiles:
+                profile["linked_models"] = links[profile["id"]]
+        return jsonify(payload)
+
+    def read_catalog(*, admin=False):
+        try:
+            return catalog_response(get_settings(), admin=admin)
+        except Exception as exc:
+            log_event("[MODELS] Catalog load failed.", level=logging.ERROR, extra={"error_type": type(exc).__name__})
+            return jsonify({"error": "Unable to load the model catalog. Retry or contact an administrator."}), 503
+
+    @bp.route('/api/models/catalog', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def model_catalog_choices():
+        """Public profile metadata only; no settings, secrets, or deployment inventory."""
+        return read_catalog()
+
+    @bp.route('/api/admin/model-catalog', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def admin_model_catalog():
+        return read_catalog(admin=True)
+
+    def save_catalog(profile_id=None):
+        try:
+            settings = save_model_catalog_change(request.get_json(silent=True), profile_id=profile_id)
+            return catalog_response(settings, admin=True)
+        except ModelCatalogError as exc:
+            return jsonify({"error": exc.public_message, "field": exc.field, "code": exc.code}), 400
+        except SettingsConflictError:
+            return jsonify({"error": "The catalog changed. Reload and review before saving.", "code": "catalog_conflict"}), 409
+        except SettingsUnavailableError:
+            return jsonify({"error": "Unable to confirm the save. Reload and verify before retrying."}), 503
+        except Exception as exc:
+            log_event("[MODELS] Catalog save failed.", level=logging.ERROR, extra={"error_type": type(exc).__name__})
+            return jsonify({"error": "Unable to save the model catalog."}), 500
+
+    @bp.route('/api/admin/model-catalog', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def create_model_catalog_profile():
+        return save_catalog()
+
+    @bp.route('/api/admin/model-catalog/<profile_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def update_model_catalog_profile(profile_id):
+        return save_catalog(profile_id)
 
     def log_models_debug(message, extra=None):
         log_event(f"[MODELS] {message}", extra=extra, debug_only=True, category="Models")

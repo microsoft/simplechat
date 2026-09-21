@@ -316,6 +316,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         setOrchestrationOn((on) => savedAnalysis ? true : !on);
     };
     const orchestrating = orchestrationOn && orchestrationAvailable && !savedAnalysis;
+    const [autoModelRouting, setAutoModelRouting] = useState(false);
+    const [orchestrationModel, setOrchestrationModel] = useState<string>();
     const [excludeImageForThisMessage, setExcludeImageForThisMessage] = useState(false);
     const imageSelectionNoticeId = useId();
     const imageSelectionNoticeRef = useRef<HTMLDivElement>(null);
@@ -589,15 +591,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // Reasoning support is per-model, so the control appears only when the current model
     // actually offers a choice. Resolved from the catalog record rather than the label,
     // since the display name can be anything an administrator typed.
+    const activeModelSelection = orchestrating && !autoModelRouting
+        ? orchestrationModel || options.modelDeployment : options.modelDeployment;
     const selectedModel = findModel(
         bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-        options.modelDeployment,
+        activeModelSelection,
     );
 
     // Storage identity is deliberately separate from the authorized model's policy.
     const reasoningKey = reasoningModelKey(
         selectedModel,
-        options.modelDeployment,
+        activeModelSelection,
     );
     const reasoningPolicy = selectedModel?.reasoning_capabilities;
     const pendingLevels = useRef<ReasoningEffortSettings>({});
@@ -913,10 +917,16 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                 models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
                 agentSelection: options.agentSelection,
-                modelDeployment: options.modelDeployment,
+                modelDeployment: orchestrationModel || options.modelDeployment,
                 reasoningEffort: options.reasoningEffort,
             }),
         );
+        if (autoModelRouting) {
+            seeds.model_routing = 'auto';
+            for (const key of ['model_deployment', 'model_id', 'model_endpoint_id', 'model_provider', 'reasoning_effort']) {
+                delete seeds[key];
+            }
+        }
         if (promptInfo) {
             // Resolved by the composer rather than re-read from the catalog here: the text the
             // planner is told about must be the text that was actually sent, variables filled
@@ -1172,7 +1182,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 {/* Above the input, matching the classic interface: the warning belongs
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
-                {!agentActive && reasoningNotice?.key === reasoningKey &&
+                {!agentActive && !(orchestrating && autoModelRouting) && reasoningNotice?.key === reasoningKey &&
                     reasoningNotice.effectiveEffort === derivedReasoning && (
                     <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
                         {reasoningNotice.message}
@@ -1238,6 +1248,20 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             Clear unavailable selections
                         </button>
                     </p>
+                )}
+
+                {orchestrating && (
+                    <Dropdown
+                        options={[{ value: '__auto__', label: 'Auto - choose per step' }, ...modelOptions]}
+                        value={autoModelRouting ? '__auto__' : orchestrationModel || options.modelDeployment}
+                        placeholder="Orchestration model"
+                        title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
+                        onChange={(value) => {
+                            setAutoModelRouting(value === '__auto__');
+                            if (value !== '__auto__') setOrchestrationModel(value);
+                            setOptions((current) => ({ ...current, agentSelection: undefined }));
+                        }}
+                    />
                 )}
 
                 {orchestrating && approvalOverridable && (
@@ -1440,7 +1464,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     while an agent is selected, since the agent brings its own
                                     deployment — picking a model here is how the user gets back to
                                     using one, so it stays usable rather than disabled. */}
-                                {gating.showModelPicker && (
+                                {gating.showModelPicker && !orchestrating && (
                                     <Dropdown
                                         options={modelOptions}
                                         value={options.modelDeployment}
@@ -1598,7 +1622,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     model alone. It is clearable only where no level is in effect —
                                     a deployment with no model catalog — because that is the one case
                                     where "no level" is a state to get back to. */}
-                                {gating.showReasoning && reasoningLevels.length > 0 && (
+                                {gating.showReasoning && !(orchestrating && autoModelRouting) && reasoningLevels.length > 0 && (
                                     <Dropdown
                                         options={reasoningLevels}
                                         value={options.reasoningEffort}

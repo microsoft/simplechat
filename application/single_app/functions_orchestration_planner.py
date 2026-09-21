@@ -37,6 +37,10 @@ from config import cognitive_services_scope
 from functions_appinsights import log_event
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_events import build_model_reasoning_metadata
+from functions_model_catalog import TASKS
+from functions_orchestration_model_routing import (
+    ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
+)
 from functions_orchestration_registry import (
     CAPABILITY_RESPOND,
     build_planner_capability_projection,
@@ -393,6 +397,8 @@ def build_planner_messages(planner_context, replan_hint=None, edit_context=None)
         {
             'role': 'system',
             'content': PLANNER_SYSTEM_PROMPT + (
+                '\n' + ROUTING_INSTRUCTIONS if payload.get('model_routing') == 'auto' else ''
+            ) + (
                 '\n\n' + PLAN_EDIT_INSTRUCTIONS if edit_context is not None else ''
             ),
         },
@@ -757,6 +763,10 @@ def plan_request(
     available_ids = [capability['id'] for capability in capabilities]
 
     context = dict(planner_context or {})
+    model_candidates = []
+    if (seeds or {}).get('model_routing') == 'auto':
+        model_candidates = authorized_routing_candidates(settings, user_id)
+        context.update(model_routing='auto', model_tasks=TASKS, model_candidates=model_candidates)
     context['capabilities'] = build_planner_capability_projection(capabilities)
     context['capability_availability'] = {
         'available': available_ids,
@@ -948,6 +958,8 @@ def plan_request(
         return _failure('invalid_plan_work')
 
     plan['revision'] = revision
+    if (seeds or {}).get('model_routing') == 'auto':
+        assign_step_models(plan, model_candidates)
     plan['planner_model'] = deployment
     plan['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
     if usage is not None:

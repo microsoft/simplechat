@@ -50,6 +50,7 @@ import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelCatalogManager } from '../components/admin/ModelCatalogManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
 import { ScreeningWorkspaceControls } from '../components/screening/ScreeningWorkspaceControls';
 import { ScreeningPolicyEditor } from '../components/screening/ScreeningPolicyEditor';
@@ -770,6 +771,8 @@ export function AdminSettingsPage() {
                     return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
+                case 'model-catalog-manager':
+                    return <ModelCatalogManager key={key} />;
                 case 'model-picker':
                     return (
                         <ModelPicker

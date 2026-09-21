@@ -3,8 +3,8 @@
 counts:
   capabilities: 115
   admin_groups: 15
-  admin_tabs: 48
-  admin_sections: 109
+  admin_tabs: 49
+  admin_sections: 110
   actions: 32
   chat_controls: 47
   sub_elements: 3
@@ -253,6 +253,7 @@ admin_groups:
   tabs:
   - embeddings
   - image-generation
+  - model-catalog
   - model-endpoints
 - id: appearance
   label: Appearance
@@ -429,6 +430,9 @@ admin_tabs:
 - id: migrate
   label: Migrate
   group: backup-recovery
+- id: model-catalog
+  label: Model Catalog
+  group: ai-models
 - id: model-endpoints
   label: AI Connections
   group: ai-models
@@ -797,6 +801,10 @@ admin_sections:
   label: Metadata Extraction
   tab: extraction
   group: knowledge
+- id: model-catalog-section
+  label: Model Catalog
+  tab: model-catalog
+  group: ai-models
 - id: multi-endpoint-configuration
   label: AI Connections
   tab: model-endpoints

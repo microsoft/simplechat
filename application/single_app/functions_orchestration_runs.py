@@ -984,7 +984,7 @@ def public_step_record(item):
     fields = (
         'run_id', 'step_id', 'step_index', 'capability_id', 'title', 'status',
         'started_at', 'completed_at', 'duration_ms', 'reused', 'reused_from_run_id',
-        'checkpoint_available',
+        'checkpoint_available', 'model_binding',
     )
     row = {key: deepcopy(item[key]) for key in fields if key in item}
     row['failure'] = safe_failure(item['failure']) if item.get('failure') else None

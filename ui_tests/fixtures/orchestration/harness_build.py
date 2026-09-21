@@ -43,8 +43,10 @@ class HarnessUnavailable(RuntimeError):
 
 def _newest_source_mtime():
     """The newest modification time among the harness entry and every V2 source file."""
-    newest = ENTRY.stat().st_mtime
-    for path in V2_SRC.rglob("*"):
+    newest = max(ENTRY.stat().st_mtime, Path(__file__).stat().st_mtime)
+    shared_assets = REPO_ROOT / "application" / "single_app" / "static"
+    paths = [*V2_SRC.rglob("*"), shared_assets / "js/admin/model_catalog_ui.js", shared_assets / "css/model-catalog.css"]
+    for path in paths:
         if path.is_file():
             mtime = path.stat().st_mtime
             if mtime > newest:
@@ -79,6 +81,8 @@ def ensure_bundle():
         "--format=iife",
         "--platform=browser",
         "--jsx=automatic",
+        f"--alias:react={NODE_MODULES / 'react'}",
+        f"--alias:react-dom={NODE_MODULES / 'react-dom'}",
         # apiClient.ts reads Vite's import.meta.env at module scope; the browser has no such
         # object, so it is defined away. The code under test degrades to '' via optional chaining.
         "--define:import.meta.env={}",

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "title": "SimpleChat model capability catalog",
-  "description": "Schema version 3: independently evidenced chat/generation capacities coexist with closed capability, reasoning-only, and embedding-policy records plus provider-qualified image profiles. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Image operations, reasoning policies, and embedding dimensions/input/batch policies do not authorize chat-token budgets.",
+  "description": "Schema version 4 adds sourced task-selection profiles while retaining independently evidenced chat/generation capacities, closed capability, reasoning-only, embedding-policy records, and provider-qualified image profiles. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Selection profiles, image operations, reasoning policies, and embedding dimensions/input/batch policies do not authorize chat-token budgets.",
   "type": "object",
   "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models", "imageOperationProfiles"],
   "properties": {
@@ -12,7 +12,7 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 3
+      "const": 4
     },
     "lastUpdated": {
       "$ref": "#/$defs/verificationDate"
@@ -67,6 +67,24 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "selectionProfile": {
+      "type": "object",
+      "required": ["summary", "strengths", "limitations", "tasks", "verifiedAt", "sources"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1200},
+        "strengths": {"$ref": "#/$defs/stringList"},
+        "limitations": {"$ref": "#/$defs/stringList"},
+        "verifiedAt": {"$ref": "#/$defs/verificationDate"},
+        "sources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/publicSourceUrl"}},
+        "chatCompletions": {"type": "boolean", "description": "Documented native Chat Completions support. Omitted means not reviewed."},
+        "tasks": {
+          "type": "object",
+          "propertyNames": {"enum": ["general", "summarization", "extraction", "classification", "coding", "reasoning", "analysis", "comparison", "data_analysis", "vision", "tool_use", "planning"]},
+          "additionalProperties": {"enum": ["unknown", "suitable", "strong", "unsuitable"]}
+        }
+      },
+      "additionalProperties": false
+    },
     "nonemptyString": {
       "type": "string",
       "minLength": 1,
@@ -366,6 +384,7 @@
         "tokenLimitEvidence"
       ],
       "properties": {
+        "selectionProfile": {"$ref": "#/$defs/selectionProfile"},
         "id": {
           "$ref": "#/$defs/nonemptyString"
         },

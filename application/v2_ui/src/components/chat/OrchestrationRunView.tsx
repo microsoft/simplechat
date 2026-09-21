@@ -325,6 +325,13 @@ export function OrchestrationRunView({
                         {step.rationale ? (
                             <p className="mt-1 text-xs text-text-3">{step.rationale}</p>
                         ) : null}
+                        {step.model_binding ? (
+                            <p className="mt-2 text-xs text-text-2" data-testid="orchestration-step-model">
+                                {stepRuntime[step.step_id]?.model_binding ? 'Execution model: ' : 'Planned model: '}
+                                <strong>{stepRuntime[step.step_id]?.model_binding?.label || step.model_binding.label}</strong>
+                                {' — '}{stepRuntime[step.step_id]?.model_binding?.reason || step.model_binding.reason}
+                            </p>
+                        ) : null}
 
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>

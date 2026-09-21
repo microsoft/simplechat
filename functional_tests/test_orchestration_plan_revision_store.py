@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_store.py
 """
 Functional tests for the pre-execution plan revision persistence boundary.
-Version: 0.261.104
+Version: 0.261.126
 Implemented in: 0.261.102
 
 Uses real storage helpers and SDK batch formatting with an atomic in-memory container.
@@ -171,6 +171,22 @@ class PlanRevisionStoreTests(unittest.TestCase):
         self.assertEqual(state['plan']['approval']['mode'], 'timed')
         self.assertEqual(self.read(), self.original)
         self.assertEqual([row['origin'] for row in state['history']], ['original'])
+
+    def test_auto_bindings_survive_revision_publication_and_hydration(self):
+        held = self.hold()
+        held["plan"]["model_routing"] = "auto"
+        binding = {
+            "selection": {"model_deployment": "summary", "model_id": "summary", "model_endpoint_id": "endpoint"},
+            "label": "Summary model", "reason": "Summarization; standard priority",
+            "profile_id": "gpt-5-nano", "profile_revision": "revision",
+        }
+        held["plan"]["steps"][-1].update(model_task="summarization", model_binding=binding)
+        self.publish(held)
+        current = self.read(follow_current=True)
+        state = self.revisions.plan_editor_state(current, "user1")
+        self.assertEqual(state["plan"]["model_routing"], "auto")
+        self.assertEqual(state["plan"]["steps"][-1]["model_binding"], binding)
+        self.assertEqual(state["plan"]["steps"][-1]["model_task"], "summarization")
 
     def test_container_patch_seam_is_resolved_dynamically(self):
         replacement = AtomicMemoryContainer('conversation_id')

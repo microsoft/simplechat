@@ -286,6 +286,14 @@ for the complete workflow.
 
 ## Orchestration approval (V2 interface)
 
+Since **0.261.126**, Orchestrate has a visible **Orchestration model** picker.
+**Auto - choose per step** asks the server to choose an authorized connected model
+for each model-backed step; a specific model remains pinned. Planned and completed
+steps show model attribution and the selection reason. This picker is distinct
+from the **Auto** approval choice below. Ordinary V2 chat and classic chat remain
+manual-only, and switching modes retains the normal-chat model. See
+[Choose models for orchestration]({{ '/guides/model-catalog-routing/' | relative_url }}).
+
 In Orchestrate, selected Document Search, Web Search, Deep Research, and eligible
 URL Access controls are positive requirements, not the complete list of permitted
 tools. Unchecked controls are neutral. The planner may choose other enabled,

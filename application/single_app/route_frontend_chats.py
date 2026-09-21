@@ -15,6 +15,7 @@ from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_connections import filter_model_endpoints_by_capability
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
+from functions_model_catalog import get_effective_model_profiles, model_profile_projection
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -626,6 +627,7 @@ def _chat_model_reasoning_metadata(model):
 
 
 def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
+    profiles = get_effective_model_profiles(settings)
     if not settings.get('enable_multi_model_endpoints', False):
         if settings.get('enable_gpt_apim', False):
             models = [
@@ -647,13 +649,14 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     'deployment_name': deployment,
                     'display_name': reasoning_metadata['model_name'],
                     **reasoning_metadata,
+                    **model_profile_projection(model, {}, settings, profiles),
                 })
         return catalog
 
     catalog = []
 
     def append_models(endpoints, scope_type, scope_id=None, scope_name=None):
-        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints)
+        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints, catalog_settings=settings)
         normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
 
         for endpoint in filter_model_endpoints_by_capability(normalized_endpoints):
@@ -687,6 +690,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     'scope_id': scope_id,
                     'scope_name': scope_name,
                     'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
+                    **model_profile_projection(model, endpoint, settings, profiles),
                 })
 
     append_models(
