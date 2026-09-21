@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 chat orchestration auto-open asymmetry.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 The drawer opens ITSELF when a plan reaches awaiting-approval only in `manual` mode, and only for
 the conversation on screen. This is a deliberate design rule, not an accident: manual approval is a
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 

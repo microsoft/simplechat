@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_model_selection_api.py
+#!/usr/bin/env python3
 """
 Functional test for the V2 admin embedding and image deployment selection API.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.083
 
 ``embedding_model`` and ``image_gen_model`` are stored as

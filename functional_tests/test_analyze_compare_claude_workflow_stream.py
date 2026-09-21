@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Analyze/Compare Claude workflow stream support.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.241.193
 
 This test ensures chat and workflow document actions can resolve Claude model

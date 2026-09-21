@@ -5,7 +5,7 @@ into the box.
 
 **Implemented in version:** 0.261.092
 **Inline answers implemented in version:** 0.261.096
-**Current feature version:** 0.261.099 (`application/single_app/config.py`)
+**Current feature version:** 0.261.100 (`application/single_app/config.py`)
 **Enhanced in version:** 0.261.096 (`application/single_app/config.py`)
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal prompts,

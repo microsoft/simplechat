@@ -1,16 +1,16 @@
 // test_v2_admin_field_visibility.mjs
 //
 // Runtime test for V2 admin field visibility and the deployment picker's pure logic.
-// Version: 0.261.082
-// Implemented in: 0.261.082
+// Version: 0.261.122
+// Implemented in: 0.261.083
 //
 // Two rules are exercised here because both are invisible until a specific combination
 // of settings is on screen, and both fail silently when wrong.
 //
 // Visibility. The server field schema is flat, but the panes it mirrors are nested: the
 // Azure OpenAI key sits inside the direct-connection block *and* inside the
-// key-authentication block. A single `depends_on` expresses one of those, so the other
-// has to be inherited from the field it depends on. Get that wrong and switching a
+// key-authentication block. Visibility is judged per field rather than recursively, so a
+// field in two nested blocks has to name both conditions. Get that wrong and switching a
 // section to APIM leaves a direct-connection credential on screen, next to fields that
 // are not being used -- which reads as though the direct connection is still live.
 //
@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 
 import './test_support/tsResolve.mjs';
 
-const { hasStoredSecret, isFieldVisible, readSecretValue } = await import(
+const { isFieldVisible, readFieldValue } = await import(
     '../application/v2_ui/src/lib/adminFields.ts'
 );
 
@@ -69,13 +69,13 @@ function embeddingFields() {
         },
         {
             key: 'azure_openai_embedding_key',
-            type: 'password',
+            type: 'secret',
             label: 'Key',
             default: '',
-            depends_on: {
-                key: 'azure_openai_embedding_authentication_type',
-                equals: 'key',
-            },
+            depends_on: [
+                { key: 'enable_embedding_apim', equals: false },
+                { key: 'azure_openai_embedding_authentication_type', equals: 'key' },
+            ],
         },
         {
             key: 'azure_apim_embedding_endpoint',
@@ -90,7 +90,7 @@ function embeddingFields() {
 const fieldsByKey = Object.fromEntries(embeddingFields().map((field) => [field.key, field]));
 
 function visible(key, settings, draft = {}) {
-    return isFieldVisible(fieldsByKey[key], settings, draft, embeddingFields());
+    return isFieldVisible(fieldsByKey[key], settings, draft);
 }
 
 /* ------------------------------- visibility -------------------------------- */
@@ -120,13 +120,17 @@ check('a string dependency compares the value, not its truthiness', () => {
     assert.equal(visible('azure_openai_embedding_key', withIdentity), false);
 });
 
-check('a field whose dependency is hidden is hidden too', () => {
+check('every condition on a multi-gated field has to hold', () => {
     // Authentication type is still 'key', but the whole direct-connection block is gone.
     const apim = {
         enable_embedding_apim: true,
         azure_openai_embedding_authentication_type: 'key',
     };
     assert.equal(visible('azure_openai_embedding_key', apim), false);
+    assert.equal(visible('azure_openai_embedding_key', {
+        enable_embedding_apim: false,
+        azure_openai_embedding_authentication_type: 'key',
+    }), true);
 });
 
 check('an unsaved edit decides visibility before the save lands', () => {
@@ -146,10 +150,9 @@ check('an unsaved edit decides visibility before the save lands', () => {
     );
 });
 
-check('an absent value falls back to the declared default', () => {
-    // A settings document that predates a key has no value for it. Reading that as empty
-    // would hide the API key permanently, because the default authentication is 'key'.
-    assert.equal(visible('azure_openai_embedding_key', {}), true);
+check('a display default does not invent a stored string dependency', () => {
+    assert.equal(readFieldValue(fieldsByKey.azure_openai_embedding_authentication_type, {}, {}), 'key');
+    assert.equal(visible('azure_openai_embedding_key', {}), false);
     assert.equal(visible('azure_apim_embedding_endpoint', {}), false);
 });
 
@@ -160,11 +163,11 @@ check('a field with no dependency is always visible', () => {
 check('a dependency cycle terminates instead of hanging the page', () => {
     const a = { key: 'a', type: 'switch', label: 'A', default: true, depends_on: { key: 'b', equals: true } };
     const b = { key: 'b', type: 'switch', label: 'B', default: true, depends_on: { key: 'a', equals: true } };
-    assert.equal(isFieldVisible(a, { a: true, b: true }, {}, [a, b]), true);
+    assert.equal(isFieldVisible(a, { a: true, b: true }, {}), true);
 });
 
 check('visibility works without siblings, using the stored value alone', () => {
-    // The page passes the section's declared list, but the helper must not require it.
+    // A field declares all of its gates; their visibility is not inherited.
     const field = fieldsByKey.azure_openai_embedding_key;
     assert.equal(
         isFieldVisible(field, { azure_openai_embedding_authentication_type: 'key' }, {}),
@@ -178,30 +181,6 @@ check('visibility works without siblings, using the stored value alone', () => {
         ),
         false,
     );
-});
-
-/* --------------------------------- secrets --------------------------------- */
-
-check('a stored secret is reported as present, never as its value', () => {
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: 'sk-live' }, 'azure_openai_embedding_key'), true);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: '' }, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: '   ' }, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({}, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: 'sk-live' }, undefined), false);
-});
-
-check('a password control shows only what was typed this session', () => {
-    const field = fieldsByKey.azure_openai_embedding_key;
-    const settings = { azure_openai_embedding_key: 'sk-live' };
-
-    // The stored secret must not reach the control, even though the admin settings
-    // payload carries it.
-    assert.equal(readSecretValue(field, {}), '');
-    assert.notEqual(readSecretValue(field, {}), settings.azure_openai_embedding_key);
-
-    assert.equal(readSecretValue(field, { azure_openai_embedding_key: 'typed' }), 'typed');
-    // An explicit removal is held as null so the control can say what will happen.
-    assert.equal(readSecretValue(field, { azure_openai_embedding_key: null }), null);
 });
 
 /* ---------------------------- deployment picker ---------------------------- */
@@ -277,21 +256,21 @@ check('a null or missing dependency value does not accidentally match', () => {
     // The risk is a comparison that coerces both sides and lets a nullish value through.
     const field = fieldsByKey.azure_openai_embedding_key;
     assert.equal(
-        isFieldVisible(field, { azure_openai_embedding_authentication_type: null }, {}, []),
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: null }, {}),
         false,
     );
     assert.equal(
-        isFieldVisible(field, { azure_openai_embedding_authentication_type: '' }, {}, []),
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: '' }, {}),
         false,
     );
     // With no siblings there is no declared default to fall back to, so an absent value
     // must not match either.
-    assert.equal(isFieldVisible(field, {}, {}, []), false);
+    assert.equal(isFieldVisible(field, {}, {}), false);
 });
 
 check('a string dependency is case sensitive and not a prefix match', () => {
     const field = fieldsByKey.azure_openai_embedding_key;
-    for (const nearMiss of ['KEY', 'Key', 'keys', 'ke', ' key', 'key ']) {
+    for (const nearMiss of ['KEY', 'Key', 'keys', 'ke']) {
         assert.equal(
             isFieldVisible(
                 field,
@@ -300,11 +279,17 @@ check('a string dependency is case sensitive and not a prefix match', () => {
                     azure_openai_embedding_authentication_type: nearMiss,
                 },
                 {},
-                embeddingFields(),
             ),
             false,
             `${nearMiss} matched a condition on 'key'`,
         );
+    }
+    // The shared Python and TypeScript dependency contracts trim form strings.
+    for (const padded of [' key', 'key ', '\tkey\r\n']) {
+        assert.equal(visible('azure_openai_embedding_key', {
+            enable_embedding_apim: false,
+            azure_openai_embedding_authentication_type: padded,
+        }), true);
     }
 });
 
@@ -320,7 +305,7 @@ check('a boolean dependency is unaffected by the string branch', () => {
         [undefined, false],
     ]) {
         assert.equal(
-            isFieldVisible(apimField, { enable_embedding_apim: stored }, {}, []),
+            isFieldVisible(apimField, { enable_embedding_apim: stored }, {}),
             expected,
             `enable_embedding_apim=${JSON.stringify(stored)}`,
         );

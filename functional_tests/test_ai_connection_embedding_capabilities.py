@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_capabilities.py
 """
 Functional tests for catalog-backed embedding capability and policy contracts.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Validate sourced aliases, strict limits, gateway attestations, publication,
@@ -431,8 +431,14 @@ class EmbeddingPolicyTests(IsolatedConnectionsTestCase):
         ]
         for policy in policies:
             with self.subTest(policy=policy):
-                flags = {**original, "embeddingPolicy": policy}
-                with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"invalid-model": flags}):
+                record = {
+                    "id": "invalid-model",
+                    "capabilities": {
+                        key: value for key, value in original.items() if isinstance(value, bool)
+                    },
+                    "embeddingPolicy": policy,
+                }
+                with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"models": [record]}):
                     for legacy in (False, True):
                         with self.assertRaises(ValueError) as raised:
                             self.resolve("invalid-model", legacy=legacy)
@@ -481,7 +487,12 @@ class EmbeddingPolicyTests(IsolatedConnectionsTestCase):
     def test_required_native_task_semantics_cannot_inherit_openai_compatibility(self):
         flags = self.capabilities.get_model_catalog_capabilities("text-embedding-3-small")
         flags["embeddingPolicy"]["requires_input_type"] = True
-        with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"task-model": flags}):
+        record = {
+            "id": "task-model",
+            "capabilities": {key: value for key, value in flags.items() if isinstance(value, bool)},
+            "embeddingPolicy": flags["embeddingPolicy"],
+        }
+        with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"models": [record]}):
             self.assertEqual(self.resolve("task-model")["api"], "unsupported")
             self.assertEqual(
                 self.resolve(self.embedding_model("task-model", openai_compatible=True))["api"],
@@ -572,7 +583,7 @@ class EmbeddingCapabilityTests(IsolatedConnectionsTestCase):
         definition = self.connections.get_capability_definition(self.embeddings)
         self.assertEqual(definition.selection_key, "embedding_model_selection")
         self.assertEqual(definition.catalog_flag, "generatesEmbeddings")
-        self.assertEqual(definition.supported_providers, ("aoai", "aifoundry", "new_foundry", "openai_compatible"))
+        self.assertEqual(definition.supported_providers, ("aoai", "aifoundry", "new_foundry", "custom", "openai_compatible"))
         self.assertEqual(definition.api_routes, ("azure_openai", "openai"))
         self.assertEqual(definition.feature_flag, "")
         settings = self.settings([self.endpoint(models=[self.embedding_model()])])
@@ -623,7 +634,8 @@ class EmbeddingCapabilityTests(IsolatedConnectionsTestCase):
                     self.assertEqual(status["source"], "declared")
         for value in ("true", 1, False, None):
             flags = {"generatesEmbeddings": value}
-            with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"unverified": flags}):
+            record = {"id": "unverified", "capabilities": flags}
+            with mock.patch.object(self.capabilities, "_CATALOG_CACHE", {"models": [record]}):
                 self.assertFalse(self.connections.supports_model_capability("unverified", self.embeddings))
         for fields in (
             {"supportsEmbeddings": True, "supports_embeddings": False},

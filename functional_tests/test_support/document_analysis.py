@@ -1,7 +1,7 @@
 # document_analysis.py
 """Original-source fixtures and isolated SDK seams for the real Analyze producer.
 
-Version: 0.261.109
+Version: 0.261.122
 Implemented in: 0.261.109
 """
 
@@ -12,6 +12,8 @@ import sys
 import types
 from contextlib import contextmanager
 from copy import deepcopy
+
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from test_support.app_stubs import stubbed_config
 
@@ -55,6 +57,17 @@ def _module(name, **attributes):
 def document_analysis_runtime(documents):
     """Load real retrieval/windowing/producer code with only I/O dependencies doubled."""
     source_reads = []
+    screening_reads = []
+
+    def screening_container(scope):
+        def read_item(item, partition_key):
+            screening_reads.append((scope, item))
+            fixture = documents.get(item)
+            if partition_key != item or fixture is None or fixture['document']['scope'] != scope:
+                raise CosmosResourceNotFoundError(status_code=404, message='Fixture document not found.')
+            return deepcopy(fixture['document'])
+
+        return types.SimpleNamespace(read_item=read_item)
 
     def read_document(user_id, document_id, group_id=None, public_workspace_id=None, **kwargs):
         source_reads.append(('metadata', document_id))
@@ -78,15 +91,23 @@ def document_analysis_runtime(documents):
         fixture['document']['group_id'] for fixture in documents.values()
         if fixture['document'].get('group_id')
     ]
+    def assert_group_role(user_id, group_id, **kwargs):
+        if user_id != USER_ID or group_id not in group_ids:
+            raise PermissionError('Fixture group access denied.')
+
     stubs = {
         'functions_content': _module('functions_content'),
         'functions_documents': _module('functions_documents', get_document_record=read_document,
                                       get_ordered_document_chunks=read_chunks),
-        'functions_group': _module('functions_group', get_user_groups=lambda user_id: [{'id': key} for key in group_ids]),
+        'functions_group': _module(
+            'functions_group', get_user_groups=lambda user_id: [{'id': key} for key in group_ids],
+            assert_group_role=assert_group_role,
+        ),
         'functions_public_workspaces': _module(
             'functions_public_workspaces',
             get_user_visible_public_workspace_docs=lambda *args, **kwargs: [],
             get_user_visible_public_workspace_ids_from_settings=lambda user_id: public_ids,
+            find_public_workspace_by_id=lambda workspace_id: {'id': workspace_id} if workspace_id in public_ids else None,
         ),
         'utils_cache': _module(
             'utils_cache', generate_search_cache_key=lambda *args, **kwargs: '',
@@ -107,6 +128,10 @@ def document_analysis_runtime(documents):
     with stubbed_config(
         CLIENTS={}, cognitive_services_scope='fixture-scope',
         cosmos_conversations_container=None, cosmos_messages_container=None,
+        cosmos_user_documents_container=screening_container('personal'),
+        cosmos_group_documents_container=screening_container('group'),
+        cosmos_public_documents_container=screening_container('public'),
+        cosmos_content_screening_container=None,
     ):
         targets = ('functions_search', 'functions_search_service', 'functions_document_analysis', 'functions_debug')
         originals = {name: sys.modules.get(name) for name in (*stubs, *targets)}
@@ -121,6 +146,7 @@ def document_analysis_runtime(documents):
             yield types.SimpleNamespace(
                 producer=producer, search=search, results=results,
                 source_reads=source_reads, cancellation=cancellation,
+                screening_reads=screening_reads,
             )
         finally:
             # Only restore our app seams. Removing newly imported native SDK modules

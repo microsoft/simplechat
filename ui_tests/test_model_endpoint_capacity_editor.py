@@ -2,7 +2,7 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.035
+Version: 0.261.122
 Implemented in: 0.261.035
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
@@ -17,6 +17,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import re
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -104,9 +105,11 @@ class EndpointApiFixture:
         self.saved_payloads = []
         self.discovered_models = []
         self.fetch_payloads = []
+        self.operation_tests = []
         self.page_errors = []
         self.console_errors = []
         self.nonlocal_requests = []
+        self.unhandled_api_requests = []
         self.fail_save = False
         self.expected_save_error = False
 
@@ -134,7 +137,16 @@ class EndpointApiFixture:
         elif path == f"{prefix}/models/fetch":
             self.fetch_payloads.append(copy.deepcopy(body))
             payload = {"models": self.discovered_models}
+        elif self.scope == "admin" and path == "/api/models/vision-capability":
+            payload = {"models": {
+                model["deploymentName"]: {"supports_vision": False, "source": "heuristic"}
+                for model in body["models"]
+            }}
+        elif self.scope == "admin" and path == "/api/v2/admin/settings/test-connection":
+            self.operation_tests.append(copy.deepcopy(body))
+            payload = {"success": True, "dimensions": 1536}
         else:
+            self.unhandled_api_requests.append((route.request.method, path))
             route.fulfill(status=404, content_type="application/json", body="{}")
             return
         route.fulfill(content_type="application/json", body=json.dumps(payload))
@@ -142,7 +154,8 @@ class EndpointApiFixture:
 
 @pytest.fixture(params=("admin", "user", "group"))
 def capacity_ui(request, capacity_browser):
-    scope = request.param
+    options = request.param if isinstance(request.param, dict) else {"scope": request.param}
+    scope = options["scope"]
     api = EndpointApiFixture(scope)
     environment = Environment(
         loader=FileSystemLoader(APP_ROOT / "templates"),
@@ -151,6 +164,13 @@ def capacity_ui(request, capacity_browser):
     modal = environment.get_template("_multiendpoint_modal.html").render(
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
     )
+    connection_templates = ""
+    if options.get("connection_templates"):
+        source = (APP_ROOT / "templates" / "admin" / "_panes" / "model-endpoints.html").read_text(encoding="utf-8")
+        for template_id in ("model-endpoint-embedding-template", "custom-model-endpoint-fields-template"):
+            match = re.search(rf'<template id="{template_id}">.*?</template>', source, re.DOTALL)
+            assert match is not None, f"The actual admin template {template_id} must exist."
+            connection_templates += environment.from_string(match.group()).render()
     module = "admin/admin_model_endpoints.js" if scope == "admin" else "workspace/workspace_model_endpoints.js"
     container_id = "group-multi-endpoint-configuration" if scope == "group" else "workspace-multi-endpoint-configuration"
     html = (
@@ -167,7 +187,7 @@ def capacity_ui(request, capacity_browser):
         '<button type="button" id="add-model-endpoint-btn">Add Endpoint</button>'
         '<div class="table-responsive"><table class="table">'
         '<tbody id="model-endpoints-tbody"></tbody></table></div></div></main>'
-        f'{modal}'
+        f'{connection_templates}{modal}'
         '<script src="/static/js/bootstrap/bootstrap.bundle.min.js"></script>'
         '<script src="/static/js/toast.js"></script>'
         f'<script type="module" src="/static/js/{module}"></script>'
@@ -218,7 +238,7 @@ def capacity_ui(request, capacity_browser):
                 and ("Error saving endpoint" in error or "status of 400" in error)
             )
         ]
-        assert not unexpected_errors
+        assert not unexpected_errors, (unexpected_errors, api.unhandled_api_requests)
 
 
 def _open_editor(page, api):

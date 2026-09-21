@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 # test_v2_admin_knowledge_file_sync.py
+#!/usr/bin/env python3
 """
 Functional test for the Knowledge group's File Sync tab in the V2 admin UI.
-Version: 0.261.065
-Implemented in: 0.261.065
+Version: 0.261.122
+Implemented in: 0.261.084
 
 File Sync is the first section to declare a prerequisite owned by another group.
 It needs Redis Cache, which lives under Scale, and the server-rendered card says
@@ -93,7 +93,7 @@ def test_the_tab_sections_match_navigation():
     """A field filed under an unknown section id would never render."""
     print("Testing File Sync sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.065")
+    assert_app_version_at_least("0.261.084")
 
     nav_sections = tuple(
         section["id"]
@@ -262,11 +262,26 @@ def test_assignment_lists_round_trip():
     """The stored shape is a JSON array, and V1 wrote it as a string."""
     print("\nTesting assignment list storage...")
 
+    group_a = "11111111-1111-1111-1111-111111111111"
+    group_b = "22222222-2222-2222-2222-222222222222"
     normalized, errors, _ = normalize(
-        {"file_sync_allowed_group_ids": [{"id": "group-a"}, "group-b", "group-a"]}, {}
+        {"file_sync_allowed_group_ids": [group_a, group_b, group_a]}, {}
     )
     assert not errors, errors
-    assert normalized["file_sync_allowed_group_ids"] == ["group-a", "group-b"], normalized
+    assert normalized["file_sync_allowed_group_ids"] == [group_a, group_b], normalized
+
+    dropped, errors, _ = normalize(
+        {"file_sync_allowed_group_ids": ["not-a-uuid"]}, {}
+    )
+    assert not errors, errors
+    assert dropped["file_sync_allowed_group_ids"] == [], dropped
+
+    # Public workspace identifiers are not UUID-constrained.
+    from_records, errors, _ = normalize(
+        {"file_sync_allowed_public_workspace_ids": [{"id": "ws-1"}, "ws-2", "ws-1"]}, {},
+    )
+    assert not errors, errors
+    assert from_records["file_sync_allowed_public_workspace_ids"] == ["ws-1", "ws-2"], from_records
 
     # V1 stores this as a JSON string inside a hidden textarea, so a document
     # written by that form has to read back.
@@ -278,7 +293,7 @@ def test_assignment_lists_round_trip():
         from_string
     )
 
-    print("  Assignment lists accept both the edited and the stored shape.")
+    print("  Assignment lists validate group ids and accept both stored shapes.")
     return True
 
 

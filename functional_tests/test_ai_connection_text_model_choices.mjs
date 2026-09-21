@@ -1,6 +1,6 @@
 // test_ai_connection_text_model_choices.mjs
-// Version: 0.261.102
-// Implemented in: 0.261.102
+// Version: 0.261.105
+// Implemented in: 0.261.105
 // Execute Classic agent and workflow projections without a browser or network.
 
 import assert from 'node:assert/strict';

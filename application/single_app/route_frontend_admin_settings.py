@@ -674,12 +674,9 @@ def register_route_frontend_admin_settings(bp):
             }
 
         try:
-            normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
+            normalized_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []))
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
-        if endpoints_changed:
-            if update_settings({'model_endpoints': normalized_endpoints}, expected_etag=settings.get('_etag')):
-                settings = get_settings()
         settings['model_endpoints'] = normalized_endpoints
         frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 

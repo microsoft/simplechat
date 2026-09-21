@@ -1,6 +1,6 @@
 # Balanced Deep Research Selection and Multi-query Execution
 
-Fixed/Implemented in version: **0.261.096**
+Fixed/Implemented in version: **0.261.099**
 
 Application version reference: `application/single_app/config.py`.
 
@@ -27,7 +27,7 @@ deployment also affect an individual turn.
 | `functions_orchestration_registry.py` | Aligns web-search and deep-research descriptions with the balanced choice and self-contained research execution. |
 | `functions_orchestration_adapters.py` | Runs bounded discovery before review, rechecks permissions before searches, preserves backup planning, and merges usable evidence without success-path fallback notices. |
 | `route_backend_chats.py` | Adds backward-compatible progress/cancellation hooks and structured per-query outcomes to the existing research search loop. |
-| `config.py` | Advances the application patch version to `0.261.096`. |
+| `config.py` | Advances the application patch version to `0.261.099`. |
 
 No research-selection keywords, new capability ids, admin settings, schema migrations,
 or automatic post-search escalation loop are introduced. Existing query and crawl
@@ -35,6 +35,11 @@ limits remain unchanged.
 
 The planner's invalid-clarification retry now retains `request_context`, so a retry
 cannot lose a required role restriction after the initial plan was correctly gated.
+
+Discovery uses the current request, including its server-resolved wording for a
+follow-up, without forwarding the full conversation history or substituting the
+planner step's arbitrary objective. Direct review seeds retain the server-owned
+user-URL provenance list; rewriting a request does not authorize additional URLs.
 
 ## Recovery and evidence handling
 
@@ -72,7 +77,8 @@ does not prove a better recommendation.
 query generator, and shared search loop with controlled model/search/review seams. It
 covers bounded discovery without initial URLs, deduplication, preserved backups,
 logs-only recovery, role/feature gates, cancellation, useful partial evidence,
-no-data outcomes, and current-message-only outbound queries.
+no-data outcomes, current-request-only outbound queries, resolved follow-ups, and
+the separation between request interpretation and authorized user URLs.
 
 `functional_tests/test_orchestration_research_selection.py` covers planner contracts
 and balanced synthetic cases. Existing registry, phase-ordering, executor, query
@@ -85,9 +91,8 @@ Baseline/candidate evaluation must use the same approved deployment and cases, m
 both underuse and overuse, and avoid forcing ambiguous requests into deep research.
 Network evaluation is opt-in; no production conversations are required.
 
-For version **0.261.096**, all 50 focused planner/evaluator and research-execution tests
-pass. The related registry, plan-schema, phase-ordering, executor, query-generation,
-source-traversal, web-search privacy, and documentation coverage checks also pass.
+For version **0.261.099**, all 52 focused planner/evaluator and research-execution tests
+and 24 conversation-context integration tests pass.
 No live model comparison or final-answer quality benchmark was run.
 
 ### Running the planner comparison
@@ -129,6 +134,8 @@ observed durations, and operational failures. A human reviews the evidence-based
 there is no automatic quota or grade that rewards choosing deep research. Both variants
 use the same current planner runtime with different captured guidance. Even trivial
 cases exercise planning here, so this is not a measurement of end-to-end chat latency.
+Snapshots must have compatible capability contracts and planner parameters; capture
+a new baseline when unrelated capability changes make an older snapshot incompatible.
 
 ## Related documentation
 

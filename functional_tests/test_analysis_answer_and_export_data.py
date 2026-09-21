@@ -1,7 +1,7 @@
 # test_analysis_answer_and_export_data.py
 """
 Functional tests for readable Analyze answers and authoritative export values.
-Version: 0.261.109
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Display text is not the data handoff, and intermediate notes cannot replace
@@ -25,13 +25,14 @@ import uuid
 
 import pytest
 
-from test_analyze_backend_saved_integration import final_analysis, load_functions, saved
+from test_analyze_backend_saved_integration import final_analysis, load_functions, load_m365_runtime, saved
 from test_saved_analysis_service import saved_chat
 from test_support.app_stubs import import_app_module
 from test_workflow_result_contract import SerializedSections
 
 
 exports = import_app_module("functions_generated_file_exports")
+workflow_execution = import_app_module("functions_workflow_execution")
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 
 
@@ -183,6 +184,7 @@ def test_workflow_explanation_exports_keep_the_original_source_restrictions(save
     noop = lambda *args, **kwargs: None
     namespace = {
         "uuid": uuid,
+        "assert_workflow_execution_owned": workflow_execution.assert_workflow_execution_owned,
         "workflow_saved_analysis_descriptor": saved.workflow_saved_analysis_descriptor,
         "saved_analysis_context": saved.saved_analysis_context,
         "get_analysis_export_rows": exports.get_analysis_export_rows,
@@ -201,6 +203,7 @@ def test_workflow_explanation_exports_keep_the_original_source_restrictions(save
         "upload_generated_analysis_artifact_for_user": upload,
         "build_generated_file_artifact_metadata": exports.build_generated_file_artifact_metadata,
         "analysis_artifact_metadata": saved.analysis_artifact_metadata,
+        "attach_m365_message_provenance": load_m365_runtime().attach_m365_message_provenance,
         "_bind_analysis_projection_contexts": bind_contexts,
         "_get_document_action_config": lambda value: {"type": "analyze"},
         "_get_workflow_scope": lambda value: "personal",
@@ -331,6 +334,10 @@ def test_chat_structured_export_uses_final_values_not_envelope_or_raw_fallback(o
     source = APP / "route_backend_chats.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "maybe_create_assistant_file_generated_output")
+    existing_xsd_output = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_find_existing_validated_xsd_output"
+    )
     uploads = []
 
     def forbidden(*args, **kwargs):
@@ -353,7 +360,7 @@ def test_chat_structured_export_uses_final_values_not_envelope_or_raw_fallback(o
         "upload_generated_analysis_artifact_for_current_user": upload,
         "log_event": lambda *args, **kwargs: None,
     }
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
+    exec(compile(ast.Module(body=[existing_xsd_output, node], type_ignores=[]), str(source), "exec"), namespace)
     artifact = namespace["maybe_create_assistant_file_generated_output"](
         f"Export as {output_format}.",
         json.dumps(result["analysis_result"]["authoritative_result"]["value"]),

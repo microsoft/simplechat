@@ -569,8 +569,8 @@ def register_route_backend_models(bp):
             connection = data.get("connection") or {}
             auth_settings = data.get("auth") or {}
             model = data.get("model") or {}
-            if not isinstance(model, dict):
-                raise AIConnectionError("Supply the model as an object.", "invalid_model_selection")
+            if not isinstance(model, dict) or not model:
+                raise AIConnectionError("Supply a nonempty model selection object.", "invalid_model_selection")
             if any(
                 model.get(key) is not None and not isinstance(model[key], str)
                 for key in ("id", "deploymentName", "modelName")
@@ -621,7 +621,7 @@ def register_route_backend_models(bp):
             if not endpoint or not request_model:
                 return jsonify({"error": "Endpoint and model identifier are required."}), 400
 
-            if not supports_model_capability(model, "chat", provider):
+            if not supports_model_capability(model, "chat", provider, endpoint=data):
                 return jsonify({
                     "error": "This model is not available for chat. Use the test for its published capability; embedding models use Test embeddings.",
                     "code": "model_capability_unavailable",

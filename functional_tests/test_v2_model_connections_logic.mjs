@@ -1,7 +1,7 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.106
+// Version: 0.261.122
 // Implemented in: 0.261.059; embeddings added in 0.261.106
 //
 // The classic connection editor decided which fields a provider and auth type needed by
@@ -138,6 +138,20 @@ check('custom embedding connections show API keys only and never Azure discovery
         assert.equal(shown[field], false, field);
     }
     assert.equal(toEditableConnection({ id: 'custom', provider: 'openai_compatible' }).auth.type, 'api_key');
+});
+
+check('canonical Custom transport controls and embedding aliases stay distinct', () => {
+    for (const authType of ['api_key', 'bearer', 'oauth2_client_credentials']) {
+        const canonical = toEditableConnection({ id: 'custom', provider: 'custom', api_type: 'openai', auth: { type: authType } });
+        assert.equal(canonical.auth.type, authType);
+        assert.equal(canonical.connection.url_mode, 'auto');
+        const shown = visibleFields(canonical);
+        assert.equal(shown.apiKey, authType === 'api_key');
+        for (const field of ['project', 'management', 'managedIdentity', 'servicePrincipal', 'managementCloud', 'customAuthority', 'userAssignedClientId', 'openAiVersion', 'discovery']) {
+            assert.equal(shown[field], false, `${authType}: ${field}`);
+        }
+    }
+    assert.equal(toEditableConnection({ id: 'alias', provider: 'openai_compatible' }).provider, 'openai_compatible');
 });
 
 /* --------------------------------- validation -------------------------------- */

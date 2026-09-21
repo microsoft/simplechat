@@ -1,8 +1,8 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.098
+Implemented in: 0.261.098
 
 Use the existing orchestration harness and real stores/components. Serve its
 local bundle through request interception so local and Azure Playwright browsers

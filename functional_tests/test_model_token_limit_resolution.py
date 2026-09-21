@@ -3,6 +3,7 @@
 Functional tests for the workflow/model-budget integration contract.
 Version: 0.261.122
 Implemented in: 0.261.106
+Shared React V2 catalog integration: 0.261.112
 
 Workflow callers use the audited ModelTokenBudget API without replacing the
 existing tuple helper or reviving older nested tokenLimits annotations. These
@@ -35,6 +36,29 @@ class ModelTokenLimitResolutionTests(unittest.TestCase):
 
     def resolve(self, model, endpoint=None, **kwargs):
         return self.capabilities.resolve_model_token_budget(model, endpoint, **kwargs)
+
+    def test_token_image_and_embedding_metadata_survive_the_same_catalog_load(self):
+        catalog = self.capabilities.load_model_capability_catalog(force_refresh=True)
+        fields = {"embeddingPolicy", "imageProfiles", "imageLifecycle", "reasoningPolicy"}
+        observed = set()
+        for model in self.capabilities.get_model_capability_catalog_records():
+            identifier = self.capabilities._normalize_model_identifier(model["id"])
+            for field in fields.intersection(model):
+                with self.subTest(model=model["id"], field=field):
+                    self.assertEqual(catalog[identifier][field], model[field])
+                observed.add(field)
+            if model.get("provider"):
+                self.assertEqual(catalog[identifier]["publisher"], model["provider"])
+        self.assertEqual(observed, fields)
+        limits = self.resolve("gpt-5.6-sol")
+        self.assertEqual((limits.context_window, limits.input_limit, limits.output_limit), (1050000, 922000, 128000))
+        self.assertEqual(limits.output_accounting, "total_generation")
+        self.assertIsNone(self.resolve("gpt-4.1").context_window)
+        model = catalog[self.capabilities._normalize_model_identifier("gpt-4.1")]
+        self.assertEqual(
+            self.capabilities.get_image_operation_profile(model["imageProfiles"]["openai"])["api"],
+            "responses",
+        )
 
     def test_existing_tuple_api_and_output_helper_are_preserved(self):
         for model in ("gpt-5.6-sol", "gpt-5.5", "claude-haiku-4-5", "private-model"):

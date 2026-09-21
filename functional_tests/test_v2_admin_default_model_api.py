@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin default chat model API.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.061
 
 ``default_model_selection`` is a reference -- a connection id plus a model id -- not a

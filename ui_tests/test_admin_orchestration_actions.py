@@ -1,8 +1,8 @@
 # test_admin_orchestration_actions.py
 """
 UI coverage for the orchestration action opt-in in both admin surfaces.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.098
+Implemented in: 0.261.098
 
 Reuse the schema-backed admin fixture and Azure Playwright connection options.
 API interception uses synthetic settings; no live admin settings are changed.

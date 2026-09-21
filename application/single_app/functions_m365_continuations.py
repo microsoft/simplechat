@@ -96,8 +96,12 @@ def resume_pending_workflows(
             raise
         current = jobs.read_item(claimed["id"], partition_key=claimed["user_id"])
         if current.get("_etag") == claimed["_etag"]:
-            current["status"] = "completed" if result.get("success") else "failed"
-            current["completed_at"] = now.isoformat()
+            if result.get("durable_execution") is True and result.get("pending") is True:
+                current["status"] = "running"
+                current.pop("resume_lease_expires_at", None)
+            else:
+                current["status"] = "completed" if result.get("success") else "failed"
+                current["completed_at"] = now.isoformat()
             jobs.replace_item(
                 current["id"], body=current,
                 etag=current["_etag"], match_condition=MatchConditions.IfNotModified,

@@ -16704,6 +16704,10 @@ def register_route_backend_chats(bp):
                 )
             if isinstance(exc, AnalysisResultUnavailable):
                 return {'error': 'This analysis conversation is unavailable.', 'conversation_id': conversation_id}, 403
+            if isinstance(exc, ScreeningError):
+                return {
+                    'error': exc.public_message, 'error_code': exc.code, 'conversation_id': conversation_id,
+                }, exc.status_code
             return {
                 'canceled': True,
                 'conversation_id': conversation_id,

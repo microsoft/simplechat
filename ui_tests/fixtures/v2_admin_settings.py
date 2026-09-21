@@ -1,7 +1,7 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.093
 
 Serve the real built SPA through Playwright request interception, using the real
@@ -46,9 +46,10 @@ AGENT_SECTION_IDS = (
 class AdminSettingsFixture:
     """Load the production admin page with a closed, in-memory API boundary."""
 
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, *, validate_updates=False):
         self.page = page
         fields_module = import_app_module("admin_settings_fields")
+        self.normalize_updates = fields_module.normalize_admin_settings_updates if validate_updates else None
         schema = fields_module.get_admin_settings_fields()
         group = copy.deepcopy(next(item for item in ADMIN_NAV if item["id"] == "agents-actions"))
         agents_tab = next(tab for tab in group["tabs"] if tab["id"] == "agents")
@@ -160,8 +161,16 @@ class AdminSettingsFixture:
                     "field_errors": {key: "Fixture validation error." for key in updates},
                 })
             else:
-                self.settings.update(updates)
-                route.fulfill(json={"settings": updates, "updated_keys": list(updates)})
+                normalized = updates
+                if self.normalize_updates:
+                    normalized, errors, warnings = self.normalize_updates(updates, self.settings)
+                    if errors:
+                        route.fulfill(status=400, json={
+                            "error": "Invalid settings.", "field_errors": errors, "warnings": warnings,
+                        })
+                        return
+                self.settings.update(normalized)
+                route.fulfill(json={"settings": normalized, "updated_keys": list(normalized)})
         elif path == "/api/orchestration_types" and request.method == "GET":
             route.fulfill(json=[{"value": "default_agent", "label": "Single agent"}])
         elif path == "/api/orchestration_settings" and request.method == "GET":

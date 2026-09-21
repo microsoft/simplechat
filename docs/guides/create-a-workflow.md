@@ -4,6 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
+version: "0.261.122"
 ---
 
 ## What this does
@@ -50,6 +51,26 @@ draft instead of overwriting another editor's changes.
 
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
+
+## Choose the Microsoft 365 Run as account
+
+Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
+**Microsoft 365 Run as** in the editor when a workflow needs someone's Microsoft
+365 account for manual or scheduled actions. Personal workflows offer your
+account; group workflows load eligible choices for the selected group.
+
+New workflows start with **No Microsoft 365 account selected**. Neither workflow
+ownership nor having an account in the list grants consent. The selected person
+must connect Microsoft 365 and approve the workflow. Changes to instructions,
+capabilities, or destinations require approval again; choosing an account does
+not establish that the current revision is approved.
+
+Save the workflow to persist your choice. To explicitly remove it, choose **No
+Microsoft 365 account selected** and save. If the list cannot load or a saved
+account is absent from it, V2 retains the current selection rather than silently
+clearing it or choosing someone else. Retry the account list or review the
+unavailable selection before running; unrelated edits can still be saved without
+changing that account, subject to the usual workflow permissions and validation.
 
 ## Choose branches and optional work
 

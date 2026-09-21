@@ -75,7 +75,9 @@ from functions_m365_runtime import (
 )
 from functions_workflow_runner import _get_workflow_runner_app, create_workflow_run_id, run_group_workflow, run_personal_workflow
 from functions_m365_pending_delivery import dispatch_due_m365_deliveries
-from functions_workflow_runtime import check_durable_workflows_once, queue_durable_workflow_run
+from functions_workflow_runtime import (
+    check_durable_workflows_once, queue_durable_workflow_run, resume_m365_durable_workflow_run,
+)
 
 
 def _get_lock_holder_id():
@@ -599,6 +601,8 @@ def check_m365_workflow_continuations_once():
         if not lock:
             raise RuntimeError("The workflow is already executing.")
         try:
+            if workflow.get("durable_execution") is True:
+                return resume_m365_durable_workflow_run(workflow, job)
             runner = run_group_workflow if group_id else run_personal_workflow
             result = runner(
                 workflow, trigger_source="m365_approval",

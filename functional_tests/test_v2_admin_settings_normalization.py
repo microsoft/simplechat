@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_settings_normalization.py
+#!/usr/bin/env python3
 """
 Functional test for Admin Settings PATCH normalization.
-Version: 0.261.039
+Version: 0.261.122
 Implemented in: 0.261.039
 
 The V2 admin surface saves settings one section at a time through a JSON PATCH,
@@ -29,73 +29,72 @@ def test_dependency_conditions_compare_by_declared_type():
     """A string condition compared for truthiness would match every non-empty choice."""
     print("Testing depends_on comparison semantics...")
 
-    assert_app_version_at_least("0.261.082")
+    assert_app_version_at_least("0.261.083")
 
     satisfied = fields_module._dependency_is_satisfied
 
     # Boolean dependencies keep working exactly as they did.
-    assert satisfied({"key": "flag", "equals": True}, {"flag": True}, {}) is True
-    assert satisfied({"key": "flag", "equals": True}, {"flag": False}, {}) is False
-    assert satisfied({"key": "flag", "equals": False}, {"flag": False}, {}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": True}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": False}) is False
+    assert satisfied({"key": "flag", "equals": False}, {"flag": False}) is True
     # Including the form-shaped truthiness the PATCH accepts elsewhere.
-    assert satisfied({"key": "flag", "equals": True}, {"flag": "on"}, {}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": "on"}) is True
 
     # An omitted ``equals`` still means True, which is the historical default.
-    assert satisfied({"key": "flag"}, {"flag": True}, {}) is True
+    assert satisfied({"key": "flag"}, {"flag": True}) is True
 
     auth = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
 
     # Exact equality only. "managed_identity" is truthy, so a boolean comparison here
     # would show an API key field for a route that stores no key.
-    assert satisfied(auth, {"azure_openai_embedding_authentication_type": "key"}, {}) is True
+    assert satisfied(auth, {"azure_openai_embedding_authentication_type": "key"}) is True
     assert (
-        satisfied(auth, {"azure_openai_embedding_authentication_type": "managed_identity"}, {})
+        satisfied(auth, {"azure_openai_embedding_authentication_type": "managed_identity"})
         is False
     )
 
     # A near miss must not match: no prefix, substring or case folding.
     for near_miss in ("keys", "ke", "KEY", "Key", " key", "key "):
-        assert satisfied(auth, {"azure_openai_embedding_authentication_type": near_miss}, {}) is False, (
+        assert satisfied(auth, {"azure_openai_embedding_authentication_type": near_miss}) is False, (
             f"{near_miss!r} matched a condition on 'key'"
         )
 
     # A missing or null value must not match a string condition by accident.
     for absent in ({}, {"azure_openai_embedding_authentication_type": None},
                    {"azure_openai_embedding_authentication_type": ""}):
-        assert satisfied({"key": "some_undeclared_choice", "equals": "key"}, absent, {}) is False
+        assert satisfied(auth, absent) is False
 
     print("  Boolean conditions unchanged; string conditions match on exact equality.")
     return True
 
 
-def test_dependency_reads_the_pending_save_before_stored_state():
-    """A gate edited in the same PATCH decides the fields it gates."""
-    print("Testing depends_on value precedence...")
-
-    satisfied = fields_module._dependency_is_satisfied
-    dependency = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
-
-    # The value being written wins over the value on disk.
-    assert satisfied(
-        dependency,
-        {"azure_openai_embedding_authentication_type": "managed_identity"},
-        {"azure_openai_embedding_authentication_type": "key"},
-    ) is False
-
-    # Falling back to stored state when the gate is not part of this save.
-    assert satisfied(
-        dependency, {}, {"azure_openai_embedding_authentication_type": "key"}
-    ) is True
-
-    # And to the declared default when the document predates the key, because that is
-    # what the application would be applying.
-    declared_default = fields_module.get_field_definition(
-        "azure_openai_embedding_authentication_type"
-    )["default"]
-    assert declared_default == "key", declared_default
-    assert satisfied(dependency, {}, {}) is True
-
-    print("  Pending value beats stored value beats declared default.")
+def test_every_condition_must_hold_for_a_multi_gated_field():
+    """A field inside two nested blocks is only visible while both are open."""
+    print("Testing multi-condition visibility...")
+    field = fields_module.get_field_definition("azure_openai_embedding_key")
+    conditions = list(fields_module.iter_field_dependencies(field))
+    assert len(conditions) == 2, conditions
+    holds = fields_module.field_dependencies_are_satisfied
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is True
+    assert holds(field, {
+        "enable_embedding_apim": True,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is False
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "managed_identity",
+    }) is False
+    image_key = fields_module.get_field_definition("azure_openai_image_gen_key")
+    assert len(list(fields_module.iter_field_dependencies(image_key))) == 3
+    assert holds(image_key, {
+        "enable_image_generation": False,
+        "enable_image_gen_apim": False,
+        "azure_openai_image_gen_authentication_type": "key",
+    }) is False
+    print("  Every declared condition has to hold before a field is shown.")
     return True
 
 
@@ -216,23 +215,30 @@ def test_assignment_lists_are_deduplicated_and_typed():
     """A download policy keyed on a blank or repeated id would grant the wrong set."""
     print("\nTesting assignment list handling...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.060")
 
     normalized, errors, _ = normalize(
         {
             "file_download_allowed_group_ids": [
-                " group-a ",
-                "group-b",
-                "group-a",
+                " 3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73 ",
+                "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+                "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+                "not-a-uuid",
                 "",
                 None,
             ]
         }
     )
     assert not errors, errors
-    assert normalized["file_download_allowed_group_ids"] == ["group-a", "group-b"], (
-        normalized
+    assert normalized["file_download_allowed_group_ids"] == [
+        "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+        "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+    ], normalized
+    normalized, errors, _ = normalize(
+        {"file_download_allowed_public_workspace_ids": [" ws-alpha ", "ws-beta", "ws-alpha", ""]}
     )
+    assert not errors, errors
+    assert normalized["file_download_allowed_public_workspace_ids"] == ["ws-alpha", "ws-beta"], normalized
 
     # V1 round-trips this through a hidden textarea and accepts a JSON string. V2
     # always sends a real array, and accepting a string here would mean two shapes

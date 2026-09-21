@@ -144,7 +144,7 @@ def test_security_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Security pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.063")
 
     group = next((g for g in ADMIN_NAV if g["id"] == SECURITY_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'security' group."

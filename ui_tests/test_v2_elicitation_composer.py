@@ -1,7 +1,7 @@
 # test_v2_elicitation_composer.py
 """
 Browser regressions for composer-aware inline clarification answers.
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Exercise the real cards, composer, stores, controller, and request builders.
@@ -95,6 +95,9 @@ class InlineApi:
         self.question = file_question()
         self.plan_calls = []
         self.upload_calls = []
+        self.knowledge_calls = []
+        self.hydrated_runs = []
+        self.hydration_requests = 0
         self.documents = {item["id"]: copy.deepcopy(item) for item in DOCUMENTS}
         self.fail_next_plan = False
         self.fail_next_upload = False
@@ -141,6 +144,10 @@ class InlineApi:
             if path == "/api/user/settings":
                 route.fulfill(json={"settings": {}})
                 return
+            if path == "/api/v2/orchestration/runs":
+                self.hydration_requests += 1
+                route.fulfill(json={"runs": self.hydrated_runs})
+                return
 
         if request.method == "POST" and path == "/api/v2/orchestration/plan":
             body = request.post_data_json
@@ -163,6 +170,23 @@ class InlineApi:
             route.fulfill(content_type="text/event-stream", body="".join(
                 f"data: {json.dumps(frame)}\n\n" for frame in frames
             ))
+            return
+        if request.method == "POST" and path == "/api/v2/prompts/fill-variables":
+            self.knowledge_calls.append(request.post_data_json)
+            route.fulfill(json={
+                "values": [{
+                    "key": "company",
+                    "value": "Contoso",
+                    "sources": [{
+                        "document_id": "suggested-document",
+                        "chunk_id": "company-chunk",
+                        "title": "Suggested report",
+                        "page_number": 1,
+                        "excerpt": "Company: Contoso",
+                    }],
+                }],
+                "unresolved": [],
+            })
             return
         if request.method == "POST" and path == "/upload":
             payload = (request.post_data_buffer or b"").decode("utf-8", errors="replace")
@@ -238,6 +262,7 @@ class InlineApi:
                     scope: {groups: [], public_workspaces: []},
                     catalogs: {models: [], agents: [], prompts: [
                         {id: 'summary-prompt', name: 'Summary', content: 'Summarize {{composer}}.', scope_type: 'personal'},
+                        {id: 'company-prompt', name: 'Extract company', content: 'Company: {{company}}', scope_type: 'personal'},
                     ]},
                 }});
                 H.stores.chat.useChatStore.setState({
@@ -496,6 +521,59 @@ def test_paging_and_remount_preserve_separate_answers(inline_api):
     expect(api.card.get_by_role("checkbox", name="Staff", exact=True)).to_be_checked()
 
 
+def test_history_hydration_does_not_replace_a_pending_inline_answer(inline_api):
+    api = inline_api
+    api.open()
+    api.card.get_by_role("checkbox", name=re.compile("Suggested report")).check()
+    editor = api.card.get_by_role("textbox", name="Additional details for Source files (optional)")
+    editor.fill("Still answering this question")
+    message_id = api.page.evaluate(
+        "() => window.OrchHarness.stores.chat.useChatStore.getState().messages.find(message => message.role === 'user').id"
+    )
+    api.hydrated_runs = [{
+        "run_id": "older-pending-run", "turn_id": "older-turn",
+        "conversation_id": CONVERSATION, "status": "awaiting_approval",
+        "created_at": "2026-09-06T12:00:00Z", "user_message_id": message_id,
+        "user_message": "An earlier request",
+        "plan_summary": {"plan_id": "older-plan", "turn_id": "older-turn", "intent_summary": "Earlier work"},
+    }]
+    api.page.evaluate(
+        "(conversationId) => window.OrchHarness.resume.resumeOrchestrationForConversation(conversationId)",
+        CONVERSATION,
+    )
+    assert api.hydration_requests == 1
+    expect(editor).to_have_value("Still answering this question")
+    expect(api.card.get_by_role("checkbox", name=re.compile("Suggested report"))).to_be_checked()
+    assert api.page.evaluate(
+        "(conversationId) => window.OrchHarness.stores.orchestration.useOrchestrationStore.getState().activeTurns[conversationId]",
+        CONVERSATION,
+    ) == api.turn_id
+    api.finish_and_wait()
+    assert api.reply["elicitation_context"]["files"]["text"] == "Still answering this question"
+
+
+def test_adopted_plans_retire_drafts_without_making_new_plans_read_only(inline_api):
+    api = inline_api
+    api.open()
+    plan = api.answer_frame({"turn_id": api.turn_id, "elicitation_revision": 0})["plan"]
+    result = api.page.evaluate(
+        """({conversationId, turnId, plan}) => {
+            const store = window.OrchHarness.stores.orchestration.useOrchestrationStore;
+            const key = conversationId + '\\u0000' + turnId;
+            store.getState().adoptPersistedPlan(conversationId, turnId, plan, []);
+            const retired = !store.getState().elicitations[key]
+                && !store.getState().elicitationDrafts[key]
+                && store.getState().readOnlyTurns[key] === true;
+            store.getState().setPlan(conversationId, turnId, {
+                ...plan, plan_id: 'replanned-plan', run_id: 'replanned-run', revision: 2,
+            });
+            return {retired, editable: !store.getState().readOnlyTurns[key]};
+        }""",
+        {"conversationId": CONVERSATION, "turnId": api.turn_id, "plan": plan},
+    )
+    assert result == {"retired": True, "editable": True}
+
+
 def test_main_and_inline_attached_prompts_have_separate_state_and_ids(inline_api):
     api = inline_api
     api.open(main_composer=True)
@@ -522,6 +600,28 @@ def test_main_and_inline_attached_prompts_have_separate_state_and_ids(inline_api
     assert api.reply["prompt_info"]["id"] == "original-prompt"
 
 
+def test_suggested_file_selection_grounds_inline_prompt_variable_fill(inline_api):
+    api = inline_api
+    api.open()
+    api.card.get_by_role("checkbox", name=re.compile("Suggested report")).check()
+    editor = api.card.get_by_role("textbox", name="Additional details for Source files (optional)")
+    editor.fill("/Extract company")
+    api.card.get_by_role("option", name=re.compile("Extract company")).click()
+    fill = api.card.get_by_role("button", name="Find in knowledge", exact=True)
+    expect(fill).to_be_enabled()
+    fill.click()
+    expect(api.card.get_by_role("textbox", name=re.compile("company", re.I))).to_have_value("Contoso")
+    assert len(api.knowledge_calls) == 1
+    assert api.knowledge_calls[0]["selected_document_ids"] == ["suggested-document"]
+    assert api.knowledge_calls[0]["search_all"] is False
+    assert api.knowledge_calls[0]["conversation_id"] == CONVERSATION
+    api.finish_and_wait()
+    assert api.reply["elicitation_response"]["content"]["files"] == ["suggested-document"]
+    assert api.reply["elicitation_context"]["files"]["text"] == "Company: Contoso"
+    assert api.reply["elicitation_context"]["files"]["prompt_info"]["variables"]["company"] == "Contoso"
+    assert api.reply["prompt_info"]["id"] == "original-prompt"
+
+
 @pytest.mark.parametrize("action", ["decline", "cancel"])
 def test_refusal_never_carries_draft_context(inline_api, action):
     api = inline_api
@@ -529,6 +629,18 @@ def test_refusal_never_carries_draft_context(inline_api, action):
     api.card.get_by_role("checkbox", name=re.compile("Suggested report")).check()
     api.card.get_by_role("textbox", name="Additional details for Source files (optional)").fill("Do not submit these details")
     button = "Decline to answer" if action == "decline" else "Cancel and abandon this request"
+    if action == "cancel":
+        api.card.get_by_role("button", name=button, exact=True).click()
+        expect(api.card).not_to_be_visible()
+        assert len(api.plan_calls) == 1
+        assert api.page.evaluate(
+            """() => {
+                const state = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+                return Object.keys(state.elicitationDrafts).length === 0
+                    && Object.keys(state.activeTurns).length === 0;
+            }"""
+        )
+        return
     with api.page.expect_request(lambda request: request.method == "POST" and "/orchestration/plan" in request.url):
         api.card.get_by_role("button", name=button, exact=True).click()
     assert api.reply["elicitation_response"] == {"action": action, "content": {}}

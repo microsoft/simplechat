@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 # test_v2_admin_settings_secret_handling.py
+#!/usr/bin/env python3
 """
 Functional test for credential handling on the V2 Admin Settings endpoint.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.122
+Implemented in: 0.261.084
 
 The server-rendered admin form runs every settings document through
 ``redact_admin_settings_secrets_for_form`` before rendering, so a stored key
@@ -58,7 +58,7 @@ def test_get_does_not_return_the_raw_settings_document():
     """Returning get_settings() untouched hands every credential to the browser."""
     print("Testing that the settings GET redacts before responding...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.084")
 
     source = read_route_source()
 
@@ -98,9 +98,9 @@ def test_redaction_covers_both_the_form_list_and_the_schema():
     assert helper, "Could not locate _redact_admin_settings_for_v2"
     body = helper.group(0)
 
-    assert "redact_admin_settings_secrets_for_form" in body, (
-        "The helper should reuse the server-rendered form's redaction list, which "
-        "is what covers the nested Foundry client secret."
+    assert "redact_admin_settings_secrets_for_api" in body, (
+        "The helper should reuse the API redaction list, including credentials "
+        "that are not represented by an editable form control."
     )
     assert "get_secret_storage_paths()" in body, (
         "The helper should also redact anything the V2 schema declares as a "
@@ -109,7 +109,7 @@ def test_redaction_covers_both_the_form_list_and_the_schema():
         "credential is not always stored under the name of its control."
     )
 
-    print("  Both the form list and the schema list are applied.")
+    print("  Both the API list and the schema's storage paths are applied.")
     return True
 
 
@@ -135,19 +135,20 @@ def test_untouched_credentials_are_never_written():
     """This is the destructive case: writing the placeholder loses the key."""
     print("\nTesting that an untouched credential is dropped from the update...")
 
-    # A declared secret is needed to exercise the real path. Knowledge declares
-    # several; until then, register one temporarily so this check is meaningful
-    # from the moment the vocabulary exists rather than only after Phase 4.
+    # Nested fields are folded into their parent before route-level resolution.
     section = "__secret_handling_probe__"
     fields_module.ADMIN_SETTINGS_FIELDS[section] = [
-        {"key": "probe_secret_key", "type": "secret", "label": "Probe secret"}
+        {
+            "key": "probe_nested_secret", "type": "secret", "label": "Probe secret",
+            "paths": ["probe_container.secret"],
+        }
     ]
     try:
-        current = {"probe_secret_key": "the-real-key"}
+        current = {"probe_container": {"secret": "the-real-key", "other": "keep-me"}}
 
-        untouched, errors, _ = normalize({"probe_secret_key": REDACTED}, current)
+        untouched, errors, _ = normalize({"probe_nested_secret": REDACTED}, current)
         assert not errors, errors
-        assert "probe_secret_key" not in untouched, (
+        assert untouched.get("probe_container", {}).get("secret") != REDACTED, (
             "The placeholder was carried into the update. Saving any unrelated "
             "toggle would overwrite the stored credential with "
             f"{REDACTED!r}, which cannot be recovered without a backup."
@@ -156,20 +157,22 @@ def test_untouched_credentials_are_never_written():
         # A save that touches a toggle alongside an untouched credential must
         # still apply the toggle.
         mixed, errors, _ = normalize(
-            {"probe_secret_key": REDACTED, "enable_something": True}, current
+            {"probe_nested_secret": REDACTED, "enable_something": True}, current
         )
         assert not errors, errors
         assert mixed == {"enable_something": True}, mixed
 
         # A genuine edit still lands.
-        changed, errors, _ = normalize({"probe_secret_key": "a-new-key"}, current)
+        changed, errors, _ = normalize({"probe_nested_secret": "a-new-key"}, current)
         assert not errors, errors
-        assert changed["probe_secret_key"] == "a-new-key", changed
+        assert changed["probe_container"]["secret"] == "a-new-key", changed
+        assert changed["probe_container"]["other"] == "keep-me", changed
 
         # Deliberately clearing a credential is a real edit, not "unchanged".
-        cleared, errors, _ = normalize({"probe_secret_key": ""}, current)
+        cleared, errors, _ = normalize({"probe_nested_secret": ""}, current)
         assert not errors, errors
-        assert cleared["probe_secret_key"] == "", cleared
+        assert cleared["probe_container"]["secret"] == "", cleared
+        assert cleared["probe_container"]["other"] == "keep-me", cleared
     finally:
         del fields_module.ADMIN_SETTINGS_FIELDS[section]
 
@@ -200,7 +203,7 @@ def test_declared_secrets_are_known_to_the_form_redaction_list():
     """A schema secret absent from the V1 list is still exposed by the old page."""
     print("\nTesting declared secrets against the server-rendered redaction list...")
 
-    settings_source = (APP_ROOT / "functions_settings.py").read_text(encoding="utf-8")
+    settings_source = (APP_ROOT / "admin_settings_secret_utils.py").read_text(encoding="utf-8")
     form_list = re.search(
         r"ADMIN_SETTINGS_FORM_SECRET_FIELDS = \((.*?)\)", settings_source, re.DOTALL
     )
@@ -224,7 +227,7 @@ def test_declared_secrets_are_known_to_the_form_redaction_list():
         "classic admin page would still render them in plain text. Add them to "
         "ADMIN_SETTINGS_FORM_SECRET_FIELDS (or "
         "ADMIN_SETTINGS_NESTED_SECRET_FIELDS for a dotted path) in "
-        "functions_settings.py:\n  " + "\n  ".join(missing)
+        "admin_settings_secret_utils.py:\n  " + "\n  ".join(missing)
     )
 
     print(

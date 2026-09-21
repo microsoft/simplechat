@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_runtime.py
 """
 Functional coverage for embedding profiles and provider-independent inference.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Exercise the actual profile resolver, SDK wire format, response validation, and
@@ -9,7 +9,9 @@ retry boundaries with synthetic credentials and no Azure or provider requests.
 """
 
 import copy
+import importlib.util
 import json
+import socket
 import sys
 import types
 import unittest
@@ -24,13 +26,28 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "application" / "single_app"))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
-from test_support.app_stubs import import_app_module
+from test_support.app_stubs import import_app_module, stubbed_config
 from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY
 from functions_embedding_profile import resolve_embedding_profile
 from functions_ai_connection_migration import build_embedding_connection_migration
 
 
 runtime = import_app_module("functions_embeddings")
+
+
+def load_guarded_endpoint_runtime():
+    """Import the real shared factory without initializing Azure settings clients."""
+    with stubbed_config(cognitive_services_scope="https://cognitiveservices.azure.com/.default"):
+        sys.modules["functions_settings"].resolve_model_endpoint_foundry_scope = Mock(
+            side_effect=AssertionError("Custom embedding inference must not request a Foundry scope"),
+        )
+        spec = importlib.util.spec_from_file_location(
+            "embedding_endpoint_runtime_under_test",
+            ROOT / "application" / "single_app" / "functions_model_endpoint_runtime.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
 
 
 def custom_settings():
@@ -176,7 +193,7 @@ class EmbeddingRuntimeTests(unittest.TestCase):
         settings["model_endpoints"][0]["models"][0]["modelName"] = "different-encoder"
         self.assertNotEqual(resolve_embedding_profile(settings).profile_id, self.profile.profile_id)
 
-    def test_project_and_unsecured_remote_custom_urls_are_rejected(self):
+    def test_project_and_credential_bearing_custom_urls_are_rejected(self):
         for endpoint in (
             "https://resource.services.ai.azure.com/api/projects/project",
             "http://remote.example.test/v1",
@@ -187,6 +204,15 @@ class EmbeddingRuntimeTests(unittest.TestCase):
             settings["model_endpoints"][0]["connection"]["endpoint"] = endpoint
             with self.subTest(endpoint=endpoint), self.assertRaises(AIConnectionError):
                 resolve_embedding_profile(settings)
+
+    def test_legacy_alias_profile_keeps_https_requirement_before_client_creation(self):
+        settings = copy.deepcopy(self.settings)
+        settings["allow_insecure_custom_model_endpoints"] = True
+        settings["model_endpoints"][0]["connection"]["endpoint"] = "http://remote.example.test/v1"
+        with patch.object(runtime, "create_capability_client") as factory:
+            with self.assertRaises(AIConnectionError):
+                resolve_embedding_profile(settings)
+        factory.assert_not_called()
 
     def test_foundry_requires_explicit_inference_base_and_keeps_project_endpoint(self):
         settings = copy.deepcopy(self.settings)
@@ -228,7 +254,13 @@ class EmbeddingRuntimeTests(unittest.TestCase):
             SecretReturnType=types.SimpleNamespace(VALUE="value"),
             keyvault_model_endpoint_get_helper=helper,
         )
-        with patch.dict(sys.modules, {"functions_keyvault": vault}):
+        with patch.dict(sys.modules, {
+            "functions_keyvault": vault,
+            "functions_model_endpoint_runtime": load_guarded_endpoint_runtime(),
+        }), patch(
+            "socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))],
+        ):
             with runtime.build_embedding_connection_client(self.profile.binding, self.settings) as client:
                 self.assertEqual(str(client.base_url), self.profile.base_url)
                 self.assertEqual(client.auth_headers, {"Authorization": "Bearer hydrated-synthetic-key"})
@@ -236,6 +268,7 @@ class EmbeddingRuntimeTests(unittest.TestCase):
                 self.assertNotIn("api-version", client.default_query)
         self.assertEqual(helper.call_args.args[1], "custom")
         self.assertEqual(helper.call_args.kwargs["scope"], "global")
+        self.assertTrue(helper.call_args.kwargs["strict"])
         self.assertEqual(self.settings["model_endpoints"][0]["auth"]["api_key"], "synthetic-key")
 
     def test_apim_import_preserves_the_explicit_legacy_chunk_budget(self):

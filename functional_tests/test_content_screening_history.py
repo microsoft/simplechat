@@ -10,6 +10,8 @@ not turn old source material into newly authorized evidence.
 """
 
 import ast
+from collections import Counter, defaultdict
+from collections.abc import Mapping
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -20,6 +22,7 @@ from flask import Blueprint, Response, jsonify, request
 from werkzeug.test import Client
 
 from test_content_screening_access import APP_ROOT, ScreeningAccessFixture
+from test_support.app_stubs import import_app_module
 from content_screening import access
 from content_screening.contracts import DocumentHeldError, ScreeningError
 
@@ -36,6 +39,46 @@ def load_body(file_name, function_name, namespace, *, nested=False):
 
 
 class ScreeningHistoryTests(ScreeningAccessFixture):
+    def test_exports_suppress_thoughts_for_screening_or_saved_analysis_holds(self):
+        for collaboration in (False, True):
+            for blocked in ("none", "screening", "saved", "both"):
+                with self.subTest(collaboration=collaboration, blocked=blocked):
+                    snapshot = {"id": "answer", "role": "assistant", "content": "Safe displayed text"}
+                    if blocked in ("screening", "both"):
+                        snapshot["content_unavailable"] = True
+                    if blocked in ("saved", "both"):
+                        snapshot["metadata"] = {"saved_analysis": {"available": False}}
+                    thought = {"message_id": "answer", "text": "SOURCE_THOUGHT_CANARY"}
+                    collaboration_reads = []
+
+                    def collaboration_thoughts(*args):
+                        collaboration_reads.append(True)
+                        return [thought]
+
+                    namespace = {
+                        "Any": Any, "Dict": Dict, "List": List, "Mapping": Mapping,
+                        "Counter": Counter, "defaultdict": defaultdict,
+                        "TRANSCRIPT_ROLES": {"user", "assistant"},
+                        "build_message_artifact_payload_map": lambda messages: {},
+                        "_filter_messages_for_export": list,
+                        "sanitize_saved_analysis_messages": lambda messages, user_id: messages,
+                        "hydrate_agent_citations_from_artifacts": lambda messages, payloads: messages,
+                        "public_history_messages": lambda messages, user_id: messages,
+                        "sort_messages_by_thread": list,
+                        "is_collaboration_conversation": lambda conversation: collaboration,
+                        "get_thoughts_for_conversation": lambda *args: [thought],
+                        "get_accessible_collaboration_message_thoughts": collaboration_thoughts,
+                        "_sanitize_thought": deepcopy,
+                        "_sanitize_message": lambda message, **kwargs: {"id": message["id"], "thoughts": kwargs["thoughts"]},
+                        "_sanitize_conversation": lambda conversation, **kwargs: conversation,
+                        "_build_summary_intro": lambda **kwargs: None,
+                    }
+                    load_body("functions_saved_analysis.py", "is_saved_analysis_unavailable", namespace)
+                    export = load_body("route_backend_conversation_export.py", "_build_export_entry", namespace)
+                    result = export({"id": "conversation-1"}, [snapshot], "user-1", {})
+                    self.assertEqual(result["messages"][0]["thoughts"], [thought] if blocked == "none" else [])
+                    self.assertEqual(collaboration_reads, [True] if collaboration and blocked == "none" else [])
+
     def native_citation(self, *, tabular=False):
         arguments = (
             {"source": "workspace", "filename": self.document["file_name"], "column": "email"}
@@ -132,7 +175,7 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
             "filter_assistant_artifact_items": lambda messages: messages,
             "hydrate_image_messages": lambda messages, **kwargs: messages,
             "public_history_messages": access.public_history_messages,
-            "sanitize_saved_analysis_messages": lambda messages, _reader: messages,
+            "sanitize_saved_analysis_messages": import_app_module("functions_saved_analysis").sanitize_saved_analysis_messages,
             "hydrate_m365_pending_action_cards": lambda messages, _reader, _conversation: messages,
             "deepcopy": deepcopy, "List": List, "Dict": Dict, "Any": Any,
             "refresh_azure_maps_citation_payload": lambda value: value,

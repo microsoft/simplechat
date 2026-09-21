@@ -22,6 +22,7 @@ from functions_ai_connections import (
 from functions_appinsights import log_event
 from functions_embedding_profile import resolve_embedding_profile
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import custom_endpoint_validation_view
 
 
 class EmbeddingVector(list):
@@ -57,6 +58,7 @@ class _EmbeddingOpenAIClient(OpenAI):
 def _build_embedding_connection_client(binding, settings):
     profile = resolve_embedding_profile(settings, binding=binding)
     endpoint = deepcopy(binding.endpoint)
+    provider = str(endpoint.get("provider") or "aoai").strip().lower()
     if embedding_settings_use_connections(settings):
         # Secret hydration must happen at runtime, not in the pure profile resolver.
         from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
@@ -64,14 +66,38 @@ def _build_embedding_connection_client(binding, settings):
         endpoint = keyvault_model_endpoint_get_helper(
             endpoint, binding.selection["endpoint_id"], scope="global",
             return_type=SecretReturnType.VALUE,
+            **({"strict": True} if provider in ("custom", "openai_compatible") else {}),
         )
     auth = endpoint.get("auth") or {}
-    provider = str(endpoint.get("provider") or "aoai").strip().lower()
     auth_type = str(auth.get("type") or "managed_identity").strip().lower()
     operation = binding.operation_settings
     auth_header = operation.get("auth_header") or (
         "authorization" if profile.api == "openai" else "api-key"
     )
+    if provider in ("custom", "openai_compatible"):
+        # Construct runtime-only clients through the shared guarded Custom factory.
+        from functions_model_endpoint_auth import resolve_api_key_header
+        from functions_model_endpoint_runtime import build_custom_openai_client_kwargs
+
+        custom = custom_endpoint_validation_view(endpoint)
+        custom["connection"] = {
+            **(custom.get("connection") or {}), "endpoint": profile.base_url, "url_mode": "exact",
+        }
+        if profile.api == "azure_openai":
+            custom["connection"]["api_version"] = profile.api_version
+        if operation.get("auth_header") and auth_type != "bearer":
+            header, prefix = resolve_api_key_header(
+                auth, "Authorization" if auth_header == "authorization" else auth_header,
+                "Bearer" if auth_header == "authorization" else "",
+            )
+            custom["auth"] = {**auth, "api_key_header": header, "api_key_prefix": prefix}
+        return OpenAI(
+            **build_custom_openai_client_kwargs(
+                custom, settings, request_model=profile.deployment,
+                default_headers=build_model_endpoint_identity_headers(settings, endpoint_config=endpoint),
+            ),
+            max_retries=0, timeout=httpx.Timeout(60.0, connect=10.0),
+        )
     token_provider = None
     api_key = ""
     if auth_type in ("key", "api_key"):

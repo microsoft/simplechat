@@ -1,13 +1,17 @@
 # Analyze planning, Retry, downloads, and responsive stabilization
 
-Fixed in version: **0.261.113**, recorded in
+Fixed in version: **0.261.115**, recorded in
 `application/single_app/config.py`.
 
 ## Scope and reproduction baseline
 
-This stabilization builds on `paullizer-react-v2-ui` at
+Initial reproduction used `paullizer-react-v2-ui` at
 `c728f62b9a4cd05f4c18fde850082ed76db14168`, application **0.261.112**, after
-#1483 and #1484. It does not reintroduce those feature commits or add workflow
+#1483 and #1484. Integration incorporates screening #1485 at
+`c1a417096381a30d351fe4ef1792f10b317af60c`, application **0.261.113**, and the
+subsequent #1494 baseline at `5af5fc8a`, application **0.261.114**. The final
+stabilization patch uses **0.261.115** to avoid reusing that upstream version.
+It does not reintroduce old feature commits or add workflow
 conditions, loops, aggregation semantics, or another execution/storage engine.
 
 On 2026-09-17, the named Azure test application was still configured for image
@@ -85,11 +89,12 @@ content types, safe attachment filenames, and private `no-store` headers. Missin
 content returns a safe 404, lost access a safe 403, and unavailable storage a safe
 503. Other unexpected failures remain errors, without exposing exception text.
 
-The screening-free baseline does not add screening-specific imports or disable
-screening. When combined with screening, its existing source-evidence check in
-`_get_authorized_chat_artifact_message` must remain on both sides of the read,
-and genuine screening holds must retain that branch's explicit error handling.
-Workspace-linked documents still use their own admitted representation.
+The integrated screening source-evidence check in
+`_get_authorized_chat_artifact_message` remains on both sides of the read.
+Genuine screening holds return **409** with the stable `document_under_review`
+code; the Blueprint's final source check remains in place. Workspace-linked
+artifacts authorize the linked source and read its active admitted representation,
+not the retained chat blob. No screening toggle or hold is bypassed.
 Already-published workspace copies keep their independent destination ACL.
 
 Classic and V2 download buttons now fetch and validate the attachment response
@@ -130,6 +135,7 @@ provider, storage, and authentication boundaries:
 | Attachment header access for the configured split-origin frontend only | `functional_tests/test_v2_artifact_download_cors.py` |
 | Error recovery without navigation, saved findings/evidence, and full-shell narrow-screen behavior | `ui_tests/test_chat_saved_analysis.py` |
 | Fresh Supplier/Terms/Governance source text, four factual anchors, accepted findings, saved reload, evidence, and Markdown/CSV values | `functional_tests/test_analyze_three_document_smoke.py` |
+| Fresh producer completion in each UI, both exports through the download route, cross-UI reload, and saved-data follow-ups | `ui_tests/test_chat_three_document_smoke.py` |
 
 Existing saved-analysis, workflow result handoff, publication, calculation,
 paging, checkpoint, write-fence, and route-policy regressions remain the
@@ -140,8 +146,50 @@ The three-document regression runs the real narrative producer with scripted
 model responses grounded in the original fictional passages. It checks the
 sole-supplier dependency, one-time USD 10,000 convenience termination fee,
 unstated dates without claiming absent clauses, and Maya Chen's existing
-ownership/quarterly-review controls. It proves data-flow and representation
-contracts, not live model judgment or the complete deployed browser workflow.
+ownership/quarterly-review controls. The browser fixture creates a fresh result,
+opens that same saved result in the other UI, downloads actual CSV/Markdown
+bytes, and reads saved data for follow-ups without additional source model calls.
+Planning/execution transport and provider responses are deterministic; this is
+not live model judgment or a complete deployed acceptance run.
+
+### Validation results and remaining workflow work
+
+The `c1a41709`-based stabilization passed **200 affected browser cases**, plus **2**
+fresh three-document cross-UI cases. The focused backend run passed **99 tests
+and 61 subtests** for downloads, screening integration, planner diagnostics,
+the three-source producer, CORS, and native results. The existing standalone
+composer, run-hydration, and clarification suites each passed **6 cases**.
+
+A final broader **315-case** backend selection passed **305 tests and 142
+subtests**, with ten failures in unchanged workflow runner/fixture scope on
+this branch. Two additional planner evaluation exception-double import-order
+mismatches were corrected and passed in this final run.
+
+- Pending or uncertain publication is not exposed in the merged top-level
+  `publication` field expected by two integration tests.
+- One revocation test expects the older, later input-rejection wording instead
+  of the earlier saved-output source-access rejection.
+- Seven legacy inventory handoff cases lack the newly integrated screening
+  callable in their AST test fixture.
+
+These ten are owned by the separate M4A workstream, which reported **67 passing
+targeted cases** after its fixes. Those results are coordination evidence, not
+a claim that its unmerged fixes are included in this stabilization branch.
+`functions_workflow_runner.py` and those two fixture files remain unchanged here
+relative to `c1a41709`. Production result contracts, consumption receipts, and
+checkpoint/publication behavior are not redesigned by this fix.
+
+The validated `c1a41709`-based V2 production assets were `index-BO6D1Ehi.js` and
+`index-CtsizXvK.css`. That build passed with the existing large-bundle warning.
+The pre-PR rebuild after incorporating `5af5fc8a` also passed and produced
+`index-Ds8H12Gw.js` and `index-CtsizXvK.css`.
+On that updated baseline, **56 focused functional/browser cases** and **27
+documentation/route-policy cases** passed before publication.
+Backend validation used the repository-pinned Flask **3.1.3**, OpenAI
+**1.109.1**, and Semantic Kernel **1.39.4**, not the machine-global versions.
+The configured historical image tag resolved to registry digest
+`sha256:da943bbd95d70f5ac83f090a87df669b20189aadfa9cbc064536d9f1a449e70d`;
+neither that registry lookup nor these local assets represent a new deployment.
 
 A new three-document live result, cross-interface reload, factual-oracle review,
 and controlled second-account authorization check remain separate live gates.

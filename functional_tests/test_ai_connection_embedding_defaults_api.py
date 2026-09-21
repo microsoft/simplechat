@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_defaults_api.py
 """
 Functional tests for embedding defaults and administrator save boundaries.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Mount the actual Flask handlers and pure profile/preflight collaborators with
@@ -18,6 +18,7 @@ import uuid
 from functools import wraps
 from pathlib import Path
 
+from azure.core.exceptions import AzureError
 from flask import Blueprint, Flask, jsonify, redirect, request
 from werkzeug.test import Client
 
@@ -32,6 +33,12 @@ from functions_ai_connection_migration import (
     preserve_legacy_embedding_form_settings,
 )
 from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint, validate_custom_model_endpoints
+from admin_settings_secret_utils import is_admin_settings_redacted_secret
+from content_screening.contracts import ScreeningError
+from test_app_settings_store_consistency import AppSettingsStore, FakeCosmos, SettingsConflictError
 
 
 CAPABILITY_URL = "/api/v2/admin/capability-models/embeddings"
@@ -99,7 +106,20 @@ def selection(endpoint_id="one", model_id="embedding", provider="aoai"):
 
 
 class AdminApiHarness:
+    @property
+    def settings(self):
+        return self.cosmos.document
+
+    @settings.setter
+    def settings(self, value):
+        self.cosmos.document = (
+            {"id": "app_settings", "_etag": str(self.cosmos.etag), **copy.deepcopy(value)}
+            if value is not None else None
+        )
+
     def __init__(self):
+        self.cosmos = FakeCosmos()
+        self.store = AppSettingsStore(self.cosmos)
         self.settings = {
             "enable_multi_model_endpoints": False,
             "enable_image_generation": False,
@@ -142,16 +162,22 @@ class AdminApiHarness:
 
         def read_settings():
             self.raw_reads += 1
-            return copy.deepcopy(self.settings)
+            return self.store.read() if self.settings is not None else None
 
-        def update_settings(updates):
+        def update_settings(updates, *, expected_etag=None):
             self.events.append("commit")
             self.writes.append(copy.deepcopy(updates))
             if self.write_error:
                 raise self.write_error
             if self.fail_write:
                 return False
-            self.settings.update(copy.deepcopy(updates))
+            try:
+                self.store.write(
+                    lambda current: {**current, **copy.deepcopy(updates)},
+                    expected_etag=expected_etag,
+                )
+            except SettingsConflictError:
+                return False
             return True
 
         def inspect_stores(settings, profile):
@@ -196,6 +222,15 @@ class AdminApiHarness:
             "update_settings": update_settings,
             "log_event": lambda *_args, **_kwargs: None,
             "resolve_embedding_profile": resolve_embedding_profile,
+            "ModelEndpointValidationError": ModelEndpointValidationError,
+            "ModelTokenBudgetError": ModelTokenBudgetError,
+            "normalize_model_budget_overrides": normalize_model_budget_overrides,
+            "validate_custom_model_endpoints": validate_custom_model_endpoints,
+            "validate_custom_model_endpoint": validate_custom_model_endpoint,
+            "get_model_endpoint_provider_ui_options": get_model_endpoint_provider_ui_options,
+            "is_admin_settings_redacted_secret": is_admin_settings_redacted_secret,
+            "AzureError": AzureError,
+            "ScreeningError": ScreeningError,
             "EMBEDDING_VECTOR_PROFILE_KEY": EMBEDDING_VECTOR_PROFILE_KEY,
             "EMBEDDING_MIGRATION_NOTICE_KEY": EMBEDDING_MIGRATION_NOTICE_KEY,
             "MIGRATION_NOTICE_KEY": MIGRATION_NOTICE_KEY,
@@ -296,6 +331,7 @@ class AdminApiHarness:
         wrapper.body.insert(0, copy.deepcopy(save_block))
         namespace = dict(self.namespace)
         namespace.update({
+            "settings_etag": self.settings["_etag"],
             "new_settings": {"model_endpoints": copy.deepcopy(endpoints), **(updates or {})},
             "parsed_model_endpoints": copy.deepcopy(endpoints),
             "form_data": form_data or {},
@@ -803,6 +839,18 @@ class EmbeddingEndpointSaveTests(unittest.TestCase):
         response = self.api.classic_save(self.api.settings["model_endpoints"])
         self.assertEqual(302, response.status_code)
         self.assertTrue(any(level == "danger" for _message, level in self.api.flashes))
+        self.assertFalse(any(level == "success" for _message, level in self.api.flashes))
+
+    def test_classic_stale_snapshot_cannot_overwrite_a_concurrent_store_write(self):
+        def concurrent_write():
+            self.api.store.write(lambda current: {**current, "app_title": "Concurrent title"})
+
+        self.api.cosmos.before_replace = concurrent_write
+        before_writes = self.api.cosmos.writes
+        saved = self.api.classic_save(self.api.settings["model_endpoints"])
+        self.assertIs(saved, False)
+        self.assertEqual(self.api.settings["app_title"], "Concurrent title")
+        self.assertEqual(self.api.cosmos.writes, before_writes + 1)
         self.assertFalse(any(level == "success" for _message, level in self.api.flashes))
 
     def test_classic_get_does_not_persist_normalized_connections(self):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the inline chart editor.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.061
+Implemented in: 0.261.061
 
 This test ensures a generated chart can be edited in place — its numbers, its type, its axes, or
 by asking the model — without the conversation filling up with near-duplicate charts, and without
@@ -31,7 +31,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.061"
 
 EDITOR_TSX = V2_SRC / "components" / "chat" / "ChartEditor.tsx"
 GRID_TSX = V2_SRC / "components" / "chat" / "ChartDataGrid.tsx"

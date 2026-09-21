@@ -1,7 +1,7 @@
 # test_prompt_variable_knowledge_fill.py
 """
 Functional tests for scoped, document-grounded prompt variable filling.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.096
 
 Execute the service with mocked retrieval/model/storage boundaries and the real

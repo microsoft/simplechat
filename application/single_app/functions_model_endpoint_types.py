@@ -7,6 +7,7 @@ names that the rest of the application imports, and delegates the decisions to
 the registry so an API type is declared in exactly one place.
 """
 
+import copy
 from typing import Any, Dict
 
 from functions_model_endpoint_providers import (
@@ -35,7 +36,23 @@ __all__ = [
     "get_model_endpoint_api_type",
     "normalize_model_endpoint_api_type",
     "resolve_model_endpoint_request_model",
+    "custom_endpoint_validation_view",
 ]
+
+
+def custom_endpoint_validation_view(endpoint):
+    """Apply Custom policy to embedding-only aliases without changing stored identities."""
+    if not isinstance(endpoint, dict) or str(endpoint.get("provider") or "").strip().lower() != "openai_compatible":
+        return endpoint
+    result = copy.deepcopy(endpoint)
+    result["provider"] = MODEL_ENDPOINT_PROVIDER_CUSTOM
+    result["api_type"] = MODEL_ENDPOINT_API_TYPE_OPENAI
+    result["name"] = result.get("name") or result.get("id") or "Embedding connection"
+    result.setdefault("connection", {})["url_mode"] = "exact"
+    for model in result.get("models") or []:
+        if isinstance(model, dict):
+            model["modelName"] = str(model.get("deploymentName") or model.get("deployment") or "").strip()
+    return result
 
 
 def normalize_model_endpoint_api_type(provider: Any, api_type: Any) -> str:

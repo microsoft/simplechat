@@ -9,7 +9,7 @@ counts:
   chat_controls: 47
   sub_elements: 3
   app_pages: 29
-  feature_surfaces: 24
+  feature_surfaces: 25
 capabilities:
 - key: enable_agent_template_gallery
   default: true

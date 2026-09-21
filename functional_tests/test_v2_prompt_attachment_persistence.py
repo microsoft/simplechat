@@ -2,8 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional regression for prompt attachments at actual message persistence boundaries.
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
+Turn-reuse integration coverage expanded in: 0.261.097
+Frozen turn-context persistence integration: 0.261.099
 
 Execute the shipping metadata helper, chat persistence statements, orchestration writer,
 and shared post/stream routes against in-memory Cosmos containers. Importing the full chat
@@ -24,10 +26,10 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
-from flask import Flask, Response, current_app, jsonify, request, session, stream_with_context
+from flask import Flask, Response, current_app, g, has_request_context, jsonify, request, session, stream_with_context
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
@@ -36,6 +38,8 @@ sys.path.insert(0, str(APP_DIR))
 import collaboration_models  # noqa: E402
 from functions_chat_stream_events import build_user_message_persisted_stream_event  # noqa: E402
 from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E402
+from test_orchestration_conversation_context import load_modules  # noqa: E402
+from test_support.app_stubs import import_app_module  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -46,8 +50,10 @@ USER = {"user_id": "author-1", "display_name": "Author", "email": "author@exampl
 class MemoryContainer:
     def __init__(self):
         self.rows = {}
+        self.write_count = 0
 
     def upsert_item(self, document):
+        self.write_count += 1
         self.rows[document["id"]] = deepcopy(document)
         return deepcopy(document)
 
@@ -224,7 +230,10 @@ def _chat_boundary(path, info, content):
         ]
         assert len(candidates) == 1, f"Expected one new-user persistence branch in {name}"
         body = candidates[0]
-    write = next(index for index, statement in enumerate(body) if _is_message_write(statement))
+    write = next(
+        index for index, statement in enumerate(body)
+        if any(_is_message_write(node) for node in ast.walk(statement))
+    )
     document = _execute_boundary(body[:write + 2], namespace, "user_message_doc", events)
     stored = storage.read_item(document["id"], document["conversation_id"])
     assert stored == document
@@ -239,25 +248,101 @@ def _chat_boundary(path, info, content):
 
 def _orchestration_boundary(info, content):
     storage = MemoryContainer()
+    context = load_modules().context
+    memory = import_app_module("functions_orchestration_memory")
+    authorize = Mock(return_value={"id": "conversation-1", "user_id": USER["user_id"]})
+    latest_run = Mock(return_value=None)
+    persisted_contexts = []
+
+    def capture_run(
+        plan, user_id, *, conversation_id, idempotent, turn_context, expected_previous_run,
+    ):
+        assert plan["run_id"] == "run-1"
+        assert user_id == USER["user_id"]
+        assert conversation_id == "conversation-1"
+        assert idempotent is True
+        assert expected_previous_run is None
+        persisted_contexts.append(deepcopy(turn_context))
+
+    data = {"prompt_info": deepcopy(info)}
     namespace = {
-        "data": {"prompt_info": deepcopy(info)}, "message": content,
+        "data": data, "message": content,
         "resolved_conversation_id": "conversation-1", "turn_id": "turn-1",
+        "user_id": USER["user_id"], "seeds": context.resolve_seeds(data),
+        "approval_mode": "manual", "replan_hint": "", "deepcopy": deepcopy,
+        "_authorize_context_conversation": authorize,
+        "validate_memory_context": memory.validate_memory_context,
+        "has_request_context": has_request_context, "g": g,
+        "get_latest_turn_run": latest_run,
+        "normalize_history_message": context.normalize_history_message,
+        "ConversationContextError": context.ConversationContextError,
+        "CosmosResourceNotFoundError": KeyError,
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "cosmos_messages_container": storage, "datetime": datetime,
         "timezone": timezone, "uuid": uuid, "logging": logging, "log_event": Mock(),
+        "create_orchestration_run": capture_run,
     }
-    _load_functions("route_backend_orchestration.py", namespace, "_now_iso", "_save_message")
+    _load_functions(
+        "route_backend_orchestration.py", namespace,
+        "_now_iso", "_save_message", "_save_turn_message",
+        "_validate_turn_memory_context", "_persist_planned_turn",
+    )
     function = _function("route_backend_orchestration.py", "orchestration_plan")
-    generator = next(node for node in ast.walk(function)
-                     if isinstance(node, ast.FunctionDef) and node.name == "generate")
-    body = next(node.body for node in generator.body if isinstance(node, ast.Try))
-    first = next(index for index, statement in enumerate(body)
-                 if _assigns(statement, "prompt_selection"))
-    message_id = _execute_boundary(body[first:first + 2], namespace, "user_message_id", [])
+    selections = [
+        node for node in ast.walk(function)
+        if _assigns(node, "prompt_selection") and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "build_prompt_selection_metadata"
+    ]
+    turn_contexts = [
+        node for node in ast.walk(function)
+        if _assigns(node, "turn_context") and isinstance(node.value, ast.Dict)
+        and any(isinstance(key, ast.Constant) and key.value == "prompt_selection" for key in node.value.keys)
+    ]
+    assert len(selections) == 1, "Expected one production prompt snapshot capture."
+    assert len(turn_contexts) == 1, "Expected one frozen turn-context initialization."
+    assert any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_persist_planned_turn"
+        for node in ast.walk(function)
+    ), "The planning route must use the merged turn persistence helper."
+    turn_context = _execute_boundary(
+        [selections[0], turn_contexts[0]], namespace, "turn_context", [],
+    )
+    expected_snapshot = build_prompt_selection_metadata(info, content)
+    assert turn_context["prompt_selection"] == expected_snapshot
+
+    # The streamed planner runs later; request-data changes must not replace its snapshot.
+    data["prompt_info"] = {"content": "A later, unrelated prompt."}
+    plan = {"run_id": "run-1"}
+    namespace["_persist_planned_turn"](plan, turn_context, USER["user_id"], "conversation-1")
+    message_id = turn_context["user_message_id"]
     assert message_id
     stored = storage.read_item(message_id, "conversation-1")
-    if build_prompt_selection_metadata(info, content):
-        assert stored["metadata"]["orchestration_turn_id"] == "turn-1"
+    assert authorize.call_args_list == [call("conversation-1", USER["user_id"])] * 2
+    latest_run.assert_called_once_with("conversation-1", USER["user_id"], "turn-1")
+    assert storage.write_count == 1
+    fingerprint = context.normalize_history_message(stored)["fingerprint"]
+    assert turn_context["user_message_fingerprint"] == fingerprint
+    assert persisted_contexts[0]["user_message_id"] == message_id
+    assert persisted_contexts[0]["user_message_fingerprint"] == fingerprint
+    assert persisted_contexts[0]["prompt_selection"] == expected_snapshot
+    assert stored["metadata"]["orchestration"]["turn_id"] == "turn-1"
+    assert stored["metadata"]["orchestration_turn_id"] == "turn-1"
+
+    # A retry missing prompt_info still reuses the exact original message and metadata.
+    retried_context = deepcopy(turn_context)
+    retried_context["prompt_selection"] = None
+    namespace["_persist_planned_turn"](plan, retried_context, USER["user_id"], "conversation-1")
+    assert retried_context["user_message_id"] == message_id
+    assert retried_context["user_message_fingerprint"] == fingerprint
+    assert storage.write_count == 1
+    assert storage.read_item(message_id, "conversation-1") == stored
+    assert len(persisted_contexts) == 2
+    assert authorize.call_args_list == [call("conversation-1", USER["user_id"])] * 4
+    assert latest_run.call_args_list == [
+        call("conversation-1", USER["user_id"], "turn-1"),
+    ] * 2
     return stored, deepcopy(stored)
 
 
@@ -397,7 +482,10 @@ def test_absent_or_unusable_metadata_does_not_change_messages(path, info):
     assert "prompt_selection" not in stored.get("metadata", {})
     assert "prompt_selection" not in echo.get("metadata", {})
     if path == "orchestration":
-        assert "metadata" not in stored
+        assert stored["metadata"] == {
+            "orchestration": {"turn_id": "turn-1"}, "orchestration_turn_id": "turn-1",
+        }
+        assert echo["metadata"] == stored["metadata"]
 
 
 def test_legacy_metadata_requires_a_complete_prompt_or_exact_delimiter():

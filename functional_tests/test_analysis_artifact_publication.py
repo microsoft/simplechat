@@ -14,6 +14,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
+from importlib.metadata import version
 import io
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ import uuid
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from flask import Flask, jsonify, request
 import pytest
+import werkzeug
 
 from test_support.app_stubs import import_app_module
 
@@ -582,7 +584,9 @@ def test_publication_configuration_never_infers_missing_intent_or_destination(co
         normalizers()["normalize_workflow_publication"](config)
 
 
-def test_manual_route_uses_same_receipt_service_and_safe_errors(publication):
+def test_manual_route_uses_same_receipt_service_and_safe_errors(publication, monkeypatch):
+    if not hasattr(werkzeug, "__version__"):
+        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
     namespace = {
         "request": request, "jsonify": jsonify, "get_current_user_id": lambda: "actor",
         "get_current_user_info": lambda: {"displayName": "Actor"},

@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 # test_v2_admin_knowledge_audio_video.py
+#!/usr/bin/env python3
 """
 Functional test for the Knowledge group's Audio & Video tab in the V2 admin UI.
-Version: 0.261.064
-Implemented in: 0.261.064
+Version: 0.261.084
+Implemented in: 0.261.084
 
 The server-rendered pane puts three unrelated things in one card and orders them
 so the shared part is discovered last.
@@ -78,7 +78,7 @@ def test_the_tab_sections_match_navigation():
     """A field filed under an unknown section id would never render."""
     print("Testing Audio & Video sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.064")
+    assert_app_version_at_least("0.261.084")
 
     nav_sections = {
         section["id"]

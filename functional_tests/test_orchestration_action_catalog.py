@@ -3,7 +3,7 @@
 """Functional coverage for governed orchestration action discovery and resolution.
 
 Version: 0.261.122
-Implemented in: 0.261.096
+Implemented in: 0.261.098
 
 Exercises the real catalog and governance decisions with isolated storage,
 membership, and Key Vault seams. No Azure calls or plugin initialization occur.

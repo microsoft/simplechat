@@ -20,6 +20,8 @@ from functions_embedding_policy import (
     normalize_embedding_config,
     resolve_embedding_policy,
 )
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_urls import resolve_custom_azure_openai_base_url, resolve_custom_openai_base_url
 
 
 EMBEDDING_VECTOR_PROFILE_KEY = "embedding_vector_profile"
@@ -104,8 +106,38 @@ def embedding_transport(binding):
         "openai" if provider != "aoai" or urlsplit(endpoint).path.lower().endswith("/openai/v1")
         else "azure_openai"
     )
+    if provider == "custom":
+        api_type = get_model_endpoint_api_type(binding.endpoint)
+        auth_type = str((binding.endpoint.get("auth") or {}).get("type") or "api_key").strip().lower()
+        if api_type not in ("openai", "azure_openai") or auth_type not in ("api_key", "key", "bearer"):
+            raise AIConnectionError(
+                "Embeddings require a Custom OpenAI or Azure OpenAI API with API key or bearer authentication.",
+                "embedding_api_unsupported",
+            )
+        if operation.get("api") and operation["api"] != api_type:
+            raise AIConnectionError("The embedding operation must match the Custom connection API type.")
+        deployment = resolve_model_endpoint_request_model(binding.endpoint, binding.model)
+        if not deployment:
+            raise AIConnectionError("The embedding model must name a request model or deployment.")
+        if api_type == "openai":
+            version = operation.get("api_version") or ""
+            if version not in ("", "v1"):
+                raise AIConnectionError("OpenAI-compatible embeddings do not use a dated API version.")
+            return "openai", resolve_custom_openai_base_url(endpoint, api_type, connection.get("url_mode")), "", deployment
+        version = operation.get("api_version") or connection.get("api_version") or ""
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", version):
+            raise AIConnectionError("The Custom Azure embedding API version must be a dated version.")
+        return (
+            "azure_openai",
+            resolve_custom_azure_openai_base_url(endpoint, deployment, connection.get("url_mode")),
+            version, deployment,
+        )
     if provider == "openai_compatible" and api != "openai":
         raise AIConnectionError("Custom connections require the OpenAI-compatible embeddings API.")
+    if provider == "openai_compatible" and str(
+        (binding.endpoint.get("auth") or {}).get("type") or "api_key"
+    ).strip().lower() not in ("api_key", "key"):
+        raise AIConnectionError("The embedding-only connection type requires API key authentication.", "embedding_api_unsupported")
     deployment = str(
         binding.model.get("deploymentName") or binding.model.get("deployment") or ""
     ).strip()
@@ -203,7 +235,7 @@ def resolve_embedding_profile(settings, binding=None):
     )
     provider = str(binding.endpoint.get("provider") or "aoai").strip().lower()
     if binding.capability != EMBEDDINGS_CAPABILITY or provider not in (
-        "aoai", "aifoundry", "new_foundry", "openai_compatible",
+        "aoai", "aifoundry", "new_foundry", "custom", "openai_compatible",
     ):
         raise AIConnectionError("This connection has no supported embedding adapter.", "embedding_api_unsupported")
     if binding.endpoint.get("enabled") is False or binding.model.get("enabled") is False:

@@ -10687,13 +10687,14 @@ def _execute_workflow_task_sequence(
         task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
         task['id'] = task_id
         task_unit_key = f'task:{task_id}'
+        m365_task_key = f'execution:{durable.execution_id()}' if structured_definition else task_id
         if has_repeat:
             # Resume skips sealed rounds; retain the original ordinal rather than
             # weakening native/task checkpoint fingerprints when enumeration changes.
             task['order'] = durable.cache(f'task-order:{task_id}', {'order': task['order']})['order']
         completed_task = durable.snapshot(f'task-result:{task_id}') if durable is not None else None
         if completed_task is None:
-            completed_task = read_m365_task_checkpoint(task_id)
+            completed_task = read_m365_task_checkpoint(m365_task_key)
         if completed_task is not None:
             if not isinstance(completed_task.get('result'), dict):
                 raise WorkflowResultNotReadyError(
@@ -10953,7 +10954,7 @@ def _execute_workflow_task_sequence(
                             durable.pause_input(str(exc), code='workflow_context_limit')
                         raise
 
-                with m365_workflow_task_context(task_id), workflow_context_budget_scope(attempt_workflow):
+                with m365_workflow_task_context(m365_task_key), workflow_context_budget_scope(attempt_workflow):
                     task_result = workflow_unit(
                         task_unit_key,
                         dispatch_task,
@@ -11234,7 +11235,7 @@ def _execute_workflow_task_sequence(
                     'execution_id': durable.execution_id(), 'iteration_path': [dict(frame) for frame in durable.iteration_path],
                 } if flow_runner else {}),
             }
-            save_m365_task_checkpoint(task_id, completed_task)
+            save_m365_task_checkpoint(m365_task_key, completed_task)
             task_results.append(completed_task)
             if structured_definition:
                 durable.finish_node(
@@ -11693,7 +11694,12 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
             )
         if not str(workflow.get('m365_run_as_user_id') or '').strip():
             raise M365PolicyError('m365_run_as_required', 'Select a Microsoft 365 Run as account before running this workflow.')
-        conversation = _ensure_workflow_conversation(workflow)
+        conversation = workflow_unit(
+            'conversation', lambda: _ensure_workflow_conversation(workflow),
+            inputs={'workflow_id': workflow['id']}, replay_safe=True,
+        )
+        if current_workflow_execution() is not None:
+            conversation = _ensure_workflow_conversation({**workflow, 'conversation_id': conversation['id']})
         execution_workflow = dict(workflow)
         execution_workflow['conversation_id'] = conversation['id']
         if workflow.get('conversation_id') != conversation['id']:

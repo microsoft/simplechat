@@ -4,6 +4,9 @@
 
 The application version is recorded in `application/single_app/config.py`.
 
+**Integration update:** 0.261.097 preserves prompt snapshots when incorporating
+conversation-aware orchestration and its stable per-turn message writer.
+
 ## Issue and root cause
 
 A saved prompt could look correct in the V2 composer but become a single large

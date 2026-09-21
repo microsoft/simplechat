@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration run ledger.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 Every turn re-plans, so a conversation accumulates runs. Without a memory of them, turn
 five re-searches exactly what turn two already found and re-asks a question the user has
@@ -203,7 +203,7 @@ def test_seeds_suppress_the_candidate_probe():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_run_count_bound,

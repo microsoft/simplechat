@@ -1,8 +1,8 @@
 # Orchestration Model Selection Fix
 
-**Version: 0.261.101** (tracked in `application/single_app/config.py`)
+**Version: 0.261.103** (tracked in `application/single_app/config.py`)
 
-**Fixed in version: 0.261.101**
+**Fixed in version: 0.261.103**
 
 ## Issue
 
@@ -11,8 +11,9 @@ V2 Orchestrate could use GPT-4o even when the user selected GPT-5.6 Terra in
 identity reached the backend and was saved with the run, but planning and answer
 generation still used the legacy chat configuration.
 
-This was separate from the second-question resolver validation failure fixed in
-**0.261.100**. That compatibility fix remains in place.
+This was separate from the second-question resolver validation failure. Both fixes
+are delivered in **0.261.103**, after integrating the newer V2 inline-answer,
+approval-persistence, and conversational plan-editing changes.
 
 ## Root cause
 
@@ -50,15 +51,25 @@ Without a dedicated planner override, conversational resolution, plan generation
 research query/review completions and answer synthesis use the same selection.
 Trivial plans still avoid a planning completion.
 
+Conversational plan edits and their clarification answers reuse the saved model,
+including a pinned admin default, rather than resolving the legacy planner again.
+Model authorization retains the authenticated request context. Failed edits leave
+the previous plan intact and release both the model client and revision claim.
+Replaying a saved revision, discarding a question, or restoring a plan requires no
+model client.
+
 A dedicated planner remains independent of the answer. Deployment-only overrides
 retain the classic/APIM connection. The existing planner endpoint/model/provider
 fields can instead identify a separate authorized model connection. An unavailable
 answer or planner selection fails rather than falling back to another connection.
 Standalone legacy planner callers retain their existing interface.
 
-Clients and caller identity are captured before streaming leaves Flask's request
-context. Research receives the captured planner binding, and direct actions receive
-the actual answer model identity. Configured agents retain their own model behavior.
+Caller identity is captured before streaming. Planning retains authenticated request
+context while restoring the canonical turn and authorizing its model, so a clarification
+or replan cannot replace the original model with answer-local controls. Execution clients
+are captured before the worker starts. Research receives the captured planner binding,
+and direct actions receive the actual answer model identity. Configured agents retain
+their own model behavior.
 
 ### Completion compatibility and lifecycle
 
@@ -78,7 +89,8 @@ retain their distinct meanings. This lets a valid Claude follow-up pass the
 same strict completion checks without accepting a truncated or refused JSON response.
 
 Client bindings close idempotently after completion and failures. A stream closed
-before starting releases its clients; disconnecting from an active run does not
+before starting allocates no planning client and releases any prepared execution clients;
+disconnecting from an active run does not
 close a client still in use by its worker.
 
 Empty, refused, filtered and provider-failed answer completions fail the run
@@ -99,11 +111,12 @@ renderer displays the returned deployment name without new browser runtime code.
 | `functions_orchestration_models.py` | Shared authorized selection, client binding, parameter compatibility and safe identity metadata. |
 | `functions_orchestration_context.py` | Retains manual reasoning effort with the model seeds. |
 | `functions_orchestration_planner.py` | Accepts the captured binding for resolution, planning and clarification replanning without changing standalone callers. |
+| `functions_orchestration_plan_editing.py` | Reauthorizes the saved selection for editor completions and preserves it through edit questions and revised plans. |
 | `route_backend_orchestration.py` | Pins answer selection, reauthorizes execution, binds synthesis, closes clients and surfaces failed answers. |
 | `functions_orchestration_executor.py`, `functions_orchestration_adapters.py` | Carry the selected planner into research instead of resolving an unrelated legacy client. |
 | `functions_orchestration_events.py` | Includes actual answer-model metadata in the terminal stream. |
 | `model_endpoint_clients.py` | Normalizes Anthropic completion reasons for chat-completions and Semantic Kernel consumers. |
-| `application/single_app/config.py` | Advances the patch version from `0.261.100` to `0.261.101`. |
+| `application/single_app/config.py` | Advances the patch version from `0.261.102` to `0.261.103`. |
 
 No new setting, dependency, conversation migration or deployment-configuration
 change is required. Previously saved explicit selections are honored when their
@@ -112,18 +125,27 @@ configured default. New plans pin the resolved default before approval.
 
 ## Validation
 
-The focused orchestration, endpoint authorization, protocol and standalone
-planner suites passed **255 tests and 208 subtests**. Coverage includes manual and
+The focused orchestration, endpoint authorization, protocol and standalone planner
+suites passed **394 tests and 291 subtests** after integrating V2 inline answers,
+approval persistence, and conversational plan editing. Coverage includes manual and
 default selection, separate planner connections, all approval modes, first and
 second questions, unused null clarifications, stale defaults, access revocation,
 protocol parameters, native Anthropic completion flags, action/research identity,
-token usage and client cleanup.
+canonical models across clarification/replanning, submission-lease cleanup,
+approval preferences, token usage and client cleanup.
 
-The local Playwright harness passed **5 tests and 3 subtests** using the shipped
-controller, stores and components. It exercises model/clarification transport and
-the visible answer-model label in Auto, countdown and manual approval.
+Plan-editor integration coverage includes manual and default model continuity,
+independent planner overrides, edit clarification, revoked model access, failed
+execution claims, and client cleanup. The browser-to-Flask editor workflow runs
+with both classic configuration and a selected Terra model through edits,
+questions, restoration, and execution.
 
-A two-turn synthetic replay used the real configured Terra SDK endpoint with the
+The local Playwright harnesses passed **39 tests and 3 subtests** using the shipped
+controller, stores and components. They exercise model/clarification transport,
+the visible answer-model label in Auto, countdown and manual approval, and the
+conversational editor against both HTTP fixtures and the real Flask routes.
+
+Before the plan-editor merge, a two-turn synthetic replay used the real configured Terra SDK endpoint with the
 Flask route and in-memory conversation/run containers. The follow-up resolved the
 prior answer successfully; all three model completions used Terra and finished
 normally with the configured `2024-05-01-preview` API. No production conversation
@@ -134,8 +156,12 @@ Primary regressions:
 - `functional_tests/test_orchestration_model_selection.py`
 - `functional_tests/test_orchestration_conversation_context_routes.py`
 - `functional_tests/test_orchestration_conversation_context.py`
+- `functional_tests/test_orchestration_elicitation_context.py`
+- `functional_tests/test_orchestration_plan_revision_planner.py`
+- `functional_tests/test_orchestration_plan_revision_routes.py`
 - `functional_tests/test_model_endpoint_protocol_inference.py`
 - `ui_tests/test_v2_orchestration_conversation_context.py`
+- `ui_tests/test_v2_orchestration_plan_editor_backend.py`
 
 These results establish routing and compatibility, not factual accuracy or an
 availability guarantee for every configured provider.

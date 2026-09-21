@@ -1,4 +1,4 @@
-# AI Connections Embeddings (v0.261.106)
+# AI Connections Embeddings (v0.261.108)
 
 ## Overview
 
@@ -9,6 +9,7 @@ Embedding Model action. Credentials remain on the connection, not in each consum
 
 Implemented in version: **0.261.106**. The application version is recorded in
 `application/single_app/config.py`.
+Integration with the Custom endpoint/image foundation was implemented in **0.261.108**.
 
 Dependencies are the existing OpenAI SDK, Azure Identity, scoped Key Vault helpers,
 Azure AI Search, Cosmos DB, and the existing distributed Search write fence. No
@@ -23,9 +24,18 @@ retired Azure AI Inference SDK or browser runtime dependency is added.
 | Foundry | Explicit, supported resource-level OpenAI-compatible inference base | `/api/projects/<project>` is for project operations, not embeddings |
 | OpenAI-compatible custom | `<configured-api-base>/embeddings`, API key/token authentication | Manual model entry; no Azure management discovery, native vendor API, or new chat/image adapter |
 
-Custom remote endpoints require HTTPS; local loopback development may use HTTP.
-The supplied base path is retained. Endpoint URLs must not contain credentials,
-query parameters, or fragments.
+Canonical **Custom** OpenAI and Azure OpenAI connections also support embeddings
+with API key or bearer authentication. They retain the shared provider's model-name
+or deployment-name convention and its `auto`/`exact` URL policy. Custom chat/image
+support, including their broader authentication options, remains independent;
+OAuth2 and other Custom API types are not embedding adapters in this phase.
+
+Existing `openai_compatible` embedding-only records retain their deployment
+identifiers and exact base paths. Both Custom forms now use the common
+DNS-pinned transport, certificate configuration, and administrator network policy.
+Private networks and plaintext HTTP require the corresponding explicit permissions;
+loopback, link-local, and metadata destinations remain blocked. Endpoint URLs must
+not contain credentials, query parameters, or fragments.
 
 The catalog describes models, not universal endpoint compatibility. For example,
 Cohere embedding families require task-sensitive behavior on their native APIs.

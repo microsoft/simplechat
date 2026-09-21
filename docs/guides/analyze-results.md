@@ -4,7 +4,7 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.113"
+version: "0.261.115"
 ---
 
 ## What this does
@@ -33,7 +33,7 @@ Use the existing source-selection and Analyze flow:
   Analyze, use the existing plan-review and approval controls; the saved-result
   view appears with its answer. **Documents** is not a separate Analyze button.
 
-Since **0.261.113**, pinning documents does not also require a Search step. Ask
+Since **0.261.115**, pinning documents does not also require a Search step. Ask
 for Analyze in the message and review the proposed operation. All selected
 documents must still be accounted for; an explicit Search selection remains a
 requirement rather than being silently replaced by Analyze.

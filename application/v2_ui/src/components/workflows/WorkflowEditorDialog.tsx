@@ -11,6 +11,7 @@ import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { WorkflowStructuredList } from './WorkflowStructuredList';
 import { WorkflowFlowView } from './WorkflowFlowView';
+import { WorkflowMicrosoft365RunAs } from './WorkflowMicrosoft365RunAs';
 import {
     convertToStructuredWorkflow,
     defaultFlowPredicate,
@@ -1637,6 +1638,12 @@ export function WorkflowEditorDialog({
                                     }))}
                                 />
                             )}
+                            <WorkflowMicrosoft365RunAs
+                                scope={scope}
+                                value={draft.m365_run_as_user_id ?? ''}
+                                disabled={readOnly || saving}
+                                onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
+                            />
                             <div className="grid gap-3 md:grid-cols-3">
                                 <label className="text-sm text-text-2">
                                     Trigger

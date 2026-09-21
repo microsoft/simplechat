@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 # test_v2_admin_app_role_registry.py
+#!/usr/bin/env python3
 """
 Functional test that the app role registry describes every role requirement.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.122
+Implemented in: 0.261.063
 
 Admin Settings gathers every "require an Entra app role" switch into one place so
 the access policy can be read as a whole. The server-rendered page builds that
@@ -49,7 +49,7 @@ CATALOG_TSX = (
     / "src"
     / "components"
     / "admin"
-    / "AppRoleRequirements.tsx"
+    / "AppRoleRoster.tsx"
 )
 
 SETTING_KEY_RE = re.compile(r"^\s*'(?P<key>[a-z0-9_]+)'\s*:", re.MULTILINE)
@@ -77,7 +77,7 @@ def test_every_role_setting_is_registered():
     """An unregistered requirement is invisible in the access policy view."""
     print("Testing that every role-shaped setting is registered...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.063")
 
     candidates = {
         key for key in read_setting_keys() if roles_module.is_app_role_setting_key(key)
@@ -201,14 +201,30 @@ def test_catalog_is_declared_and_rendered():
         if field.get("type") == "component"
     }
 
-    assert "app-role-requirements" in declared_components, (
-        "No schema field declares the 'app-role-requirements' component, so the "
+    assert "app-role-requirements-roster" in declared_components, (
+        "No schema field declares the 'app-role-requirements-roster' component, so the "
         "catalog never renders. Declare it in app-role-requirements-section."
     )
 
     assert CATALOG_TSX.is_file(), f"Missing the catalog component: {CATALOG_TSX}"
 
-    print("  The catalog is declared by the schema and its component exists.")
+    source = CATALOG_TSX.read_text(encoding="utf-8")
+    missing = [
+        name
+        for name, fragment in (
+            ("the Entra role value", "entry.role"),
+            ("what enforcing it restricts", "entry.grants"),
+            ("who keeps access when it is off", "entry.whenOff"),
+            ("the marker for a requirement guarding a disabled feature", "entry.dependsOn"),
+        )
+        if fragment not in source
+    ]
+    assert not missing, (
+        "The roster no longer renders the registry detail it exists to surface:\n  "
+        + "\n  ".join(missing)
+    )
+
+    print("  The catalog is declared by the schema and renders the registry detail.")
     return True
 
 

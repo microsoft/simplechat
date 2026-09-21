@@ -15,6 +15,7 @@ from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
 
 from functions_appinsights import log_event
+from functions_m365_workflow_binding import M365_WAITING_STATES
 from functions_workflow_definitions import (
     WORKFLOW_DEFINITION_FIELDS, validate_workflow_publication_completion, workflow_definition_revision,
 )
@@ -31,6 +32,7 @@ from functions_workflow_runtime_store import (
     workflow_runtime_projection,
     workflow_runtime_store,
     validate_repeat_admission_policy,
+    WAITING_STATES,
 )
 
 
@@ -348,14 +350,25 @@ def decide_workflow_runtime(workflow, run_id, data, *, actor_user_id, resume=Fal
         )
     if control["state"] == "queued":
         _bind_active_run(services, snapshot, run_id, runtime_version=control["version"])
+    elif control["state"] == "cancelled":
+        _cancel_m365_workflow_run(current, run_id)
     _project_runtime_run(services, current, run_id, control)
     return workflow_runtime_projection(control)
+
+
+def _cancel_m365_workflow_run(workflow, run_id):
+    if workflow.get("m365_run_as_user_id"):
+        # Resolve the configured M365 services only at an authorized cancellation.
+        from functions_m365_runtime import cancel_m365_workflow_requests
+
+        cancel_m365_workflow_requests(workflow["id"], run_id)
 
 
 def cancel_durable_workflow_run(workflow, run_id, *, actor_user_id):
     services = _services(workflow)
     store = workflow_runtime_store(workflow, run_id)
     control = store.request_cancel(actor_user_id=actor_user_id, request_id=str(uuid.uuid4()))
+    _cancel_m365_workflow_run(workflow, run_id)
     run = _project_runtime_run(services, workflow, run_id, control)
     current = services["load_workflow"]()
     if current is None:
@@ -384,7 +397,7 @@ def continue_durable_workflow_run(workflow, run_id):
             ready = True
         if ready:
             control = store.requeue_output(expected_version=control["version"], gate_id=control["gate"]["id"])
-    if control["state"].startswith("waiting") or control["state"] == "paused":
+    if control["state"] in WAITING_STATES:
         return _project_runtime_run(services, current, run_id, control)
     owner_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
     with WorkflowRuntimeLease(store, owner_id=owner_id) as lease:
@@ -422,6 +435,8 @@ def continue_durable_workflow_run(workflow, run_id):
                     actor_user_id=control["actor_user_id"], run_id=run_id,
                 )
                 execution.check()
+                if (result.get("run") or {}).get("status") in M365_WAITING_STATES:
+                    execution.wait_for_m365(result["run"]["status"])
                 reference = (
                     save_workflow_runtime_result(snapshot, run_id, result, settings=settings)
                     if snapshot.get("definition_version") == 3 else
@@ -434,6 +449,37 @@ def continue_durable_workflow_run(workflow, run_id):
             except WorkflowSuspended:
                 pass
         return _project_runtime_run(services, current, run_id, store.read(), result=result)
+
+
+def resume_m365_durable_workflow_run(workflow, job):
+    """Hand an authorized M365 continuation back to the original leased run."""
+    run_id = job["run_id"]
+    services = _services(workflow)
+    current = services["load_workflow"]()
+    store = workflow_runtime_store(workflow, run_id)
+    control = store.read()
+    if (
+        not current or current.get("active_run_id") != run_id
+        or job.get("id") != run_id or job.get("workflow_id") != current["id"]
+        or job.get("user_id") != current.get("m365_run_as_user_id")
+        or job.get("actor_user_id") != control["actor_user_id"]
+        or workflow_definition_revision(current) != control["definition_revision"]
+    ):
+        raise WorkflowRuntimeConflict("workflow_definition_changed", "The Microsoft 365 workflow continuation changed.")
+    _authorize_execution(current, control["actor_user_id"], services["settings"]())
+    control = store.requeue_m365(expected_version=control["version"], gate_id=(control.get("gate") or {}).get("id"))
+    _project_runtime_run(services, current, run_id, control)
+    run = continue_durable_workflow_run(current, run_id)
+    if run is None:
+        # Another scheduler may already own the same run; never invoke the legacy runner.
+        run = services["runs"].read_item(item=run_id, partition_key=services["partition"])
+    control = store.read()
+    pending = control["state"] not in RUNTIME_TERMINAL_STATES
+    return {
+        "success": not pending and run.get("success") is True,
+        "pending": pending, "durable_execution": True,
+        "run": {**run, "status": control["state"]},
+    }
 
 
 def check_durable_workflows_once(limit=20):

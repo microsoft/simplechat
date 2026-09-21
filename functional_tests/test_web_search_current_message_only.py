@@ -1,9 +1,9 @@
 # test_web_search_current_message_only.py
 """
 Functional test for current-message-only web search egress.
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.241.008
-Updated in: 0.261.096
+Updated in: 0.261.099
 
 This test ensures external web search uses only the current user message,
 keeps history-derived internal search rewrites out of the outbound web-search

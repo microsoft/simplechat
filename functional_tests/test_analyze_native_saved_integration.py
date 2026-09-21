@@ -1,7 +1,7 @@
 # test_analyze_native_saved_integration.py
 """
 Native Analyze output, adapter and saved-consumer integration regressions.
-Version: 0.261.109
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Real native checkpoint serialization, adaptation and saved-section readers run
@@ -359,7 +359,9 @@ def test_modern_mixed_results_keep_native_records_and_zero_finding_sources(
     } for document_id, item in documents.items()]
     manifest = [fixture.source, *narrative_sources]
     client = FixtureAnalysisClient()
-    with document_analysis_runtime(documents) as runtime:
+    native_document = original_document(fixture.source["document_id"], [])
+    native_document["document"].update(file_name=fixture.source["file_name"], _etag="source-etag")
+    with document_analysis_runtime({**documents, fixture.source["document_id"]: native_document}) as runtime:
         runner = runner_namespace(
             **{name: getattr(mixed, name) for name in (
                 "EVIDENCE_ENGINE_TABULAR_TOOLS", "EVIDENCE_STATUS_PENDING",

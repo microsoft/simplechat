@@ -56,6 +56,14 @@ from functions_model_endpoint_validation import (
     resolve_custom_model_endpoint_addresses,
     validate_custom_model_endpoint_url,
 )
+from functions_model_endpoint_urls import (
+    CUSTOM_OPENAI_OPERATION_SUFFIXES,
+    CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN,
+    normalize_endpoint_text,
+    normalize_custom_openai_base_url,
+    resolve_custom_openai_base_url,
+    resolve_custom_azure_openai_base_url,
+)
 
 
 ANTHROPIC_MODEL_MARKERS = ("claude",)
@@ -180,11 +188,6 @@ def create_completion_with_reasoning(create_callable, params, model_name, *, on_
         return create_callable(**parameters), resolution
 
 
-def normalize_endpoint_text(endpoint: Any) -> str:
-    """Return a trimmed endpoint URL without a trailing slash."""
-    return str(endpoint or "").strip().rstrip("/")
-
-
 def get_endpoint_path(endpoint: Any) -> str:
     """Return the lower-case parsed path for an endpoint string."""
     endpoint_value = normalize_endpoint_text(endpoint)
@@ -267,59 +270,6 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
         return endpoint[:openai_index].rstrip("/") + "/openai/v1/"
 
     return endpoint.rstrip("/") + "/openai/v1/"
-
-
-CUSTOM_OPENAI_OPERATION_SUFFIXES = (
-    "/chat/completions", "/responses", "/models", "/images/generations", "/images/edits",
-)
-CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(r"^v\d+(?:[a-z][a-z0-9]*)?$", re.IGNORECASE)
-
-
-def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:
-    """Append v1 only when neither a version nor a full operation defines the base."""
-    endpoint = normalize_endpoint_text(raw_endpoint)
-    if not endpoint:
-        raise ModelEndpointValidationError("A Custom endpoint URL is required.")
-    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
-        if endpoint.lower().endswith(suffix):
-            return endpoint[:-len(suffix)].rstrip("/") + "/"
-    last_segment = urlparse(endpoint).path.rstrip("/").rsplit("/", 1)[-1]
-    if CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN.fullmatch(last_segment):
-        return endpoint + "/"
-    return endpoint + "/v1/"
-
-
-def resolve_custom_openai_base_url(raw_endpoint: Any, api_type: Any = "", url_mode: Any = "") -> str:
-    """Resolve an OpenAI-compatible base without adding Azure deployment semantics."""
-    descriptor = get_model_endpoint_provider(api_type or "openai")
-    if descriptor is None or descriptor.protocol != MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-        raise ModelEndpointValidationError("This Custom API type does not use an OpenAI-compatible base URL.")
-    if normalize_custom_endpoint_url_mode(url_mode) == "exact" or descriptor.url_policy == URL_POLICY_AS_GIVEN:
-        endpoint = normalize_endpoint_text(raw_endpoint)
-        if not endpoint:
-            raise ModelEndpointValidationError("A Custom endpoint URL is required.")
-        return endpoint + "/"
-    return normalize_custom_openai_base_url(raw_endpoint)
-
-
-def resolve_custom_azure_openai_base_url(raw_endpoint: Any, deployment_name: Any, url_mode: Any = "") -> str:
-    """Build the dated deployment API base, retaining gateway prefixes."""
-    endpoint = normalize_endpoint_text(raw_endpoint)
-    deployment = str(deployment_name or "").strip()
-    if not endpoint or not deployment:
-        raise ModelEndpointValidationError("Custom Azure OpenAI requires an endpoint and deployment name.")
-    if normalize_custom_endpoint_url_mode(url_mode) == "exact":
-        return endpoint + "/"
-    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
-        if endpoint.lower().endswith(suffix):
-            endpoint = endpoint[:-len(suffix)].rstrip("/")
-            break
-    deployment_index = endpoint.lower().find("/openai/deployments/")
-    if deployment_index >= 0:
-        endpoint = endpoint[:deployment_index]
-    elif endpoint.lower().endswith("/openai"):
-        endpoint = endpoint[:-len("/openai")]
-    return f"{endpoint}/openai/deployments/{quote(deployment, safe='')}/"
 
 
 def normalize_anthropic_messages_url(raw_endpoint: Any, *, direct_custom: bool = False, url_mode: Any = "") -> str:

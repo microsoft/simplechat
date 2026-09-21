@@ -201,6 +201,18 @@ carry `expected_version` and `request_id`. Lease tokens are never client inputs.
 
 ## Implementation and verification
 
+React V2 integration in **0.261.112** retains workflow token limits alongside
+the shared catalog's image operation profiles and embedding policies.
+Endpoint-bound agents retain both the model metadata used for workflow budgets
+and the Custom connection's API type and configuration used for provider routing.
+These describe separate concerns; neither replaces the other.
+
+`functional_tests/test_model_token_limit_resolution.py` covers loading these
+metadata families together, and `test_workflow_react_v2_integration.py` covers
+the agent configuration resolver in global and per-user execution modes.
+The native UI retains both saved Analyze result types and provider-aware image
+editing types.
+
 `functions_workflow_runtime_store.py` owns the Cosmos journal and renewable
 lease. `functions_workflow_execution.py` provides operation-boundary checkpoints
 around the existing dispatcher. `functions_workflow_runtime.py` handles

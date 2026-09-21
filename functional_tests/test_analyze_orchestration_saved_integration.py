@@ -1,7 +1,7 @@
 # test_analyze_orchestration_saved_integration.py
 """
 Behavioral tests for saved Analyze references through orchestration.
-Version: 0.261.109
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Adapters, collection, section persistence/readers and checkpoint codecs are
@@ -19,11 +19,12 @@ from unittest.mock import patch
 
 import pytest
 
-from test_analyze_backend_saved_integration import access, budget, load_functions, mixed, saved
+from test_analyze_backend_saved_integration import access, budget, load_functions, mixed, model_budget, saved
 from test_analyze_native_saved_integration import native_run
 from test_orchestration_conversation_context import load_modules
 from test_support.app_stubs import import_app_module
 
+from content_screening import access as screening_access
 
 class Sections:
     def __init__(self):
@@ -79,6 +80,16 @@ def orchestration(monkeypatch):
         assert ids == ["source-1"]
         return [{**source, "authorization_status": "authorized" if state["allowed"] else "unresolved"}]
 
+    def read_screening_document(document_id, user_id, **kwargs):
+        if user_id != "owner" or document_id != "source-1" or not state["allowed"]:
+            raise PermissionError("Fixture source access denied.")
+        document = {"id": document_id, "user_id": user_id, "version": 1}
+        if state.get("screening_held"):
+            document["content_screening"] = {"state": "pending_review"}
+        return document
+
+    monkeypatch.setattr(screening_access, "_read_authorized_document", read_screening_document)
+
     def authorize_run(user_id, binding):
         assert user_id == "owner"
         assert binding == {
@@ -117,10 +128,10 @@ def orchestration(monkeypatch):
     invoke.model_metadata = {"modelName": "selected-offline-model"}
     invoke.provider = "aoai"
     invoke.output_tokens = 4096
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 200000, "max_input_tokens": None, "max_output_tokens": 4096,
         "tokenizer": None, "source": "configured", "model_id": "selected-offline-model", "status": "known",
-    })
+    }))
     context = modules.executor.RunContext(
         run_id="run-1", conversation_id="conversation-1", user_id="owner",
         invoke_prompt=invoke, user_message="Explain the review.", resolve_source_manifest=resolve,
@@ -190,6 +201,21 @@ def test_orchestration_source_revocation_blocks_whole_saved_answer(orchestration
     assert "Complete finding" not in json.dumps(answer)
 
 
+@pytest.mark.parametrize("format_only", [False, True])
+def test_orchestration_new_screening_hold_blocks_saved_explanation_and_formatting(orchestration, format_only):
+    fixture = orchestration
+    fixture.context.merge_step_result(analyze(fixture), step_id="analyze-1")
+    fixture.state["screening_held"] = True
+    if format_only:
+        fixture.context.user_message = "Return the saved findings as JSON."
+    answer = respond(fixture)
+    assert answer["status"] == "failed"
+    assert answer["failure"]["code"] == "context_unavailable"
+    assert fixture.state["model_calls"] == []
+    assert not answer.get("artifacts")
+    assert "Complete finding" not in json.dumps(answer)
+
+
 def test_orchestration_save_failure_is_not_completed_evidence(orchestration):
     fixture = orchestration
     fixture.store.fail = True
@@ -244,7 +270,7 @@ def test_orchestration_model_boundary_blocks_oversized_saved_records(monkeypatch
         "context_window_tokens": 1024, "max_input_tokens": None, "max_output_tokens": 512,
         "tokenizer": None, "source": "catalog", "model_id": "chosen-small-model", "status": "known",
     }
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: limits)
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget(limits))
     calls = []
     model = SimpleNamespace(
         deployment="chosen-deployment", provider="aoai", behavior_name="chosen-model",
@@ -271,10 +297,10 @@ def test_orchestration_model_boundary_blocks_oversized_saved_records(monkeypatch
 def test_orchestration_respond_pages_all_records_without_a_second_source_pass(orchestration, monkeypatch):
     fixture = orchestration
     fixture.context.merge_step_result(analyze(fixture), step_id="analyze-1")
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 16000, "max_input_tokens": 16000, "max_output_tokens": 2048,
         "tokenizer": None, "source": "configured", "model_id": "selected-offline-model", "status": "known",
-    })
+    }))
     seen = []
 
     def invoke(messages, **kwargs):

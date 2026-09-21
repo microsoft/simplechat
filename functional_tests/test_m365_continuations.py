@@ -1,7 +1,7 @@
 # test_m365_continuations.py
 """
 Functional tests for conditional Microsoft 365 workflow continuation delivery.
-Version: 0.261.029
+Version: 0.261.122
 Implemented in: 0.261.029
 
 Approval delivery is idempotent and uncertain external execution is not replayed.
@@ -87,6 +87,18 @@ class ContinuationTests(unittest.TestCase):
         current = self.jobs.read_item("request", "reader")
         self.assertEqual(current["status"], "awaiting_approval")
         self.assertEqual(current["approval_id"], "second-approval")
+
+    def test_durable_handoff_remains_running_without_a_legacy_replay_lease(self):
+        def execute(job):
+            self.effects.append(job["id"])
+            return {"success": False, "pending": True, "durable_execution": True}
+        self.run_pending(execute)
+        current = self.jobs.read_item("request", "reader")
+        self.assertEqual(current["status"], "running")
+        self.assertNotIn("completed_at", current)
+        self.assertNotIn("resume_lease_expires_at", current)
+        self.assertEqual(self.run_pending(execute), [])
+        self.assertEqual(self.effects, ["request"])
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 # test_v2_admin_schema_vocabulary.py
+#!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.122
+Implemented in: 0.261.084
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -55,7 +55,7 @@ def test_declared_types_are_renderable():
     """A type the renderer does not implement would draw nothing at all."""
     print("Testing declared field types...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.084")
 
     for new_type in ("secret", "string_list", "id_list", "status"):
         assert new_type in fields_module.FIELD_TYPES, (
@@ -79,22 +79,21 @@ def test_declared_types_are_renderable():
 
 def test_redaction_placeholder_matches_the_settings_module():
     """Two spellings of the placeholder would make secrets unsavable."""
-    print("\nTesting the redaction placeholder against functions_settings...")
+    print("\nTesting the redaction placeholder against admin_settings_secret_utils...")
 
     source = (
         Path(__file__).resolve().parents[1]
         / "application"
         / "single_app"
-        / "functions_settings.py"
+        / "admin_settings_secret_utils.py"
     ).read_text(encoding="utf-8")
 
     expected_line = f'ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "{REDACTED}"'
     assert expected_line in source, (
         "admin_settings_fields.SECRET_REDACTED_VALUE no longer matches "
-        "functions_settings.ADMIN_SETTINGS_SECRET_REDACTED_VALUE. The schema "
-        "module mirrors that constant rather than importing it, because "
-        "functions_settings reaches config, which builds a Cosmos client at "
-        "import time. Update both together.\n"
+        "admin_settings_secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE. "
+        "The schema and dependency-light secret helper must agree without "
+        "importing functions_settings and initializing its Azure dependencies.\n"
         f"  schema module: {expected_line}"
     )
 
