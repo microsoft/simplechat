@@ -1,0 +1,187 @@
+# functions_workspace_context.py
+
+"""Safe, explicitly scoped context for the shared V2 workspace shell.
+
+This projection describes navigation and operation eligibility, not authorization
+to a particular document or resource. Resource routes must still check access.
+"""
+
+import re
+from urllib.parse import quote
+
+from functions_file_sync import is_file_sync_enabled_for_group
+from functions_governance import is_action_scope_access_allowed, is_governance_access_allowed
+from functions_group import (
+    assert_group_role,
+    check_group_status_allows_operation,
+    find_group_by_id,
+    get_user_role_in_group,
+)
+from functions_settings import (
+    get_group_workflow_management_roles,
+    is_group_workflows_enabled_for_group,
+    is_group_workspace_file_download_enabled,
+)
+from functions_workspace_branding import get_workspace_logo_metadata, normalize_workspace_hero_color
+from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
+
+
+GROUP_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
+GROUP_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+GROUP_STATUSES = ("active", "locked", "upload_disabled", "inactive")
+INVALID_SCOPE_ID = re.compile(r"[/\\?#\x00-\x1f\x7f]")
+
+
+class WorkspaceContextError(Exception):
+    """An expected, user-safe context lookup failure."""
+
+    def __init__(self, public_message, status_code):
+        super().__init__(public_message)
+        self.public_message = public_message
+        self.status_code = status_code
+
+
+def build_group_workspace_context(user_id, group_id, settings, *, user_info=None):
+    """Resolve one authorized group without reading or changing active preferences."""
+    if (
+        not isinstance(group_id, str)
+        or not group_id
+        or group_id in (".", "..")
+        or group_id != group_id.strip()
+        or INVALID_SCOPE_ID.search(group_id)
+    ):
+        raise WorkspaceContextError("Invalid group identifier.", 400)
+    if not user_id or not settings.get("enable_group_workspaces", False):
+        raise WorkspaceContextError("Group workspaces are unavailable.", 403)
+
+    try:
+        assert_group_role(user_id, group_id, allowed_roles=GROUP_READER_ROLES)
+    except PermissionError as exc:
+        raise WorkspaceContextError("You do not have access to the selected group.", 403) from exc
+    except LookupError as exc:
+        raise WorkspaceContextError("The selected group was not found.", 404) from exc
+    group = find_group_by_id(group_id)
+    if not group:
+        raise WorkspaceContextError("The selected group was not found.", 404)
+    # Recheck the returned snapshot as membership may have changed since the guard's read.
+    role = get_user_role_in_group(group, user_id)
+    if role not in GROUP_READER_ROLES:
+        raise WorkspaceContextError("You do not have access to the selected group.", 403)
+
+    stored_status = group.get("status", "active")
+    status = stored_status if stored_status in GROUP_STATUSES else "unknown"
+    view_allowed, status_reason = check_group_status_allows_operation(group, "view")
+    if status == "unknown":
+        view_allowed = False
+        status_reason = "This group's status is not recognized. Contact an administrator."
+    active = status == "active"
+    manager = role in GROUP_CONTENT_MANAGER_ROLES
+    automation_manager = role in get_group_workflow_management_roles(settings)
+    semantic_kernel = bool(settings.get("enable_semantic_kernel", False))
+    group_kernel = semantic_kernel and bool(settings.get("per_user_semantic_kernel", False))
+    sync_enabled = manager and is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
+
+    agents_configured = group_kernel and bool(settings.get("allow_group_agents", False))
+    actions_configured = agents_configured and bool(settings.get("allow_group_plugins", False))
+    endpoints_configured = (
+        group_kernel
+        and bool(settings.get("allow_group_custom_endpoints", False))
+        and bool(settings.get("enable_multi_model_endpoints", False))
+    )
+    delegation_configured = semantic_kernel and bool(settings.get("allow_group_agents", False))
+    delegation_allowed = delegation_configured and is_governance_access_allowed("governance_group_agents", user_id)
+    agents_allowed = group_kernel and delegation_allowed
+    actions_allowed = actions_configured and is_action_scope_access_allowed("governance_group_actions", user_id, "group")
+    endpoints_allowed = endpoints_configured and is_governance_access_allowed("governance_group_endpoints", user_id)
+    workflows_enabled = is_group_workflows_enabled_for_group(settings, group_id)
+
+    def section(enabled, can_manage=False, reason="This section is not enabled for this group."):
+        available = bool(view_allowed and enabled)
+        return {
+            "enabled": available,
+            "can_manage": bool(available and active and can_manage),
+            "reason": None if available else (status_reason if not view_allowed else reason),
+        }
+
+    governance_reason = "Your administrator has restricted access to this capability."
+    manager_reason = "Your role does not permit managing this group's connections."
+    sections = {
+        "documents": section(True, manager),
+        "tags": section(True, manager),
+        "prompts": section(True, manager),
+        "agents": section(
+            agents_allowed, automation_manager,
+            governance_reason if agents_configured else "Group agents are not enabled.",
+        ),
+        "actions": section(
+            actions_allowed, automation_manager,
+            governance_reason if actions_configured else "Group actions are not enabled.",
+        ),
+        "endpoints": section(
+            endpoints_allowed, role in ("Owner", "Admin"),
+            governance_reason if endpoints_configured else "Group model endpoints are not enabled.",
+        ),
+        "workflows": section(
+            workflows_enabled, automation_manager,
+            "Workflows are not enabled or assigned to this group.",
+        ),
+        "identities": section(
+            manager and (sync_enabled or semantic_kernel), manager,
+            manager_reason if not manager else "Identities require File Sync or Semantic Kernel.",
+        ),
+        "sync": section(
+            sync_enabled, manager,
+            manager_reason if not manager else "File Sync is not available for this group.",
+        ),
+    }
+    for section_id, entry in sections.items():
+        entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
+
+    logo = get_workspace_logo_metadata(group)
+    owner = group.get("owner") or {}
+    return {
+        "schema_version": 1,
+        "enabled": True,
+        "viewer_id": user_id,
+        "scope": {"kind": "group", "id": group_id},
+        "workspace": {
+            "name": str(group.get("name") or "Untitled group"),
+            "description": str(group.get("description") or ""),
+            "owner": {
+                "display_name": str(owner.get("displayName") or ""),
+                "email": str(owner.get("email") or ""),
+            },
+            "hero_color": normalize_workspace_hero_color(group.get("heroColor")),
+            "logo_url": (
+                f"/api/groups/{quote(group_id, safe='')}/logo?v={logo['logoVersion']}"
+                if logo["hasLogo"] else None
+            ),
+        },
+        "role": role,
+        "status": status,
+        "can_manage_workspace": role in ("Owner", "Admin"),
+        "sections": sections,
+        "native_delegation": {
+            **section(
+                delegation_allowed,
+                automation_manager and bool(settings.get("allow_group_plugins", False)),
+                governance_reason if delegation_configured else "Group agents are not enabled.",
+            ),
+            "group": "automation",
+        },
+        "document_permissions": {
+            "can_view": bool(view_allowed),
+            "can_chat": bool(view_allowed and check_group_status_allows_operation(group, "chat")[0]),
+            "can_upload": bool(manager and active),
+            "can_edit": bool(manager and active),
+            "can_delete": bool(manager and view_allowed and check_group_status_allows_operation(group, "delete")[0]),
+            "can_download": bool(
+                manager and view_allowed and is_group_workspace_file_download_enabled(settings, group)
+            ),
+        },
+        "document_queries": {
+            "sort_fields": ["_ts", "file_name", "title"],
+            "facets": False,
+            "places": False,
+        },
+    }

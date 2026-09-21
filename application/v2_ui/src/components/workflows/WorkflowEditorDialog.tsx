@@ -82,6 +82,8 @@ export function WorkflowEditorDialog({
     onClose,
     onSaved,
     onDirtyChange,
+    onBusyChange,
+    interactionDisabled = false,
 }: {
     scope: WorkflowScope;
     workflow: WorkflowDefinition | null;
@@ -89,6 +91,8 @@ export function WorkflowEditorDialog({
     onClose: () => void;
     onSaved: (workflow: WorkflowDefinition) => void;
     onDirtyChange?: (dirty: boolean) => void;
+    onBusyChange?: (busy: boolean) => void;
+    interactionDisabled?: boolean;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
         workflow ? structuredClone(workflow) : null,
@@ -209,6 +213,11 @@ export function WorkflowEditorDialog({
     }, [dirty, onDirtyChange]);
 
     useEffect(() => {
+        onBusyChange?.(saving);
+        return () => onBusyChange?.(false);
+    }, [saving, onBusyChange]);
+
+    useEffect(() => {
         if (!dirty || readOnly) {
             return;
         }
@@ -243,6 +252,10 @@ export function WorkflowEditorDialog({
     };
 
     const save = async () => {
+        if (interactionDisabled) {
+            setError('Refresh workspace access before saving. Your draft has been retained.');
+            return;
+        }
         history.session.closeGroup();
         if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending) {
             return;
@@ -324,7 +337,7 @@ export function WorkflowEditorDialog({
                             {readOnly ? 'Close' : 'Cancel'}
                         </GlassButton>
                         {!readOnly ? (
-                            <GlassButton type="button" variant="primary" disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)} onClick={() => void save()}>
+                            <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending)} onClick={() => void save()}>
                                 {saving ? 'Saving…' : 'Save workflow'}
                             </GlassButton>
                         ) : null}

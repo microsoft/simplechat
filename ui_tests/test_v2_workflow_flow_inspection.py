@@ -1,7 +1,7 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.121
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
@@ -68,7 +68,7 @@ def select_node(view, node_id):
 def open_saved(ui, name=FLOW_NAME, *, group_id=None, **options):
     ui.open("/groups" if group_id else "/workspace/workflows", **options)
     if group_id:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(group_id)
+        ui.select_group(group_id)
     ui.page.get_by_role("button", name=f"View Flow for {name}", exact=True).click()
     expect(ui.page.get_by_role("dialog", name="Workflow Flow", exact=True)).to_be_visible()
     view = flow_region(ui.page)
@@ -109,7 +109,7 @@ def select_authoring_node(view, node_id):
 def open_run_flow(ui, *, workflow_name=FLOW_NAME, workflow_id=FLOW_WORKFLOW_ID, run_id=FLOW_RUN_ID, group=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = ui.page.get_by_role("listitem").filter(has=ui.page.get_by_role(
         "button", name=f"View Flow for {workflow_name}", exact=True,
     )).first
@@ -866,11 +866,11 @@ def test_read_only_group_source_switch_rejects_delayed_previous_group_projection
     next(task for task in beta["tasks"] if task["id"] == "evaluate")["name"] = "Beta-only evaluation"
     ui.hold_next_flow(source_kind="saved", group_id=GROUP_ID)
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     page.get_by_role("button", name="View Flow for Alpha read-only Flow", exact=True).click()
     expect(flow_region(page).get_by_text("Loading authorized Flow definition...", exact=True)).to_be_visible()
     close_saved(page)
-    page.get_by_label("Group workspace", exact=True).select_option(SECOND_GROUP_ID)
+    ui.select_group(SECOND_GROUP_ID)
     page.get_by_role("button", name="View Flow for Beta read-only Flow", exact=True).click()
     view = flow_region(page)
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Beta-only evaluation (Task)")

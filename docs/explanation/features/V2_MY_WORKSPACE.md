@@ -18,6 +18,11 @@ serve file sources and actions.
 **Agent/action authoring expanded in version:** 0.261.096, recorded in
 `application/single_app/config.py`.
 
+**Shared shell extracted in version:** 0.261.127. Personal and group pages now
+reuse `WorkspaceShell` and the presentation-only `WorkspaceOverview`. Personal
+counts, data adapters, routes, and authorization remain personal. See
+[V2 shared workspace context and group shell](V2_SHARED_WORKSPACE_CONTEXT.md).
+
 ### Dependencies
 
 | Dependency | Purpose |
@@ -127,6 +132,8 @@ application/v2_ui/src/
     lib/workspaceApi.ts                 Typed client for all eight sections
     lib/workspaceSections.ts            Grouping and gating, free of React
     components/workspace/
+        WorkspaceShell.tsx              Shared rail and section layout
+        WorkspaceOverview.tsx           Presentation-only overview
         primitives.tsx                  Rows, pills, search, confirm actions
         useSectionResource.ts           Load, refresh and error state
     pages/workspace/

@@ -2,9 +2,10 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.122
+Version: 0.261.126
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
+Selected-group context policy coverage: 0.261.126
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -122,6 +123,7 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_workflows.py", "get_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
     ("route_backend_workflows.py", "get_group_workflow_flow"): ("login_required", "user_required"),
     ("route_backend_workflows.py", "get_user_workflow_run_flow"): ("login_required", "user_required", "workflow_user_required"),

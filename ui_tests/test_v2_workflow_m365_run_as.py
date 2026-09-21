@@ -1,7 +1,7 @@
 # test_v2_workflow_m365_run_as.py
 """
 Closed-browser tests for native V2 Microsoft 365 Run as authoring.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.122
 
 Use the actual built SPA and existing scoped workflow fixtures. Cover explicit
@@ -50,7 +50,7 @@ def account_select(page):
 def open_workflows(ui, *, group=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
 
 
 def edit_personal(ui):
@@ -120,7 +120,7 @@ def test_group_selection_uses_its_scope_and_participates_in_the_dirty_guard(work
     expect(select).to_be_enabled()
     select.select_option("group-reviewer")
     expect(page.get_by_label("Group workspace", exact=True)).to_be_disabled()
-    expect(page.get_by_role("status").filter(has_text="group automation changes")).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="group changes")).to_be_visible()
     page.get_by_label("Workflow name", exact=True).fill("Group Run as review")
     page.get_by_label("Model", exact=True).select_option(label="Workspace GPT · aoai")
     page.get_by_label("Instructions", exact=True).first.fill("Review the approved group records.")

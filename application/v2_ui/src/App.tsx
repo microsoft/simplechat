@@ -18,7 +18,7 @@ import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
-import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
+import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 
@@ -199,10 +199,10 @@ export function App() {
                         />
                     }
                 />
-                <Route
-                    path="/groups"
-                    element={<GroupAgentDelegationPage />}
-                />
+                <Route path="/groups" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section/:resourceId" element={<GroupWorkspacePage />} />
                 <Route
                     path="/public"
                     element={

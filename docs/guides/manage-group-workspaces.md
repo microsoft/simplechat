@@ -25,7 +25,43 @@ Use a group workspace when a team needs common source documents, prompts, agents
 - You need group membership or permission to create/find groups from Profile.
 - Tabs such as **Sync**, **Workflows**, **Agents**, and **Actions** require their own admin toggles.
 
-## Steps
+## Use group workspaces in V2
+
+The shared V2 shell was implemented in version **0.261.127**. It uses the same
+grouped navigation and overview as My Workspace.
+
+Open **Group Workspaces**, then choose a group in **Group workspace**. Selection
+makes that group active and loads its name, description, owner, role, status,
+and available sections. Your saved active group is restored on a later visit.
+If no valid selection exists, the page asks you to choose rather than selecting
+an arbitrary group.
+
+**Search your groups** searches the full membership list, not just the displayed
+page. A selected group stays selected when searching or changing result pages.
+Section URLs include the group ID, so a bookmark opens the intended group.
+
+Use **Workflows** for the existing native workflow editor and run history.
+**Actions** includes native **Call agent** configuration and local caller
+bindings. Other sections are explicitly marked **Classic** while their native
+V2 experiences are being built. **Open classic group workspace** confirms the
+selected group before navigating; choose the relevant classic tab there.
+Owners and administrators also have **Manage group (classic)**.
+
+Save or cancel open changes before switching groups. Navigating away from an
+unfinished editor asks whether to discard it. Returning to the browser refreshes
+workspace access without replacing a retained draft on a temporary failure.
+If access cannot be confirmed, saving is disabled until refresh succeeds.
+Revoked membership removes the cached workspace content.
+
+If another tab changes the active group, the current page keeps its explicit
+group and explains the difference. **Make this group active** selects it again.
+After an uncertain switch, use **Refresh workspace selection** to reconcile the
+server's selection without repeating the change.
+
+This release does not replace group Documents, other classic editors, group
+membership administration, or public workspace pages.
+
+## Use the classic workspace
 
 1. Open **Profile** and choose **Groups** when you need to create or find a group.
 2. Use **Create Group** when permitted, or **Find Group** to locate an existing group.

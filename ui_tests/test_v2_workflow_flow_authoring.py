@@ -1,7 +1,7 @@
 # test_v2_workflow_flow_authoring.py
 """
 Offline real-bundle browser regressions for M5B workflow Flow authoring.
-Version: 0.261.124
+Version: 0.261.127
 Implemented in: 0.261.122
 
 Uses the existing fictional, closed API harness and real Python compiler.
@@ -107,8 +107,8 @@ class WorkflowAuthoringFixture(WorkflowFlowFixture):
 
     def assert_authoring_only(self):
         assert all(
-            entry.method == "POST" and entry.path in SAVE_PATHS | PREVIEW_PATHS for entry in self.writes
-        ), self.writes
+            entry.method == "POST" and entry.path in SAVE_PATHS | PREVIEW_PATHS for entry in self.non_navigation_writes
+        ), self.non_navigation_writes
         forbidden = re.compile(
             r"/(?:run|approve|retry|resume|continue|publish|readiness)(?:/|$)|/runtime/decision(?:/|$)|/publication(?:/|$)"
         )
@@ -160,7 +160,7 @@ def install_seed(ui, *, kind="json"):
 def open_editor(ui, workflow_id=FLOW_WORKFLOW_ID, *, group_id=None, **options):
     if group_id:
         ui.open("/groups", **options)
-        ui.page.get_by_label("Group workspace", exact=True).select_option(group_id)
+        ui.select_group(group_id)
         name = ui.group_workflows[group_id][workflow_id]["name"]
         ui.page.get_by_role("button", name=f"Edit {name}", exact=True).click()
     else:
@@ -749,7 +749,7 @@ def test_query_tag_buffer_survives_node_and_surface_switch_without_source_previe
     payload = save(ui, editor)
     loop = payload["flow"]["nodes"][1]
     assert loop["iterable"]["filters"]["tags"] == ["finance", "quarterly"]
-    assert not [request for request in ui.writes if request.path not in SAVE_PATHS | PREVIEW_PATHS]
+    assert not [request for request in ui.non_navigation_writes if request.path not in SAVE_PATHS | PREVIEW_PATHS]
 
 
 def test_unfinished_field_builder_alone_participates_in_unsaved_change_protection(authoring_ui):
@@ -799,7 +799,7 @@ def test_delayed_preview_cannot_cross_closed_editor_workflow_or_group_scope(auth
         "button", name="Discard changes", exact=True,
     ).click()
     if group:
-        page.get_by_label("Group workspace", exact=True).select_option(SECOND_GROUP_ID)
+        ui.select_group(SECOND_GROUP_ID)
         page.get_by_role("button", name="Edit Beta read-only Flow", exact=True).click()
     else:
         page.get_by_role("button", name="Edit Authoring seed", exact=True).click()
@@ -1097,8 +1097,8 @@ def test_read_only_access_boundaries_never_offer_flow_authoring(authoring_ui, re
     if restriction == "reader":
         ui.group_can_manage = False
         ui.open("/groups")
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
-        page.get_by_role("button", name="Edit Alpha read-only Flow", exact=True).click()
+        ui.select_group(GROUP_ID)
+        page.get_by_role("button", name="View Alpha read-only Flow", exact=True).click()
         reader = page.get_by_role("dialog", name="Edit workflow", exact=True)
         expect(reader).to_contain_text("This workflow is read-only.")
         expect(reader.get_by_label("Workflow name", exact=True)).to_be_disabled()

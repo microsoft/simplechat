@@ -1,12 +1,13 @@
 # workflow_flow.py
 """
 Closed production-bundle fixtures for read-only M5A Flow inspection.
-Version: 0.261.121
+Version: 0.261.127
 Implemented in: 0.261.121
 
 The shared fixture serves only local static assets and fictional API responses.
 Topology, preview, details and execution identities use the real pure Python
-helpers. Every mutation other than the data-only preview POST is rejected.
+helpers. Only data-only preview and explicit group-selection requests are allowed;
+workflow and unrelated preference mutations remain rejected.
 """
 
 import copy
@@ -517,7 +518,9 @@ class WorkflowFlowFixture(WorkflowRepeatFixture):
             raise AssertionError(f"Unexpected eager Flow evidence read: {entry}")
 
     def _dispatch(self, route, entry):
-        if entry.method != "GET" and not (entry.method == "POST" and entry.path.endswith("/flow-preview")):
+        if (entry.method, entry.path) == ("PATCH", "/api/groups/setActive"):
+            super()._dispatch(route, entry)
+        elif entry.method != "GET" and not (entry.method == "POST" and entry.path.endswith("/flow-preview")):
             self.unexpected_requests.append(f"Read-only Flow issued a mutation: {entry}")
             self._json(route, {"error": "Read-only fixture rejects workflow and preference mutations."}, 405)
         elif re.fullmatch(r"/api/(user|group)/workflows(?:/flow-preview|/[^/]+(?:/runs/[^/]+)?/flow)", entry.path):
@@ -559,7 +562,7 @@ class WorkflowFlowFixture(WorkflowRepeatFixture):
 
     def assert_read_only(self):
         assert not self.workflow_writes
-        assert all(entry.method == "POST" and entry.path.endswith("/flow-preview") for entry in self.writes), self.writes
+        assert all(entry.method == "POST" and entry.path.endswith("/flow-preview") for entry in self.non_navigation_writes), self.non_navigation_writes
         assert all(entry.path.endswith("/flow") for entry in self.detail_requests)
 
     def assert_clean(self):

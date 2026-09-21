@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.124
+Version: 0.261.127
 Implemented in: 0.261.108
 """
 
@@ -12,7 +12,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
-from playwright.sync_api import Page, Route
+from playwright.sync_api import Page, Route, expect
+from ui_tests.fixtures.group_workspace import group_context
 
 from ui_tests.fixtures.workspace_authoring import (
     AGENT_ID,
@@ -143,6 +144,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
 
     def __init__(self, page: Page):
         super().__init__(page)
+        self.active_group_id = None
         self.personal_workflows = {
             WORKFLOW_ID: workflow_record(),
             "agent-workflow": workflow_record(
@@ -345,6 +347,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             "group": "automation",
         }
         payload["features"]["enable_group_workspaces"] = True
+        payload["scope"]["active_group_id"] = self.active_group_id
         payload["scope"]["groups"] = [
             {"id": GROUP_ID, "name": "Alpha Group"},
             {"id": SECOND_GROUP_ID, "name": "Beta Group"},
@@ -353,6 +356,23 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             {"id": "public-handbook", "name": "Published handbook"},
         ]
         return payload
+
+    def select_group(self, group_id):
+        """Use the actual selector and shared rail to reach the group's workflows."""
+        selector = self.page.get_by_label("Group workspace", exact=True)
+        selector.select_option(group_id)
+        expect(self.page).to_have_url(re.compile(rf"/v2/groups/{re.escape(group_id)}(?:/[^?]+)?(?:\?.*)?$"))
+        expect(selector).to_be_enabled()
+        self.page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role(
+            "link", name="Workflows", exact=True,
+        ).click()
+
+    @property
+    def non_navigation_writes(self):
+        return [
+            entry for entry in self.writes
+            if (entry.method, entry.path) != ("PATCH", "/api/groups/setActive")
+        ]
 
     def _route(self, route: Route):
         request = route.request
@@ -363,7 +383,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             return
         path = unquote(parsed.path)
         if request.method == "GET" and re.fullmatch(
-            r"/v2/(workspace(?:/(?:agents|actions|prompts|documents|workflows)(?:/[^/]+)?)?|groups|chat)",
+            r"/v2/(workspace(?:/(?:agents|actions|prompts|documents|workflows)(?:/[^/]+)?)?|groups(?:/[^/]+(?:/[^/]+)?)?|chat)",
             path,
         ):
             route.fulfill(path=str(SPA_INDEX), content_type="text/html")
@@ -400,7 +420,19 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
-        if path == "/api/groups" and method == "GET":
+        if path.startswith("/api/v2/workspaces/group/") and method == "GET":
+            group_id = path.rsplit("/", 1)[-1]
+            assert group_id in (GROUP_ID, SECOND_GROUP_ID), entry
+            context = group_context(
+                group_id, "Alpha Group" if group_id == GROUP_ID else "Beta Group",
+                role="Admin" if getattr(self, "group_can_manage", True) else "User",
+            )
+            self._json(route, context)
+        elif path == "/api/groups/setActive" and method == "PATCH":
+            assert entry.body["groupId"] in (GROUP_ID, SECOND_GROUP_ID), entry
+            self.active_group_id = entry.body["groupId"]
+            self._json(route, {"message": "Active group selected."})
+        elif path == "/api/groups" and method == "GET":
             self._json(route, {
                 "groups": [
                     {"id": GROUP_ID, "name": "Alpha Group", "userRole": "Admin"},

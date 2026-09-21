@@ -1,7 +1,7 @@
 # test_agent_delegation_v2.py
 """
-Real V2 Call agent create/edit/attach workflows for group and global scopes.
-Version: 0.261.096
+Real V2 Call agent create/edit/attach workflows for global scope.
+Version: 0.261.127
 Implemented in: 0.261.093
 
 Deterministic local Playwright coverage using the existing orchestration harness pattern.
@@ -11,6 +11,8 @@ fail tests, and desktop/mobile runs load the real production V2 CSS. Personal
 create/edit/delete, mixed bindings, conflicts, unavailable targets, keyboard
 selection, and target-type coverage now live in test_v2_workspace_authoring.py,
 which loads the production SPA and its data router rather than MemoryRouter.
+Group wrapper coverage is now in test_v2_group_workspace_shell.py using the
+production SPA and its scoped navigation/activation behavior.
 """
 
 import copy
@@ -196,7 +198,6 @@ def create_call(page, name, label):
 
 
 @pytest.mark.parametrize("scope,view,action_id", [
-    ("group", "groups", "group-call"),
     ("global", "admin", "global-call"),
 ])
 def test_native_call_action_deletion_requires_confirmation_and_preserves_callers(ui, scope, view, action_id):
@@ -216,40 +217,6 @@ def test_native_call_action_deletion_requires_confirmation_and_preserves_callers
     assert api.writes[-1][:2] == ("DELETE", f"/api/{owner}/plugins/{action_id}")
     assert api.writes[-1][2] == ({"group_id": ["group-1"]} if scope == "group" else {})
     assert api.agents == original_agents
-
-
-def test_group_native_scoping_permissions_and_unsaved_changes(ui):
-    page, api = ui
-    mount(page, "groups")
-    page.get_by_label("Group workspace", exact=True).select_option("group-1")
-    create_call(page, "Group delegate", "group target · group · local")
-    assert api.writes[-1][2] == {"group_id": ["group-1"]}
-    page.get_by_role("button", name="Edit Call agent action Group delegate").click()
-    expect(page.get_by_label("Group workspace", exact=True)).to_be_disabled()
-    page.get_by_label("Action name", exact=True).fill("Group renamed")
-    page.get_by_role("button", name="Save Call agent action", exact=True).click()
-    expect(page.get_by_text("Group renamed", exact=True)).to_be_visible()
-    assert api.writes[-1][:3] == ("PATCH", "/api/group/plugins/new-action", {"group_id": ["group-1"]})
-    page.get_by_role("button", name="Attach Call agent actions to Local caller").click()
-    page.get_by_role("checkbox", name="Group renamed").check()
-    page.get_by_role("button", name="Save bindings", exact=True).click()
-    expect(page.get_by_role("status").filter(has_text="bindings saved")).to_be_visible()
-    assert api.writes[-1][:3] == ("PATCH", "/api/group/agents/caller/agent-actions", {"group_id": ["group-1"]})
-    assert not any("setActive" in item[1] for item in api.writes)
-    assert all(query.get("group_id") for path, query in api.reads if path.startswith("/api/group/"))
-    page.get_by_label("Group workspace", exact=True).select_option("group-2")
-    expect(page.get_by_text("Read-only access.", exact=False)).to_be_visible()
-    expect(page.get_by_role("button", name="New Call agent action", exact=True)).to_have_count(0)
-
-
-def test_group_owner_only_catalog_can_deny_management(ui):
-    page, api = ui
-    api.manage = False
-    mount(page, "groups")
-    page.get_by_label("Group workspace", exact=True).select_option("group-1")
-    expect(page.get_by_text("Read-only access.", exact=False)).to_be_visible()
-    expect(page.get_by_role("button", name="New Call agent action", exact=True)).to_have_count(0)
-    assert not api.writes
 
 
 @pytest.mark.parametrize("mobile", [False, True])

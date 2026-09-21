@@ -1,7 +1,7 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.116
+Version: 0.261.127
 Implemented in: 0.261.108
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
@@ -316,13 +316,13 @@ def test_pristine_create_cancels_without_invented_dirty_state(workflow_ui):
 def test_group_workflows_carry_group_id_and_dirty_guard_blocks_switching(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
     page.get_by_role("button", name="Create workflow", exact=True).click()
     labelled(page, "Workflow name").fill("Group workflow from V2")
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
     expect(page.get_by_label("Group workspace", exact=True)).to_be_disabled()
-    expect(page.get_by_role("status").filter(has_text="group automation changes")).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="group changes")).to_be_visible()
 
     expect(page.get_by_role("list", name="Available documents").get_by_text("Group brief")).to_be_visible()
     page.get_by_role("listitem").filter(has_text="Group brief").get_by_role("button", name="Add").click()

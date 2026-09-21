@@ -1,7 +1,7 @@
 # test_v2_workflow_repeat_until.py
 """
 Local closed-browser regressions for typed Repeat until and manual continuation.
-Version: 0.261.120
+Version: 0.261.127
 Implemented in: 0.261.120
 
 Exercises the actual built V2 SPA, strict guards, scoped API requests and production
@@ -54,7 +54,7 @@ def details(block):
 def open_repeat(ui, *, group=False, **kwargs):
     if group:
         ui.open("/groups", **kwargs)
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         ui.page.get_by_role("button", name="Edit Group Repeat review", exact=True).click()
     else:
         ui.open(f"/workspace/workflows?workflow_id={REPEAT_WORKFLOW_ID}", **kwargs)
@@ -186,7 +186,7 @@ def open_repeat_run(ui, *, group=False, **kwargs):
     page = ui.page
     ui.open("/groups" if group else "/workspace/workflows", **kwargs)
     if group:
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = page.get_by_role("listitem").filter(has_text="Group Repeat review" if group else "Repeat review").first
     row.get_by_role("button", name="Show run history", exact=True).click()
     row.get_by_role("button", name="Show run task results", exact=True).click()
@@ -601,7 +601,7 @@ def test_repeat_final_named_records_use_existing_exact_reader(workflow_repeat_ui
     request = [request for request in ui.requests if request.path.endswith("/records")][-1]
     assert request.path.endswith(f"/executions/{REPEAT_EXECUTION_ID}/attempts/1/records")
     assert request.query["output"] == ["findings"]
-    assert not ui.writes
+    assert not ui.non_navigation_writes
 
 
 @pytest.mark.parametrize("kind", ["records", "document_results"])
@@ -750,7 +750,7 @@ def test_repeat_body_instances_drill_into_nested_rounds_and_frozen_items(workflo
     assert all(request.query["limit"] == ["50"] for request in reads)
     assert all(request.query.get("group_id") == ([GROUP_ID] if group else None) for request in reads)
     assert not any(request.path.endswith(("/result", "/records")) for request in ui.requests)
-    assert not ui.writes
+    assert not ui.non_navigation_writes
 
 
 def test_invalid_repeat_poll_removes_previous_summary_and_confirmation(workflow_repeat_ui):

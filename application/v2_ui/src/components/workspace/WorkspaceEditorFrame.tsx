@@ -13,9 +13,9 @@ export interface WorkspaceEditorSection {
     content: ReactNode;
 }
 
-function LeavePrompt({
-    saving, onStay, onDiscard,
-}: { saving: boolean; onStay: () => void; onDiscard: () => void }) {
+export function WorkspaceLeavePrompt({
+    saving, onStay, onDiscard, switching = false,
+}: { saving: boolean; onStay: () => void; onDiscard: () => void; switching?: boolean }) {
     const dialog = useRef<HTMLDialogElement>(null);
     const titleId = useId();
     useEffect(() => {
@@ -30,10 +30,10 @@ function LeavePrompt({
             onCancel={(event) => { event.preventDefault(); onStay(); }}
             className="glass-modal m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-edge p-5 text-text-1 backdrop:bg-surface-sunken/75">
             <h2 id={titleId} className="text-lg font-semibold">
-                {saving ? 'Your changes are still being saved' : 'Discard unsaved changes?'}
+                {switching ? 'Workspace switch in progress' : saving ? 'Your changes are still being saved' : 'Discard unsaved changes?'}
             </h2>
             <p className="mt-2 text-sm text-text-2">
-                {saving ? 'Stay here until the save finishes.' : 'Your changes have not been saved. Stay to keep editing, or discard them before leaving.'}
+                {switching ? 'Stay here until the selected workspace is confirmed.' : saving ? 'Stay here until the save finishes.' : 'Your changes have not been saved. Stay to keep editing, or discard them before leaving.'}
             </p>
             <div className="mt-5 flex flex-wrap justify-end gap-2">
                 <GlassButton type="button" autoFocus onClick={onStay}>Keep editing</GlassButton>
@@ -189,7 +189,7 @@ export function WorkspaceEditorFrame({
                 </div>
             </div>
             {blocker.state === 'blocked' ? (
-                <LeavePrompt saving={saving} onStay={() => blocker.reset()}
+                <WorkspaceLeavePrompt saving={saving} onStay={() => blocker.reset()}
                     onDiscard={() => { onDiscard(); blocker.proceed(); }} />
             ) : null}
         </form>

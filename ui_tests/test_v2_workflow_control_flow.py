@@ -1,7 +1,7 @@
 # test_v2_workflow_control_flow.py
 """
 UI regressions for structured If/else, Run when and forward routing.
-Version: 0.261.116
+Version: 0.261.127
 Implemented in: 0.261.116
 
 The real local SPA uses the existing closed API fixture and production definition
@@ -210,7 +210,7 @@ def test_group_structured_save_keeps_explicit_group_scope(workflow_ui):
     record = structured_record(group_id=GROUP_ID)
     ui.group_workflows[GROUP_ID] = {STRUCTURED_ID: record}
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
     page.get_by_role("button", name=re.compile("Edit Structured review")).click()
     page.get_by_label("Workflow name", exact=True).fill("Group structured review")
