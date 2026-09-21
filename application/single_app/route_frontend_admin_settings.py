@@ -139,11 +139,6 @@ AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
 }
 
 
-def _is_update_version_newer(latest_version, current_version):
-    """Return True only when the discovered release version is newer than the running version."""
-    return compare_versions(latest_version, current_version) == 1
-
-
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
@@ -1039,56 +1034,10 @@ def register_route_frontend_admin_settings(bp):
 
             # Check for application updates
             current_version = current_app.config['VERSION']
-            update_available = False
-            latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
-            
-            # Only check for updates every 24 hours at most
-            last_check_time = settings.get('last_update_check_time')
-            check_needed = last_check_time is None or (
-                datetime.now(timezone.utc) - 
-                datetime.fromisoformat(last_check_time)
-            ).total_seconds() > 86400  # 24 hours in seconds
-            
-            if check_needed:
-                try:
-                    # Fetch latest release from GitHub
-                    response = requests.get(
-                        "https://github.com/microsoft/simplechat/releases", 
-                        timeout=3
-                    )
-                    if response.status_code == 200:
-                        # Extract the latest version
-                        latest_version = extract_latest_version_from_html(response.text)
-                        
-                        # Store the results in settings for persistence
-                        new_settings = {
-                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
-                            'latest_version_available': latest_version
-                        }
-                        
-                        # Compare with current version
-                        if _is_update_version_newer(latest_version, current_version):
-                            new_settings['update_available'] = True
-                        else:
-                            new_settings['update_available'] = False
-                        
-                        # Update settings to persist these values
-                        if update_settings(new_settings):
-                            settings = get_settings()
-                except Exception as e:
-                    print(f"Error checking for updates: {e}")
-                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
-            
-            # Get the persisted values for template rendering
-            latest_version = settings.get('latest_version_available')
-            update_available = _is_update_version_newer(latest_version, current_version)
-            if settings.get('update_available') != update_available:
-                try:
-                    if update_settings({'update_available': update_available}):
-                        settings = get_settings()
-                except Exception as e:
-                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
+            update_status = get_application_update_status(settings, current_version)
+            latest_version = update_status['latest_version']
+            update_available = update_status['update_available']
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
@@ -1120,6 +1069,7 @@ def register_route_frontend_admin_settings(bp):
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
                 update_available=update_available,
+                update_status=update_status,
                 latest_version=latest_version,
                 download_url=download_url,
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),

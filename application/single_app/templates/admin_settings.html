@@ -581,8 +581,16 @@
             Version: {{ config['VERSION'] }}
             {% if update_available %}
                 <span class="ms-2 badge bg-warning text-dark align-middle">
-                    New version available, v{{ latest_version }}.
+                    {{ 'New version available' if update_status.status == 'checked' else 'Last known newer release' }}, v{{ latest_version }}.
                     <a href="{{ download_url }}" target="_blank" rel="noopener noreferrer" class="link-primary text-decoration-underline">Download here</a>.
+                </span>
+            {% endif %}
+            {% if update_status.error %}
+                <span class="text-warning" role="status">
+                    {{ update_status.error }}
+                    {% if update_status.latest_version %}
+                        Last known release: v{{ update_status.latest_version }}; this result may be stale.
+                    {% endif %}
                 </span>
             {% endif %}
         </p>

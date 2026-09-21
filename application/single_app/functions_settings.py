@@ -1,10 +1,13 @@
 # functions_settings.py
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from functools import wraps
 import logging
+import re
 import threading
 
+import requests
 from flask import g, has_request_context, jsonify, request, session
 from azure.core import MatchConditions
 
@@ -2405,6 +2408,87 @@ def compare_versions(v1_str, v2_str):
 
     # If all compared parts are equal, they are the same version
     return 0
+
+def get_application_update_status(settings, current_version):
+    """Check releases on admin visits, sharing successful and failed attempts for 24 hours."""
+    now = datetime.now(timezone.utc)
+
+    def read_time(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed > now:
+            return None
+        return parsed
+
+    def valid_version(value):
+        return isinstance(value, str) and re.fullmatch(
+            r'[vV]?\d+(?:\.\d+)*', value.strip()
+        ) is not None
+
+    latest_version = settings.get('latest_version_available')
+    latest_version = latest_version.strip().lstrip('vV') if valid_version(latest_version) else None
+    last_success = read_time(settings.get('last_update_check_time'))
+    last_attempt = read_time(settings.get('last_update_check_attempt_time'))
+    error = 'Unable to check for application updates.'
+    failed = settings.get('last_update_check_failed') is True
+    cache_time = last_attempt if failed else last_success
+    cache_valid = cache_time is not None and (now - cache_time).total_seconds() < 86400
+    if not failed:
+        cache_valid = cache_valid and latest_version is not None
+
+    if not cache_valid:
+        updates = {
+            'last_update_check_attempt_time': now.isoformat(),
+            'last_update_check_failed': True,
+        }
+        failed = True
+        try:
+            response = requests.get(
+                'https://github.com/microsoft/simplechat/releases', timeout=3
+            )
+            if response.status_code != 200:
+                raise ValueError('Unexpected release response status')
+            discovered_version = extract_latest_version_from_html(response.text)
+            if not valid_version(discovered_version):
+                raise ValueError('No valid release version')
+            latest_version = discovered_version
+            last_success = now
+            failed = False
+            updates.update({
+                'last_update_check_time': now.isoformat(),
+                'latest_version_available': latest_version,
+                'last_update_check_failed': False,
+            })
+        except (requests.RequestException, ValueError) as exc:
+            log_event(
+                '[APP_UPDATES] Release check failed.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+        updates['update_available'] = compare_versions(latest_version, current_version) == 1
+        try:
+            saved = update_settings(updates)
+        except AIConnectionError:
+            saved = False
+        if not saved:
+            failed = True
+            error = 'Unable to cache the application update check.'
+            log_event('[APP_UPDATES] Could not persist release check.', level=logging.WARNING)
+        last_attempt = now
+
+    return {
+        'latest_version': latest_version,
+        'update_available': compare_versions(latest_version, current_version) == 1,
+        'status': ('stale' if latest_version else 'unavailable') if failed else 'checked',
+        'checked_at': last_success.isoformat() if last_success else None,
+        'attempted_at': last_attempt.isoformat() if last_attempt else None,
+        'error': error if failed else None,
+    }
+
 
 def extract_latest_version_from_html(html_content):
     """

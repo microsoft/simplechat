@@ -200,6 +200,7 @@ function buildCapabilityIndex(
 
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
+    const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
 
     /**
      * Re-read the bootstrap payload once a save lands.
@@ -1010,6 +1011,48 @@ export function AdminSettingsPage() {
                         : undefined
                 }
             />
+
+            <div
+                role="status"
+                aria-label="Application version"
+                className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-edge px-6 py-3 text-sm"
+            >
+                <span className="font-medium text-text-1">
+                    Version: {data?.version || bootstrapVersion || 'Unavailable'}
+                </span>
+                {loading ? (
+                    <span className="text-text-3">Checking for updates...</span>
+                ) : data?.update_status ? (
+                    <>
+                        {data.update_status.update_available && (
+                            <span className="text-warn">
+                                {data.update_status.status === 'checked' ? 'New version available' : 'Last known newer release'}
+                                : v{data.update_status.latest_version}.{' '}
+                                <a
+                                    href="https://github.com/microsoft/simplechat/releases"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-accent underline"
+                                >
+                                    View releases
+                                </a>
+                            </span>
+                        )}
+                        {data.update_status.status !== 'checked' ? (
+                            <span className="text-warn">
+                                {data.update_status.error || 'Unable to check for application updates.'}
+                                {data.update_status.latest_version && (
+                                    <> Last known release: v{data.update_status.latest_version}; this result may be stale.</>
+                                )}
+                            </span>
+                        ) : !data.update_status.update_available && (
+                            <span className="text-text-3">No newer release found.</span>
+                        )}
+                    </>
+                ) : (
+                    <span className="text-warn">Unable to check for application updates.</span>
+                )}
+            </div>
 
             <div className="flex min-h-0 flex-1">
                 <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">
