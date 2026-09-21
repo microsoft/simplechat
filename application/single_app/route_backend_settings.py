@@ -33,6 +33,7 @@ from functions_model_endpoint_types import (
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
+    log_index_auto_fix,
     log_admin_release_notifications_registration,
     log_user_support_feedback_email_submission,
 )
@@ -53,6 +54,8 @@ from functions_keyvault_reminders import (
     check_due_key_vault_secret_reminders_once,
     list_key_vault_secret_reminders,
 )
+from functions_keyvault import get_keyvault_credential
+from functions_keyvault_test import run_key_vault_connection_test
 from functions_redis_monitoring import (
     get_redis_explorer_keys,
     get_redis_explorer_value,
@@ -60,7 +63,6 @@ from functions_redis_monitoring import (
 )
 from azure.identity import DefaultAzureCredential
 from azure.core.exceptions import AzureError
-from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import time
@@ -301,7 +303,28 @@ def run_admin_settings_connection_test(payload):
         return jsonify({'error': str(exc)}), 500
 
 
-def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
+def _index_settings_for_revision(expected_etag=None):
+    settings = get_settings(use_cosmos=expected_etag is not None)
+    if expected_etag is not None and settings.get("_etag") != expected_etag:
+        raise AIConnectionError(
+            "Settings changed since this page was loaded. Review the latest settings and try again.",
+            "settings_conflict",
+        )
+    return settings
+
+
+def _index_configuration_error_response(error):
+    return jsonify({
+        "error": error.public_message,
+        "code": error.code,
+        "needsReload": error.code == "settings_conflict",
+        "needsRecreation": error.code in {"embedding_dimensions_mismatch", "embedding_rebuild_required"},
+    }), 409
+
+
+def auto_fix_index_fields(
+    idx_type: str, user_id: str = 'system', admin_email: str = None, *, expected_etag=None,
+) -> dict:
     """
     Automatically fix missing fields in an Azure AI Search index.
         Args:
@@ -323,7 +346,7 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
             
         with open(json_path, 'r') as f:
             full_def = json.load(f)
-        settings = get_settings()
+        settings = _index_settings_for_revision(expected_etag)
         full_def = build_embedding_index_schema(full_def, settings)
 
         client = get_index_client()
@@ -335,8 +358,10 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
 
         if not missing_defs:
             with embedding_index_maintenance(settings):
-                record_embedding_index_schema(index_obj, settings)
-            return {'status': 'nothingToAdd'}
+                revision = record_embedding_index_schema(
+                    index_obj, settings, expected_etag=expected_etag,
+                )
+            return {'status': 'nothingToAdd', 'settings_etag': revision}
 
         new_fields = []
         for fld in missing_defs:
@@ -385,7 +410,9 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
         index_obj.etag = "*"
         with embedding_index_maintenance(settings):
             updated_index = client.create_or_update_index(index_obj)
-            record_embedding_index_schema(updated_index, settings)
+            revision = record_embedding_index_schema(
+                updated_index, settings, expected_etag=expected_etag,
+            )
 
         added = [f.name for f in new_fields]
         
@@ -397,7 +424,7 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
             admin_email=admin_email
         )
         
-        return {'status': 'success', 'added': added}
+        return {'status': 'success', 'added': added, 'settings_etag': revision}
 
     except AIConnectionError as exc:
         return {'error': exc.public_message, 'code': exc.code}
@@ -532,9 +559,18 @@ def register_route_backend_settings(bp):
     @admin_required
     def check_index_fields():
         try:
-            data = request.get_json(force=True)
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                log_event("[EMBEDDING] Invalid index check request.", level=logging.WARNING)
+                return jsonify({'error': 'Index check payload must be an object.'}), 400
             idx_type = data.get('indexType')  # 'user', 'group', or 'public'
             auto_fix = data.get('autoFix', True)  # Default to auto-fix enabled
+            expected_etag = data.get('settings_etag')
+            if expected_etag is not None and (
+                not isinstance(expected_etag, str) or not expected_etag.strip()
+            ):
+                log_event("[EMBEDDING] Invalid index check revision.", level=logging.WARNING)
+                return jsonify({'error': 'The settings revision is invalid.'}), 400
 
             if not idx_type or idx_type not in ['user', 'group', 'public']:
                 return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
@@ -553,9 +589,12 @@ def register_route_backend_settings(bp):
                 expected = json.load(f)
 
             # Check if Azure AI Search is configured
-            settings = get_settings()
+            settings = _index_settings_for_revision(expected_etag)
             expected = build_embedding_index_schema(expected, settings)
-            if not settings.get("azure_ai_search_endpoint"):
+            if not settings.get(
+                "azure_apim_ai_search_endpoint" if settings.get("enable_ai_search_apim")
+                else "azure_ai_search_endpoint"
+            ):
                 return jsonify({
                     'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
                     'needsConfiguration': True
@@ -580,17 +619,25 @@ def register_route_backend_settings(bp):
                         fix_result = auto_fix_index_fields(
                             idx_type=idx_type,
                             user_id=user_id,
-                            admin_email=admin_email
+                            admin_email=admin_email,
+                            expected_etag=expected_etag,
                         )
                         
-                        if fix_result.get('status') == 'success':
+                        if fix_result.get('status') in {'success', 'nothingToAdd'}:
                             return jsonify({
                                 'indexExists': True,
                                 'missingFields': [],
                                 'autoFixed': True,
                                 'fieldsAdded': fix_result.get('added', []),
-                                'indexName': expected['name']
+                                'indexName': expected['name'],
+                                'settings_etag': fix_result.get('settings_etag'),
                             }), 200
+                        elif fix_result.get('code') == 'settings_conflict':
+                            return jsonify({
+                                'error': fix_result['error'],
+                                'code': 'settings_conflict',
+                                'needsReload': True,
+                            }), 409
                         else:
                             # Auto-fix failed, return missing fields for manual fix
                             return jsonify({
@@ -609,15 +656,18 @@ def register_route_backend_settings(bp):
                         }), 200
                 else:
                     with embedding_index_maintenance(settings):
-                        record_embedding_index_schema(current, settings)
+                        revision = record_embedding_index_schema(
+                            current, settings, expected_etag=expected_etag,
+                        )
                     return jsonify({ 
                         'missingFields': [],
                         'indexExists': True,
-                        'indexName': expected['name']
+                        'indexName': expected['name'],
+                        'settings_etag': revision,
                     }), 200
                 
             except AIConnectionError as exc:
-                return jsonify({'error': exc.public_message, 'code': exc.code, 'needsRecreation': True}), 409
+                return _index_configuration_error_response(exc)
             except ResourceNotFoundError as not_found_error:
                 # Index doesn't exist - this is the specific exception for "index not found"
                 return jsonify({
@@ -626,29 +676,18 @@ def register_route_backend_settings(bp):
                     'indexName': expected['name'],
                     'needsCreation': True
                 }), 404
-            except Exception as search_error:
-                error_str = str(search_error).lower()
-                # Check for other index not found patterns (fallback)
-                if any(phrase in error_str for phrase in [
-                    "not found", "does not exist", "no index with the name", 
-                    "index does not exist", "could not find index"
-                ]):
-                    return jsonify({
-                        'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
-                        'indexExists': False,
-                        'indexName': expected['name'],
-                        'needsCreation': True
-                    }), 404
-                else:
-                    current_app.logger.error(f"Azure AI Search error: {search_error}")
-                    return jsonify({
-                        'error': f'Failed to connect to Azure AI Search: {str(search_error)}',
-                        'needsConfiguration': True
-                    }), 500
-
-        except Exception as e:
-            current_app.logger.error(f"Error in check_index_fields: {str(e)}")
-            return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+        except AIConnectionError as exc:
+            return _index_configuration_error_response(exc)
+        except (AzureError, ImportError, OSError, RuntimeError, ValueError) as exc:
+            log_event(
+                "[EMBEDDING] Index check failed.",
+                extra={"error_type": type(exc).__name__, "status_code": getattr(exc, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({
+                'error': 'Unable to inspect Azure AI Search. Check the Search connection, permissions, and server diagnostics.',
+                'code': 'index_check_failed',
+            }), 500
 
 
     @bp.route('/api/admin/settings/fix_index_fields', methods=['POST'])
@@ -788,10 +827,6 @@ def register_route_backend_settings(bp):
             except ResourceNotFoundError:
                 # Index doesn't exist, which is what we want for creation
                 pass
-            except Exception as e:
-                # Other errors checking if index exists
-                current_app.logger.error(f"Error checking if index exists: {e}")
-                # Continue with creation attempt anyway
 
             # Create the index using the JSON definition
             from azure.search.documents.indexes.models import SearchIndex
@@ -809,9 +844,15 @@ def register_route_backend_settings(bp):
                 'fieldsCount': len(result.fields)
             }), 200
 
-        except Exception as e:
-            current_app.logger.error(f"Error creating index: {str(e)}")
-            return jsonify({'error': f'Failed to create index: {str(e)}'}), 500
+        except AIConnectionError as exc:
+            return _index_configuration_error_response(exc)
+        except (AzureError, ImportError, OSError, RuntimeError, ValueError) as exc:
+            log_event(
+                "[EMBEDDING] Index creation failed.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'AI Search index creation failed. Check the connection and permissions.'}), 500
     
     @bp.route('/api/admin/settings/test_connection', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2106,33 +2147,10 @@ def _test_content_understanding_connection(payload):
 
 
 def _test_key_vault_connection(payload):
-    """Attempt to connect to Azure Key Vault using ephemeral settings."""
-    vault_name = payload.get('vault_name', '').strip()
-    client_id = payload.get('client_id', '').strip()
-
-    if not vault_name:
-        return jsonify({'error': 'Key Vault name is required'}), 400
-
-    try:
-        vault_url = f"https://{vault_name}{KEY_VAULT_DOMAIN}"
-
-        if client_id:
-            credential = DefaultAzureCredential(managed_identity_client_id=client_id)
-        else:
-            credential = DefaultAzureCredential()
-
-        if AZURE_ENVIRONMENT == "custom":
-            #TODO: Needs to be tested with a custom environment
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
-        else:
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
-
-        # Perform a simple list operation to verify connectivity
-        secrets = kv_client.list_properties_of_secrets()
-        _ = next(secrets, None)  # Attempt to get the first secret (if any)
-
-        return jsonify({'message': 'Key Vault connection successful'}), 200
-
-    except Exception as e:
-        log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
-        return jsonify({'error': 'Key Vault connection failed. Check Application Insights using "[AKV_TEST]" for details.'}), 500
+    """Verify draft Key Vault settings with an isolated write/read/cleanup probe."""
+    result, status = run_key_vault_connection_test(
+        payload,
+        vault_domain=KEY_VAULT_DOMAIN,
+        credential_factory=get_keyvault_credential,
+    )
+    return jsonify(result), status

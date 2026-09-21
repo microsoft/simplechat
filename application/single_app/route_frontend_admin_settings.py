@@ -12,6 +12,7 @@ from functions_authentication import *
 from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
@@ -3291,6 +3292,9 @@ def register_route_frontend_admin_settings(bp):
                 ]
                 new_settings["model_endpoints"] = parsed_model_endpoints
                 settings_saved = update_settings(new_settings, expected_etag=settings_etag)
+            except KeyVaultSecretStorageError as exc:
+                flash(f"Admin settings were not saved. {exc.public_message}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             except AIConnectionError as exc:
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))

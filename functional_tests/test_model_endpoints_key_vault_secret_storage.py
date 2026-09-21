@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.261.113
+Version: 0.261.125
 Implemented in: 0.241.179
 Strict screening credential hydration and safe retrieval logging: 0.261.106
 Custom credential strict hydration merge coverage: 0.261.113
+Actionable secret-write errors and explicit diagnostic credentials: 0.261.125
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
 returned to the UI as placeholders, resolved for backend use, and cleaned up
@@ -18,7 +19,10 @@ import importlib
 import os
 import sys
 import types
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import pytest
+from azure.core.exceptions import HttpResponseError
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -124,6 +128,49 @@ def load_functions_keyvault_module():
 def read_file_text(file_path):
     with open(file_path, "r", encoding="utf-8") as file_handle:
         return file_handle.read()
+
+
+def test_denied_secret_write_is_actionable_without_plaintext_fallback():
+    FakeSecretClient.reset()
+    module, original_modules = load_functions_keyvault_module()
+    denied = HttpResponseError(message="private provider details: synthetic-secret")
+    denied.status_code = 403
+    endpoint = {"id": "endpoint-123", "auth": {"type": "api_key", "api_key": "synthetic-secret"}}
+    try:
+        with (
+            patch.object(FakeSecretClient, "set_secret", side_effect=denied),
+            patch.object(module, "log_event") as logged,
+            pytest.raises(module.KeyVaultSecretStorageError) as failure,
+        ):
+            module.keyvault_model_endpoint_save_helper(
+                endpoint, "endpoint-123", scope="global", stage_new_secrets=True,
+            )
+        assert failure.value.code == "key_vault_write_forbidden"
+        assert "Key Vault Secrets Officer" in failure.value.public_message
+        assert "synthetic-secret" not in failure.value.public_message
+        assert "private provider details" not in str(logged.call_args_list)
+        assert "synthetic-secret" not in str(logged.call_args_list)
+        assert FakeSecretClient.stored_secrets == {}
+        assert endpoint["auth"]["api_key"] == "synthetic-secret"
+    finally:
+        restore_modules(original_modules)
+
+
+@pytest.mark.parametrize("identity", ["", None, "11111111-2222-3333-4444-555555555555"])
+def test_explicit_diagnostic_identity_does_not_reload_saved_settings(identity):
+    module, original_modules = load_functions_keyvault_module()
+    try:
+        with patch.object(module.app_settings_cache, "get_settings_cache", side_effect=AssertionError("Unexpected saved identity")):
+            credential = module.get_keyvault_credential(
+                settings={"key_vault_identity": identity},
+                connection_timeout=5, read_timeout=10, retry_total=0, process_timeout=10,
+            )
+        assert credential.kwargs == {
+            "managed_identity_client_id": identity or None,
+            "connection_timeout": 5, "read_timeout": 10, "retry_total": 0, "process_timeout": 10,
+        }
+    finally:
+        restore_modules(original_modules)
 
 
 def test_model_endpoint_key_vault_helper_lifecycle():

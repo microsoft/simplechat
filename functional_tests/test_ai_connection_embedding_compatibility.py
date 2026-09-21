@@ -1,8 +1,9 @@
 # test_ai_connection_embedding_compatibility.py
 """
 Functional coverage for embedding vector-space activation and persistence guards.
-Version: 0.261.122
+Version: 0.261.125
 Implemented in: 0.261.106
+Idempotent admin schema observations and conditional revisions: 0.261.125
 
 Use isolated stores to prove that populated vectors, unavailable inspections, and
 stale work cannot silently cross embedding profiles or bypass a cleared default.
@@ -281,6 +282,67 @@ class EmbeddingCompatibilityTests(unittest.TestCase):
         )
         self.assertEqual(container.document, json.loads(cache.raw)["document"])
         self.assertEqual(1, container.document[SETTINGS_REVISION_FIELD])
+
+    def test_identical_schema_observation_does_not_write_or_invalidate_form(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
+            compatibility.record_embedding_index_schema(index_schema(), self.current)
+            before = store.read(use_cosmos=True)
+            writes = container.writes
+            revision = compatibility.record_embedding_index_schema(
+                index_schema(), before, expected_etag=before["_etag"],
+            )
+        self.assertEqual(container.writes, writes)
+        self.assertEqual(revision, before["_etag"])
+        stored = store.write(
+            lambda current: {**current, "app_title": "Still editable"},
+            expected_etag=before["_etag"],
+        )
+        self.assertEqual(stored["app_title"], "Still editable")
+
+    def test_schema_observation_returns_only_its_own_conditional_revision(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
+            revision = compatibility.record_embedding_index_schema(
+                index_schema(), self.current, expected_etag="1",
+            )
+        self.assertEqual(revision, container.document["_etag"])
+        self.assertNotEqual(revision, "1")
+
+    def test_schema_observation_does_not_fast_forward_a_stale_form(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        store.write(lambda current: {**current, "app_title": "Another admin"})
+        writes = container.writes
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
+            with self.assertRaises(AIConnectionError) as raised:
+                compatibility.record_embedding_index_schema(
+                    index_schema(), self.current, expected_etag="1",
+                )
+        self.assertEqual(raised.exception.code, "settings_conflict")
+        self.assertEqual(container.writes, writes)
+        self.assertEqual(container.document["app_title"], "Another admin")
+
+    def test_concurrent_edit_during_schema_observation_keeps_form_stale(self):
+        container = FakeCosmos()
+        container.document = {**copy.deepcopy(self.current), "id": "app_settings", "_etag": "1"}
+        store = AppSettingsStore(container)
+        container.before_replace = lambda: store.write(
+            lambda current: {**current, "app_title": "Concurrent edit"},
+        )
+        with patch.object(compatibility, "_get_embedding_settings_store", return_value=store):
+            with self.assertRaises(AIConnectionError) as raised:
+                compatibility.record_embedding_index_schema(
+                    index_schema(), self.current, expected_etag="1",
+                )
+        self.assertEqual(raised.exception.code, "settings_conflict")
+        self.assertEqual(container.writes, 1)
+        self.assertEqual(container.document["app_title"], "Concurrent edit")
 
     def test_schema_observation_retries_without_losing_other_index_metadata(self):
         container = FakeCosmos()
