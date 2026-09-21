@@ -12,6 +12,7 @@
         - [Configure AZD Environment](#Configure-AZD-Environment)
         - [Deployment Prompts](#Deployment-Prompts)
     - [Post Deployment Tasks](#Post-Deployment-Tasks)
+- [Key Vault secret permissions](#key-vault-secret-permissions)
 - [Cleanup / Deprovision](#Cleanup-/-Deprovisioning)
 - [Helpful Info](#Helpful-Info)
     - [Private Networking](#Private-Networking)
@@ -38,7 +39,7 @@ The following variables will be used within this document:
 
 Before deploying, ensure you have:
 
-1. **Azure Subscription** with Owner or Contributor permissions. Managed identity deployments also require permission to create role assignments and custom role definitions at the target scopes.
+1. **Azure Subscription** with Owner or Contributor permissions for resource creation. When `configureApplicationPermissions=true`, both key-based and managed-identity deployments also require permission to create role assignments and custom role definitions at the target scopes; Contributor alone is insufficient.
 2. **Azure CLI** (version 2.50.0 or later)
   Install: https://learn.microsoft.com/cli/azure/install-azure-cli
 3. **Azure Developer CLI (azd)** (version 1.5.0 or later)
@@ -304,7 +305,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 
 `imageName` defaults to `simplechat:latest`. Most deployments can accept that default without entering a custom value.
 
-When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. You can rerun with an identity that has the required permissions, ask an Azure administrator to complete the RBAC setup, or switch the AZD environment to key-based authentication with `azd env set AUTHENTICATION_TYPE key` if that security model is acceptable.
+When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. Rerun with an identity that has the required permissions or ask an Azure administrator to complete the RBAC setup. Switching to key-based authentication does not remove the Key Vault or other shared application-permission requirements when `configureApplicationPermissions=true`.
 
 `redisAuthenticationType` can be managed independently from `authenticationType`. For example, MAG/Azure Government environments can keep `AUTHENTICATION_TYPE managed_identity` for Cosmos DB, Storage, Search, OpenAI, and Cognitive Services while setting `REDIS_AUTHENTICATION_TYPE key` so Redis uses access keys.
 
@@ -321,6 +322,47 @@ When private networking is enabled, the preprovision validation step now attempt
 Provisioning may take between 5-40 minutes depending on the options selected.
 
 On the completion of the deployment, a URL will be presented, the user may use to access the site.
+
+## Key Vault secret permissions
+
+Implemented in application version **0.261.125** (`application/single_app/config.py`) and deployer version **1.0.32** (`deployers/version.txt`).
+
+Whenever `configureApplicationPermissions=true`, the container app and optional native Python app each receive **Key Vault Secrets Officer** at the **vault scope**, regardless of `authenticationType`. Its built-in role ID is `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`. **Key Vault Secrets User** only supplies read access; it cannot save credentials or complete the connection test's write/read/delete sequence. Officer permits secret management, including get/list/set/delete, without granting permission to manage vault RBAC. See the [Microsoft Key Vault role reference](https://learn.microsoft.com/azure/key-vault/general/rbac-guide#azure-built-in-roles-for-key-vault-data-plane-operations).
+
+Both Bicep app variants use their own **system-assigned** managed identity. Leave the application's Key Vault client ID blank for that default. Use the identity's **principal/object ID** when reviewing IAM assignments, not the sign-in app registration's client ID or the deploying administrator's identity. These templates do not attach a user-assigned runtime identity; if you customize that setup, attach the selected identity and separately authorize it at the same vault scope.
+
+`configureApplicationPermissions=false` still skips both application permission modules. It is not a read-only mode: an administrator must supply all required application grants separately. A code-only upgrade also does not change existing permissions. For manual setup, open the vault's **Access control (IAM)**, assign **Key Vault Secrets Officer** to the correct App Service identity, and keep the scope on that vault, not its resource group or subscription. Allow RBAC propagation before testing from **Admin Settings > Secrets**. The test uses a synthetic temporary secret; deletion can leave soft-deleted probe metadata under the vault's retention policy.
+
+### Upgrading and adopting existing ARM assignments
+
+The new deterministic assignment name is `guid(kv.id, webApp.id, 'kv-secrets-officer')`. It intentionally differs from the old `kv-secrets-user` assignment name: Azure cannot change the role definition on an existing assignment GUID. Normal incremental deployments add Officer and leave the old read-only grant and other administrator-created grants intact. Do not use complete-mode deployment or delete grants to resolve a role-assignment collision.
+
+ARM does not automatically adopt an equivalent assignment that was created manually with another GUID. Before upgrading an already-remediated environment, inspect assignment **metadata only**, once for each deployed App Service:
+
+```powershell
+$vaultId = az keyvault show --name "<vault-name>" --resource-group "<resource-group>" --query id --output tsv
+$principalId = az webapp identity show --name "<app-name>" --resource-group "<resource-group>" --query principalId --output tsv
+$officerRoleId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+az role assignment list --scope $vaultId --role $officerRoleId `
+    --fill-principal-name false --fill-role-definition-name false `
+    --query "[?principalId=='$principalId'].{name:name,id:id,scope:scope,condition:condition}" --output json
+```
+
+If a matching, unconditional Officer assignment already exists at the exact vault scope:
+
+1. Keep its assignment GUID and grant. An inherited or secret-level assignment is not the same vault-scoped assignment, and a conditional assignment requires administrator review.
+2. In an **environment-specific copy** of `modules/setPermissions.bicep`, change only the Officer resource's `name: guid(kv.id, webApp.id, 'kv-secrets-officer')` to `name: '<existing-officer-assignment-guid>'`. For the native app, do this separately in `modules/setNativeWebAppPermissions.bicep` using that app identity's assignment GUID. Never substitute the old Secrets User GUID or another principal's assignment.
+3. Keep `scope`, `roleDefinitionId`, and `principalId` unchanged. Regenerate the ARM template from that copy, from the repository root:
+
+   ```powershell
+   az bicep build --file .\deployers\bicep\main.bicep --outfile .\deployers\bicep\main.json
+   ```
+
+4. Use the customized Bicep/ARM in your normal reviewed deployment process and retain the same environment-specific names for subsequent runs. The public one-click template does not contain this customization; using it unchanged can return `RoleAssignmentExists`. Do not hand-edit generated `main.json`.
+
+If your platform team owns IAM instead, `configureApplicationPermissions=false` avoids template ownership conflicts, but that team must maintain **all** application permissions, not just Key Vault. No application role is silently downgraded to Secrets User.
+
+Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py); it checks both Bicep modules, generated ARM, permission-disable conditions, and runtime principals without deploying resources.
 
 ---
 
@@ -476,7 +518,7 @@ The deployment automatically handles the following endpoint differences:
 A: Initial deployment typically takes 15-40 minutes depending on options selected. Subsequent deployments are faster.
 
 **Q: What Azure permissions do I need?**
-A: Key-based deployments generally need Owner or Contributor on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin). Managed identity deployments also need permission to create role assignments and custom role definitions at the target scopes, such as Owner, Role Based Access Control Administrator, or an equivalent custom role.
+A: Resource creation needs Owner or Contributor on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin). When application permissions are configured, both authentication modes also need permission to create role assignments and custom role definitions at the target scopes, such as Owner, Role Based Access Control Administrator, or an equivalent custom role.
 
 **Q: Can I deploy to an existing resource group?**
 A: No, the deployment creates a new resource group named `<appName>-<environment>-rg`.
@@ -485,7 +527,7 @@ A: No, the deployment creates a new resource group named `<appName>-<environment
 A: You can choose between `key` (API keys stored in Key Vault) or `managed_identity` (recommended for production).
 
 **Q: Why does managed identity deployment stop before provisioning?**
-A: Managed identity deployment must create RBAC role assignments for the App Service identity and related resources. If the signed-in Azure identity cannot perform `Microsoft.Authorization/roleAssignments/write` and `Microsoft.Authorization/roleDefinitions/write` at the target scopes, the preprovision hook fails fast instead of letting deployment appear successful while runtime access is broken. Use Owner, Role Based Access Control Administrator, or an equivalent custom role, then rerun `azd up`. To continue with key-based authentication instead, run `azd env set AUTHENTICATION_TYPE key` and rerun the deployment.
+A: Managed identity deployment must create RBAC role assignments for the App Service identity and related resources. If the signed-in Azure identity cannot perform `Microsoft.Authorization/roleAssignments/write` and `Microsoft.Authorization/roleDefinitions/write` at the target scopes, the preprovision hook fails fast instead of letting deployment appear successful while runtime access is broken. Use Owner, Role Based Access Control Administrator, or an equivalent custom role, then rerun `azd up`. Changing to key-based authentication does not eliminate the vault-scoped Officer grant or other shared application-permission requirements.
 
 **Q: What capacity defaults does the deployer use?**
 A: The Bicep and AZD path defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned autoscale throughput on each SimpleChat container. These defaults avoid the limited free semantic query quota, avoid the 25-container limit for shared-throughput databases, and make document search and ingestion more reliable after first deployment.
@@ -600,4 +642,3 @@ View application logs:
 ```bash
 az webapp log tail --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg
 ```
-

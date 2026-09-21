@@ -98,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.124"
+VERSION = "0.261.125"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -415,6 +415,7 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
+    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:

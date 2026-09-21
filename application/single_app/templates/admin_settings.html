@@ -525,22 +525,22 @@
         </div>
     </div>
 </div>
-<div id="index-warning-user" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ User-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-user"></span>
-    <button id="fix-user-index-btn" class="btn btn-sm btn-primary ms-2">Add missing user-fields</button>
+<div id="index-warning-user" class="alert alert-warning d-none" role="alert">
+    <strong>User index:</strong>
+    <span id="missing-fields-user"></span>
+    <button type="button" id="fix-user-index-btn" class="btn btn-sm btn-primary ms-2">Add missing user-fields</button>
 </div>
 
-<div id="index-warning-group" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ Group-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-group"></span>
-    <button id="fix-group-index-btn" class="btn btn-sm btn-primary ms-2">Add missing group-fields</button>
+<div id="index-warning-group" class="alert alert-warning d-none" role="alert">
+    <strong>Group index:</strong>
+    <span id="missing-fields-group"></span>
+    <button type="button" id="fix-group-index-btn" class="btn btn-sm btn-primary ms-2">Add missing group-fields</button>
 </div>
 
-<div id="index-warning-public" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ Public-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-public"></span>
-    <button id="fix-public-index-btn" class="btn btn-sm btn-primary ms-2">Add missing public-fields</button>
+<div id="index-warning-public" class="alert alert-warning d-none" role="alert">
+    <strong>Public index:</strong>
+    <span id="missing-fields-public"></span>
+    <button type="button" id="fix-public-index-btn" class="btn btn-sm btn-primary ms-2">Add missing public-fields</button>
 </div>
 
 <!-- Flash messages display section -->

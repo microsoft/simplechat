@@ -153,6 +153,7 @@ from functions_keyvault import (
     keyvault_model_endpoint_delete_helper,
     keyvault_model_endpoint_save_helper,
 )
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_source_review import (
     get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
@@ -1752,6 +1753,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return _model_endpoint_response(saved, endpoint_id, 201)
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except ModelEndpointValidationError as exc:
@@ -1826,6 +1829,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return _model_endpoint_response(saved, current.get("id"), 200)
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except ModelEndpointValidationError as exc:
@@ -1869,6 +1874,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return jsonify({"success": True}), 200
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except Exception as exc:

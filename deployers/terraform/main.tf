@@ -569,11 +569,27 @@ resource "azurerm_user_assigned_identity" "id" {
   resource_group_name = azurerm_resource_group.rg.name
 }
 
-# Grant Managed Identity access to Key Vault secrets (get/list)
-resource "azurerm_role_assignment" "kv_secrets_user_managed_identity" {
+# Keep the legacy read-only grant in Azure when upgrading, without managing or deleting it.
+removed {
+  from = azurerm_role_assignment.kv_secrets_user_managed_identity
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Leave assignment names provider-managed so existing manual Officer grants can be imported.
+resource "azurerm_role_assignment" "kv_secrets_officer_managed_identity" {
   scope                = azurerm_key_vault.kv.id
-  role_definition_name = "Key Vault Secrets User"
+  role_definition_name = "Key Vault Secrets Officer"
   principal_id         = azurerm_user_assigned_identity.id.principal_id
+}
+
+# A blank Key Vault client ID uses the web app's system-assigned identity.
+resource "azurerm_role_assignment" "kv_secrets_officer_app_service" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
 }
 
 # --- App Service Plan ---

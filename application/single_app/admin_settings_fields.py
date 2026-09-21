@@ -4918,9 +4918,10 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Vault connection",
             "label": "Managed Identity Client ID",
             "help": (
-                "Client ID of the user-assigned managed identity that holds Get, Set "
-                "and List on the vault. Leave blank to use the App Service "
-                "system-assigned identity."
+                "Client ID of the user-assigned managed identity. Leave blank to use "
+                "the App Service system-assigned identity. Assign Key Vault Secrets "
+                "Officer to that identity at vault scope; Secrets User cannot write. "
+                "Legacy access policies need Get, List, Set, and Delete."
             ),
             "default": "",
             "max_length": 120,
@@ -4937,9 +4938,11 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Vault connection",
             "label": "Test Key Vault connection",
             "help": (
-                "Lists secret properties with the identity above. Run this before "
-                "saving a vault change, because a wrong identity is only visible once "
-                "an agent tries to read a secret."
+                "Lists secrets, writes and reads a unique synthetic test secret, then "
+                "deletes it using the draft vault and identity above. Success requires "
+                "cleanup; existing secrets are never changed. The test secret expires "
+                "after ten minutes if cleanup fails, but may still need manual deletion. "
+                "Soft-deleted metadata follows vault retention; the test never purges."
             ),
             "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
         },

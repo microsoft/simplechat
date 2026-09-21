@@ -98,11 +98,17 @@ Someone who signs in successfully but holds none of the required roles reaches a
 
 ### Key Vault {#keyvault-section}
 
-Agents and actions hold credentials: API keys for the services they call, subscription keys for gateways in front of them. By default those live in the settings document. Enabling Key Vault moves them into Azure Key Vault instead, leaving only a reference behind, which is what deployments with a policy against secrets at rest outside a vault need.
+Agents, actions, and AI Connections hold credentials: API keys for the services they call, subscription keys for gateways in front of them. By default those live in the settings document. Enabling Key Vault stores supported application-managed credentials in Azure Key Vault instead, leaving only a reference behind, which is what deployments with a policy against secrets at rest outside a vault need.
 
 Treat enabling this as one-way. Secrets saved afterwards are referenced by name, so turning it back off leaves those references pointing at values the application can no longer read, and every agent and action depending on them stops working.
 
-The vault identity needs Get, Set and List on secrets. Use the Test Key Vault connection button before saving: a wrong identity is otherwise invisible until an agent tries to read a secret at runtime.
+Assign **Key Vault Secrets Officer at the vault scope** to the application's selected managed identity. **Key Vault Secrets User is read-only**: it can read existing secrets but cannot save new credentials. Leave the managed identity client ID blank for the App Service system-assigned identity, or supply the client ID of the attached user-assigned identity. Permissions on the deploying administrator do not give the application access. A vault using legacy access policies needs **Get, List, Set, and Delete** secret permissions.
+
+**Permission test (0.261.125).** Before saving a vault change, run **Test Key Vault connection** in either interface. The test uses the draft vault and identity, lists secret properties, writes a uniquely named `simplechat-connection-test-*` secret containing a synthetic value, reads it back, and deletes it. Success requires every stage, including cleanup; it never changes existing secrets or purges deleted secrets.
+
+The temporary secret expires after ten minutes, but expiration is not deletion. If cleanup cannot be confirmed, the result identifies the generated secret for an administrator to remove. Soft-deleted test metadata remains under the vault's retention policy. Do not remove other application secrets when cleaning up a test.
+
+A denied-write result or save error names the missing permission rather than suggesting that a successful list operation proves write access. Check the identity, vault-scoped role or access policy, propagation of a recent role assignment, and network restrictions. A failed secret write does not fall back to storing the submitted credential as plaintext. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
 **Expiration reminders.** Secret names written by SimpleChat are content hashes, so a Key Vault expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. Reminder tracking records the missing half: which user or group owns each secret, which action and field it backs, and who to contact. The tracked secret inventory in this section is the lookup from an opaque secret name back to that context.
 
@@ -114,7 +120,7 @@ SimpleChat does not send the reminder emails. It raises them in-app and emits an
 | --- | --- | --- | --- |
 | Store agent and action secrets in Key Vault | Writes agent and action credentials to Azure Key Vault and keeps only a reference in the settings document. | Off | `enable_key_vault_secret_storage`; capability toggle |
 | Key Vault Name | The vault resource name, not a URL. The endpoint suffix comes from the `AZURE_ENVIRONMENT` App Service setting. | Empty | `key_vault_name` |
-| Key Vault Managed Identity Client ID | Client ID of the user-assigned managed identity holding Get, Set and List on the vault. Blank uses the App Service system-assigned identity. | Empty | `key_vault_identity` |
+| Key Vault Managed Identity Client ID | Selects the user-assigned identity granted vault-scoped Secrets Officer, or equivalent Get, List, Set, and Delete secret permissions. Blank uses the App Service system-assigned identity. | Empty | `key_vault_identity` |
 | Track secret expiration dates | Records owner, source and field for each tracked secret, and warns before it expires. | Off | `enable_key_vault_secret_expiration_reminders`; capability toggle |
 | Default lead days | How far ahead of expiry the first reminder is raised. Accepts 1 to 3650. | 30 | `key_vault_secret_expiration_default_lead_days` |
 | Default reminder email | Recorded against secrets that name no owner of their own, for downstream automation to route to. SimpleChat does not email it. | Empty | `key_vault_secret_expiration_default_contact_email` |

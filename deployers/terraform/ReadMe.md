@@ -73,6 +73,54 @@ Terraform defaults to Azure AI Search Standard S1 with standard Semantic Ranker 
 
 Terraform also assigns the application managed identity the `SimpleChat Cosmos Throughput Operator` custom role on the deployed Cosmos account. It is limited to Cosmos account/database/container throughput discovery and mutation, throughput-operation reads, autoscale migration operations, and metrics reads; it does not replace Cosmos DB data-plane permissions. The optional Data Management source backup boost is capped at 10,000 RU/s and restores the captured capacity after completion, cancellation, failure, or durable recovery. Review the additional Cosmos cost before enabling it. Serverless, unsupported shared/dedicated throughput layouts, and capacity already above 10,000 RU/s remain portal-managed.
 
+## Key Vault secret-management permissions
+
+Implemented in application version **0.261.125** (`application/single_app/config.py`) and deployer version **1.0.32** (`deployers/version.txt`). Use Terraform **1.12.0 or later**, as required by `main.tf`.
+
+This deployer uses Key Vault RBAC and grants **Key Vault Secrets Officer**, built-in role ID `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`, at the **vault scope** to both supported application identities:
+
+| Terraform resource | Runtime identity |
+|---|---|
+| `azurerm_role_assignment.kv_secrets_officer_app_service` | App Service **system-assigned** principal, used when the application's Key Vault client ID is blank and no credential override is configured |
+| `azurerm_role_assignment.kv_secrets_officer_managed_identity` | The user-assigned identity attached by this deployment, used when its client ID is selected in the application's Key Vault settings |
+
+The app has both identities attached; the template does not set an `AZURE_CLIENT_ID` override. Use a user-assigned identity's **client ID** to select it in the application, but its **principal/object ID** when checking IAM. The separate `kv_secrets_officer_current_user` grant is for the deploying user/service principal and is not a substitute for either runtime grant.
+
+**Key Vault Secrets User** only allows reading secrets. Saving application credentials and running the write/read/delete connection probe require secret-management access, including get/list/set/delete. Officer supplies these operations without granting control over vault RBAC. Do not move the application assignments to resource-group or subscription scope. For a manually managed or code-only upgrade, assign Officer to the selected runtime identity under the vault's **Access control (IAM)**, leaving existing grants intact. This Terraform path does not configure legacy access policies; the Azure CLI deployer supports that mode.
+
+### State migration and existing Officer assignments
+
+The old `kv_secrets_user_managed_identity` resource is declared in a `removed` block with `destroy = false`. An upgrade forgets that read-only assignment from Terraform state **without deleting it in Azure**, and the new Officer resources have separate addresses. Do not move the old Secrets User state to an Officer resource: changing its role would require replacement of an immutable Azure assignment.
+
+Terraform cannot discover and adopt an equivalent manually created grant automatically. Before planning an upgrade, inspect Officer assignment metadata for the vault and each runtime principal:
+
+```powershell
+$vaultId = az keyvault show --name "<vault-name>" --resource-group "<resource-group>" --query id --output tsv
+$officerRoleId = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+az role assignment list --scope $vaultId --role $officerRoleId `
+    --fill-principal-name false --fill-role-definition-name false `
+    --query "[].{id:id,principalId:principalId,scope:scope,condition:condition}" --output json
+```
+
+Compare the returned principal IDs with **App Service > Identity** and the deployed user-assigned identity's overview. Only import an unconditional Officer assignment for that principal at the exact vault scope. An inherited grant, a secret-level grant, or the deploying administrator's grant is not the same resource. Conditional grants need administrator review.
+
+For each existing manual runtime grant, back up your Terraform state and import its **full role-assignment resource ID** into the corresponding new address. Run from `deployers\terraform`, using your normal variables file or `TF_VAR_*` environment:
+
+```powershell
+$systemOfficerAssignmentId = "<vault-resource-id>/providers/Microsoft.Authorization/roleAssignments/<system-officer-assignment-guid>"
+$userOfficerAssignmentId = "<vault-resource-id>/providers/Microsoft.Authorization/roleAssignments/<user-officer-assignment-guid>"
+terraform import -var-file=".\params\production.tfvars" azurerm_role_assignment.kv_secrets_officer_app_service $systemOfficerAssignmentId
+terraform import -var-file=".\params\production.tfvars" azurerm_role_assignment.kv_secrets_officer_managed_identity $userOfficerAssignmentId
+```
+
+Import only assignments that already exist and are not already managed at the intended address. Assignment names are intentionally left provider-managed so an imported GUID remains stable instead of forcing replacement. If a grant is already tracked under another Terraform address, coordinate its state ownership rather than importing the same grant twice.
+
+Review the next plan: the old User grant should be forgotten, not destroyed; imported Officer grants should not be replaced; missing Officer grants should be added. Keep manual grants rather than deleting them to work around `RoleAssignmentExists`. Neither an import nor these instructions authorizes applying an unreviewed infrastructure plan.
+
+After a reviewed deployment and RBAC propagation, test the chosen identity under **Admin Settings > Secrets**. The probe uses a synthetic temporary secret and deletes it afterward; soft-deleted metadata may remain under vault retention. Network restrictions still apply independently of IAM.
+
+Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py) checks both runtime assignments, vault scopes, and the non-destructive legacy state migration.
+
 ## Deploy initial container
 
 Terraform does not build the container image itself. It expects `image_name` to point to an image tag that already exists in your Azure Container Registry.
