@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.040)**
+
+#### Bug Fixes
+
+*   **Collaborative Prompts Now Receive Model Responses**
+    *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
+    *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
 ### **(v0.261.030)**
 
 #### Bug Fixes

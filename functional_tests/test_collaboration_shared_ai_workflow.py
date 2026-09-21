@@ -2,8 +2,8 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.250.224
-Implemented in: 0.241.068
+Version: 0.261.040
+Implemented in: 0.261.040
 
 This test ensures collaborative conversations route shared AI requests through
 the collaboration stream bridge, persist explicit AI-request metadata, and
@@ -53,6 +53,7 @@ def test_frontend_collaboration_stream_wiring():
     assert 'export function getCollaborativeTagSuggestions(' in messages_source
     assert 'export function buildCollaborativeInvocationTarget(' in messages_source
     assert 'export function shouldUseCollaborativeAiWorkflow(' in messages_source
+    assert "|| String(messageData.message || '').trim()" in messages_source
     assert 'function buildCollaborativeSendContext(' in messages_source
     assert "source_mode: 'explicit_tag'" in messages_source
     assert 'stripExplicitCollaborativeTargetText(' in messages_source
