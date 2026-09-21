@@ -1,16 +1,14 @@
 # functions_generated_file_exports.py
 """Format-neutral planning and rendering for generated chat file exports."""
 
-import hashlib
 import html
 import io
 import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, BinaryIO, Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Sequence, Tuple, overload
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, overload
 from xml.etree import ElementTree
 
 from defusedxml import ElementTree as DefusedElementTree
@@ -22,6 +20,26 @@ from functions_assistant_table_exports import (
     build_csv_output_clarification_guidance,
     extract_assistant_table_entries,
 )
+from functions_generated_export_contracts import (
+    GeneratedFileExportError,
+    GeneratedFileExportLimits,
+    GeneratedFileExportReadiness,
+    GeneratedFileExportRequest,
+    GeneratedFileExportSource,
+    GeneratedFileExportStream,
+    GeneratedRecordExportSource,
+    GeneratedStructuredValueExportSource,
+    GeneratedTextExportSource,
+)
+from functions_generated_export_registry import (
+    get_generated_file_export_catalog,
+    get_prepared_slide_deck_schema,
+    resolve_generated_file_export_format,
+)
+from functions_structured_file_renderers import _render_generated_file_source
+
+if TYPE_CHECKING:
+    from functions_office_file_renderers import OfficeRenderLimits
 
 
 GENERATED_FILE_FORMAT_CSV = 'csv'
@@ -38,125 +56,8 @@ SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
 ASSISTANT_TEXT_SUPPRESSING_FORMATS = {'json', 'xml'}
 GENERATED_FILE_PREVIEW_ROWS = 3
 REQUESTED_ARTIFACT_FORMATS = ('csv', 'json', 'xml', 'md', 'docx', 'pdf')
+# Preserve workflow admission separately from the pure renderer capability catalog.
 GENERATED_RECORD_EXPORT_FORMATS = {'exact_records_v1': ('json',)}
-
-
-@dataclass(frozen=True)
-class GeneratedFileExportRequest:
-    output_format: str
-    profile: str = 'exact_records_v1'
-
-
-class GeneratedRecordExportSource(Protocol):
-    kind: str
-    record_count: int
-
-    def iter_records(self) -> Iterator[Dict[str, Any]]: ...
-
-    def recheck(self) -> None: ...
-
-
-@dataclass
-class GeneratedFileExportStream:
-    file_content: BinaryIO
-    output_format: str
-    media_type: str
-    size_bytes: int
-    content_sha256: str
-    record_count: int
-    profile: str
-
-    def close(self) -> None:
-        self.file_content.close()
-
-    def __enter__(self) -> "GeneratedFileExportStream":
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
-
-
-def _validate_exact_json_value(value):
-    if type(value) is dict:
-        for key, child in value.items():
-            if type(key) is not str:
-                raise ValueError('Saved record object keys must be strings.')
-            _validate_exact_json_value(child)
-    elif type(value) is list:
-        for child in value:
-            _validate_exact_json_value(child)
-    elif type(value) not in {str, int, float, bool, type(None)}:
-        raise ValueError('Saved records must contain only finite JSON values.')
-
-
-def _build_generated_record_export(
-    source: GeneratedRecordExportSource, request: GeneratedFileExportRequest, *,
-    max_output_bytes: int, check: Optional[Callable[[], Any]],
-) -> GeneratedFileExportStream:
-    if (
-        not isinstance(request, GeneratedFileExportRequest)
-        or request.output_format not in GENERATED_RECORD_EXPORT_FORMATS.get(request.profile, ())
-        or source.kind != 'records'
-    ):
-        raise ValueError('This saved-output source and export format are not supported.')
-    if type(source.record_count) is not int or source.record_count < 0:
-        raise ValueError('The saved record count is invalid.')
-    if type(max_output_bytes) is not int or max_output_bytes < 1:
-        raise ValueError('A positive saved-output byte limit is required.')
-    stream = tempfile.TemporaryFile(mode='w+b')
-    digest = hashlib.sha256()
-    size = 0
-    checked_size = 0
-    count = 0
-    completed = False
-    encoder = json.JSONEncoder(sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
-
-    def write(fragment):
-        nonlocal size, checked_size
-        for offset in range(0, len(fragment), 65536):
-            chunk = fragment[offset:offset + 65536].encode('ascii')
-            if size + len(chunk) > max_output_bytes:
-                raise ValueError('The complete saved-output file exceeds the configured artifact size limit.')
-            stream.write(chunk)
-            digest.update(chunk)
-            size += len(chunk)
-            if check is not None and size - checked_size >= 65536:
-                check()
-                checked_size = size
-
-    try:
-        if check is not None:
-            check()
-        source.recheck()
-        write('[')
-        for record in source.iter_records():
-            if type(record) is not dict or count >= source.record_count:
-                raise ValueError('The saved record collection does not match its declared shape or count.')
-            _validate_exact_json_value(record)
-            if count:
-                write(',')
-            for fragment in encoder.iterencode(record):
-                write(fragment)
-            count += 1
-            if check is not None and count % 100 == 0:
-                check()
-        if count != source.record_count:
-            raise ValueError('The complete saved record count does not match the exported file.')
-        write(']')
-        source.recheck()
-        if check is not None:
-            check()
-        stream.seek(0)
-        completed = True
-        return GeneratedFileExportStream(
-            file_content=stream, output_format=request.output_format, media_type='application/json',
-            size_bytes=size, content_sha256=digest.hexdigest(), record_count=count, profile=request.profile,
-        )
-    except (TypeError, RecursionError) as exc:
-        raise ValueError('Saved records must contain only finite, bounded JSON values.') from exc
-    finally:
-        if not completed:
-            stream.close()
 
 
 STRUCTURED_ARTIFACT_FORMAT_MARKERS = {
@@ -770,10 +671,13 @@ def build_generated_file_export(
     pending_output_format: Optional[str] = None,
     analysis_result: Optional[Dict[str, Any]] = None,
     *,
-    source: GeneratedRecordExportSource,
+    source: GeneratedFileExportSource,
     export_request: GeneratedFileExportRequest,
     max_output_bytes: int,
     check: Optional[Callable[[], Any]] = None,
+    limits: Optional[GeneratedFileExportLimits] = None,
+    office_limits: Optional["OfficeRenderLimits"] = None,
+    image_resolver: Optional[Callable[[str], bytes]] = None,
 ) -> GeneratedFileExportStream: ...
 
 
@@ -796,20 +700,38 @@ def build_generated_file_export(
     pending_output_format: Optional[str] = None,
     analysis_result: Optional[Dict[str, Any]] = None,
     *,
-    source: Optional[GeneratedRecordExportSource] = None,
+    source: Optional[GeneratedFileExportSource] = None,
     export_request: Optional[GeneratedFileExportRequest] = None,
     max_output_bytes: Optional[int] = None,
     check: Optional[Callable[[], Any]] = None,
+    limits: Optional[GeneratedFileExportLimits] = None,
+    office_limits: Optional["OfficeRenderLimits"] = None,
+    image_resolver: Optional[Callable[[str], bytes]] = None,
 ) -> Optional[Dict[str, Any]] | GeneratedFileExportStream:
     """Render an explicit complete source, or preserve the existing response-export policy."""
     if source is not None or export_request is not None:
         if source is None or export_request is None or analysis_result is not None:
-            raise ValueError('An explicit export requires exactly one saved source and format request.')
+            raise GeneratedFileExportError(
+                'invalid_source', 'An explicit export requires exactly one saved source and format request.',
+            )
         if type(max_output_bytes) is not int or max_output_bytes < 1:
-            raise ValueError('A positive saved-output byte limit is required.')
-        return _build_generated_record_export(
-            source, export_request, max_output_bytes=max_output_bytes, check=check,
+            raise GeneratedFileExportError('invalid_limit', 'A positive saved-output byte limit is required.')
+        entry = resolve_generated_file_export_format(export_request, getattr(source, 'kind', None))
+        if entry.renderer_id == 'office':
+            # Keep binary codec loading off the legacy and structured-only startup paths.
+            from functions_generated_office_adapters import _render_generated_office_source
+
+            return _render_generated_office_source(
+                source, export_request, max_output_bytes=max_output_bytes, check=check, limits=limits,
+                office_limits=office_limits, image_resolver=image_resolver,
+            )
+        if office_limits is not None or image_resolver is not None:
+            raise GeneratedFileExportError('invalid_options', 'This export profile does not accept Office options.')
+        return _render_generated_file_source(
+            source, export_request, max_output_bytes=max_output_bytes, check=check, limits=limits,
         )
+    if office_limits is not None or image_resolver is not None:
+        raise GeneratedFileExportError('invalid_options', 'Office options require an explicit Office source request.')
     output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
         pending_output_format,
     )

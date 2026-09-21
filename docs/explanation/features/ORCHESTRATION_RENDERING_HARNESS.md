@@ -1,13 +1,14 @@
 # Gather / Reason / Render result foundation
 
-**Version: 0.261.125**
+**Version: 0.261.126**
 
-Implemented in version: **0.261.125**, recorded in
+Foundation implemented in version: **0.261.125**; shared export source bindings
+implemented in version: **0.261.126**, recorded in
 `application/single_app/config.py`.
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
-This implements the **M0 contract baseline and M1 retained-result facade only**,
-not the complete orchestration/rendering epic.
+This documents the **M0 contract baseline, M1 retained-result facade, and shared
+export source bindings**, not the complete orchestration/rendering epic.
 
 ## Purpose and availability
 
@@ -361,13 +362,52 @@ and source-change flag.
 result.** Final count/digest checks and the last access recheck run at exhaustion.
 A preview or a partially consumed iterator is not an integrity receipt.
 Exhausting an explicitly allowed partial result verifies that retained subset,
-not complete original coverage. Future export adapters must preserve this
-distinction rather than infer readiness from a record count.
+not complete original coverage. Export adapters preserve this distinction
+rather than infer readiness from a record count.
 
 `preview(max_items=3, max_bytes=4096)` returns an explicitly marked preview with
 `integrity_verified=False`. Collection previews contain bounded records;
 text/Markdown and structured/comparison previews contain text fragments. A JSON
 preview need not be a parseable complete JSON value.
+
+### Shared export source bindings
+
+`functions_orchestration_export_sources.py` adapts authorized full readers to the
+shared generated-file framework without adding a serializer or publishing a
+file. These service APIs do not enable orchestration Render tasks by themselves.
+
+- `build_orchestration_export_source(reader, *, columns=None, max_value_bytes=...)`
+  adapts an already authorized reader.
+- `open_orchestration_export_source(service, reference, *, columns=None,
+  max_value_bytes=..., require_current_sources=False)` opens through the result
+  service before adapting it. It never opts partial data into a complete export.
+- `build_saved_analysis_export_source(source, *, completeness, columns=None)`
+  retains the native saved-Analyze reader and authorization. Its owner must
+  validate native coverage into an explicit `Completeness` contract; a successful
+  legacy status or nonempty record list is not sufficient proof of full coverage.
+
+Records become a `records` source with explicit ordered public column names.
+Text and Markdown use their verified Unicode character counts and full chunk
+iterators, without a preliminary counting read. Structured and comparison values
+use the bounded `structured_value` source; source/evidence sets require an
+explicit supported representation rather than automatic flattening.
+
+Column selection is an allowlisted projection over the retained schema. It may
+select or reorder public fields, but it does not invent columns, flatten nested
+values, change row order, or replace the original result. The chosen projection
+must be part of the owning render specification and its retry identity.
+
+Create a fresh binding per render attempt. After rendering, the publisher must
+call `require_complete_consumption()` before accepting the stream. That method
+requires an exhausted, count-verified input and rechecks current access. Merely
+opening a reader, inspecting a preview, or stopping after its first row does not
+produce a receipt. Renderer/transport failures still require their own cleanup
+and publication guards.
+
+The integration coverage is in
+`functional_tests/test_orchestration_export_sources.py`, including two exports
+of 30,000 retained rows after restart, no producer replay, strict projections,
+partial-data refusal, current versus historical source policy, and revocation.
 
 ### Bounds and performance
 
@@ -410,9 +450,10 @@ prose or Compare output into Analyze. It does not modify native persistence,
 standalone generated artifacts, or workflow behavior.
 
 The existing `exact_records_v1` JSON export accepts a complete generic records
-reader without any new export profile. Other formats remain outside this PR;
-in particular, passing CSV to that unchanged profile still fails. Neither the
-facade nor the compatibility adapter invokes an export or publishes a file.
+reader without any new export profile. Other formats use explicit shared export
+profiles; passing CSV to the unchanged `exact_records_v1` profile still fails.
+Neither the result facade nor its compatibility adapter invokes an export or
+publishes a file automatically.
 
 See [Saved Analyze results](ANALYZE_RESULTS.md),
 [Chat orchestration](CHAT_ORCHESTRATION.md), and
