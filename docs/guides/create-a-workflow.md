@@ -139,8 +139,33 @@ and page scrolling and browser zoom remain available.
 Pan, zoom, collapse, and temporary box positions are not executable edits and
 are not saved. There is no autosave or implicit execution, Analyze invocation,
 publication, or readiness check when switching or configuring blocks.
-Cross-surface undo/redo is deferred to a future milestone-5 slice; ordinary
-text-field undo remains native.
+
+### Undo unsaved edits
+
+Starting in **0.261.123**, use the shared **Undo** and **Redo** buttons in a
+structured editor to reverse and restore edits across List and Flow. This
+includes common fields, block configuration, moves/removals, unfinished
+schema text and errors, and Repeat state fields. Typing during one field visit
+is one action; schema-builder and other compound changes stay together.
+
+Inside text fields, Ctrl/Cmd+Z keeps native text undo. Outside text fields,
+Ctrl/Cmd+Z undoes a workflow action; Ctrl/Cmd+Shift+Z or Ctrl+Y redoes one.
+Replay that removes blocks or affects other references asks for confirmation.
+Review the impact and repair any resulting invalid selectors before Save.
+Undo/Redo does not start work, reverse a publication, or change a saved run.
+
+The editor retains up to 100 actions across both directions and 32 MiB of
+additional accounted history data, not total browser memory. It announces
+when old steps are removed. An individually oversized edit asks before
+applying its complete contents and clearing history; **Keep draft unchanged**
+retains your previous work.
+
+Successful Save, discard, reload, or switching to a different workflow/scope
+starts a fresh history session. Failed saves keep your draft and history
+without replacing the original saved revision. Confirmed loss of authoring
+access clears protected history and requires reopening after access returns.
+Converting an ordered workflow starts empty v3 history; Undo does not reverse
+that explicit conversion.
 
 ## Preview the structure without changing execution
 

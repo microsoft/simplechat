@@ -990,6 +990,7 @@ export function WorkflowTaskFields({
     });
 
     return (
+        <div data-workflow-history-kind="task" data-workflow-history-owner={task.id}>
         <GlassPanel elevation="flat" className="space-y-4 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -1140,6 +1141,7 @@ export function WorkflowTaskFields({
                 </div>
             </details>
         </GlassPanel>
+        </div>
     );
 }
 

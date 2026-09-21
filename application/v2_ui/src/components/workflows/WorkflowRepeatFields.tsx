@@ -86,7 +86,8 @@ export function WorkflowRepeatFields({ node, workflow, options, onChange }: {
                         (output.kinds ?? [output.kind]).every((kind) => kind === contract.kind)),
                 })).filter((producer) => producer.outputs.length);
                 const schemaType = typeof contract.schema?.type === 'string' ? contract.schema.type : '';
-                return <fieldset key={stateRowIds[index]} className="min-w-0 space-y-3 rounded-lg bg-surface-sunken p-3">
+                return <fieldset key={stateRowIds[index]} data-workflow-history-row={stateRowIds[index]}
+                    className="min-w-0 space-y-3 rounded-lg bg-surface-sunken p-3">
                     <legend className="px-1 text-xs font-semibold text-text-2">{label}</legend>
                     <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                         <label className="text-xs text-text-2">

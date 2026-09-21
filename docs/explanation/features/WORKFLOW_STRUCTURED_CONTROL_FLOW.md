@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.116**
 
-Updated in version: **0.261.122**.
+Updated in version: **0.261.123**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -26,7 +26,8 @@ typed state and explicit manual grants after finite automatic batches.
 Version **0.261.121** adds [M5A read-only Flow inspection](WORKFLOW_FLOW_INSPECTION.md)
 over the same compiler and runtime. Version **0.261.122** adds M5B accessible
 List/Flow authoring of the same supported draft, without changing saved or
-frozen-run inspection into an editor. M4A itself did not admit loops.
+frozen-run inspection into an editor. Version **0.261.123** adds shared
+unsaved authoring Undo/Redo. M4A itself did not admit loops.
 
 ## Dependencies and compatibility
 
@@ -91,12 +92,15 @@ Surface and selection changes preserve unfinished schema text, field errors,
 typed bindings, and the original saved revision. A reference-breaking move or
 removal confirms concrete affected selectors, then retains those references
 until the author repairs them; it never silently cascades or retargets.
-Save remains explicit and blocked by unresolved errors. Cross-surface
-undo/redo is deferred to a future milestone-5 slice.
+Save remains explicit and blocked by unresolved errors. Version **0.261.123**
+adds shared Undo/Redo for common fields, structured edits and unfinished
+buffers across List and Flow. Text controls retain native undo, and replay
+that removes blocks or affects references requires confirmation.
 
 See the published [Create a workflow guide](https://microsoft.github.io/simplechat/guides/create-a-workflow/)
 for the editing procedure. `WORKFLOW_FLOW_AUTHORING.md` records the M5B
-architecture, offline coverage objectives, and deferred design work.
+architecture; `WORKFLOW_AUTHORING_UNDO_REDO.md` explains M5C history,
+retention and session boundaries.
 
 ### Skip an optional task
 

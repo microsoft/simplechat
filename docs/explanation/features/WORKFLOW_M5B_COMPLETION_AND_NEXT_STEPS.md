@@ -1,5 +1,10 @@
 # SimpleChat M5C plan and completed M5B handoff
 
+Historical checkpoint: M5C is now implemented in **0.261.123**. Use the
+[M5C completion and next-milestone handover](WORKFLOW_M5C_COMPLETION_AND_NEXT_STEPS.md)
+for current delivery status and remaining work. The sections below preserve
+the state and authorization boundaries at the M5B handoff.
+
 Prepared: **2026-09-20**. Repository: **microsoft/simplechat**.
 
 Completed M5B implementation version: **0.261.122**.

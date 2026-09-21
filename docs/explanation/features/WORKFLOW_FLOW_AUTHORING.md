@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.122**
 
+Updated for M5C in version: **0.261.123**
+
 Application version tracking: `application\single_app\config.py`.
 
 ## Purpose and scope
@@ -260,28 +262,29 @@ Continuation resets only batch usage, not lifetime identity or the original
 Collect order/lineage, native Analyze identity, accepted-partial limitations,
 `exact_records_v1` JSON, and publication completion observations are unchanged.
 
-## Planned M5C: cross-surface undo/redo
+## M5C: cross-surface undo/redo
 
-M5B visual authoring is implemented in **0.261.122**. Cross-surface undo/redo
-was deliberately outside that completed scope and is now named **M5C**.
-M5C is a plan, not an implemented feature or an approval to begin coding.
-M5B has no structural undo shortcut; text-input undo remains native.
-The M5C design must settle the following decisions before implementation:
+Version **0.261.123** adds shared **Undo** and **Redo** to eligible v3
+authoring. Common fields, structural/configuration edits, raw text, diagnostics
+and Repeat-row identities restore together across List and Flow. Typing groups
+by field visit; compound actions restore in one step. Redo retains exact
+allocated IDs instead of recreating blocks.
 
-| Design consideration | Required decision or boundary |
-| --- | --- |
-| Command granularity | Define atomic structural edits and coalescing for typing, schema changes, and typed bindings; preserve canonical IDs |
-| Buffers and parity | Decide how unfinished text and its diagnostics join history so List and Flow restore the same draft, not just its last valid values |
-| History size | Define bounded entry/memory retention and what happens when the bound is reached; no history limit is selected here |
-| Save, reload, and discard | Define history clearing/rebasing explicitly; undo must never roll back a server save or historical run or advance/replace the saved CAS baseline |
-| Conflict handling | Preserve unsaved intent without automatic overwrite/rebase; define history behavior after a rejected save or an explicit reload |
-| Scope and permissions | Define invalidation on workflow/scope changes and access loss; history must not restore protected data or bypass current editing permissions |
-| Selection and focus | Restore or recover a canonical selection and its configuration focus, including when undo removes the selected block |
-| View state | Keep geometry, viewport, and other temporary presentation choices out of executable-edit history |
+History retains at most 100 actions across both directions and 32 MiB of
+additional accounted data, not total browser heap. Oldest-step eviction is
+visible. A single oversized edit requires confirmation before applying its
+complete contents and clearing history; cancellation changes nothing.
+Reference-affecting replay and block removal require fresh confirmation.
 
-The detailed M5C plan and completed M5B handoff are in
-`WORKFLOW_M5B_COMPLETION_AND_NEXT_STEPS.md`. M5C's detailed scope still needs
-approval; no delivery date or runtime rollback capability is promised.
+Text controls retain native undo. Outside them, Ctrl/Cmd+Z,
+Ctrl/Cmd+Shift+Z and Ctrl+Y use workflow history. Save success, discard,
+reload and editor/scope changes reset the session. Ordinary failed saves
+retain history and the original CAS. Confirmed access loss clears protected
+history permanently for that editor instance.
+
+See [Workflow authoring undo and redo](WORKFLOW_AUTHORING_UNDO_REDO.md) for
+accounting, lifecycle, architecture and coverage. Layout is still view-only;
+history never rolls back a saved workflow, runtime action or publication.
 
 ## Other deferred work
 

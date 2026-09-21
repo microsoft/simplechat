@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.123)**
+
+#### New Features
+
+*   **Workflow Authoring Undo And Redo**
+    *   Restore unsaved structured-workflow edits across List and Flow, including common fields, block configuration, unfinished schema text and errors, and Repeat state fields. Redo preserves exact block identities.
+    *   Shared Undo/Redo controls group typing by field visit while text controls retain native undo. Replay that removes blocks or affects references requires fresh confirmation.
+    *   History retains up to 100 actions and 32 MiB of additional accounted data. Old-step eviction is visible; a single oversized edit asks before applying its complete contents and clearing history.
+    *   Failed saves retain the draft, history, and original saved revision. Save success, discard, session changes, and confirmed access loss clear history. Undo never rolls back a saved workflow, execution, or publication.
+    *   (Ref: `WorkflowEditorDialog.tsx`, `WorkflowAuthoringHistory.tsx`, `workflowAuthoringHistory.ts`, [Cross-surface workflow history](features/WORKFLOW_AUTHORING_UNDO_REDO.md))
+
 ### **(v0.261.115)**
 
 #### Bug Fixes

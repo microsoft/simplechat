@@ -15,17 +15,19 @@ interface PendingEdit {
 }
 
 export function useWorkflowAuthoring({
-    draft, options, readOnly, saving, onChange, onError,
+    draft, options, readOnly, saving, onChange, onError, getDraft, onRejected,
 }: {
     draft: WorkflowDefinition;
     options: WorkflowEditorOptions;
     readOnly: boolean;
     saving: boolean;
-    onChange: (workflow: WorkflowDefinition) => void;
+    onChange: (workflow: WorkflowDefinition, command: WorkflowEditCommand, selectedId: string) => boolean | void;
     onError: (message: string) => void;
+    getDraft?: () => WorkflowDefinition;
+    onRejected?: () => void;
 }) {
-    const latest = useRef({ draft, options, readOnly, saving, onChange, onError });
-    latest.current = { draft, options, readOnly, saving, onChange, onError };
+    const latest = useRef({ draft, options, readOnly, saving, onChange, onError, getDraft, onRejected });
+    latest.current = { draft, options, readOnly, saving, onChange, onError, getDraft, onRejected };
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [positions, setPositions] = useState(() => new Map<string, { x: number; y: number }>());
     const [collapsed, setCollapsed] = useState(() => new Set<string>());
@@ -44,24 +46,27 @@ export function useWorkflowAuthoring({
             return { status: 'rejected', message: 'Editing is unavailable while this workflow is read-only or being saved.' };
         }
         try {
-            return applyWorkflowEdit(current.draft, command, current.options, confirmed);
+            return applyWorkflowEdit(current.getDraft?.() ?? current.draft, command, current.options, confirmed);
         } catch (cause: unknown) {
             return { status: 'rejected', message: workflowErrorMessage(cause, 'The draft edit could not be applied. No changes were saved.') };
         }
     }, []);
 
     const execute = useCallback((command: WorkflowEditCommand, confirmed = false) => {
-        const current = latest.current;
+        const current = { ...latest.current, draft: latest.current.getDraft?.() ?? latest.current.draft };
         const result = evaluate(command, confirmed);
         if (result.status === 'rejected') {
+            current.onRejected?.();
             current.onError(result.message);
             return result.status;
         }
         current.onError('');
         if (result.status === 'confirmation_required') {
+            current.onRejected?.();
             setPending({ command, source: current.draft, message: result.message, impact: result.impact });
             return result.status;
         }
+        if (current.onChange(result.workflow, command, result.selectedId) === false) return 'rejected';
         const structural = command.type === 'add' || command.type === 'move' || command.type === 'remove';
         if (structural) {
             const before = new Map(workflowDraftStructure(current.draft).nodes.map((node) => [node.id, node.parent_id]));
@@ -76,19 +81,19 @@ export function useWorkflowAuthoring({
                     : 'Block removed from the unsaved draft. Existing references were not retargeted.');
         } else setSelectedId((selected) => selected ?? result.selectedId);
         latest.current = { ...current, draft: result.workflow };
-        current.onChange(result.workflow);
         return result.status;
     }, [evaluate, requestFocus]);
 
     const confirm = useCallback(() => {
         if (!pending) return;
-        if (pending.source !== latest.current.draft) {
+        const currentDraft = latest.current.getDraft?.() ?? latest.current.draft;
+        if (pending.source !== currentDraft) {
             const result = evaluate(pending.command, false);
             if (result.status === 'rejected') {
                 latest.current.onError(result.message);
                 setPending(null);
             } else {
-                setPending({ ...pending, source: latest.current.draft, impact: result.impact,
+                setPending({ ...pending, source: currentDraft, impact: result.impact,
                     message: 'The draft changed while confirmation was open. Review the current impact and confirm again; no edit has been applied.' });
             }
             return;
@@ -104,8 +109,38 @@ export function useWorkflowAuthoring({
         }
     }, [pending, requestFocus]);
 
+    const recover = useCallback((before: WorkflowDefinition, after: WorkflowDefinition, targetId?: string, focus = true) => {
+        const previous = workflowDraftStructure(before);
+        const next = workflowDraftStructure(after);
+        const targets = new Map(next.nodes.map((node) => [node.id, node]));
+        const old = previous.nodes.find((node) => node.id === (targetId ?? selectedId));
+        const siblings = old ? next.nodes.filter((node) => node.parent_id === old.parent_id) : [];
+        const id = targetId && targets.has(targetId) ? targetId
+            : old ? siblings.find((node) => node.order >= old.order)?.id ?? siblings.at(-1)?.id ??
+                (old.parent_id && targets.has(old.parent_id) ? old.parent_id : next.root_region_id)
+                : selectedId && targets.has(selectedId) ? selectedId : next.root_region_id;
+        const parents = new Map(previous.nodes.map((node) => [node.id, node.parent_id]));
+        setPositions((current) => new Map([...current].filter(([key]) =>
+            targets.has(key) && targets.get(key)?.parent_id === parents.get(key))));
+        setCollapsed((current) => new Set([...current].filter((key) => targets.has(key))));
+        setSelectedId(id);
+        if (focus) requestFocus(id);
+        else setFocusRequest(null);
+        setAnnouncement('');
+        latest.current = { ...latest.current, draft: after };
+    }, [selectedId, requestFocus]);
+
+    const reset = useCallback(() => {
+        setPending(null);
+        setSelectedId(null);
+        setPositions(new Map());
+        setCollapsed(new Set());
+        setFocusRequest(null);
+        setAnnouncement('');
+    }, []);
+
     return {
         selectedId, setSelectedId, positions, setPositions, collapsed, setCollapsed,
-        focusRequest, requestFocus, pending, cancel, confirm, execute, announcement,
+        focusRequest, requestFocus, pending, cancel, confirm, execute, announcement, recover, reset,
     };
 }
