@@ -52,9 +52,13 @@ def check(condition, message):
 with patch.object(socket.socket, "connect", no_network), patch.object(builtins, "__import__", guarded_import):
     for name in sys.argv[3:]:
         importlib.import_module(name)
-    from test_support.orchestration_results import ResultFixture, ROWS
-    from functions_orchestration_result_contracts import TaskResult
-    from functions_orchestration_results import OrchestrationResultAccess, ResultContractError
+    from dataclasses import replace
+    from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
+    from test_support.orchestration_results import ResultFixture, ROWS, complete, source
+    from functions_orchestration_result_contracts import ExternalSourceRef, TaskResult
+    from functions_orchestration_results import (
+        NamedOutput, OrchestrationResultAccess, OrchestrationResults, ResultContractError,
+    )
     fixture = ResultFixture(blob=True)
     saved = fixture.save(grounded=False)
     checkpoint = saved.to_dict()
@@ -64,6 +68,60 @@ with patch.object(socket.socket, "connect", no_network), patch.object(builtins, 
     check(records == ROWS, "Complete result changed during cold restart")
     check(records[-1]["id"] == "last", "Final record was not read")
     check(bool(fixture.blobs.uploads), "Required persistence disappeared under optimized Python")
+    bound = fixture.save(grounded=False, input_fingerprint="a" * 64)
+    recovered = fixture.restart().recover_task_result(
+        producer=fixture.producer, input_fingerprint="a" * 64,
+    )
+    check(recovered == bound, "Exact receipt recovery changed or disappeared")
+    external = ExternalSourceRef("web", "web_search", "server-ref", "personal:owner", source_revision="v1")
+    access = OrchestrationResultAccess(
+        user_id="owner", conversation_id="conversation-1",
+        read_conversation=fixture.service.access.read_conversation,
+        read_run=fixture.service.access.read_run,
+        external_source_catalog={"source": external},
+        external_source_authorizer=lambda reference, **context: external,
+    )
+    service = OrchestrationResults(fixture.service.store, access)
+    gathered = service.persist_task_result(
+        producer=fixture.producer, role="reason", status="complete",
+        outputs=[NamedOutput("prepared", "text-v1", "Retained external content.", complete(1))],
+        sources=[], origin="grounded", guard_token="server-attempt-token",
+        input_fingerprint="b" * 64, external_sources=("source",),
+    )
+    access.external_source_catalog.clear()
+    retained = service.recover_task_result(producer=fixture.producer, input_fingerprint="b" * 64)
+    metadata = service.open_result(retained.output("prepared")).metadata()
+    check(retained == gathered and metadata["external_source_count"] == 1, "External lineage was only cached")
+
+    native = ResultFixture()
+    original = native.producer
+    resumed_producer = replace(original, run_id="resumed-run", attempt_index=2)
+    native.add_producer(resumed_producer)
+    def checkpoints(producer, previous=None):
+        return analysis_checkpoints_for_orchestration(
+            producer.user_id, producer.conversation_id, producer.run_id, producer.step_id,
+            store=native.service.store, resume_run_id=previous,
+            authorize=lambda: native.service.access.authorize_producer(producer, for_write=True),
+            source_authorizer=lambda user_id, sources, require_snapshot: (
+                native.service.access.authorize_sources(sources, require_snapshot=require_snapshot)
+            ),
+        )
+    first = checkpoints(original)
+    first.prepare()
+    first.initialize({"operation": "analyze"}, [source()])
+    resumed = checkpoints(resumed_producer, original.run_id)
+    resumed.prepare()
+    resumed.initialize({"operation": "analyze"}, [source()])
+    result = native.service.persist_task_result(
+        producer=resumed_producer, role="reason", status="complete",
+        outputs=[NamedOutput("prepared", "text-v1", "Native retained data.", complete(1))],
+        sources=[source()], origin="grounded", guard_token=resumed.token,
+        input_fingerprint="c" * 64,
+    )
+    guard = native.service.store._analysis_guard(resumed.binding, required=True)
+    check(guard["resume_from"] == first.binding, "Generic saving reset the native resume binding")
+    recovered = native.restart().recover_task_result(producer=resumed_producer, input_fingerprint="c" * 64)
+    check(recovered == result, "Native resumed receipt was not recovered")
     try:
         OrchestrationResultAccess(
             user_id="owner", conversation_id="conversation-1",

@@ -14,12 +14,16 @@ from dataclasses import dataclass
 from content_screening.access import assert_evidence_available
 from functions_analysis_access import analysis_source_snapshot, authorize_analysis_sources
 from functions_orchestration_result_contracts import (
+    EXTERNAL_LINEAGE_VERSION,
+    MAX_EXTERNAL_SOURCES,
     MAX_DESCRIPTOR_BYTES,
     MAX_OUTPUTS,
     RESULT_KINDS,
+    RESULT_MANIFEST_VERSION,
     RESULT_STATES,
     TASK_RESULT_VERSION,
     Completeness,
+    ExternalSourceRef,
     InputSpec,
     ProducerIdentity,
     RecordColumn,
@@ -28,6 +32,7 @@ from functions_orchestration_result_contracts import (
     TaskResult,
     canonical_bytes,
     choice,
+    digest,
     identifier,
     integer,
     output_name,
@@ -94,18 +99,28 @@ class OrchestrationResultAccess:
     def __init__(
         self, *, user_id, conversation_id, read_conversation, read_run,
         source_resolver=None, source_metadata_reader=None,
+        external_source_catalog=None, external_source_authorizer=None,
     ):
         self.user_id = identifier(user_id)
         self.conversation_id = identifier(conversation_id)
         if not callable(read_conversation) or not callable(read_run):
             raise ResultContractError("result_access_reader_required")
-        for callback in (source_resolver, source_metadata_reader):
+        for callback in (source_resolver, source_metadata_reader, external_source_authorizer):
             if callback is not None and not callable(callback):
                 raise ResultContractError("result_access_reader_required")
         self.read_conversation = read_conversation
         self.read_run = read_run
         self.source_resolver = source_resolver
         self.source_metadata_reader = source_metadata_reader
+        catalog = {} if external_source_catalog is None else external_source_catalog
+        if type(catalog) is not dict or len(catalog) > MAX_EXTERNAL_SOURCES:
+            raise ResultContractError("result_external_catalog_invalid")
+        for alias, reference in catalog.items():
+            output_name(alias)
+            if type(reference) is not ExternalSourceRef:
+                raise ResultContractError("result_external_reference_untrusted")
+        self.external_source_catalog = dict(catalog)
+        self.external_source_authorizer = external_source_authorizer
 
     def authorize_producer(self, producer, *, for_write=False):
         if (
@@ -177,6 +192,39 @@ class OrchestrationResultAccess:
         )
         return {**checked, "source_snapshot_changed": checked["source_snapshot_changed"] or digest_changed}
 
+    def admit_external_sources(self, aliases):
+        if type(aliases) not in (list, tuple) or len(aliases) > MAX_EXTERNAL_SOURCES:
+            raise ResultContractError("result_external_catalog_invalid")
+        bindings = []
+        for alias in aliases:
+            output_name(alias)
+            reference = self.external_source_catalog.get(alias)
+            if type(reference) is not ExternalSourceRef:
+                raise ResultContractError("result_external_reference_untrusted")
+            bindings.append({"alias": alias, "reference": reference.to_dict()})
+        _external_bindings(bindings)
+        return bindings
+
+    def authorize_external_sources(self, producer, bindings, *, require_snapshot):
+        references = _external_bindings(bindings)
+        if references and self.external_source_authorizer is None:
+            raise ResultUnavailableError("result_external_authorizer_required")
+        changed = False
+        for reference in references:
+            current = self.external_source_authorizer(
+                reference, producer=producer, user_id=self.user_id, conversation_id=self.conversation_id,
+            )
+            if type(current) is not ExternalSourceRef or current.identity() != reference.identity():
+                raise ResultUnavailableError("result_external_source_unavailable")
+            snapshot_changed = any(
+                getattr(reference, field) is not None and getattr(current, field) != getattr(reference, field)
+                for field in ("content_sha256", "source_revision")
+            )
+            if snapshot_changed and require_snapshot:
+                raise ResultUnavailableError("result_external_snapshot_changed")
+            changed = changed or snapshot_changed
+        return changed, set(references)
+
 
 def _producer_arguments(producer):
     return (producer.user_id, producer.conversation_id, producer.run_id, producer.step_id)
@@ -196,8 +244,34 @@ def _sources(value):
     return snapshots
 
 
+def _external_bindings(value):
+    if type(value) is not list or len(value) > MAX_EXTERNAL_SOURCES:
+        raise ResultContractError("result_external_catalog_invalid")
+    aliases, identities, references = set(), set(), []
+    for binding in value:
+        if type(binding) is not dict or set(binding) != {"alias", "reference"}:
+            raise ResultContractError("result_external_catalog_invalid")
+        alias = output_name(binding["alias"])
+        reference = ExternalSourceRef.from_dict(binding["reference"])
+        if alias in aliases or reference.identity() in identities:
+            raise ResultContractError("result_external_duplicate_binding")
+        aliases.add(alias)
+        identities.add(reference.identity())
+        references.append(reference)
+    return tuple(references)
+
+
 def _lineage(value):
-    if type(value) is not dict or set(value) != _LINEAGE_FIELDS:
+    if type(value) is not dict:
+        raise ResultContractError("result_lineage_invalid")
+    expected_fields = _LINEAGE_FIELDS
+    external = ()
+    if value.get("version") == EXTERNAL_LINEAGE_VERSION:
+        expected_fields = expected_fields | {"version", "external_sources"}
+        external = _external_bindings(value.get("external_sources"))
+        if not external:
+            raise ResultContractError("result_lineage_invalid")
+    if set(value) != expected_fields:
         raise ResultContractError("result_lineage_invalid")
     choice(value["origin"], {"generated", "grounded"})
     choice(value["source_policy"], {"current", "snapshot"})
@@ -210,7 +284,7 @@ def _lineage(value):
     references = tuple(ResultRef.from_dict(item) for item in parents)
     if len(set(references)) != len(references):
         raise ResultContractError("result_lineage_invalid")
-    if (value["origin"] == "generated") != (not value["sources"] and not references):
+    if (value["origin"] == "generated") != (not value["sources"] and not references and not external):
         raise ResultContractError("result_lineage_invalid")
     if len(canonical_bytes(value)) > MAX_DESCRIPTOR_BYTES:
         raise ResultContractError("result_descriptor_too_large")
@@ -244,18 +318,38 @@ def _reference(producer, name, output, manifest_sha256):
 
 
 def _task_result(manifest, manifest_sha256):
-    if type(manifest) is not dict or set(manifest) != _MANIFEST_FIELDS or manifest["version"] != TASK_RESULT_VERSION:
+    if type(manifest) is not dict:
+        raise ResultContractError("result_manifest_invalid")
+    version = manifest.get("version")
+    expected_fields = _MANIFEST_FIELDS
+    if version == RESULT_MANIFEST_VERSION:
+        expected_fields = expected_fields | {"input_fingerprint", "output_order"}
+        if manifest.get("input_fingerprint") is not None:
+            digest(manifest["input_fingerprint"])
+    elif version != TASK_RESULT_VERSION:
+        raise ResultContractError("result_manifest_invalid")
+    if set(manifest) != expected_fields:
         raise ResultContractError("result_manifest_invalid")
     if len(canonical_bytes(manifest)) > MAX_DESCRIPTOR_BYTES:
         raise ResultContractError("result_descriptor_too_large")
     producer = ProducerIdentity.from_dict(manifest["producer"])
     _lineage(manifest["lineage"])
+    if version == TASK_RESULT_VERSION and "version" in manifest["lineage"]:
+        raise ResultContractError("result_manifest_invalid")
     outputs = manifest["outputs"]
     if type(outputs) is not dict or not 1 <= len(outputs) <= MAX_OUTPUTS:
         raise ResultContractError("result_manifest_invalid")
+    order = list(outputs)
+    if version == RESULT_MANIFEST_VERSION:
+        order = manifest["output_order"]
+        if (
+            type(order) is not list or any(type(name) is not str for name in order)
+            or len(order) != len(outputs) or set(order) != set(outputs)
+        ):
+            raise ResultContractError("result_manifest_invalid")
     return TaskResult(
         producer, manifest["role"], manifest["status"],
-        tuple(_reference(producer, name, output, manifest_sha256) for name, output in outputs.items()),
+        tuple(_reference(producer, name, outputs[name], manifest_sha256) for name in order),
     )
 
 
@@ -353,7 +447,10 @@ class OrchestrationResults:
         source_snapshots = {
             _source_key(source): {canonical_bytes(source)} for source in lineage["sources"]
         }
-        changed = checked["source_snapshot_changed"]
+        external_changed, external_sources = self.access.authorize_external_sources(
+            producer, lineage.get("external_sources", []), require_snapshot=current,
+        )
+        changed = checked["source_snapshot_changed"] or external_changed
         active = set() if active is None else active
         visited = {} if visited is None else visited
         for parent in parents:
@@ -374,15 +471,19 @@ class OrchestrationResults:
                     )
                 finally:
                     active.remove(key)
-            parent_changed, parent_snapshots = visited[key]
+            parent_changed, parent_snapshots, parent_external = visited[key]
             changed = changed or parent_changed
             for source_key, snapshots in parent_snapshots.items():
                 source_snapshots.setdefault(source_key, set()).update(snapshots)
-        return changed, source_snapshots
+            external_sources.update(parent_external)
+            if len(external_sources) > MAX_LINEAGE_RESULTS:
+                raise ResultContractError("result_lineage_limit")
+        return changed, source_snapshots, external_sources
 
     def persist_task_result(
         self, *, producer, role, status, outputs, sources, origin, guard_token,
-        upstream=(), source_policy="current", allow_partial_inputs=False,
+        upstream=(), source_policy="current", allow_partial_inputs=False, input_fingerprint=None,
+        external_sources=(),
     ):
         """Retain final data/diagnostics and return only immutable named descriptors.
 
@@ -399,6 +500,10 @@ class OrchestrationResults:
             raise ResultContractError("result_outputs_invalid")
         if any(type(output) is not NamedOutput for output in outputs):
             raise ResultContractError("result_outputs_invalid")
+        if input_fingerprint is not None:
+            digest(input_fingerprint)
+            if status not in {"complete", "partial"}:
+                raise ResultContractError("result_receipt_not_terminal")
         if len({output.name for output in outputs}) != len(outputs):
             raise ResultContractError("result_duplicate_output")
         if type(upstream) not in (list, tuple) or any(type(parent) is not ResultRef for parent in upstream):
@@ -407,12 +512,15 @@ class OrchestrationResults:
             "origin": origin, "source_policy": source_policy, "sources": deepcopy(sources),
             "upstream": [parent.to_dict() for parent in upstream], "allow_partial_inputs": allow_partial_inputs,
         }
+        external_bindings = self.access.admit_external_sources(external_sources)
+        if external_bindings:
+            lineage.update(version=EXTERNAL_LINEAGE_VERSION, external_sources=external_bindings)
         parents = _lineage(lineage)
         if any(parent.completeness.status == "partial" for parent in parents) and any(
             output.completeness.status == "complete" for output in outputs
         ):
             raise ResultContractError("result_partial_promoted")
-        _, source_snapshots = self._authorize_lineage(producer, lineage, for_write=True)
+        _, source_snapshots, _ = self._authorize_lineage(producer, lineage, for_write=True)
         if status == "complete" and any(output.completeness.status != "complete" for output in outputs):
             raise ResultContractError("result_incomplete")
         self.store.prepare_orchestration_result(*_producer_arguments(producer), guard_token=guard_token)
@@ -491,15 +599,53 @@ class OrchestrationResults:
             "version": TASK_RESULT_VERSION, "producer": producer.to_dict(), "role": role, "status": status,
             "lineage": lineage, "outputs": stored_outputs,
         }
+        if input_fingerprint is not None or external_bindings:
+            manifest.update(
+                version=RESULT_MANIFEST_VERSION, input_fingerprint=input_fingerprint,
+                output_order=list(stored_outputs),
+            )
         encoded = canonical_bytes(manifest)
         result = _task_result(manifest, hashlib.sha256(encoded).hexdigest())
         reference = budget.save_section(manifest, save, max_section_bytes=MAX_DESCRIPTOR_BYTES)
         if reference["sha256"] != result.outputs[0].manifest_sha256:
             raise ResultContractError("result_digest_invalid")
         self._authorize_lineage(producer, lineage, for_write=True)
-        self.store.commit_orchestration_result(*_producer_arguments(producer), reference, guard_token=guard_token)
+        receipt_options = (
+            {"producer": producer, "input_fingerprint": input_fingerprint} if input_fingerprint is not None else {}
+        )
+        self.store.commit_orchestration_result(
+            *_producer_arguments(producer), reference, guard_token=guard_token, **receipt_options,
+        )
         self._authorize_lineage(producer, lineage, for_write=True)
         return result
+
+    def recover_task_result(self, *, producer, input_fingerprint):
+        """Recover one committed terminal result before replaying any producer work."""
+        self.access.authorize_producer(producer)
+        digest(input_fingerprint)
+        receipt = self.store.load_orchestration_result_receipt(producer, input_fingerprint)
+        if receipt is None:
+            self.access.authorize_producer(producer)
+            return None
+        manifest_sha256, manifest = receipt
+        task = _task_result(manifest, manifest_sha256)
+        if task.producer != producer or task.status not in {"complete", "partial"}:
+            raise ResultContractError("result_receipt_invalid")
+        self._authorize_lineage(producer, manifest["lineage"])
+        for reference in task.outputs:
+            if reference.completeness.status not in {"complete", "partial"}:
+                continue
+            reader = self.open_result(reference, allow_partial=True)
+            if reference.kind in _COLLECTION_KINDS:
+                values = reader.iter_items()
+            elif reference.kind in _TEXT_KINDS:
+                values = reader.iter_text()
+            else:
+                values = reader.iter_value_bytes()
+            for _ in values:
+                pass
+        self._authorize_lineage(producer, manifest["lineage"])
+        return task
 
     def open_result(self, reference, *, allow_partial=False, require_current_sources=False):
         if type(reference) is not ResultRef or type(require_current_sources) is not bool:
@@ -564,22 +710,31 @@ class OrchestrationResultReader:
         self.columns = reference.columns
         self.completeness = reference.completeness
         self._source_snapshots = {}
+        self._external_sources = set()
         self._changed = False
 
     def recheck(self):
         self.reference.completeness.require_readable(allow_partial=self._allow_partial)
         self._service._load_manifest(self.reference)
-        self._changed, self._source_snapshots = self._service._authorize_lineage(
+        self._changed, self._source_snapshots, self._external_sources = self._service._authorize_lineage(
             self.reference.producer, self._manifest["lineage"], force_current=self._require_current_sources,
         )
 
     def metadata(self):
         self.recheck()
-        return {
+        metadata = {
             "reference": self.reference.to_dict(), "source_count": len(self._source_snapshots),
             "source_snapshot_changed": self._changed, "origin": self._manifest["lineage"]["origin"],
             "source_policy": self._manifest["lineage"]["source_policy"],
         }
+        if self._manifest["version"] == RESULT_MANIFEST_VERSION:
+            metadata["input_fingerprint"] = self._manifest["input_fingerprint"]
+        if self._external_sources:
+            metadata.update(
+                external_source_count=len({reference.identity() for reference in self._external_sources}),
+                external_sources=deepcopy(self._manifest["lineage"].get("external_sources", [])),
+            )
+        return metadata
 
     def _collection(self):
         output = self._manifest["outputs"][self.reference.output_name]

@@ -13,6 +13,12 @@ TASK_RESULT_VERSION = "orchestration-task-result-v1"
 RESULT_REF_VERSION = "orchestration-result-ref-v1"
 INPUT_BINDING_VERSION = "orchestration-input-binding-v1"
 COMPLETENESS_VERSION = "orchestration-completeness-v1"
+RESULT_MANIFEST_VERSION = "orchestration-result-manifest-v2"
+RESULT_RECEIPT_VERSION = "orchestration-result-receipt-v1"
+EXTERNAL_SOURCE_VERSION = "orchestration-external-source-v1"
+EXTERNAL_LINEAGE_VERSION = "orchestration-lineage-v2"
+EXTERNAL_SOURCE_TYPES = frozenset({"web", "url", "deep_research", "agent", "action", "fact_memory"})
+MAX_EXTERNAL_SOURCES = 64
 RESULT_KINDS = frozenset({
     "records-v1", "text-v1", "markdown-v1", "structured-v1",
     "evidence-set-v1", "source-set-v1", "comparison-v1",
@@ -27,6 +33,7 @@ MAX_DESCRIPTOR_BYTES = 128 * 1024
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _COLUMN_TYPES = frozenset({"string", "integer", "number", "boolean", "object", "array", "json"})
+_OPAQUE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 
 
 class ResultContractError(ValueError):
@@ -171,6 +178,48 @@ class ProducerIdentity(_Contract):
     @classmethod
     def from_dict(cls, value):
         return cls(**cls._values(value))
+
+
+def result_receipt_binding(producer, input_fingerprint):
+    if type(producer) is not ProducerIdentity:
+        raise ResultContractError("result_producer_invalid")
+    digest(input_fingerprint)
+    return {
+        "version": RESULT_RECEIPT_VERSION, "producer": producer.to_dict(),
+        "input_fingerprint": input_fingerprint,
+    }
+
+
+@dataclass(frozen=True)
+class ExternalSourceRef(_Contract):
+    source_type: str
+    capability_id: str
+    reference_id: str
+    audience: str
+    content_sha256: str | None = None
+    source_revision: str | None = None
+    VERSION = EXTERNAL_SOURCE_VERSION
+
+    def __post_init__(self):
+        choice(self.source_type, EXTERNAL_SOURCE_TYPES)
+        for value in (self.capability_id, self.reference_id, self.audience):
+            if type(value) is not str or _OPAQUE_REFERENCE.fullmatch(value) is None:
+                raise ResultContractError("result_external_identity_invalid")
+        if self.content_sha256 is None and self.source_revision is None:
+            raise ResultContractError("result_external_snapshot_required")
+        if self.content_sha256 is not None:
+            digest(self.content_sha256)
+        if self.source_revision is not None:
+            identifier(self.source_revision, limit=256)
+            if any(ord(character) < 32 or ord(character) == 127 for character in self.source_revision):
+                raise ResultContractError("result_external_snapshot_invalid")
+
+    @classmethod
+    def from_dict(cls, value):
+        return cls(**cls._values(value))
+
+    def identity(self):
+        return self.source_type, self.capability_id, self.reference_id, self.audience
 
 
 def validate_result_role(producer, role):
