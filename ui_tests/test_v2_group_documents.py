@@ -289,8 +289,8 @@ def test_late_scope_reads(group_documents_ui, path, action):
 
 def test_late_progress_is_discarded(group_documents_ui):
     ui = group_documents_ui
-    open_documents(ui)
     ui.page.clock.install()
+    open_documents(ui)
     ui.defer_next("GET", "/api/group_documents/processing-report")
     with ui.page.expect_request(lambda request: urlsplit(request.url).path == "/api/group_documents/processing-report"):
         ui.page.clock.fast_forward(5000)
@@ -306,16 +306,25 @@ def test_late_progress_is_discarded(group_documents_ui):
 
 def test_poll_replaces_restricted_metadata(group_documents_ui):
     ui = group_documents_ui
-    open_documents(ui)
-    row(ui, "Indexing source").get_by_role("checkbox").check()
-    expect(ui.page.get_by_text("Approved metadata for Indexing source.", exact=True)).to_be_visible()
     ui.page.clock.install()
+    open_documents(ui)
+    with ui.page.expect_response(
+        lambda response: urlsplit(response.url).path == "/api/group_documents/processing-report"
+    ) as initial_detail:
+        row(ui, "Indexing source").get_by_role("checkbox").check()
+    initial_detail.value.finished()
+    expect(ui.page.get_by_role("button", name="Refresh document details", exact=True)).to_be_enabled()
+    expect(ui.page.get_by_text("Approved metadata for Indexing source.", exact=True)).to_be_visible()
     held = restricted({
         **ui.documents["group-a"][5], "percentage_complete": 100,
         "content_screening": {"state": "pending_review", "available": False, "finding_count": 1},
     })
     ui.detail_overrides[("group-a", "processing-report")] = held
-    ui.page.clock.fast_forward(5000)
+    with ui.page.expect_response(
+        lambda response: urlsplit(response.url).path == "/api/group_documents/processing-report"
+    ) as polled:
+        ui.page.clock.fast_forward(5000)
+    polled.value.finished()
     expect(row(ui, "processing-report.pdf").get_by_role("checkbox")).to_be_disabled()
     expect(ui.page.get_by_text("Approved metadata for Indexing source.", exact=True)).to_have_count(0)
     expect(explorer(ui).locator('input[type="checkbox"]:checked')).to_have_count(0)

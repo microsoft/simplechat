@@ -40,6 +40,30 @@ an arbitrary group.
 page. A selected group stays selected when searching or changing result pages.
 Section URLs include the group ID, so a bookmark opens the intended group.
 
+### Browse group documents
+
+Native read-only document browsing is available from version **0.261.128**.
+Choose **Documents** to search by filename/title, use shared-workspace tags and
+classification filters, sort results, and page through the group's sources.
+Counts describe the whole visible workspace rather than the current page.
+
+Inspect a document for available metadata, its owning/shared-group relationship,
+processing or screening status, and **Version history**. Pending shares and held
+sources remain restricted and cannot be selected for chat. On narrow screens,
+use **Filters** and the details toggle to open the same controls in dialogs.
+
+Select eligible documents and choose **Chat** to carry their group/document
+context into the existing chat experience. Current access is checked again
+before those sources are adopted. This does not create a group-only retrieval
+mode or override an existing conversation's workspace lock.
+
+Use **Classic** for uploads, metadata/tag changes, sharing or approval, deletion,
+reprocessing, and downloads. Those management operations are not yet part of
+the native group explorer. Group-specific saved views and content previews are
+also deferred.
+
+### Use group tools and manage the workspace
+
 Use **Workflows** for the existing native workflow editor and run history.
 **Actions** includes native **Call agent** configuration and local caller
 bindings. Other sections are explicitly marked **Classic** while their native
@@ -58,8 +82,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-This release does not replace group Documents, other classic editors, group
-membership administration, or public workspace pages.
+This release does not replace group document management, other classic editors,
+group membership administration, or public workspace pages.
 
 ## Use the classic workspace
 
