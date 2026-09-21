@@ -1100,6 +1100,27 @@ export function workflowForSave(
     return normalizeWorkflowDefinition(next, scope);
 }
 
+// Mirrors the server's authored revision fields; the compiler contract test checks parity.
+export const WORKFLOW_DEFINITION_FIELDS = [
+    'name', 'description', 'task_prompt', 'tasks', 'runner_type', 'chat_capabilities_enabled',
+    'trigger_type', 'is_enabled', 'schedule', 'error_handling', 'document_action', 'analyze',
+    'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'm365_run_as_user_id',
+    'url_access_enabled', 'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
+    'definition_version', 'reference_inputs', 'durable_execution', 'flow', 'limits',
+] as const;
+
+const flowPreviewFields = new Set<string>([
+    ...WORKFLOW_DEFINITION_FIELDS, 'id', 'definition_revision', 'user_id', 'group_id',
+]);
+
+export function workflowForFlowPreview(definition: WorkflowDefinition): WorkflowDefinition {
+    const preview = { ...definition };
+    for (const key of Object.keys(preview)) {
+        if (!flowPreviewFields.has(key)) delete preview[key];
+    }
+    return preview;
+}
+
 export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null): string[] {
     if (!original) {
         return [];

@@ -2,6 +2,8 @@
 
 Fixed in version: **0.261.122**.
 
+React V2 authoring integration fixed in version: **0.261.124**.
+
 The application version is recorded in
 `application/single_app/config.py`. This integration combines Development's
 Microsoft 365 authorization, guarded Custom model clients, and authoritative
@@ -18,6 +20,25 @@ same outbound policy as the current Custom model clients.
 
 The final integration restores the missing merge intent without replacing
 Development's newer security and persistence contracts with older implementations.
+
+## React V2 List and Flow authoring
+
+The subsequent React V2 base integration retains M5B visual authoring and M5C
+cross-surface Undo/Redo alongside the Microsoft 365 account selector. The original
+pre-rebase React V2 snapshot distinguishes new target-side changes from historical
+conflicts caused by replayed commits; unchanged target files do not replace the
+already integrated Development implementations.
+
+The new history session originally classified `m365_run_as_user_id` as protected
+runtime metadata, rejecting Run as changes in structured workflows. Adding it to
+the authored-field list in `WorkflowAuthoringHistory.tsx` lets selection, explicit
+clearing, Undo, and Redo use the same guarded draft transaction as other fields.
+The Flow preview projection in `workflowEditor.ts` also retains this authored
+field, keeping its field inventory and definition digest consistent with Save
+and the server's `WORKFLOW_DEFINITION_FIELDS` rather than silently omitting it.
+`WorkflowEditorDialog.tsx` retains both the account selector and the new authoring
+components. History does not change scope, saved revisions, runtime metadata, or
+Microsoft 365 consent.
 
 ## Microsoft 365 and durable workflows
 
@@ -114,6 +135,14 @@ iteration-scoped checkpoints, crash recovery, and conversation reuse.
 ownership without a false terminal result.
 `functional_tests/test_workflow_m365_run_as_client.js` and the native Microsoft
 365 browser tests cover authoring and cancellation-only authorization waits.
+`functional_tests/test_workflow_authoring_session.js` covers Run as selection and
+clearing from absent, empty, and saved values, exact history replay, and the saved
+revision boundary. `ui_tests/test_v2_workflow_authoring_history.py` verifies the
+same account edits across List and Flow against the real built interface.
+`functional_tests/test_workflow_authoring_history.py` compiles real history-produced
+payloads and verifies that preview retains the selected account and authored digest.
+The Flow authoring browser suite also verifies that switching groups replaces
+the eligible Run as account list while discarding the prior group's delayed preview.
 
 `functional_tests/test_ai_connection_embedding_custom_merge.py` covers the
 Custom embedding integration. Existing route-policy, settings, provider, content

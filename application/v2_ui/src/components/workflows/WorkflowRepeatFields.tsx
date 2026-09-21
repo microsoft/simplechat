@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowDecisionFields, WorkflowFlowSourcePicker } from './WorkflowConditionEditor';
+import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
 import {
     analyzeWorkflowFlow,
     enclosingFlowRepeats,
@@ -27,6 +28,9 @@ export function WorkflowRepeatFields({ node, workflow, options, onChange }: {
     options: WorkflowEditorOptions;
     onChange: (node: WorkflowRepeatUntilNode) => void;
 }) {
+    const drafts = useWorkflowFieldDrafts();
+    const draftOwner: WorkflowFieldDraftOwner = ['node', node.id];
+    const stateRowIds = drafts.repeatStateRowIds(draftOwner, node.state.length);
     const maximumRef = useRef<HTMLInputElement>(null);
     const initialMaximumUnset = useRef(!Number.isFinite(node.max_iterations));
     const lastStateRef = useRef<HTMLInputElement>(null);
@@ -82,7 +86,8 @@ export function WorkflowRepeatFields({ node, workflow, options, onChange }: {
                         (output.kinds ?? [output.kind]).every((kind) => kind === contract.kind)),
                 })).filter((producer) => producer.outputs.length);
                 const schemaType = typeof contract.schema?.type === 'string' ? contract.schema.type : '';
-                return <fieldset key={index} className="min-w-0 space-y-3 rounded-lg bg-surface-sunken p-3">
+                return <fieldset key={stateRowIds[index]} data-workflow-history-row={stateRowIds[index]}
+                    className="min-w-0 space-y-3 rounded-lg bg-surface-sunken p-3">
                     <legend className="px-1 text-xs font-semibold text-text-2">{label}</legend>
                     <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                         <label className="text-xs text-text-2">
@@ -135,7 +140,7 @@ export function WorkflowRepeatFields({ node, workflow, options, onChange }: {
                         aria-label={`${label} use initial schema`} onClick={() => update(index, {
                             ...slot, output_contract: { ...contract, schema: structuredClone(initialOutput.schema) },
                         })}>Use initial output's declared schema</GlassButton> : null}
-                    <WorkflowDecisionFields contract={{
+                    <WorkflowDecisionFields draftOwner={draftOwner} draftPath={['state', stateRowIds[index], 'decision']} contract={{
                         ...contract, allow_partial: contract.allow_partial === true,
                         require_complete_coverage: contract.require_complete_coverage === true,
                     }} onChange={(next) => update(index, { ...slot, output_contract: { ...next, kind: contract.kind } })} />
@@ -178,7 +183,10 @@ export function WorkflowRepeatFields({ node, workflow, options, onChange }: {
                             : 'Partial data is rejected by default. Manual continuation cannot bypass validation or authorize missing data.'}
                     </p>
                     <GlassButton size="sm" variant="danger" aria-label={`Remove ${label.toLowerCase()}`}
-                        onClick={() => onChange({ ...node, state: node.state.filter((_, position) => position !== index) })}>
+                        onClick={() => {
+                            drafts.removeRepeatStateRow(draftOwner, stateRowIds[index]);
+                            onChange({ ...node, state: node.state.filter((_, position) => position !== index) });
+                        }}>
                         <Trash2 size={14} /> Remove state
                     </GlassButton>
                 </fieldset>;

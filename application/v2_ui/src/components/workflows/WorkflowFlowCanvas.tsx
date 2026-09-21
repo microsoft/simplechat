@@ -1,14 +1,14 @@
 // WorkflowFlowCanvas.tsx
-// A local, read-only renderer. Geometry and selection never reach the workflow editor.
+// A local presentation-only renderer. Semantic edits belong to the owning editor.
 
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction, type TouchEvent } from 'react';
 import {
     Handle, MarkerType, Position, ReactFlow,
     type Edge, type Node, type NodeChange, type NodeProps, type ReactFlowInstance,
 } from '@xyflow/react';
 import { GlassButton } from '../ui/primitives';
-import { layoutWorkflowFlow, visibleWorkflowEdges, visibleWorkflowNode } from '../../lib/workflowFlowLayout';
-import { workflowInspectionBindings, type WorkflowFlowProjection, type WorkflowInspectionDetails, type WorkflowInspectionNode } from '../../lib/workflowInspection';
+import { layoutWorkflowFlow, visibleWorkflowEdges, visibleWorkflowNode, type WorkflowFlowStructure } from '../../lib/workflowFlowLayout';
+import { workflowInspectionBindings, type WorkflowInspectionDetails, type WorkflowInspectionNode } from '../../lib/workflowInspection';
 import type { WorkflowExecutionRecord } from '../../lib/workflowExecutionHistory';
 import '@xyflow/react/dist/style.css';
 import './WorkflowFlowView.css';
@@ -65,13 +65,13 @@ const DefinitionNode = memo(function DefinitionNode({ data }: NodeProps<FlowNode
             </button> : null}
         </div>
         {!data.container ? <p className="workflow-flow-node-note">
-            {node.kind === 'repeat_until' ? `Post-body Until; ${node.max_iterations} rounds per batch`
-                : node.kind === 'for_each' ? `At most ${node.max_items} actual inputs`
+            {node.kind === 'repeat_until' ? node.max_iterations === undefined ? 'Choose an explicit finite batch' : `Post-body Until; ${node.max_iterations} rounds per batch`
+                : node.kind === 'for_each' ? node.max_items === undefined ? 'Choose an actual-input limit' : `At most ${node.max_items} actual inputs`
                     : node.has_condition ? node.kind === 'task' ? 'Run when condition' : 'Typed condition'
                         : `${node.inputs_count} inputs; ${node.outputs_count} outputs`}
         </p> : null}
         {data.container && node.kind === 'repeat_until' ? <p className="workflow-flow-boundary-note">
-            Post-body Until; {node.max_iterations} rounds per automatic batch
+            {node.max_iterations === undefined ? 'Choose an explicit finite batch' : `Post-body Until; ${node.max_iterations} rounds per automatic batch`}
         </p> : null}
         <Handle type="source" position={Position.Bottom} id="out" isConnectable={false} />
         <Handle type="source" position={Position.Bottom} id="body" className="workflow-flow-body-handle" isConnectable={false} />
@@ -80,10 +80,16 @@ const DefinitionNode = memo(function DefinitionNode({ data }: NodeProps<FlowNode
 
 const nodeTypes = { workflow: DefinitionNode };
 
+function preserveBrowserPinch(event: TouchEvent<HTMLDivElement>) {
+    if (event.touches.length > 1) event.stopPropagation();
+}
+
 export function WorkflowFlowCanvas({
     projection, collapsed, selectedId, statuses, observations, details, focusRequest, positions, setPositions, onSelect, onCollapse, onInspect,
+    sourceKind = 'saved', diagramLabel = 'Read-only workflow diagram', inspectLabel = 'Inspect selected node',
+    bindingRelationships, helpText,
 }: {
-    projection: WorkflowFlowProjection;
+    projection: WorkflowFlowStructure;
     collapsed: ReadonlySet<string>;
     selectedId: string | null;
     statuses: ReadonlyMap<string, string>;
@@ -95,6 +101,11 @@ export function WorkflowFlowCanvas({
     onSelect: (id: string) => void;
     onCollapse: (id: string) => void;
     onInspect: () => void;
+    sourceKind?: 'saved' | 'draft' | 'run';
+    diagramLabel?: string;
+    inspectLabel?: string;
+    bindingRelationships?: { sourceId: string; label: string }[];
+    helpText?: string;
 }) {
     const instance = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -185,12 +196,12 @@ export function WorkflowFlowCanvas({
             data: {
                 record, container: box.container, collapsed: collapsed.has(box.id), chosen: selectedId === box.id,
                 tabStop: (focusedId && boxMap.has(focusedId) ? focusedId : boxes[0]?.id) === box.id,
-                status: statuses.get(box.id) ?? (projection.source.kind === 'run' ? 'Not loaded' : 'Definition'),
+                status: statuses.get(box.id) ?? (sourceKind === 'run' ? 'Not loaded' : 'Definition'),
                 onSelect, onFocus, onNavigate, onCollapse, registerButton,
             },
         };
     }), [boxes, records, positions, collapsed, selectedId, focusedId, boxMap, statuses, dragPan,
-        projection.source.kind, onSelect, onFocus, onNavigate, onCollapse, registerButton]);
+        sourceKind, onSelect, onFocus, onNavigate, onCollapse, registerButton]);
 
     const edges: Edge[] = useMemo(() => {
         const connections = new Map<string, { edge: Edge; labels: Set<string> }>();
@@ -222,9 +233,10 @@ export function WorkflowFlowCanvas({
         }
         const control = [...connections.values()].map(({ edge }) => edge);
         const selected = selectedId ? records.get(selectedId) : undefined;
-        if (!details || !selected) return control;
+        if (!selected || !details && !bindingRelationships) return control;
         const dataConnections = new Map<string, { edge: Edge; count: number }>();
-        for (const [index, binding] of workflowInspectionBindings(selected, details).entries()) {
+        const bindings = bindingRelationships ?? (details ? workflowInspectionBindings(selected, details) : []);
+        for (const [index, binding] of bindings.entries()) {
             const source = visibleWorkflowNode(binding.sourceId, records, collapsed);
             const target = visibleWorkflowNode(selected.id, records, collapsed);
             if (source === target) continue;
@@ -232,7 +244,8 @@ export function WorkflowFlowCanvas({
             const existing = dataConnections.get(key);
             if (existing) {
                 existing.count += 1;
-                existing.edge.label = `${existing.count} declared bindings (this page)`;
+                existing.edge.label = bindingRelationships ? `${existing.count} declared relationships`
+                    : `${existing.count} declared bindings (this page)`;
             } else {
                 dataConnections.set(key, { count: 1, edge: {
                     id: `binding:${selectedId}:${index}`, source, target, type: 'smoothstep',
@@ -244,7 +257,7 @@ export function WorkflowFlowCanvas({
             }
         }
         return [...control, ...[...dataConnections.values()].map(({ edge }) => edge)];
-    }, [projection, collapsed, records, observations, details, selectedId]);
+    }, [projection, collapsed, records, observations, details, selectedId, bindingRelationships]);
 
     const changePositions = useCallback((changes: NodeChange<FlowNode>[]) => {
         const moved = changes.filter((change) => change.type === 'position' && change.position !== undefined);
@@ -287,16 +300,18 @@ export function WorkflowFlowCanvas({
             <GlassButton size="sm" onClick={() => pan(0, 120)}>Pan view up</GlassButton>
             <GlassButton size="sm" onClick={() => pan(0, -120)}>Pan view down</GlassButton>
             <GlassButton size="sm" onClick={() => setPositions(new Map())}>Reset layout</GlassButton>
-            <GlassButton size="sm" disabled={!selectedId} onClick={onInspect}>Inspect selected node</GlassButton>
+            <GlassButton size="sm" disabled={!selectedId} onClick={onInspect}>{inspectLabel}</GlassButton>
         </div>
         <p className="text-xs text-text-3" id={helpId}>
-            Arrow keys move focus through the structure; Enter selects a node. Left returns to its region and Right enters or expands it.
-            Solid arrows show control flow. Dashed arrows show only the selected page of typed bindings, not additional execution paths.
-            A recorded-path label comes only from that exact instance's saved branch decision.
-            On touch screens, use the pan buttons; page scrolling and browser zoom remain available.
+            {helpText ?? 'Arrow keys move focus through the structure; Enter selects a node. Left returns to its region and Right enters or expands it. Solid arrows show control flow. Dashed arrows show only the selected page of typed bindings, not additional execution paths. A recorded-path label comes only from that exact instance\'s saved branch decision. On touch screens, use the pan buttons; page scrolling and browser zoom remain available.'}
         </p>
         {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
-        <div ref={containerRef} role="group" className="workflow-flow-canvas" aria-label="Read-only workflow diagram" aria-describedby={helpId}>
+        <div ref={containerRef} role="group" className="workflow-flow-canvas" aria-label={diagramLabel} aria-describedby={helpId}
+            onWheelCapture={(event) => {
+                // XYFlow cancels Ctrl+wheel before applying its disabled-zoom filter.
+                if (event.ctrlKey) event.stopPropagation();
+            }}
+            onTouchStartCapture={preserveBrowserPinch} onTouchMoveCapture={preserveBrowserPinch}>
             <ReactFlow<FlowNode, Edge>
                 id={`workflow-flow-${helpId.replaceAll(':', '')}`}
                 nodes={nodes} edges={edges} nodeTypes={nodeTypes}

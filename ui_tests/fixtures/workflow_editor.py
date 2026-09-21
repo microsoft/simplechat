@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.122
+Version: 0.261.124
 Implemented in: 0.261.108
 """
 
@@ -232,6 +232,10 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 {"id": OWNER_ID, "display_name": "Workspace editor"},
                 {"id": "group-reviewer", "display_name": "Group reviewer"},
             ],
+            SECOND_GROUP_ID: [
+                {"id": OWNER_ID, "display_name": "Workspace editor"},
+                {"id": "group-beta-reviewer", "display_name": "Beta group reviewer"},
+            ],
         }
         self.workflow_runs = {
             DURABLE_WORKFLOW_ID: [{
@@ -426,8 +430,10 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 self._json(route, editor_options())
         elif path == "/api/workflows/m365-run-as-users" and method == "GET":
             if entry.query.get("scope") == ["group"]:
-                assert entry.query.get("group_id") == [GROUP_ID], entry
-                users = self.m365_run_as_users[GROUP_ID]
+                group_id = entry.query.get("group_id", [None])[0]
+                assert group_id in self.group_workflows, entry
+                assert entry.query == {"scope": ["group"], "group_id": [group_id]}, entry
+                users = self.m365_run_as_users[group_id]
             else:
                 assert entry.query == {"scope": ["personal"]}, entry
                 users = self.m365_run_as_users["personal"]

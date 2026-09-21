@@ -1,7 +1,7 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.121
+Version: 0.261.122
 Implemented in: 0.261.121
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
@@ -81,18 +81,29 @@ def open_editor(ui, workflow_id=FLOW_WORKFLOW_ID, **options):
     ui.open(f"/workspace/workflows?workflow_id={workflow_id}", **options)
     editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
     expect(editor).to_be_visible()
-    expect(editor.get_by_role("button", name="Show Flow preview", exact=True)).to_be_visible()
+    surface = editor.get_by_role("group", name="Workflow authoring surface", exact=True)
+    expect(surface.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(surface.get_by_role("button", name="Flow authoring", exact=True)).to_be_visible()
     assert not ui.preview_requests, "Flow preview must remain opt-in for existing List users."
     return editor
 
 
 def show_preview(editor):
-    editor.get_by_role("button", name="Show Flow preview", exact=True).click()
-    view = editor.get_by_role("region", name="Workflow Flow", exact=True)
-    expect(view.get_by_text("Unsaved draft", exact=True)).to_be_visible()
-    expect(view.get_by_role("button", name="Refresh Flow", exact=True)).to_be_enabled()
+    editor.get_by_role("button", name="Flow authoring", exact=True).click()
+    view = editor.get_by_role("region", name="Workflow Flow authoring", exact=True)
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Compiler-validated draft\."))).to_be_visible()
     expect(node_button(view, "root")).to_be_visible()
     return view
+
+
+def select_authoring_node(view, node_id):
+    node = node_button(view, node_id)
+    node.focus()
+    node.press("Enter")
+    expect(node).to_have_attribute("aria-pressed", "true")
+    fields = view.get_by_role("region", name="Selected block configuration", exact=True)
+    expect(fields.get_by_text(f"Canonical ID: {node_id}", exact=True)).to_be_visible()
+    return fields
 
 
 def open_run_flow(ui, *, workflow_name=FLOW_NAME, workflow_id=FLOW_WORKFLOW_ID, run_id=FLOW_RUN_ID, group=False):
@@ -224,7 +235,7 @@ def test_v1_v2_have_no_implicit_flow_conversion_or_preview_request(workflow_flow
     for name in ("Quarterly review workflow", "Legacy version one"):
         expect(page.get_by_role("button", name=f"View Flow for {name}", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
-    expect(page.get_by_role("button", name="Show Flow preview", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Flow authoring", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Enable structured control flow", exact=True)).to_be_visible()
     page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role("button", name="Close", exact=True).click()
     expect(page.get_by_role("dialog")).to_have_count(0)
@@ -339,13 +350,13 @@ def test_layout_collapse_and_keyboard_focus_do_not_change_definition_revision_or
     expect(page.get_by_role("dialog")).to_have_count(0)
 
 
-def test_list_preview_updates_without_save_or_cas_changes_and_uses_desktop_columns(workflow_flow_ui):
+def test_list_flow_authoring_updates_without_save_or_cas_changes_and_uses_desktop_columns(workflow_flow_ui):
     ui = workflow_flow_ui
     original = copy.deepcopy(ui.personal_workflows[FLOW_WORKFLOW_ID])
     editor = open_editor(ui)
     view = show_preview(editor)
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Later live evaluation (Task)")
-    select_node(view, "evaluate")
+    select_authoring_node(view, "evaluate")
     wrapper = view.locator(".react-flow__node[data-id='evaluate']")
     original_transform = wrapper.evaluate("element => getComputedStyle(element).transform")
     requests_before_move = len(ui.preview_requests)
@@ -353,17 +364,19 @@ def test_list_preview_updates_without_save_or_cas_changes_and_uses_desktop_colum
     expect(wrapper).not_to_have_css("transform", original_transform)
     moved_transform = wrapper.evaluate("element => getComputedStyle(element).transform")
     assert len(ui.preview_requests) == requests_before_move
+    editor.get_by_role("button", name="List authoring", exact=True).click()
     task = editor.get_by_role("region", name="Later live evaluation block", exact=True)
     task.get_by_label("Task name", exact=True).fill("Edited only in List")
+    view = show_preview(editor)
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Edited only in List (Task)")
     expect(wrapper).to_have_css("transform", moved_transform)
     assert ui.preview_requests[-1].body["definition"]["definition_revision"] == original["definition_revision"]
     assert ui.personal_workflows[FLOW_WORKFLOW_ID] == original
     assert not ui.workflow_writes
-    list_box = editor.get_by_role("group", name="Main region", exact=True).bounding_box()
-    flow_box = view.bounding_box()
-    assert list_box and flow_box and list_box["x"] + list_box["width"] <= flow_box["x"] + 1
-    expect(editor.get_by_role("button", name="Hide Flow preview", exact=True)).to_be_visible()
+    flow_box = view.locator(".workflow-flow-canvas").bounding_box()
+    fields_box = view.get_by_role("region", name="Selected block configuration", exact=True).bounding_box()
+    assert flow_box and fields_box and flow_box["x"] + flow_box["width"] <= fields_box["x"] + 1
+    expect(editor.get_by_role("button", name="List authoring", exact=True)).to_be_visible()
 
 
 def test_opening_and_layout_of_unchanged_preview_does_not_make_editor_dirty(workflow_flow_ui):
@@ -373,27 +386,33 @@ def test_opening_and_layout_of_unchanged_preview_does_not_make_editor_dirty(work
     view = show_preview(editor)
     for name in ("Zoom in", "Zoom out", "Fit Flow", "Reset layout"):
         view.get_by_role("button", name=name, exact=True).click()
-    editor.get_by_role("button", name="Hide Flow preview", exact=True).click()
-    expect(flow_region(page)).to_have_count(0)
+    editor.get_by_role("button", name="List authoring", exact=True).click()
+    expect(editor.get_by_role("region", name="Workflow Flow authoring", exact=True)).to_have_count(0)
     editor.get_by_role("button", name="Close", exact=True).click()
     expect(page.get_by_role("dialog")).to_have_count(0)
     assert ui.personal_workflows[FLOW_WORKFLOW_ID] == original
 
 
-def test_invalid_list_draft_retains_edits_but_removes_last_valid_graph(workflow_flow_ui):
+def test_invalid_authoring_draft_retains_blocks_without_stale_control_paths(workflow_flow_ui):
     ui = workflow_flow_ui
     original = copy.deepcopy(ui.personal_workflows[FLOW_WORKFLOW_ID])
     editor = open_editor(ui)
     view = show_preview(editor)
     expect(node_button(view, "evaluate")).to_have_count(1)
-    instructions = editor.get_by_role("region", name="Later live evaluation block", exact=True).get_by_label("Instructions", exact=True)
+    instructions = select_authoring_node(view, "evaluate").get_by_label("Instructions", exact=True)
     instructions.fill("")
-    expect(view.get_by_role("alert")).to_contain_text("Task instructions must be nonempty")
-    expect(view.locator("[data-workflow-node-id]")).to_have_count(0)
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Unvalidated draft\."))).to_be_visible()
+    expect(editor.get_by_role("status").filter(
+        has_text="Resolve these validation issues before saving:",
+    )).to_contain_text("Later live evaluation needs instructions.")
+    expect(node_button(view, "evaluate")).to_have_count(1)
+    expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
     expect(instructions).to_have_value("")
     assert ui.personal_workflows[FLOW_WORKFLOW_ID] == original
     instructions.fill("A repaired but still unsaved instruction.")
     expect(node_button(view, "evaluate")).to_have_count(1)
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Compiler-validated draft\."))).to_be_visible()
+    expect(editor.get_by_role("status").filter(has_text="needs instructions.")).to_have_count(0)
     expect(view.get_by_role("alert")).to_have_count(0)
     assert ui.preview_requests[-1].body["definition"]["definition_revision"] == original["definition_revision"]
 
@@ -402,12 +421,15 @@ def test_delayed_draft_projection_cannot_replace_a_newer_list_edit(workflow_flow
     ui, page = workflow_flow_ui, workflow_flow_ui.page
     editor = open_editor(ui)
     view = show_preview(editor)
+    fields = select_authoring_node(view, "evaluate")
     ui.hold_next_flow(source_kind="draft")
     with page.expect_request(lambda request: request.url.endswith("/flow-preview")):
-        editor.get_by_role("region", name="Later live evaluation block", exact=True).get_by_label("Task name", exact=True).fill("Older queued draft")
-    expect(view.get_by_text("Checking the current List draft...", exact=True)).to_be_visible()
-    editor.get_by_role("region", name="Older queued draft block", exact=True).get_by_label("Task name", exact=True).fill("Newest retained draft")
+        fields.get_by_label("Task name", exact=True).fill("Older queued draft")
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Validating draft\."))).to_be_visible()
+    expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
+    fields.get_by_label("Task name", exact=True).fill("Newest retained draft")
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Newest retained draft (Task)")
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Compiler-validated draft\."))).to_be_visible()
     assert len(ui.held_flow_responses) == 1
     ui.release_flow_responses()
     page.wait_for_load_state("networkidle")
@@ -419,23 +441,29 @@ def test_delayed_valid_preview_cannot_resurrect_a_graph_for_an_invalid_draft(wor
     ui, page = workflow_flow_ui, workflow_flow_ui.page
     editor = open_editor(ui)
     view = show_preview(editor)
+    fields = select_authoring_node(view, "evaluate")
     ui.hold_next_flow(source_kind="draft")
     with page.expect_request(lambda request: request.url.endswith("/flow-preview")):
-        editor.get_by_role("region", name="Later live evaluation block", exact=True).get_by_label(
-            "Task name", exact=True,
-        ).fill("Pending valid draft")
-    expect(view.get_by_text("Checking the current List draft...", exact=True)).to_be_visible()
-    instructions = editor.get_by_role("region", name="Pending valid draft block", exact=True).get_by_label(
-        "Instructions", exact=True,
-    )
+        fields.get_by_label("Task name", exact=True).fill("Pending valid draft")
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Validating draft\."))).to_be_visible()
+    expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
+    instructions = fields.get_by_label("Instructions", exact=True)
     instructions.fill("")
-    expect(view.get_by_role("alert")).to_contain_text("Task instructions must be nonempty")
-    expect(view.locator("[data-workflow-node-id]")).to_have_count(0)
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Unvalidated draft\."))).to_be_visible()
+    expect(editor.get_by_role("status").filter(
+        has_text="Resolve these validation issues before saving:",
+    )).to_contain_text("Pending valid draft needs instructions.")
+    expect(node_button(view, "evaluate")).to_have_count(1)
+    expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
     assert len(ui.held_flow_responses) == 1
     ui.release_flow_responses()
     page.wait_for_load_state("networkidle")
-    expect(view.get_by_role("alert")).to_contain_text("Task instructions must be nonempty")
-    expect(view.locator("[data-workflow-node-id]")).to_have_count(0)
+    expect(view.get_by_role("status").filter(has_text=re.compile(r"^Unvalidated draft\."))).to_be_visible()
+    expect(editor.get_by_role("status").filter(
+        has_text="Resolve these validation issues before saving:",
+    )).to_contain_text("Pending valid draft needs instructions.")
+    expect(node_button(view, "evaluate")).to_have_count(1)
+    expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
     expect(instructions).to_have_value("")
 
 
@@ -1082,25 +1110,19 @@ def test_mobile_defaults_to_list_and_optional_flow_has_no_page_overflow(workflow
     assert not ui.preview_requests
     ui.assert_no_overflow()
     view = show_preview(editor)
-    expect(main).to_have_count(1)
     expect(main).to_be_hidden()
-    expect(view.get_by_role("button", name="Structure list", exact=True)).to_have_attribute("aria-pressed", "true")
-    expect(view.get_by_role("list", name="Read-only workflow structure", exact=True)).to_be_visible()
-    expect(view.locator(".workflow-flow-canvas")).to_have_count(0)
-    inspector = select_node(view, "evaluate")
-    view.get_by_role("button", name="Inspect selected node", exact=True).click()
-    expect(inspector).to_be_focused()
-    inspector.get_by_role("button", name="Return to selected node", exact=True).click()
-    expect(node_button(view, "evaluate")).to_be_focused()
-    view.get_by_role("button", name="Flow diagram", exact=True).click()
-    expect(view.get_by_role("button", name="Flow diagram", exact=True)).to_have_attribute("aria-pressed", "true")
     expect(view.locator(".workflow-flow-canvas")).to_be_visible()
-    select_node(view, "evaluate")
+    fields = select_authoring_node(view, "evaluate")
+    view.get_by_role("button", name="Configure selected block", exact=True).click()
+    expect(fields.get_by_label("Task name", exact=True)).to_be_focused()
+    fields.get_by_role("button", name="Return to selected block", exact=True).click()
+    expect(node_button(view, "evaluate")).to_be_focused()
+    expect(editor.get_by_label("Task name", exact=True)).to_have_count(1)
     view.get_by_role("button", name="Fit Flow", exact=True).click()
     ui.assert_no_overflow()
     assert editor.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
     assert page.evaluate("matchMedia('(prefers-reduced-motion: reduce)').matches")
     assert all(asset.startswith("/static/") for asset in ui.loaded_assets)
-    editor.get_by_role("button", name="Hide Flow preview", exact=True).click()
-    expect(editor.get_by_role("region", name="Workflow Flow", exact=True)).to_have_count(0)
+    editor.get_by_role("button", name="List authoring", exact=True).click()
+    expect(editor.get_by_role("region", name="Workflow Flow authoring", exact=True)).to_have_count(0)
     expect(main).to_be_visible()

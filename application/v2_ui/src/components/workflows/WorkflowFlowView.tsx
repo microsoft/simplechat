@@ -381,7 +381,8 @@ export function WorkflowFlowView({
             </div>
             {view === 'flow' ? <WorkflowFlowCanvas
                 key={projection.source.kind === 'draft' ? 'draft-layout' : sourceKey}
-                projection={projection} collapsed={collapsed} selectedId={selectedId} statuses={statuses} observations={observations}
+                projection={projection} sourceKind={projection.source.kind}
+                collapsed={collapsed} selectedId={selectedId} statuses={statuses} observations={observations}
                 positions={positions} setPositions={setPositions}
                 details={bindingDetails} focusRequest={focusRequest} onSelect={selectNode} onCollapse={toggleCollapse}
                 onInspect={() => inspectorRef.current?.focus()} /> : <div className="space-y-2">

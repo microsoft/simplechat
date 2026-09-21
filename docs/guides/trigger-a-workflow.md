@@ -113,6 +113,9 @@ for that run, even if someone later edited the saved workflow or reused a node
 name. Missing snapshots report an error instead of showing today's definition.
 **Hide Flow for this run** returns to the execution list.
 
+This viewer remains read-only in **0.261.122**. **Flow authoring** edits a draft
+in the workflow editor, never a run's frozen definition or saved evidence.
+
 Select a node to inspect its exact execution and attempts. One bounded
 metadata page is loaded; **Not loaded** does not mean Pending or Completed.
 **No execution recorded** is an explicit lookup result, not an empty successful
@@ -138,7 +141,8 @@ indexed-ready, and graph refresh does not perform a new readiness check.
 On narrow screens, **Structure list** is the initial read-only presentation;
 **Flow diagram** enables the optional picture. Both use the same inspector.
 For configuration without run evidence, use the
-[saved or unsaved-draft view]({{ '/guides/create-a-workflow/' | relative_url }}#preview-the-structure-without-changing-execution).
+[saved-definition viewer]({{ '/guides/create-a-workflow/' | relative_url }}#preview-the-structure-without-changing-execution).
+Open the workflow editor separately when you intend to change an unsaved draft.
 
 ## Inspect loop progress
 
