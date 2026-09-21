@@ -12,9 +12,11 @@ Implemented in version: **0.261.126**, recorded in
 
 The shared group shell was implemented in version: **0.261.127**, also recorded
 in `application/single_app/config.py`. It integrates the existing native group
-workflows and Call agent tools into My Workspace's layout. Group Documents and
-other unported editors remain explicit classic handoffs. Public pages and public
-context endpoints are not implemented by this change.
+workflows and Call agent tools into My Workspace's layout.
+[Native read-only group Documents](V2_GROUP_DOCUMENT_BROWSING.md) was added in
+**0.261.128**. Group document management and other unported editors remain
+explicit classic handoffs. Public pages and public context endpoints are not
+implemented by these slices.
 
 ### Dependencies
 
@@ -87,9 +89,9 @@ membership.
 
 These fields are UI eligibility hints, not grants. Resource endpoints must still
 authorize the caller, explicit scope, actual object, operation, ownership/share
-relationship, and current policy. Native document and other resource adapters
-are later work. In particular, the current group query contract advertises only
-`_ts`, `file_name`, and `title` sorting, without facets or standing views.
+relationship, and current policy. The 0.261.128 group read contract advertises
+all eight explorer sort fields, facets, and standing views. Group document
+mutations and additional resource adapters remain later work.
 
 ## Client activation contract
 
@@ -196,11 +198,17 @@ labels, and desktop/mobile light/dark layouts. Existing workflow suites use a
 real selector-and-navigation helper, preserving their authoring, read-only
 inspection, and runtime assertions.
 
+`ui_tests/test_v2_personal_document_scope.py` provides the personal-document
+integration baseline added in version **0.261.128**. It checks that an unrelated
+active group does not retarget personal reads, search/tag filters, action
+availability, or metadata updates.
+
 Route-policy tests include the new endpoint. Existing personal bootstrap,
 workspace, and browser journeys protect compatibility. These isolated tests do
 not claim connectivity to a live Azure tenant or prove all future native
 document operations.
 
 The projection loads one group's metadata and policy, not its collections,
-statistics, or all membership pages. Shared documents, public UI, native
-management, and additional per-resource scope adapters remain separate milestones.
+statistics, or all membership pages. Native group reads use separate explicit
+document adapters. Public UI, group document mutations, native management, and
+additional resource adapters remain separate milestones.

@@ -209,6 +209,11 @@ export interface WorkspaceDocument {
     /** Entries are `"<user id>,<approval status>"`, not bare ids. */
     shared_user_ids?: string[];
     shared_approval_status?: 'owner' | 'approved' | 'not_approved' | 'none' | string;
+    /** Group ownership is independent of the authenticated viewer's personal ownership. */
+    group_id?: string;
+    owner_group_id?: string;
+    owner_group_name?: string;
+    shared_group_active_id?: string;
     owner_id?: string;
     user_id?: string;
     created_from_chat_upload?: boolean;
@@ -237,6 +242,13 @@ export interface DocumentListResponse {
     total_count?: number;
     file_downloads_enabled?: boolean;
     needs_legacy_update_check?: boolean;
+}
+
+export interface DocumentVersionsResponse {
+    document_id?: string;
+    group_id?: string;
+    revision_family_id?: string;
+    versions?: WorkspaceDocument[];
 }
 
 /**

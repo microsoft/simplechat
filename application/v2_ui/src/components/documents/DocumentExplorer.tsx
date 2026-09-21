@@ -18,8 +18,12 @@ import {
     buildContextHandoffParams,
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
-import { PERSONAL_SCOPE } from '../../lib/chatContext';
+import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { isScreeningAvailable, isScreeningBusy } from '../../lib/contentScreening';
+import {
+    documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
+    supportedDocumentQuery, type DocumentReadAdapter,
+} from '../../lib/documentReadAdapter';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -42,6 +46,7 @@ import {
     documentStatus,
     moveSelection,
     normalizeSortField,
+    normalizePageSize,
     pruneSelection,
     toggleSelectAll,
     toggleSort,
@@ -63,10 +68,6 @@ import {
     downloadPersonalDocument,
     downloadPersonalDocuments,
     extractPersonalDocumentMetadata,
-    fetchPersonalDocument,
-    fetchPersonalDocumentFacets,
-    fetchPersonalDocumentTags,
-    fetchPersonalDocuments,
     reprocessPersonalDocumentExtraction,
     updatePersonalDocumentMetadata,
     uploadPersonalDocuments,
@@ -76,6 +77,7 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { toast } from '../../stores/toastStore';
 import { EmptyState, GlassButton, Skeleton } from '../ui/primitives';
+import { Modal } from '../ui/Modal';
 import { errorMessage } from '../workspace/useSectionResource';
 import { ExplorerRail } from './ExplorerRail';
 import {
@@ -143,12 +145,30 @@ function saveBlob(blob: Blob, fileName: string) {
     URL.revokeObjectURL(url);
 }
 
-export function DocumentExplorer() {
+interface DocumentExplorerProps {
+    reader?: DocumentReadAdapter;
+    canChat?: boolean;
+    interactionDisabled?: boolean;
+    onOpenClassic?: () => void;
+}
+
+export function DocumentExplorer({
+    reader = PERSONAL_DOCUMENT_READER, ...props
+}: DocumentExplorerProps) {
+    const viewerId = useBootstrapStore((state) => state.data?.user.id);
+    if (!viewerId) return null;
+    return <ScopedDocumentExplorer key={documentExplorerScopeKey(viewerId, reader.scope)} reader={reader} {...props} />;
+}
+
+function ScopedDocumentExplorer({
+    reader, canChat = true, interactionDisabled = false, onOpenClassic,
+}: DocumentExplorerProps & { reader: DocumentReadAdapter }) {
     const navigate = useNavigate();
     const features = useBootstrapStore((state) => state.data?.features);
     const settings = useBootstrapStore((state) => state.data?.settings);
     const userSettings = useUserSettingsStore((state) => state.settings);
     const saveUserSettings = useUserSettingsStore((state) => state.update);
+    const readOnly = reader.scope.kind === 'group';
 
     const storedPrefs = userSettings.v2DocumentsPrefs;
     const prefs: DocumentExplorerPrefs = useMemo(
@@ -163,16 +183,16 @@ export function DocumentExplorer() {
     );
 
     const savedViews = useMemo(
-        () => parseSavedViews(userSettings.v2DocumentSavedViews),
-        [userSettings.v2DocumentSavedViews],
+        () => readOnly ? [] : parseSavedViews(userSettings.v2DocumentSavedViews),
+        [readOnly, userSettings.v2DocumentSavedViews],
     );
 
-    const [query, setQuery] = useState<DocumentQuery>(() => ({
+    const [query, setQuery] = useState<DocumentQuery>(() => supportedDocumentQuery({
         ...DEFAULT_DOCUMENT_QUERY,
-        pageSize: prefs.pageSize,
+        pageSize: normalizePageSize(prefs.pageSize),
         sortBy: normalizeSortField(prefs.sortBy),
         sortOrder: prefs.sortOrder === 'asc' ? 'asc' : 'desc',
-    }));
+    }, reader));
     const [searchDraft, setSearchDraft] = useState('');
 
     const [documents, setDocuments] = useState<WorkspaceDocument[]>([]);
@@ -188,12 +208,78 @@ export function DocumentExplorer() {
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [dialog, setDialog] = useState<ActiveDialog>(null);
+    const [sidebarError, setSidebarError] = useState<string | null>(null);
+    const [pollError, setPollError] = useState<string | null>(null);
+    const [detailError, setDetailError] = useState<string | null>(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [detailRefresh, setDetailRefresh] = useState(0);
+    const [chatPending, setChatPending] = useState(false);
+    const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 1279px)').matches);
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [detailsOpen, setDetailsOpen] = useState(false);
 
     // Dialogs disable their controls while any bulk work is running.
     const busy = task !== null;
 
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLFieldSetElement>(null);
+    const mounted = useRef(true);
+    const listRequest = useRef<AbortController | null>(null);
+    const sidebarRequest = useRef<AbortController | null>(null);
+    const detailRequest = useRef<AbortController | null>(null);
+    const chatRequest = useRef<AbortController | null>(null);
+    const documentReads = useRef(new Map<string, number>());
+    const listRevision = useRef(0);
+    const access = useRef({ canChat, interactionDisabled });
+    access.current = { canChat, interactionDisabled };
+
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+            for (const request of [listRequest, sidebarRequest, detailRequest, chatRequest]) request.current?.abort();
+        };
+    }, []);
+
+    useEffect(() => {
+        const media = window.matchMedia('(max-width: 1279px)');
+        const update = () => setCompact(media.matches);
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+
+    useEffect(() => {
+        setQuery((current) => {
+            const next = supportedDocumentQuery(current, reader);
+            return next.place === current.place && next.sortBy === current.sortBy ? current : { ...next, page: 1 };
+        });
+    }, [reader]);
+
+    const selectionReason = useCallback((document: WorkspaceDocument) =>
+        interactionDisabled ? 'Refresh workspace access before selecting documents.'
+            : documentSelectionReason(document, reader.scope, canChat),
+    [reader, canChat, interactionDisabled]);
+
+    const requirePersonalWrite = useCallback(() => {
+        if (readOnly || interactionDisabled) {
+            toast.error(readOnly ? 'Document management is available in the classic group workspace.'
+                : 'Refresh workspace access before changing documents.');
+            return false;
+        }
+        return true;
+    }, [readOnly, interactionDisabled]);
+
+    const readCurrentDocument = useCallback(async (id: string, signal: AbortSignal) => {
+        const revision = (documentReads.current.get(id) ?? 0) + 1;
+        documentReads.current.set(id, revision);
+        try {
+            const document = await reader.detail(id, signal);
+            return !signal.aborted && documentReads.current.get(id) === revision ? document : null;
+        } catch (cause) {
+            if (signal.aborted || documentReads.current.get(id) !== revision) return null;
+            throw cause;
+        }
+    }, [reader]);
 
     const classifications = useMemo(() => {
         const raw = settings?.document_classification_categories;
@@ -229,22 +315,24 @@ export function DocumentExplorer() {
 
     const availability = useMemo(
         () => ({
-            downloads: downloadsEnabled,
-            extractMetadata: Boolean(features?.enable_extract_meta_data),
-            sharing: Boolean(features?.enable_file_sharing),
+            manage: !readOnly,
+            chat: canChat && !interactionDisabled && !loading && !error && !detailError && !chatPending,
+            downloads: !readOnly && downloadsEnabled,
+            extractMetadata: !readOnly && Boolean(features?.enable_extract_meta_data),
+            sharing: !readOnly && Boolean(features?.enable_file_sharing),
             classification: Boolean(features?.enable_document_classification),
             enhancedExtraction: Boolean(features?.enable_enhanced_extraction),
         }),
-        [downloadsEnabled, features],
+        [readOnly, canChat, interactionDisabled, loading, error, detailError, chatPending, downloadsEnabled, features],
     );
 
     const orderedIds = useMemo(
-        () => documents.filter(isScreeningAvailable).map(documentId),
-        [documents],
+        () => documents.filter((document) => !selectionReason(document)).map(documentId),
+        [documents, selectionReason],
     );
     const selectedDocuments = useMemo(
-        () => documents.filter((item) => isScreeningAvailable(item) && selection.ids.includes(documentId(item))),
-        [documents, selection.ids],
+        () => documents.filter((item) => !selectionReason(item) && selection.ids.includes(documentId(item))),
+        [documents, selection.ids, selectionReason],
     );
     const detailDocuments = inspectedId
         ? documents.filter((item) => documentId(item) === inspectedId)
@@ -259,57 +347,98 @@ export function DocumentExplorer() {
     /* ---------------------------------------------------------------------- */
 
     const loadDocuments = useCallback(
-        async (signal?: AbortSignal) => {
+        async () => {
+            listRequest.current?.abort();
+            listRevision.current += 1;
+            if (!mounted.current || interactionDisabled) return;
+            const controller = new AbortController();
+            listRequest.current = controller;
             setLoading(true);
             setError(null);
             try {
-                const response = await fetchPersonalDocuments(query, signal);
+                const response = await reader.list(supportedDocumentQuery(query, reader), controller.signal);
+                if (controller.signal.aborted || !mounted.current) return;
                 const items = response.documents ?? response.items ?? [];
-                setDocuments(items);
-                setTotalCount(Number(response.total_count ?? items.length));
-                setDownloadsEnabled(Boolean(response.file_downloads_enabled));
-                setSelection((current) => pruneSelection(current, items.filter(isScreeningAvailable).map(documentId)));
-            } catch (loadError) {
-                if ((loadError as Error)?.name === 'AbortError') {
+                const total = Number(response.total_count ?? items.length);
+                const lastPage = Math.max(1, Math.ceil(total / query.pageSize));
+                if (query.page > lastPage) {
+                    setQuery((current) => ({ ...current, page: lastPage }));
                     return;
                 }
+                setDocuments(items);
+                setTotalCount(total);
+                setDownloadsEnabled(!readOnly && Boolean(response.file_downloads_enabled));
+                setSelection((current) => pruneSelection(current, items.filter((item) => !selectionReason(item)).map(documentId)));
+                setInspectedId((current) => items.some((item) => documentId(item) === current) ? current : null);
+            } catch (loadError) {
+                if (controller.signal.aborted || !mounted.current) return;
+                setDocuments([]);
+                setTotalCount(0);
+                setSelection(EMPTY_SELECTION);
+                setInspectedId(null);
                 setError(errorMessage(loadError, 'Failed to load documents.'));
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted && mounted.current) setLoading(false);
             }
         },
-        [query],
+        [query, reader, readOnly, interactionDisabled, selectionReason],
     );
 
-    const loadSidebar = useCallback(async (signal?: AbortSignal) => {
+    const loadSidebar = useCallback(async () => {
+        sidebarRequest.current?.abort();
+        if (!mounted.current || interactionDisabled) return;
+        const controller = new AbortController();
+        sidebarRequest.current = controller;
+        setSidebarError(null);
         const [tagsResult, facetsResult] = await Promise.allSettled([
-            fetchPersonalDocumentTags(signal),
-            fetchPersonalDocumentFacets(signal),
+            reader.tags(controller.signal),
+            reader.queries.facets ? reader.facets(controller.signal) : Promise.resolve(null),
         ]);
-        if (tagsResult.status === 'fulfilled') {
-            setTags(tagsResult.value.tags ?? []);
-        }
-        if (facetsResult.status === 'fulfilled') {
-            setFacets(facetsResult.value);
-        }
-    }, []);
+        if (controller.signal.aborted || !mounted.current) return;
+        setTags(tagsResult.status === 'fulfilled' ? tagsResult.value.tags ?? [] : []);
+        setFacets(facetsResult.status === 'fulfilled' ? facetsResult.value : null);
+        const errors = [tagsResult, facetsResult].flatMap((result) =>
+            result.status === 'rejected' ? [errorMessage(result.reason, 'Could not load document filters.')] : []);
+        setSidebarError(errors.length ? errors.join(' ') : null);
+    }, [reader, interactionDisabled]);
 
     useEffect(() => {
-        const controller = new AbortController();
-        void loadDocuments(controller.signal);
-        return () => controller.abort();
+        void loadDocuments();
+        return () => listRequest.current?.abort();
     }, [loadDocuments]);
 
     useEffect(() => {
-        const controller = new AbortController();
-        void loadSidebar(controller.signal);
-        return () => controller.abort();
+        void loadSidebar();
+        return () => sidebarRequest.current?.abort();
     }, [loadSidebar]);
 
     /** Reload the list and the rail together, after anything that changes both. */
     const refreshAll = useCallback(async () => {
+        setPollError(null);
         await Promise.all([loadDocuments(), loadSidebar()]);
     }, [loadDocuments, loadSidebar]);
+
+    const detailId = detailDocuments.length === 1 ? documentId(detailDocuments[0]) : null;
+    useEffect(() => {
+        detailRequest.current?.abort();
+        setDetailError(null);
+        setDetailLoading(false);
+        if (!detailId || interactionDisabled || (!readOnly && detailRefresh === 0)) return;
+        const controller = new AbortController();
+        detailRequest.current = controller;
+        const revision = listRevision.current;
+        setDetailLoading(true);
+        void readCurrentDocument(detailId, controller.signal).then((document) => {
+            if (!document || controller.signal.aborted || !mounted.current || revision !== listRevision.current) return;
+            // Replace, never merge: a newly held or unapproved projection omits restricted metadata.
+            setDocuments((current) => current.map((item) => documentId(item) === detailId ? document : item));
+        }).catch((cause: unknown) => {
+            if (!controller.signal.aborted && mounted.current) setDetailError(errorMessage(cause, 'Could not refresh document details.'));
+        }).finally(() => {
+            if (!controller.signal.aborted && mounted.current) setDetailLoading(false);
+        });
+        return () => controller.abort();
+    }, [detailId, readCurrentDocument, interactionDisabled, detailRefresh, readOnly, query]);
 
     /* ---------------------------------------------------------------------- */
     /* Progress polling                                                        */
@@ -325,25 +454,30 @@ export function DocumentExplorer() {
     );
 
     useEffect(() => {
-        if (processingIds.length === 0) {
+        if (processingIds.length === 0 || interactionDisabled) {
             return;
         }
 
-        let cancelled = false;
+        const controller = new AbortController();
+        let polling = false;
         const timer = window.setInterval(async () => {
+            if (polling) return;
+            polling = true;
+            const revision = listRevision.current;
             // Refreshed one document at a time rather than by re-listing: a poll that
             // re-fetched the page would fight the user's scroll position and selection every
             // few seconds for as long as anything was indexing.
             const updates = await Promise.allSettled(
-                processingIds.map((id) => fetchPersonalDocument(id)),
+                processingIds.map((id) => readCurrentDocument(id, controller.signal)),
             );
-            if (cancelled) {
-                return;
-            }
+            polling = false;
+            if (controller.signal.aborted || !mounted.current || revision !== listRevision.current) return;
+            const failure = updates.find((update) => update.status === 'rejected');
+            setPollError(failure?.status === 'rejected' ? errorMessage(failure.reason, 'Could not refresh document progress.') : null);
 
             const byId = new Map<string, WorkspaceDocument>();
             for (const update of updates) {
-                if (update.status === 'fulfilled') {
+                if (update.status === 'fulfilled' && update.value) {
                     const id = documentId(update.value);
                     if (id) {
                         byId.set(id, update.value);
@@ -359,7 +493,7 @@ export function DocumentExplorer() {
             );
 
             const finished = [...byId.values()].some(
-                (item) => documentStatus(item).state !== 'processing',
+                (item) => documentStatus(item).state !== 'processing' && !isScreeningBusy(item),
             );
             if (finished) {
                 void loadSidebar();
@@ -367,10 +501,10 @@ export function DocumentExplorer() {
         }, PROGRESS_POLL_MS);
 
         return () => {
-            cancelled = true;
+            controller.abort();
             window.clearInterval(timer);
         };
-    }, [processingIds, loadSidebar]);
+    }, [processingIds, loadSidebar, readCurrentDocument, interactionDisabled, query]);
 
     /* ---------------------------------------------------------------------- */
     /* Preferences                                                             */
@@ -388,11 +522,13 @@ export function DocumentExplorer() {
     /* ---------------------------------------------------------------------- */
 
     const changeQuery = useCallback((change: Partial<DocumentQuery>) => {
-        setQuery((current) => applyQueryChange(current, change));
-    }, []);
+        if (interactionDisabled || chatPending) return;
+        setQuery((current) => supportedDocumentQuery(applyQueryChange(current, change), reader));
+    }, [reader, interactionDisabled, chatPending]);
 
     // Debounced so typing does not issue a request per keystroke.
     useEffect(() => {
+        if (interactionDisabled || chatPending) return;
         const timer = window.setTimeout(() => {
             setQuery((current) =>
                 current.search === searchDraft
@@ -401,17 +537,18 @@ export function DocumentExplorer() {
             );
         }, 300);
         return () => window.clearTimeout(timer);
-    }, [searchDraft]);
+    }, [searchDraft, interactionDisabled, chatPending]);
 
     const onSort = useCallback(
         (field: DocumentSortField) => {
+            if (interactionDisabled || chatPending || !reader.queries.sortFields.includes(field)) return;
             setQuery((current) => {
                 const next = toggleSort(current, field);
                 updatePrefs({ sortBy: next.sortBy, sortOrder: next.sortOrder });
                 return { ...next, page: 1 };
             });
         },
-        [updatePrefs],
+        [updatePrefs, reader, interactionDisabled, chatPending],
     );
 
     /* ---------------------------------------------------------------------- */
@@ -420,24 +557,26 @@ export function DocumentExplorer() {
 
     const onSelect = useCallback(
         (id: string, intent: SelectionIntent) => {
-            if (!orderedIds.includes(id)) {
+            if (interactionDisabled || chatPending || loading || error || !orderedIds.includes(id)) {
                 return;
             }
             setInspectedId(null);
             setSelection((current) => applySelection(current, id, intent, orderedIds));
         },
-        [orderedIds],
+        [orderedIds, interactionDisabled, chatPending, loading, error],
     );
 
     const onOpen = useCallback(
         (document: WorkspaceDocument) => {
+            if (interactionDisabled || chatPending || loading || error) return;
             setInspectedId(documentId(document));
-            if (!isScreeningAvailable(document)) {
+            if (selectionReason(document)) {
                 setSelection(EMPTY_SELECTION);
             }
+            if (compact) setDetailsOpen(true);
             updatePrefs({ detailsPaneOpen: true });
         },
-        [updatePrefs],
+        [updatePrefs, compact, selectionReason, interactionDisabled, chatPending, loading, error],
     );
 
     useEffect(() => {
@@ -447,8 +586,9 @@ export function DocumentExplorer() {
                 target &&
                 (target.tagName === 'INPUT' ||
                     target.tagName === 'TEXTAREA' ||
+                    target.tagName === 'SELECT' ||
                     target.isContentEditable);
-            if (typing || dialog) {
+            if (typing || dialog || interactionDisabled || chatPending || loading || error || filtersOpen || detailsOpen) {
                 return;
             }
             if (!containerRef.current?.contains(document.activeElement) &&
@@ -483,11 +623,11 @@ export function DocumentExplorer() {
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [orderedIds, dialog]);
+    }, [orderedIds, dialog, interactionDisabled, chatPending, loading, error, filtersOpen, detailsOpen]);
 
     const onDragStart = useCallback(
         (event: React.DragEvent, id: string) => {
-            if (!orderedIds.includes(id)) {
+            if (readOnly || interactionDisabled || !orderedIds.includes(id)) {
                 event.preventDefault();
                 return;
             }
@@ -503,12 +643,16 @@ export function DocumentExplorer() {
             );
             event.dataTransfer.effectAllowed = 'copy';
         },
-        [selection.ids, orderedIds],
+        [selection.ids, orderedIds, readOnly, interactionDisabled],
     );
 
     /* ---------------------------------------------------------------------- */
     /* Actions                                                                 */
     /* ---------------------------------------------------------------------- */
+
+    const openDialog = useCallback((value: NonNullable<ActiveDialog>) => {
+        if (requirePersonalWrite()) setDialog(value);
+    }, [requirePersonalWrite]);
 
     /**
      * Run one request per batch of documents, reporting progress as each lands.
@@ -555,6 +699,7 @@ export function DocumentExplorer() {
             tagNames: string[],
             options: { undoable?: boolean } = {},
         ) => {
+            if (!requirePersonalWrite()) return;
             if (ids.length === 0 || tagNames.length === 0) {
                 return;
             }
@@ -589,7 +734,7 @@ export function DocumentExplorer() {
                 toast.success(message);
             }
         },
-        [refreshAll, runBatched],
+        [refreshAll, runBatched, requirePersonalWrite],
     );
 
     const onDropOnTag = useCallback(
@@ -601,6 +746,7 @@ export function DocumentExplorer() {
 
     const onUploadFiles = useCallback(
         async (files: File[]) => {
+            if (!requirePersonalWrite()) return;
             if (files.length === 0) {
                 return;
             }
@@ -648,10 +794,11 @@ export function DocumentExplorer() {
                 setUploading(false);
             }
         },
-        [refreshAll, settings],
+        [refreshAll, settings, requirePersonalWrite],
     );
 
     const onDownload = useCallback(async (targets: WorkspaceDocument[]) => {
+        if (!requirePersonalWrite()) return;
         if (targets.some((target) => !isScreeningAvailable(target))) {
             toast.error('Held content cannot be downloaded. Open Content review.');
             return;
@@ -673,7 +820,7 @@ export function DocumentExplorer() {
         } catch (downloadError) {
             toast.settle(pendingId, 'error', errorMessage(downloadError, 'Download failed.'));
         }
-    }, []);
+    }, [requirePersonalWrite]);
 
     /**
      * Hand the selection to the composer.
@@ -685,34 +832,58 @@ export function DocumentExplorer() {
      * page already has in hand.
      */
     const onChat = useCallback(
-        (targets: WorkspaceDocument[]) => {
-            if (targets.some((target) => !isScreeningAvailable(target))) {
-                toast.error('Held content cannot be used in chat. Open Content review.');
+        async (targets: WorkspaceDocument[]) => {
+            if (!availability.chat) {
+                toast.error('Chat is not currently available for this selection. Refresh workspace access and try again.');
                 return;
             }
-            const documents = targets.filter((target) => documentId(target));
+            const reason = targets.map(selectionReason).find(Boolean);
+            if (reason) {
+                toast.error(reason);
+                return;
+            }
+            let documents = targets.filter((target) => documentId(target));
             if (documents.length === 0) {
                 return;
             }
-
-            const query = buildContextHandoffParams({
-                documentIds: documents.map(documentId),
-                docScope: 'personal',
-            });
-            const state: ContextHandoffState = {
-                contextDocuments: documents.map((document) => ({
-                    document,
-                    scope: PERSONAL_SCOPE,
-                })),
-            };
-
-            navigate(`/chat?${query}`, { state });
+            chatRequest.current?.abort();
+            const controller = new AbortController();
+            chatRequest.current = controller;
+            setChatPending(true);
+            try {
+                if (readOnly) documents = await Promise.all(documents.map((document) => reader.detail(documentId(document), controller.signal)));
+                if (controller.signal.aborted || !mounted.current || access.current.interactionDisabled || !access.current.canChat) return;
+                const blocked = documents.map((document) => documentSelectionReason(document, reader.scope)).find(Boolean);
+                if (blocked) {
+                    setDocuments((current) => current.map((item) => documents.find((document) => documentId(document) === documentId(item)) ?? item));
+                    toast.error(blocked);
+                    return;
+                }
+                const scope = reader.scope.kind === 'group' ? groupScope(reader.scope) : PERSONAL_SCOPE;
+                const tags = readOnly ? query.tags : [];
+                const handoff = buildContextHandoffParams({
+                    documentIds: documents.map(documentId),
+                    docScope: reader.scope.kind,
+                    groupId: reader.scope.kind === 'group' ? reader.scope.id : undefined,
+                    tags,
+                });
+                const state: ContextHandoffState = {
+                    contextDocuments: documents.map((document) => ({ document, scope })),
+                    contextTags: tags.map((name) => ({ name, scope })),
+                };
+                navigate(`/chat?${handoff}`, { state });
+            } catch (cause) {
+                if (!controller.signal.aborted && mounted.current) toast.error(errorMessage(cause, 'Could not confirm the selected documents for chat.'));
+            } finally {
+                if (!controller.signal.aborted && mounted.current) setChatPending(false);
+            }
         },
-        [navigate],
+        [navigate, reader, readOnly, query.tags, availability.chat, selectionReason],
     );
 
     const onExtractMetadata = useCallback(
         async (targets: WorkspaceDocument[]) => {
+            if (!requirePersonalWrite()) return;
             if (targets.some((target) => !isScreeningAvailable(target))) {
                 toast.error('Held content cannot be analyzed. Open Content review.');
                 return;
@@ -731,11 +902,12 @@ export function DocumentExplorer() {
                 toast.error(errorMessage(extractError, 'Could not queue metadata extraction.'));
             }
         },
-        [refreshAll],
+        [refreshAll, requirePersonalWrite],
     );
 
     const onReextract = useCallback(
         async (targets: WorkspaceDocument[], mode: 'read' | 'layout') => {
+            if (!requirePersonalWrite()) return;
             if (targets.some((target) => !isScreeningAvailable(target))) {
                 toast.error('Use Content review to retry screening of held content.');
                 return;
@@ -754,11 +926,12 @@ export function DocumentExplorer() {
                 toast.error(errorMessage(reextractError, 'Could not queue re-extraction.'));
             }
         },
-        [refreshAll],
+        [refreshAll, requirePersonalWrite],
     );
 
     const onSaveMetadata = useCallback(
         async (target: WorkspaceDocument, draft: MetadataDraft) => {
+            if (!requirePersonalWrite()) return;
             setTask({ label: 'Saving metadata', completed: 0, total: 1 });
             try {
                 await updatePersonalDocumentMetadata(documentId(target), {
@@ -784,7 +957,7 @@ export function DocumentExplorer() {
                 setTask(null);
             }
         },
-        [refreshAll],
+        [refreshAll, requirePersonalWrite],
     );
 
     const onConfirmDelete = useCallback(
@@ -792,6 +965,7 @@ export function DocumentExplorer() {
             targets: WorkspaceDocument[],
             options: { force: boolean; deleteAllVersions: boolean },
         ) => {
+            if (!requirePersonalWrite()) return;
             const ids = targets.map(documentId).filter(Boolean);
             if (ids.length === 0) {
                 return;
@@ -859,10 +1033,11 @@ export function DocumentExplorer() {
             setSelection(EMPTY_SELECTION);
             await refreshAll();
         },
-        [refreshAll],
+        [refreshAll, requirePersonalWrite],
     );
 
     const onSaveView = useCallback(() => {
+        if (!requirePersonalWrite()) return;
         const name = window.prompt('Name this view');
         if (!name?.trim()) {
             return;
@@ -870,10 +1045,11 @@ export function DocumentExplorer() {
         const view = createSavedView(name, query);
         saveUserSettings({ v2DocumentSavedViews: upsertSavedView(savedViews, view) });
         toast.success(`Saved "${view.name}" to the rail.`);
-    }, [query, savedViews, saveUserSettings]);
+    }, [query, savedViews, saveUserSettings, requirePersonalWrite]);
 
     const onDeleteSavedView = useCallback(
         (view: DocumentSavedView) => {
+            if (!requirePersonalWrite()) return;
             if (!window.confirm(`Remove the saved view "${view.name}"?`)) {
                 return;
             }
@@ -881,16 +1057,24 @@ export function DocumentExplorer() {
                 v2DocumentSavedViews: removeSavedView(savedViews, view.id),
             });
         },
-        [savedViews, saveUserSettings],
+        [savedViews, saveUserSettings, requirePersonalWrite],
     );
 
     /* ---------------------------------------------------------------------- */
     /* Render                                                                  */
     /* ---------------------------------------------------------------------- */
 
-    const chips = describeActiveFilters(query);
+    const chips = describeActiveFilters(query).map((chip) =>
+        readOnly && chip.kind === 'place' && chip.value === 'shared'
+            ? { ...chip, label: 'Shared with this group' } : chip);
 
     const content = () => {
+        if (error) return (
+            <div role="alert">
+                <EmptyState icon={<FileText size={28} />} title="Documents could not be loaded"
+                    description={error} action={<GlassButton size="sm" onClick={() => void refreshAll()}>Retry documents</GlassButton>} />
+            </div>
+        );
         if (loading && documents.length === 0) {
             return (
                 <div className="space-y-2 p-2">
@@ -910,7 +1094,8 @@ export function DocumentExplorer() {
                     description={
                         filtered
                             ? undefined
-                            : 'Upload a file to make it available for grounded chat.'
+                            : readOnly ? 'This group has no visible documents. Use the classic workspace to manage files.'
+                                : 'Upload a file to make it available for grounded chat.'
                     }
                     action={
                         filtered ? (
@@ -924,6 +1109,8 @@ export function DocumentExplorer() {
                             >
                                 Clear filters
                             </GlassButton>
+                        ) : readOnly ? (
+                            onOpenClassic ? <GlassButton size="sm" onClick={onOpenClassic}>Manage files in classic</GlassButton> : undefined
                         ) : (
                             <GlassButton
                                 variant="primary"
@@ -947,7 +1134,9 @@ export function DocumentExplorer() {
                 classificationColors={classificationColors}
                 onSelect={onSelect}
                 onOpen={onOpen}
-                onDragStart={onDragStart}
+                onDragStart={readOnly ? undefined : onDragStart}
+                selectionReason={selectionReason}
+                scope={reader.scope}
             />
         ) : (
             <DocumentTable
@@ -959,19 +1148,73 @@ export function DocumentExplorer() {
                 classificationColors={classificationColors}
                 onSelect={onSelect}
                 onToggleSelectAll={() => {
+                    if (interactionDisabled || chatPending || loading || error) return;
                     setInspectedId(null);
                     setSelection((current) => toggleSelectAll(current, orderedIds));
                 }}
                 onSort={onSort}
                 onOpen={onOpen}
-                onDragStart={onDragStart}
+                onDragStart={readOnly ? undefined : onDragStart}
+                selectionReason={selectionReason}
+                scope={reader.scope}
+                sortFields={reader.queries.sortFields}
             />
         );
     };
 
+    const rail = <ExplorerRail
+        query={query}
+        facets={facets}
+        tags={tags}
+        savedViews={savedViews}
+        classifications={availability.classification ? classifications : []}
+        onQueryChange={changeQuery}
+        onApplySavedView={(view) => {
+            if (readOnly || interactionDisabled) return;
+            setSearchDraft(view.query.search);
+            setQuery((current) => applySavedView(current, view));
+        }}
+        onDeleteSavedView={onDeleteSavedView}
+        onDropOnTag={readOnly ? undefined : onDropOnTag}
+        placesEnabled={reader.queries.places}
+        sharedLabel={readOnly ? 'Shared with this group' : 'Shared with me'}
+        compact={compact}
+    />;
+    const detailsPane = <DocumentDetailsPane
+        documents={detailDocuments}
+        availability={availability}
+        reader={reader}
+        selectionReason={selectionReason}
+        loading={detailLoading}
+        error={detailError}
+        interactionDisabled={interactionDisabled || chatPending}
+        compact={compact}
+        onRefresh={() => setDetailRefresh((value) => value + 1)}
+        actions={{
+            onChat: (targets) => void onChat(targets),
+            onDownload: (targets) => void onDownload(targets),
+            onEditMetadata: (target) => openDialog({ kind: 'metadata', document: target }),
+            onExtractMetadata: (targets) => void onExtractMetadata(targets),
+            onReextract: (targets, mode) => void onReextract(targets, mode),
+            onShare: (target) => openDialog({ kind: 'share', document: target }),
+            onManageTags: (targets) => openDialog({ kind: 'tag', documents: targets }),
+            onDelete: (targets) => openDialog({ kind: 'delete', documents: targets, blocked: [] }),
+            onSelectTag: (tag) => changeQuery({ tags: [tag] }),
+            onRemoveTag: (targets, tag) => void runBulkTag(targets.map(documentId).filter(Boolean), 'remove_tags', [tag]),
+        }}
+        tagColors={tagColors}
+        classificationColors={classificationColors}
+        onClose={() => {
+            setDetailsOpen(false);
+            if (!compact) updatePrefs({ detailsPaneOpen: false });
+        }}
+    />;
+
     return (
-        <div ref={containerRef} className="flex h-full min-h-0 flex-col gap-2">
-            <input
+        <fieldset ref={containerRef} disabled={interactionDisabled || chatPending} aria-label="Documents explorer"
+            aria-busy={loading}
+            className="flex h-full min-h-0 min-w-0 flex-col gap-2">
+            {!readOnly ? <input
                 ref={fileInputRef}
                 type="file"
                 multiple
@@ -981,31 +1224,39 @@ export function DocumentExplorer() {
                     event.target.value = '';
                     void onUploadFiles(files);
                 }}
-            />
+            /> : null}
 
             <ExplorerCommandBar
                 searchDraft={searchDraft}
-                prefs={prefs}
-                selectionCount={selection.ids.length}
+                prefs={compact ? { ...prefs, detailsPaneOpen: detailsOpen } : prefs}
+                selectionCount={selectedDocuments.length}
                 uploading={uploading}
                 availability={availability}
-                canSaveView={isSaveableQuery(query)}
+                canSaveView={!readOnly && isSaveableQuery(query)}
+                query={query}
+                sortFields={reader.queries.sortFields}
+                onSort={onSort}
+                onShowFilters={compact ? () => setFiltersOpen(true) : undefined}
                 onSearchChange={setSearchDraft}
                 onSearchSubmit={(value) => {
                     // Enter searches now rather than waiting out the debounce.
                     setSearchDraft(value);
-                    setQuery((current) => applyQueryChange(current, { search: value }));
+                    changeQuery({ search: value });
                 }}
                 onUpload={() => fileInputRef.current?.click()}
                 onDownload={() => void onDownload(selectedDocuments)}
-                onTag={() => setDialog({ kind: 'tag', documents: selectedDocuments })}
-                onChat={() => onChat(selectedDocuments)}
+                onTag={() => openDialog({ kind: 'tag', documents: selectedDocuments })}
+                onChat={() => void onChat(selectedDocuments)}
                 onExtractMetadata={() => void onExtractMetadata(selectedDocuments)}
                 onDelete={() =>
-                    setDialog({ kind: 'delete', documents: selectedDocuments, blocked: [] })
+                    openDialog({ kind: 'delete', documents: selectedDocuments, blocked: [] })
                 }
                 onSaveView={onSaveView}
                 onPrefsChange={(change) => {
+                    if (compact && change.detailsPaneOpen !== undefined) {
+                        setDetailsOpen(change.detailsPaneOpen);
+                        return;
+                    }
                     updatePrefs(change);
                     if (change.pageSize) {
                         changeQuery({ pageSize: change.pageSize });
@@ -1013,27 +1264,17 @@ export function DocumentExplorer() {
                 }}
             />
 
-            {error ? (
-                <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
-                    {error}
-                </p>
+            {chatPending ? <p role="status" className="text-xs text-text-3">Confirming selected documents for chat...</p> : null}
+            {readOnly && !canChat ? <p role="status" className="text-xs text-text-3">Chat is not available for this group. You can still inspect its documents.</p> : null}
+            {sidebarError || pollError ? (
+                <div className="space-y-1 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+                    <p>{sidebarError || pollError}</p>
+                    <GlassButton size="sm" onClick={() => void refreshAll()}>Retry document updates</GlassButton>
+                </div>
             ) : null}
 
             <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
-                <ExplorerRail
-                    query={query}
-                    facets={facets}
-                    tags={tags}
-                    savedViews={savedViews}
-                    classifications={availability.classification ? classifications : []}
-                    onQueryChange={changeQuery}
-                    onApplySavedView={(view) => {
-                        setSearchDraft(view.query.search);
-                        setQuery((current) => applySavedView(current, view));
-                    }}
-                    onDeleteSavedView={onDeleteSavedView}
-                    onDropOnTag={onDropOnTag}
-                />
+                {!compact ? rail : null}
 
                 <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
                     <FilterChips
@@ -1065,51 +1306,31 @@ export function DocumentExplorer() {
                         {content()}
                     </div>
 
-                    <ExplorerStatusBar
+                    {!error ? <ExplorerStatusBar
                         page={query.page}
                         pageSize={query.pageSize}
                         totalCount={totalCount}
-                        selectionCount={selection.ids.length}
+                        selectionCount={selectedDocuments.length}
                         onPageChange={(page) => changeQuery({ page })}
                         onPageSizeChange={(pageSize) => {
                             updatePrefs({ pageSize });
                             changeQuery({ pageSize });
                         }}
-                    />
+                    /> : null}
                 </div>
 
-                {prefs.detailsPaneOpen ? (
-                    <DocumentDetailsPane
-                        documents={detailDocuments}
-                        availability={availability}
-                        actions={{
-                            onChat,
-                            onDownload: (targets) => void onDownload(targets),
-                            onEditMetadata: (target) =>
-                                setDialog({ kind: 'metadata', document: target }),
-                            onExtractMetadata: (targets) => void onExtractMetadata(targets),
-                            onReextract: (targets, mode) => void onReextract(targets, mode),
-                            onShare: (target) => setDialog({ kind: 'share', document: target }),
-                            onManageTags: (targets) =>
-                                setDialog({ kind: 'tag', documents: targets }),
-                            onDelete: (targets) =>
-                                setDialog({ kind: 'delete', documents: targets, blocked: [] }),
-                            onSelectTag: (tag) => changeQuery({ tags: [tag] }),
-                            onRemoveTag: (targets, tag) =>
-                                void runBulkTag(
-                                    targets.map(documentId).filter(Boolean),
-                                    'remove_tags',
-                                    [tag],
-                                ),
-                        }}
-                        tagColors={tagColors}
-                        classificationColors={classificationColors}
-                        onClose={() => updatePrefs({ detailsPaneOpen: false })}
-                    />
-                ) : null}
+                {!compact && prefs.detailsPaneOpen ? detailsPane : null}
             </div>
 
-            {dialog?.kind === 'tag' ? (
+            {compact && filtersOpen ? <Modal title="Document filters" onClose={() => setFiltersOpen(false)}
+                footer={<GlassButton size="sm" onClick={() => setFiltersOpen(false)}>Show documents</GlassButton>}>
+                <fieldset disabled={interactionDisabled || chatPending}>{rail}</fieldset>
+            </Modal> : null}
+            {compact && detailsOpen ? <Modal title="Document details" onClose={() => setDetailsOpen(false)} tall bodyClassName="min-h-0 overflow-hidden p-2">
+                {detailsPane}
+            </Modal> : null}
+
+            {!readOnly && dialog?.kind === 'tag' ? (
                 <TagDialog
                     documents={dialog.documents}
                     tags={tags}
@@ -1126,6 +1347,7 @@ export function DocumentExplorer() {
                         }
                     }}
                     onCreateTag={async (name) => {
+                        if (!requirePersonalWrite()) return;
                         try {
                             await createPersonalDocumentTag(name);
                             await loadSidebar();
@@ -1136,7 +1358,7 @@ export function DocumentExplorer() {
                 />
             ) : null}
 
-            {dialog?.kind === 'metadata' ? (
+            {!readOnly && dialog?.kind === 'metadata' ? (
                 <MetadataDialog
                     document={dialog.document}
                     classifications={classifications}
@@ -1147,7 +1369,7 @@ export function DocumentExplorer() {
                 />
             ) : null}
 
-            {dialog?.kind === 'share' ? (
+            {!readOnly && dialog?.kind === 'share' ? (
                 <ShareDialog
                     document={dialog.document}
                     onClose={() => setDialog(null)}
@@ -1155,7 +1377,7 @@ export function DocumentExplorer() {
                 />
             ) : null}
 
-            {dialog?.kind === 'delete' ? (
+            {!readOnly && dialog?.kind === 'delete' ? (
                 <DeleteDialog
                     documents={dialog.documents}
                     blocked={dialog.blocked}
@@ -1164,6 +1386,6 @@ export function DocumentExplorer() {
                     onConfirm={(options) => void onConfirmDelete(dialog.documents, options)}
                 />
             ) : null}
-        </div>
+        </fieldset>
     );
 }

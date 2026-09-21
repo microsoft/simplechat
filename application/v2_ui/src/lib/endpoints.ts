@@ -26,6 +26,7 @@ import type {
     DocumentFacets,
     DocumentListResponse,
     DocumentQuery,
+    DocumentVersionsResponse,
     Json,
     PersistedThought,
     SavedAnalysisDescriptor,
@@ -1341,7 +1342,7 @@ export const fetchPersonalDocument = (documentId: string, signal?: AbortSignal) 
     api.get<WorkspaceDocument>(`/api/documents/${encodeURIComponent(documentId)}`, signal);
 
 export const fetchPersonalDocumentVersions = (documentId: string, signal?: AbortSignal) =>
-    api.get<{ document_id?: string; revision_family_id?: string; versions?: WorkspaceDocument[] }>(
+    api.get<DocumentVersionsResponse>(
         `/api/documents/${encodeURIComponent(documentId)}/versions`,
         signal,
     );
