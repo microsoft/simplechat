@@ -2,7 +2,7 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.127
+Version: 0.261.128
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 
@@ -171,7 +171,11 @@ def test_projection_is_allowlisted_explicit_and_uncached(environment):
     assert body["workspace"]["logo_url"] == "/api/groups/group-b/logo?v=3"
     assert body["workspace"]["hero_color"] == "#123456"
     assert body["document_queries"] == {
-        "sort_fields": ["_ts", "file_name", "title"], "facets": False, "places": False,
+        "sort_fields": [
+            "_ts", "file_name", "title", "upload_date", "file_size",
+            "number_of_pages", "version", "document_classification",
+        ],
+        "facets": True, "places": True,
     }
     assert all(call.args == ("group-b",) for call in environment.find.call_args_list)
     text = response.get_data(as_text=True)

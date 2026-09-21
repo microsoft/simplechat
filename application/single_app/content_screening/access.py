@@ -30,6 +30,8 @@ import json
 import mimetypes
 from urllib.parse import unquote
 
+from werkzeug.exceptions import HTTPException
+
 from content_screening.contracts import (
     SCREENING_FIELD,
     DocumentHeldError,
@@ -842,7 +844,7 @@ def public_documents_payload(documents, user_id=None, *, metadata_reader=None):
     return payloads
 
 
-def register_document_api_guards(blueprint, *, user_resolver=None):
+def register_document_api_guards(blueprint, *, user_resolver=None, document_projector=None):
     """Protect ordinary classic/V2 document responses and mutation requests."""
     flask = import_module("flask")
 
@@ -864,21 +866,25 @@ def register_document_api_guards(blueprint, *, user_resolver=None):
                 payload = response.get_json()
                 if isinstance(payload, dict):
                     actor_id = user_resolver() if user_resolver else _current_user_id()
+                    project_documents = document_projector or public_documents_payload
                     if "id" in payload and ("file_name" in payload or "filename" in payload):
-                        refreshed = public_documents_payload([payload], actor_id)
+                        refreshed = project_documents([payload], actor_id)
                         payload = refreshed[0] if refreshed else {"error": "Document not found or access denied."}
                         if not refreshed:
                             response.status_code = 404
                     for key in ("documents", "versions"):
                         if isinstance(payload.get(key), list):
-                            payload[key] = public_documents_payload(payload[key], actor_id)
+                            payload[key] = project_documents(payload[key], actor_id)
                     response.set_data(flask.json.dumps(payload))
-        except (DocumentHeldError, ScreeningConflictError) as error:
+        except ScreeningError as error:
             response = flask.jsonify({"error": error.public_message, "error_code": error.code})
             response.status_code = error.status_code
         except (LookupError, PermissionError):
             response = flask.jsonify({"error": "Document not found or access denied."})
             response.status_code = 404
+        except HTTPException as error:
+            response = flask.jsonify({"error": error.description})
+            response.status_code = error.code
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
         response.headers.pop("ETag", None)
