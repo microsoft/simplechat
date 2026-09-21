@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.127
+Version: 0.261.128
 Implemented in: 0.261.127
 """
 
@@ -59,7 +59,13 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             "can_delete": manager and status in ("active", "upload_disabled"),
             "can_download": manager and readable,
         },
-        "document_queries": {"sort_fields": ["_ts", "file_name", "title"], "facets": False, "places": False},
+        "document_queries": {
+            "sort_fields": [
+                "_ts", "file_name", "title", "upload_date", "file_size",
+                "number_of_pages", "version", "document_classification",
+            ],
+            "facets": True, "places": True,
+        },
     }
 
 
@@ -172,9 +178,23 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             assert entry.query.get("scope") == ["group"]
             assert entry.query.get("group_id", [None])[0] in self.groups
             self._json(route, {"users": []})
-        elif path == "/api/group_documents":
-            assert entry.query.get("group_ids", [None])[0] in self.groups
-            self._json(route, {"documents": [], "total_count": 0, "page": 1, "page_size": 10})
+        elif path == "/api/group_documents" and method == "GET":
+            scope_key = "group_id" if "group_id" in entry.query else "group_ids"
+            assert entry.query.get(scope_key, [None])[0] in self.groups
+            assert not {"group_id", "group_ids"}.issubset(entry.query)
+            self._json(route, {
+                "documents": [], "total_count": 0,
+                "page": int(entry.query.get("page", ["1"])[0]),
+                "page_size": int(entry.query.get("page_size", ["10"])[0]),
+            })
+        elif path in ("/api/group_documents/tags", "/api/group_documents/facets") and method == "GET":
+            assert len(entry.query.get("group_id", [])) == 1
+            assert entry.query["group_id"][0] in self.groups
+            assert "group_ids" not in entry.query
+            self._json(route, {"tags": []} if path.endswith("/tags") else {
+                "total": 0, "untagged": 0, "processing": 0, "errors": 0,
+                "recent": 0, "shared_with_me": 0, "by_tag": {}, "by_classification": {},
+            })
         elif path.startswith("/api/group/"):
             group_id = entry.query.get("group_id", [None])[0]
             assert group_id in self.groups, f"Every group request needs explicit scope: {entry}"

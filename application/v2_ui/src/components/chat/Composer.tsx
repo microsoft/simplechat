@@ -985,6 +985,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
             publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
             state: linkedHandoffState,
+            viewerId: bootstrap?.user.id,
             signal: controller.signal,
         })
             .then((items) => {
@@ -1021,7 +1022,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             });
 
         return () => controller.abort();
-    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope]);
+    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope, bootstrap?.user.id]);
 
     const applySuggestion = (suggestion: MentionSuggestion) => {
         // An "Add to this conversation" row is an action, not just a completion. Inserting

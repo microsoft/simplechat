@@ -1,7 +1,7 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.127
+Version: 0.261.128
 Implemented in: 0.261.127
 """
 
@@ -42,6 +42,8 @@ def test_group_selection_populates_shared_shell_without_personal_data(group_ui, 
     expect(ui.page.get_by_text("Role: Owner", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Status: Active", exact=True)).to_be_visible()
     section(ui.page, "Documents")
+    expect(ui.page.get_by_role("searchbox", name="Search documents. Press Enter to search immediately.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Upload", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Open classic group workspace", exact=True)).to_be_visible()
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/documents") or entry.path in ("/api/user/plugins", "/api/user/agents")]
     section(ui.page, "Overview")

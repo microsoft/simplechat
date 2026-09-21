@@ -15,7 +15,7 @@
 import { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
-import { isScreeningAvailable } from '../../lib/contentScreening';
+import { groupDocumentOrigin, type DocumentReadScope } from '../../lib/documentReadAdapter';
 import type {
     DocumentQuery,
     DocumentSortField,
@@ -99,6 +99,9 @@ export function DocumentTable({
     onSort,
     onOpen,
     onDragStart,
+    selectionReason,
+    scope,
+    sortFields,
 }: {
     documents: WorkspaceDocument[];
     columns: string[];
@@ -110,11 +113,14 @@ export function DocumentTable({
     onToggleSelectAll: () => void;
     onSort: (field: DocumentSortField) => void;
     onOpen: (document: WorkspaceDocument) => void;
-    onDragStart: (event: React.DragEvent, id: string) => void;
+    onDragStart?: (event: React.DragEvent, id: string) => void;
+    selectionReason: (document: WorkspaceDocument) => string | null;
+    scope: DocumentReadScope;
+    sortFields: readonly DocumentSortField[];
 }) {
     const activeColumns = DOCUMENT_COLUMNS.filter((column) => columns.includes(column.id));
     const selectedIds = new Set(selection.ids);
-    const selectable = documents.filter(isScreeningAvailable);
+    const selectable = documents.filter((document) => !selectionReason(document));
     const allSelected = selectable.length > 0 && selectable.every((item) => selectedIds.has(documentId(item)));
     const someSelected = selection.ids.length > 0 && !allSelected;
 
@@ -128,7 +134,7 @@ export function DocumentTable({
     }, [someSelected]);
 
     return (
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full min-w-[42rem] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-surface-1">
                 <tr className="border-b border-edge text-left">
                     <th scope="col" className="w-9 px-2 py-2">
@@ -143,7 +149,8 @@ export function DocumentTable({
                         />
                     </th>
                     {activeColumns.map((column) => {
-                        const active = column.sortField === query.sortBy;
+                        const sortable = Boolean(column.sortField && sortFields.includes(column.sortField));
+                        const active = sortable && column.sortField === query.sortBy;
                         return (
                             <th
                                 key={column.id}
@@ -161,7 +168,7 @@ export function DocumentTable({
                                     column.align === 'right' && 'text-right',
                                 )}
                             >
-                                {column.sortField ? (
+                                {sortable ? (
                                     <button
                                         type="button"
                                         onClick={() => onSort(column.sortField!)}
@@ -185,7 +192,8 @@ export function DocumentTable({
             <tbody>
                 {documents.map((document) => {
                     const id = documentId(document);
-                    const available = isScreeningAvailable(document);
+                    const blockedReason = selectionReason(document);
+                    const available = !blockedReason;
                     const selected = selectedIds.has(id);
                     const { primary, secondary } = documentDisplayName(document);
                     const tags = normalizeTags(document.tags);
@@ -194,8 +202,8 @@ export function DocumentTable({
                     return (
                         <tr
                             key={id}
-                            draggable={available}
-                            onDragStart={(event) => onDragStart(event, id)}
+                            draggable={available && Boolean(onDragStart)}
+                            onDragStart={onDragStart ? (event) => onDragStart(event, id) : undefined}
                             onClick={(event) =>
                                 available ? onSelect(
                                     id,
@@ -218,7 +226,7 @@ export function DocumentTable({
                                     type="checkbox"
                                     checked={selected}
                                     disabled={!available}
-                                    title={available ? undefined : 'Held sources cannot be selected for ordinary use.'}
+                                    title={blockedReason ?? undefined}
                                     onClick={(event) => event.stopPropagation()}
                                     onChange={(event) =>
                                         onSelect(
@@ -261,6 +269,11 @@ export function DocumentTable({
                                                         {secondary ? (
                                                             <div className="truncate text-xs text-text-3">
                                                                 {secondary}
+                                                            </div>
+                                                        ) : null}
+                                                        {scope.kind === 'group' ? (
+                                                            <div className="text-[11px] text-text-3">
+                                                                {groupDocumentOrigin(document, scope.id)}
                                                             </div>
                                                         ) : null}
                                                     </div>

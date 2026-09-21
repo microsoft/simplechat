@@ -72,7 +72,7 @@ function RailEntry({
     label: string;
     count?: number | null;
     active: boolean;
-    onClick: () => void;
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
     dropActive?: boolean;
     swatch?: string;
@@ -121,6 +121,9 @@ export function ExplorerRail({
     onApplySavedView,
     onDeleteSavedView,
     onDropOnTag,
+    placesEnabled = true,
+    sharedLabel = 'Shared with me',
+    compact = false,
 }: {
     query: DocumentQuery;
     facets: DocumentFacets | null;
@@ -132,10 +135,13 @@ export function ExplorerRail({
     onDeleteSavedView: (view: DocumentSavedView) => void;
     /** Applies a tag to the dragged documents. Undefined disables the drop target. */
     onDropOnTag?: (tagName: string, documentIds: string[]) => void;
+    placesEnabled?: boolean;
+    sharedLabel?: string;
+    compact?: boolean;
 }) {
     const [dropTarget, setDropTarget] = useState<string | null>(null);
 
-    const places = visiblePlaces(facets);
+    const places = placesEnabled ? visiblePlaces(facets) : ['all'] as const;
 
     /**
      * Ctrl-click adds a tag to the filter rather than replacing it.
@@ -172,7 +178,7 @@ export function ExplorerRail({
     return (
         <nav
             aria-label="Document filters"
-            className="flex w-56 shrink-0 flex-col gap-1 overflow-y-auto pr-1"
+            className={clsx('flex shrink-0 flex-col gap-1 overflow-y-auto pr-1', compact ? 'w-full' : 'w-48 xl:w-56')}
         >
             <RailGroup label="Places">
                 {places.map((place) => {
@@ -181,7 +187,7 @@ export function ExplorerRail({
                         <RailEntry
                             key={place}
                             icon={<Icon size={15} className="shrink-0" />}
-                            label={DOCUMENT_PLACE_LABELS[place]}
+                            label={place === 'shared' ? sharedLabel : DOCUMENT_PLACE_LABELS[place]}
                             count={placeCount(facets, place)}
                             active={query.place === place}
                             onClick={() => onQueryChange({ place })}
@@ -220,7 +226,7 @@ export function ExplorerRail({
                             label={tag.name}
                             count={facets?.by_tag?.[tag.name] ?? tag.count ?? null}
                             active={query.tags.includes(tag.name)}
-                            onClick={() => selectTag(tag.name, false)}
+                            onClick={(event) => selectTag(tag.name, event.ctrlKey || event.metaKey)}
                             dropActive={dropTarget === tag.name}
                             onDragOver={
                                 onDropOnTag
@@ -247,7 +253,8 @@ export function ExplorerRail({
                         />
                     ))}
                     <p className="px-2.5 pt-1 pb-1 text-[10px] leading-snug text-text-3">
-                        Drag documents onto a tag to apply it. Ctrl-click to combine tags.
+                        {onDropOnTag ? 'Drag documents onto a tag to apply it. ' : ''}
+                        Ctrl-click or Cmd-click to combine tags.
                     </p>
                 </RailGroup>
             ) : null}

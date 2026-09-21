@@ -19,11 +19,14 @@
 //      resolved back into names, which is best-effort per scope.
 
 import {
-    fetchGroupDocument,
     fetchPersonalDocument,
     fetchPublicWorkspaceDocuments,
 } from './endpoints';
 import { documentId as readDocumentId } from './documentExplorer';
+import {
+    documentSelectionReason, fetchScopedGroupDocument, fetchScopedGroupDocumentTags,
+} from './documentReadAdapter';
+import { fetchGroupWorkspaceContext } from './workspaceContext';
 import {
     PERSONAL_SCOPE,
     documentContextItem,
@@ -155,7 +158,8 @@ async function resolveDocument(
 ): Promise<WorkspaceDocument | null> {
     try {
         if (scope.kind === 'group') {
-            return await fetchGroupDocument(id, signal);
+            if (!scope.id) throw new Error('Group context requires an explicit group.');
+            return await fetchScopedGroupDocument(scope.id, id, signal);
         }
         if (scope.kind === 'public') {
             return publicIndex?.get(id) ?? null;
@@ -181,6 +185,7 @@ export async function resolveContextHandoff(
         publicWorkspaces?: readonly WorkspaceRef[];
         state?: ContextHandoffState | null;
         signal?: AbortSignal;
+        viewerId?: string;
     } = {},
 ): Promise<ContextItem[]> {
     const groups = options.groups ?? [];
@@ -188,6 +193,30 @@ export async function resolveContextHandoff(
     const items: ContextItem[] = [];
 
     const passed = options.state;
+    if (handoff.docScope === 'group') {
+        if (!handoff.groupId || !options.viewerId) throw new Error('Group context requires an authenticated viewer and an explicit group.');
+        const workspace = await fetchGroupWorkspaceContext(handoff.groupId, options.viewerId, options.signal);
+        if (!workspace.document_permissions.can_view || !workspace.document_permissions.can_chat
+            || !workspace.sections.documents.enabled) throw new Error('Chat is not available for this group.');
+        const scope = groupScope({ id: workspace.scope.id, name: workspace.workspace.name });
+        const readScope = { kind: 'group' as const, id: workspace.scope.id, name: workspace.workspace.name };
+        const documents = await Promise.all(handoff.documentIds.map((id) =>
+            fetchScopedGroupDocument(handoff.groupId, id, options.signal)));
+        if (documents.length === 0 && handoff.tags.length > 0) {
+            await fetchScopedGroupDocumentTags(handoff.groupId, options.signal);
+        }
+        for (const document of documents) {
+            const reason = documentSelectionReason(document, readScope);
+            if (reason) throw new Error(reason);
+            items.push(documentContextItem(document, scope, items, 'handoff'));
+        }
+        for (const tag of handoff.tags) items.push(tagContextItem(tag, scope, items, 'handoff'));
+        return items;
+    }
+    if (passed?.contextDocuments?.some((entry) => entry.scope.kind === 'group')
+        || passed?.contextTags?.some((entry) => entry.scope.kind === 'group')) {
+        throw new Error('Group context requires an explicit group handoff.');
+    }
     if (passed?.contextDocuments?.length || passed?.contextTags?.length) {
         for (const entry of passed.contextDocuments ?? []) {
             items.push(documentContextItem(entry.document, entry.scope, items, 'handoff'));
