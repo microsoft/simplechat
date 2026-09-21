@@ -196,6 +196,11 @@ labels, and desktop/mobile light/dark layouts. Existing workflow suites use a
 real selector-and-navigation helper, preserving their authoring, read-only
 inspection, and runtime assertions.
 
+`ui_tests/test_v2_personal_document_scope.py` provides the personal-document
+integration baseline added in version **0.261.128**. It checks that an unrelated
+active group does not retarget personal reads, search/tag filters, action
+availability, or metadata updates.
+
 Route-policy tests include the new endpoint. Existing personal bootstrap,
 workspace, and browser journeys protect compatibility. These isolated tests do
 not claim connectivity to a live Azure tenant or prove all future native
