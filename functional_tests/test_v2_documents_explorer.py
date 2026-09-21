@@ -1,8 +1,9 @@
+# test_v2_documents_explorer.py
 #!/usr/bin/env python3
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.127
+Version: 0.261.128
 Implemented in: 0.261.048
 Shared workspace shell integration: 0.261.127
 
@@ -58,6 +59,7 @@ DOCUMENTS_ROUTE = APP_DIR / "route_backend_documents.py"
 USERS_ROUTE = APP_DIR / "route_backend_users.py"
 SECTIONS_PY = APP_DIR / "functions_workspace_sections.py"
 DOCUMENTS_FUNCTIONS = APP_DIR / "functions_documents.py"
+DOCUMENT_QUERY_FUNCTIONS = APP_DIR / "functions_document_queries.py"
 
 ENDPOINTS_TS = V2_SRC / "lib" / "endpoints.ts"
 EXPLORER_TS = V2_SRC / "lib" / "documentExplorer.ts"
@@ -289,16 +291,16 @@ def test_place_filters_and_facets_are_derived_correctly():
     print("Testing standing views and facet counts...")
 
     namespace = _load_module_functions(
-        DOCUMENTS_ROUTE,
+        DOCUMENT_QUERY_FUNCTIONS,
         [
             "filter_documents_by_place",
-            "build_personal_document_facets",
+            "build_document_facets",
             "_document_processing_state",
             "_parse_document_timestamp",
         ],
     )
     filter_by_place = namespace["filter_documents_by_place"]
-    build_facets = namespace["build_personal_document_facets"]
+    build_facets = namespace["build_document_facets"]
 
     now = datetime.now(timezone.utc)
     recent_ts = int((now - timedelta(days=2)).timestamp())

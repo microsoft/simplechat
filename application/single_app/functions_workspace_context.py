@@ -180,8 +180,11 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             ),
         },
         "document_queries": {
-            "sort_fields": ["_ts", "file_name", "title"],
-            "facets": False,
-            "places": False,
+            "sort_fields": [
+                "_ts", "file_name", "title", "upload_date", "file_size",
+                "number_of_pages", "version", "document_classification",
+            ],
+            "facets": True,
+            "places": True,
         },
     }

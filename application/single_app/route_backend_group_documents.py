@@ -1,15 +1,28 @@
 # route_backend_group_documents.py:
 
 from datetime import datetime, timezone
+from functools import wraps
 import logging
 
-from content_screening.access import register_document_api_guards
+from content_screening.access import public_documents_payload, register_document_api_guards
 from content_screening.contracts import ScreeningError
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from functions_group_document_reads import (
+    GroupDocumentReadError,
+    explicit_group_document_read_id,
+    get_group_document_facets,
+    get_group_document_read_metadata,
+    get_group_document_read_tags,
+    get_group_document_read_versions,
+    load_group_document_browser_documents,
+    query_group_document_list,
+    refresh_group_document_read_payloads,
+    require_group_document_read_context,
+)
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
@@ -32,7 +45,7 @@ from functions_simplechat_operations import download_blob_content, queue_generat
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload
-from flask import current_app
+from flask import current_app, g
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -43,6 +56,58 @@ PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
 GROUP_DOCUMENT_SHARE_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES = ['group_document_share_pending']
+
+
+def _group_document_read_boundary(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except GroupDocumentReadError as error:
+            return jsonify({"error": error.description}), error.code
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except Exception as error:
+            log_event(
+                "[DOCUMENTS] Group document read failed.",
+                extra={"operation": function.__name__, "exception_type": type(error).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve group documents."}), 500
+    return guarded
+
+
+def _project_group_document_read_response(documents, user_id):
+    group_ids = getattr(g, "group_document_read_ids", None)
+    if not group_ids or request.method not in {"GET", "HEAD"}:
+        return public_documents_payload(documents, user_id)
+    try:
+        by_group = {group_id: [] for group_id in group_ids}
+        for document in documents:
+            if len(group_ids) == 1:
+                group_id = group_ids[0]
+            else:
+                group_id = (
+                    document.get("group_id") if document.get("group_id") in by_group
+                    else document.get("shared_group_active_id")
+                )
+            if group_id not in by_group:
+                raise GroupDocumentReadError("Document not found or access denied.", 404)
+            by_group[group_id].append(document)
+        refreshed = {}
+        for group_id, scoped_documents in by_group.items():
+            for document in refresh_group_document_read_payloads(scoped_documents, user_id, group_id):
+                refreshed[document["id"]] = document
+        return [refreshed[document["id"]] for document in documents]
+    except (GroupDocumentReadError, ScreeningError):
+        raise
+    except Exception as error:
+        log_event(
+            "[DOCUMENTS] Group document response revalidation failed.",
+            extra={"exception_type": type(error).__name__},
+            level=logging.ERROR,
+        )
+        raise GroupDocumentReadError("Unable to retrieve group documents.", 500) from error
 
 
 def _cleanup_group_generated_artifact_notifications(document_id, group_id):
@@ -293,7 +358,7 @@ def register_route_backend_group_documents(bp):
     - POST /api/group_documents/upload
     - DELETE /api/group_documents/<doc_id>
     """
-    register_document_api_guards(bp)
+    register_document_api_guards(bp, document_projector=_project_group_document_read_response)
 
     @bp.route('/api/group_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -432,16 +497,31 @@ def register_route_backend_group_documents(bp):
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_documents():
         """
         Return a paginated, filtered list of documents for the user's groups.
-        Accepts optional `group_ids` query param (comma-separated) to load from
-        multiple groups at once. Falls back to single active group from user settings.
-        Permission: user must be a member of each group (non-members silently excluded).
+        An explicit `group_id` selects one authorized group without an active fallback.
+        Otherwise, legacy `group_ids` (comma-separated) excludes inaccessible groups
+        and an omitted selection uses the saved active group.
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        requested_group_id = explicit_group_document_read_id(request.args)
+        if requested_group_id is not None:
+            g.group_document_read_ids = [requested_group_id]
+            documents = load_group_document_browser_documents(user_id, requested_group_id)
+            payload = query_group_document_list(documents, requested_group_id, request.args)
+            group_doc, role = require_group_document_read_context(user_id, requested_group_id)
+            downloads_enabled = (
+                role in GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES
+                and is_group_workspace_file_download_enabled(get_settings(), group_doc)
+            )
+            payload["file_downloads_enabled"] = downloads_enabled
+            payload["file_download_enabled_group_ids"] = [requested_group_id] if downloads_enabled else []
+            return jsonify(payload), 200
 
         group_ids_param = request.args.get('group_ids', '')
         validated_group_roles = {}
@@ -452,14 +532,11 @@ def register_route_backend_group_documents(bp):
             validated_group_ids = []
             for gid in requested_ids:
                 try:
-                    role = assert_group_role(
-                        user_id,
-                        gid,
-                        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-                    )
-                except (LookupError, PermissionError):
+                    _, role = require_group_document_read_context(user_id, gid)
+                except GroupDocumentReadError:
                     continue
-                validated_group_ids.append(gid)
+                if gid not in validated_group_ids:
+                    validated_group_ids.append(gid)
                 validated_group_roles[gid] = role
 
             if not validated_group_ids:
@@ -480,8 +557,11 @@ def register_route_backend_group_documents(bp):
             if error_response:
                 return error_response
 
+            _, role = require_group_document_read_context(user_id, active_group_id)
             validated_group_ids = [active_group_id]
             validated_group_roles[active_group_id] = role
+
+        g.group_document_read_ids = validated_group_ids
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -694,8 +774,12 @@ def register_route_backend_group_documents(bp):
                         )
                     doc['owner_group_name'] = group_name_cache[owner_group_id]
         except Exception as e:
-            print(f"Error fetching group documents: {e}")
-            return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
+            log_event(
+                "[DOCUMENTS] Legacy group document list failed.",
+                extra={"exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve group documents."}), 500
 
 
         # --- new: do we have any legacy documents? ---
@@ -741,7 +825,12 @@ def register_route_backend_group_documents(bp):
                         )
                         legacy_count += legacy_docs[0] if legacy_docs else 0
             except Exception as e:
-                print(f"Error executing legacy query: {e}")
+                log_event(
+                    "[DOCUMENTS] Legacy group document count failed.",
+                    extra={"exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                return jsonify({"error": "Unable to retrieve group documents."}), 500
 
         # --- 5) Return results ---
         app_settings = get_settings()
@@ -765,73 +854,59 @@ def register_route_backend_group_documents(bp):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
+    @bp.route('/api/group_documents/facets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
+    def api_get_group_document_facets():
+        """Count the complete safe current-revision set of an explicitly selected group."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        group_id = explicit_group_document_read_id(request.args, required=True)
+        return jsonify(get_group_document_facets(user_id, group_id)), 200
+
     @bp.route('/api/group_documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document(document_id):
-        """
-        Return metadata for a specific group document, validating group membership.
-        Mirrors logic of api_get_user_document.
-        """
+        """Read metadata in explicit group_id scope, or the validated legacy active scope."""
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        try:
-            active_group_id = require_active_group(
-                user_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        group_id = explicit_group_document_read_id(request.args)
+        if group_id is None:
+            group_id, _, _, error_response = _require_active_group_document_context(
+                user_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                permission_message='You are not a member of the active group',
             )
-        except ValueError:
-            return jsonify({'error': 'No active group selected'}), 400
-        except LookupError:
-            return jsonify({'error': 'Active group not found'}), 404
-        except PermissionError:
-            return jsonify({'error': 'You are not a member of the active group'}), 403
+            if error_response:
+                return error_response
 
-        return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
+        g.group_document_read_ids = [group_id]
+        return jsonify(get_group_document_read_metadata(user_id, group_id, document_id)), 200
 
     @bp.route('/api/group_documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document_versions(document_id):
+        """Return only revisions individually authorized in the required group_id scope."""
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        requested_group_id = str(request.args.get('group_id') or '').strip()
-        if not requested_group_id:
-            return jsonify({'error': 'group_id is required'}), 400
-
-        try:
-            assert_group_role(
-                user_id,
-                requested_group_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
-        except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
-        except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
-
-        versions = get_document_versions(
-            user_id=user_id,
-            document_id=document_id,
-            group_id=requested_group_id,
-        )
-        if not versions:
-            return jsonify({'error': 'Document versions not found'}), 404
-
-        return jsonify({
-            'document_id': document_id,
-            'group_id': requested_group_id,
-            'revision_family_id': versions[0].get('revision_family_id'),
-            'versions': versions,
-        }), 200
+        group_id = explicit_group_document_read_id(request.args, required=True)
+        g.group_document_read_ids = [group_id]
+        return jsonify(get_group_document_read_versions(user_id, group_id, document_id)), 200
 
     def _authorize_group_document_download(user_id, document_id):
         try:
@@ -2087,16 +2162,20 @@ def register_route_backend_group_documents(bp):
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document_tags():
         """
         Get all unique tags used across one or more group workspaces with document counts.
-        Accepts optional `group_ids` query param (comma-separated).
-        Falls back to single active group from user settings if not provided.
-        Permission: user must be a member of each group (non-members silently excluded).
+        Explicit `group_id` uses the complete safe current-revision set, including shares.
+        Without it, retain the legacy `group_ids` and active-group tag contracts.
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        group_id = explicit_group_document_read_id(request.args)
+        if group_id is not None:
+            return jsonify({"tags": get_group_document_read_tags(user_id, group_id)}), 200
 
         group_ids_param = request.args.get('group_ids', '')
 
@@ -2113,13 +2192,12 @@ def register_route_backend_group_documents(bp):
         all_tags = {}
         validated_group_ids = []
         for gid in group_ids:
-            group_doc = find_group_by_id(gid)
-            if not group_doc:
+            try:
+                require_group_document_read_context(user_id, gid)
+            except GroupDocumentReadError:
                 continue
-            role = get_user_role_in_group(group_doc, user_id)
-            if not role:
-                continue
-            validated_group_ids.append(gid)
+            if gid not in validated_group_ids:
+                validated_group_ids.append(gid)
 
         index_tag_result = query_document_access_index_tag_counts(
             DOCUMENT_ACCESS_SCOPE_GROUP,

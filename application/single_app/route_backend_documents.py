@@ -32,13 +32,19 @@ from functions_document_access_index import (
     query_document_access_index_legacy_count,
     query_document_access_index_tag_counts,
 )
+from functions_document_queries import (
+    DOCUMENT_PLACE_FILTERS,
+    DOCUMENT_RECENT_DAYS,
+    build_document_facets,
+    filter_documents_by_place as filter_workspace_documents_by_place,
+)
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
 # Imported explicitly rather than relying on the star imports above: several functions in
 # this module re-import these names locally, which is a sign the star-imported bindings
 # cannot be counted on to be the classes rather than the module.
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import io
 import logging
 import os
@@ -465,164 +471,12 @@ def _load_accessible_personal_documents(user_id):
     return select_current_documents(matching_documents)
 
 
-# The standing views the workspace navigation offers, alongside the content filters. Each
-# describes the *state* of a document rather than its content.
-DOCUMENT_PLACE_FILTERS = frozenset({
-    'all',
-    'recent',
-    'shared',
-    'processing',
-    'errors',
-    'untagged',
-})
-
-DOCUMENT_RECENT_DAYS = 30
-
-
-def _document_processing_state(document_item):
-    """Classify a document as 'error', 'processing' or 'ready'.
-
-    Mirrors what the interfaces show. `status` carries the error text rather than a code, so
-    an error is detected by inspecting it; a document with no `percentage_complete` at all is
-    a legacy record that predates progress tracking and is treated as ready rather than as
-    permanently stuck.
-    """
-    status_text = str(document_item.get('status') or '').lower()
-    if 'error' in status_text or 'failed' in status_text:
-        return 'error'
-
-    percentage = document_item.get('percentage_complete')
-    if percentage is None:
-        return 'ready'
-    try:
-        return 'ready' if float(percentage) >= 100 else 'processing'
-    except (TypeError, ValueError):
-        return 'ready'
-
-
 def build_personal_document_facets(documents, user_id, recent_days=DOCUMENT_RECENT_DAYS):
-    """Count the whole accessible set along the dimensions the navigation rail offers.
-
-    Counting here rather than in the browser is what makes the rail trustworthy: the client
-    only ever holds one page, so any count it derived would describe the page rather than the
-    workspace.
-    """
-    recent_cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
-
-    facets = {
-        'total': 0,
-        'untagged': 0,
-        'processing': 0,
-        'errors': 0,
-        'recent': 0,
-        'shared_with_me': 0,
-        'by_tag': {},
-        'by_classification': {},
-    }
-
-    for document_item in documents or []:
-        facets['total'] += 1
-
-        tags = [
-            str(tag).strip()
-            for tag in (document_item.get('tags') or [])
-            if str(tag or '').strip()
-        ]
-        if tags:
-            for tag in tags:
-                facets['by_tag'][tag] = facets['by_tag'].get(tag, 0) + 1
-        else:
-            facets['untagged'] += 1
-
-        state = _document_processing_state(document_item)
-        if state == 'processing':
-            facets['processing'] += 1
-        elif state == 'error':
-            facets['errors'] += 1
-
-        classification = str(document_item.get('document_classification') or '').strip()
-        if classification:
-            facets['by_classification'][classification] = (
-                facets['by_classification'].get(classification, 0) + 1
-            )
-
-        if document_item.get('user_id') != user_id:
-            facets['shared_with_me'] += 1
-
-        upload_date = _parse_document_timestamp(document_item)
-        if upload_date and upload_date >= recent_cutoff:
-            facets['recent'] += 1
-
-    return facets
-
-
-def _parse_document_timestamp(document_item):
-    """Best-effort upload time as an aware datetime, or None when it cannot be read.
-
-    `_ts` is preferred because Cosmos always sets it, whereas `upload_date` is written by the
-    application and is absent on the oldest records.
-    """
-    raw_ts = document_item.get('_ts')
-    if raw_ts is not None:
-        try:
-            return datetime.fromtimestamp(float(raw_ts), tz=timezone.utc)
-        except (TypeError, ValueError, OSError):
-            pass
-
-    raw_upload_date = document_item.get('upload_date')
-    if not raw_upload_date:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(raw_upload_date).replace('Z', '+00:00'))
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return build_document_facets(documents, user_id, recent_days)
 
 
 def filter_documents_by_place(documents, place, user_id, recent_days=DOCUMENT_RECENT_DAYS):
-    """Narrow a document list to one standing view.
-
-    Applied after the query rather than inside it because every one of these is derived:
-    processing state is read out of free-text `status` and `percentage_complete`, "untagged"
-    is the absence of a value rather than a value, and ownership is only meaningful relative
-    to the caller. The list route already materialises and paginates in Python, so filtering
-    here costs nothing extra.
-    """
-    if place in ('', 'all', None):
-        return documents
-
-    if place == 'untagged':
-        return [
-            document_item for document_item in documents
-            if not [
-                tag for tag in (document_item.get('tags') or [])
-                if str(tag or '').strip()
-            ]
-        ]
-
-    if place == 'shared':
-        return [
-            document_item for document_item in documents
-            if document_item.get('user_id') != user_id
-        ]
-
-    if place in ('processing', 'errors'):
-        wanted_state = 'processing' if place == 'processing' else 'error'
-        return [
-            document_item for document_item in documents
-            if _document_processing_state(document_item) == wanted_state
-        ]
-
-    if place == 'recent':
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
-        recent_documents = []
-        for document_item in documents:
-            uploaded_at = _parse_document_timestamp(document_item)
-            if uploaded_at and uploaded_at >= recent_cutoff:
-                recent_documents.append(document_item)
-        return recent_documents
-
-    return documents
+    return filter_workspace_documents_by_place(documents, place, user_id, recent_days)
 
 
 def register_route_backend_documents(bp):

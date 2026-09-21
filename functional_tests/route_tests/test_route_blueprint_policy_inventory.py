@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_route_blueprint_policy_inventory.py
+#!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.126
+Version: 0.261.128
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -123,6 +123,11 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_group_documents.py", "api_get_group_documents"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_facets"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_tags"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_versions"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_workflows.py", "get_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
     ("route_backend_workflows.py", "get_group_workflow_flow"): ("login_required", "user_required"),
