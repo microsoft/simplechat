@@ -1,7 +1,7 @@
 # test_analyze_orchestration_saved_integration.py
 """
 Behavioral tests for saved Analyze references through orchestration.
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Adapters, collection, section persistence/readers and checkpoint codecs are
@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from test_analyze_backend_saved_integration import access, budget, load_functions, mixed, saved
+from test_analyze_backend_saved_integration import access, budget, load_functions, mixed, model_budget, saved
 from test_analyze_native_saved_integration import native_run
 from test_orchestration_conversation_context import load_modules
 from test_support.app_stubs import import_app_module
@@ -128,10 +128,10 @@ def orchestration(monkeypatch):
     invoke.model_metadata = {"modelName": "selected-offline-model"}
     invoke.provider = "aoai"
     invoke.output_tokens = 4096
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 200000, "max_input_tokens": None, "max_output_tokens": 4096,
         "tokenizer": None, "source": "configured", "model_id": "selected-offline-model", "status": "known",
-    })
+    }))
     context = modules.executor.RunContext(
         run_id="run-1", conversation_id="conversation-1", user_id="owner",
         invoke_prompt=invoke, user_message="Explain the review.", resolve_source_manifest=resolve,
@@ -270,7 +270,7 @@ def test_orchestration_model_boundary_blocks_oversized_saved_records(monkeypatch
         "context_window_tokens": 1024, "max_input_tokens": None, "max_output_tokens": 512,
         "tokenizer": None, "source": "catalog", "model_id": "chosen-small-model", "status": "known",
     }
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: limits)
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget(limits))
     calls = []
     model = SimpleNamespace(
         deployment="chosen-deployment", provider="aoai", behavior_name="chosen-model",
@@ -297,10 +297,10 @@ def test_orchestration_model_boundary_blocks_oversized_saved_records(monkeypatch
 def test_orchestration_respond_pages_all_records_without_a_second_source_pass(orchestration, monkeypatch):
     fixture = orchestration
     fixture.context.merge_step_result(analyze(fixture), step_id="analyze-1")
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 16000, "max_input_tokens": 16000, "max_output_tokens": 2048,
         "tokenizer": None, "source": "configured", "model_id": "selected-offline-model", "status": "known",
-    })
+    }))
     seen = []
 
     def invoke(messages, **kwargs):

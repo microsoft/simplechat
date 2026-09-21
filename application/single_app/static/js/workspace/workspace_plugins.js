@@ -2,7 +2,7 @@
 import { renderPluginsTable, renderPluginsGrid, ensurePluginsTableInRoot, validatePluginManifest, getErrorMessageFromResponse } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
 import {
-    setupViewToggle, switchViewContainers, openViewModal
+    setupViewToggle, switchViewContainers, openViewModal, getMcpRetirementStatus
 } from './view-utils.js';
 
 const root = document.getElementById('workspace-plugins-root');
@@ -19,15 +19,17 @@ function renderError(msg) {
 }
 
 function getViewHandlers() {
+  const findPlugin = key => plugins.find(plugin => plugin.id === key) || plugins.find(plugin => plugin.name === key);
   return {
-    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
-    onDelete: name => deletePlugin(name),
-    onView: name => {
-      const plugin = plugins.find(p => p.name === name);
+    getPluginKey: plugin => plugin.id || plugin.name || '',
+    onEdit: key => openPluginModal(findPlugin(key)),
+    onDelete: key => deletePlugin(key),
+    onView: key => {
+      const plugin = findPlugin(key);
       if (plugin) {
-        openViewModal(plugin, 'action', {
+        openViewModal(plugin, 'action', plugin.is_global ? {} : {
           onEdit: (item) => openPluginModal(item),
-          onDelete: (item) => deletePlugin(item.name)
+          onDelete: (item) => deletePlugin(item.id || item.name)
         });
       }
     }
@@ -106,14 +108,14 @@ async function fetchPlugins() {
   }
 }
 
-function openPluginModal(plugin = null) {
+async function openPluginModal(plugin = null) {
   // Use the new multi-step modal
   if (window.pluginModalStepper) {
     window.pluginModalStepper.setActionScope({
       scope: 'personal',
       apiBase: '/api/workspace-identities/personal'
     });
-    const modal = window.pluginModalStepper.showModal(plugin);
+    const modal = await window.pluginModalStepper.showModal(plugin);
     
     // Set up save handler
     setupSaveHandler(plugin, modal);
@@ -191,15 +193,23 @@ async function savePlugin(pluginData, existingPlugin = null) {
   let plugins = await res.json();
   
   // Update or add the plugin
-  const existingIndex = plugins.findIndex(p => {
-    if (payload.id && p.id === payload.id) {
-      return true;
-    }
-    if (existingPlugin?.name && p.name === existingPlugin.name) {
-      return true;
-    }
-    return p.name === payload.name;
-  });
+  let existingIndex;
+  if (existingPlugin?.id) {
+      existingIndex = plugins.findIndex(item => item.id === existingPlugin.id);
+      if (existingIndex < 0) {
+          throw new Error('This action is no longer available. Refresh the action list before saving.');
+      }
+  } else {
+      const matchingName = existingPlugin?.name || payload.name;
+      const matches = plugins.map((item, index) => item.name === matchingName ? index : -1).filter(index => index >= 0);
+      if (matches.length > 1) {
+          throw new Error('Multiple actions have this name. Refresh the list and edit the specific action.');
+      }
+      existingIndex = matches.length ? matches[0] : -1;
+      if (!existingPlugin && existingIndex >= 0 && getMcpRetirementStatus(plugins[existingIndex])) {
+          throw new Error('An unsupported action already has this name. Reconfigure or delete that action explicitly.');
+      }
+  }
   if (existingIndex >= 0) {
     plugins[existingIndex] = payload;
   } else {
@@ -219,11 +229,17 @@ async function savePlugin(pluginData, existingPlugin = null) {
   }
 }
 
-async function deletePlugin(name) {
+async function deletePlugin(key) {
+  const plugin = plugins.find(item => item.id === key) || plugins.find(item => item.name === key);
+  if (!plugin || plugin.is_global) {
+      return;
+  }
+  const name = plugin.name || '';
+  const locator = plugin.id || name;
   if (!confirm(`Are you sure you want to delete action "${name}"?`)) return;
   
   try {
-    const res = await fetch(`/api/user/plugins/${encodeURIComponent(name)}`, {
+    const res = await fetch(`/api/user/plugins/${encodeURIComponent(locator)}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' }
     });

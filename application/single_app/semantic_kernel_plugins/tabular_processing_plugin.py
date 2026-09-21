@@ -36,6 +36,7 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from functions_tabular_csv_query import (
     iter_tabular_csv_query_rows,
+    read_tabular_csv,
     validate_tabular_csv_query_expression,
 )
 from functions_group import assert_group_role, find_group_by_id, get_user_role_in_group
@@ -3189,7 +3190,7 @@ class TabularProcessingPlugin:
 
         name_lower = blob_name.lower()
         if name_lower.endswith('.csv'):
-            df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
+            df = read_tabular_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
         elif name_lower.endswith('.xlsx') or name_lower.endswith('.xlsm'):
             df = pandas.read_excel(
                 io.BytesIO(data),

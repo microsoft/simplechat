@@ -1490,6 +1490,20 @@ async function uploadWorkspaceFiles(files) {
    let completed = 0;
    let failed = 0;
 
+   function updateWorkspaceUploadRequestSummary() {
+       uploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+   }
+
+   function finishWorkspaceUploadRequests() {
+       fileInput.value = '';
+       docsCurrentPage = 1;
+       fetchUserDocuments();
+       uploadStatusSpan.textContent = failed
+           ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+           : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+       if (progressContainer) progressContainer.innerHTML = '';
+   }
+
    // Helper to create a unique ID for each file
    function makeId(file) {
        return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -1544,7 +1558,7 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Uploaded ${file.name} (100%)`;
+                   statusText.textContent = `Queued ${file.name} (100%)`;
                }
                completed++;
            } else {
@@ -1554,18 +1568,13 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Failed to upload ${file.name}`;
+                   statusText.textContent = `Upload request did not confirm for ${file.name}`;
                }
                failed++;
            }
-           // Update summary status
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               // Clear upload progress bars after all uploads and table refresh
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 
@@ -1576,15 +1585,12 @@ async function uploadWorkspaceFiles(files) {
                progressBar.classList.remove('progress-bar-animated');
            }
            if (statusText) {
-               statusText.textContent = `Failed to upload ${file.name}`;
+               statusText.textContent = `Upload request did not confirm for ${file.name}`;
            }
            failed++;
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 

@@ -36,8 +36,10 @@ from functions_file_sync import (
 )
 from functions_global_agents import get_global_agents
 from functions_personal_agents import get_personal_agents
+from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
@@ -75,7 +77,8 @@ def _utc_now_iso():
 def _strip_cosmos_metadata(document):
     if not isinstance(document, dict):
         return {}
-    return {key: value for key, value in document.items() if not str(key).startswith('_')}
+    cleaned = {key: value for key, value in document.items() if not str(key).startswith('_')}
+    return sanitize_workflow_alert_record(cleaned)
 
 
 def _normalize_text(value, field_name, required=False):
@@ -1004,6 +1007,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         workflow['next_run_at'] = None
 
     workflow.update(definition_fields)
+    normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
     if workflow.get('definition_version') == 3:
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 

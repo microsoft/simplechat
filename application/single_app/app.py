@@ -106,6 +106,24 @@ from route_backend_data_management import register_route_backend_data_management
 from route_backend_content_screening import register_route_backend_content_screening
 from route_frontend_content_screening import register_route_frontend_content_screening
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
+from route_backend_m365 import configure_m365_routes, register_route_backend_m365
+from functions_m365_approvals import configure_m365_approvals
+from functions_m365_connections import configure_m365_connection_authorization
+from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
+from functions_m365_file_runtime import configure_m365_file_runtime
+from functions_m365_request_resume import queue_approved_chat
+from functions_m365_runtime import (
+    authorize_m365_conversation_audit,
+    complete_m365_request,
+    configure_m365_history_runtime,
+    configure_m365_pending_delivery_runtime,
+    resolve_m365_action_config,
+    resolve_m365_action_selection,
+    resolve_m365_audit_conversation_id,
+    resolve_m365_workflow_binding,
+    validate_m365_approval_decision,
+    validate_m365_workflow_execution,
+)
 from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_validation_bp
@@ -114,6 +132,7 @@ from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -185,7 +204,7 @@ from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
 
 from flask_session import Session
-from redis import Redis
+import functions_redis_client
 from functions_settings import get_settings
 from functions_ai_connection_migration import initialize_ai_connections
 from functions_authentication import get_current_user_id
@@ -231,41 +250,18 @@ def configure_sessions(settings):
                 try:
                     if redis_auth_type == 'managed_identity':
                         log_event("Redis enabled using Managed Identity", level=logging.INFO)
-                        redis_client = app_settings_cache.create_redis_managed_identity_client(
-                            redis_url,
-                            settings=settings,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     elif redis_auth_type == 'key_vault':
                         log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
-                        from functions_keyvault import retrieve_secret_direct
-                        redis_key_secret_name = settings.get('redis_key', '').strip()
-                        redis_password = retrieve_secret_direct(redis_key_secret_name)
-                        if redis_password:
-                            redis_password = redis_password.strip()
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_password,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     else:
-                        redis_key = settings.get('redis_key', '').strip()
                         log_event("Redis enabled using Access Key", level=logging.INFO)
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_key,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
-                    
+
+                    redis_client = functions_redis_client.create_redis_client(
+                        settings=settings,
+                        credential_purpose=functions_redis_client.CREDENTIAL_PURPOSE_SESSION,
+                        socket_connect_timeout=5,
+                        socket_timeout=5
+                    )
+
                     # Test the connection
                     redis_client.ping()
                     log_event("✅ Redis connection successful", level=logging.INFO)
@@ -317,13 +313,12 @@ def initialize_application(force=False):
         print("Initializing application...")
         settings = get_settings(use_cosmos=True)
         redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
-        app_settings_cache.configure_app_cache(
+        configure_application_cache(
             settings,
-            get_redis_cache_infrastructure_endpoint(redis_hostname)
+            get_redis_cache_infrastructure_endpoint(redis_hostname),
+            redis_client_factory=functions_redis_client.create_redis_client,
         )
-        app_settings_cache.update_settings_cache(settings)
         settings = initialize_ai_connections(settings)
-        app_settings_cache.update_settings_cache(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
         sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
@@ -624,6 +619,7 @@ def inject_settings():
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
+        model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
@@ -1247,8 +1243,14 @@ def index():
 
     # Convert Markdown to HTML safely
     landing_html = markdown_filter(landing_text)
+    signed_in_account = get_signed_in_account_display(session.get("user"))
 
-    return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
+    return render_template(
+        'index.html',
+        app_settings=public_settings,
+        landing_html=landing_html,
+        signed_in_account=signed_in_account,
+    )
 
 @public_app_bp.route('/robots933456.txt')
 @swagger_route(security=get_auth_security())
@@ -1407,6 +1409,34 @@ register_route_blueprint('backend_collaboration', register_route_backend_collabo
 
 # ------------------- API MS Graph Pending Action Routes -
 register_route_blueprint('backend_msgraph_pending_actions', register_route_backend_msgraph_pending_actions, user_required_blueprint)
+configure_m365_approvals(decision_validator=validate_m365_approval_decision)
+configure_m365_execution(
+    workflow_validator=validate_m365_workflow_execution,
+    action_config_resolver=resolve_m365_action_config,
+    workflow_binding_resolver=resolve_m365_workflow_binding,
+    action_selection_resolver=resolve_m365_action_selection,
+)
+configure_m365_connection_authorization(validate_m365_workflow_context)
+configure_m365_routes(
+    conversation_authorizer=authorize_m365_conversation_audit,
+    decision_callback=queue_approved_chat,
+    audit_conversation_resolver=resolve_m365_audit_conversation_id,
+)
+configure_m365_history_runtime()
+configure_m365_file_runtime()
+configure_m365_pending_delivery_runtime(app.test_request_context)
+register_route_blueprint('backend_m365', register_route_backend_m365, user_required_blueprint)
+
+
+@app.after_request
+def finalize_m365_json_request(response):
+    if response.is_json:
+        payload = response.get_json()
+        success = response.status_code < 400 and isinstance(payload, dict) and not (
+            payload.get("error") or payload.get("pending") or payload.get("success") is False
+        )
+        complete_m365_request(success=success)
+    return response
 
 # ------------------- API Documents Routes ---------------
 register_route_blueprint('backend_documents', register_route_backend_documents, user_required_blueprint)

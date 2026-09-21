@@ -1,7 +1,7 @@
 # test_workflow_loop_reporting_integration.py
 """
 Functional integration of exact Collect with the actual saved-record report dispatcher.
-Version: 0.261.117
+Version: 0.261.122
 Implemented in: 0.261.117
 
 The production task sequence and reporting adapter use private serialized results
@@ -67,16 +67,13 @@ def test_collected_records_reach_reporting_without_an_upload_or_character_clip(m
         report = explain_saved_analysis(
             readers, [{"role": "user", "content": execution_workflow["task_prompt"]}], invoke,
             model={
-                "modelName": "closed-fixture", "context_window_tokens": 131072,
-                "max_input_tokens": 130000, "max_output_tokens": 1024,
+                "modelName": "closed-fixture", "contextWindow": context_tokens,
+                "inputTokenLimit": context_tokens - 1024, "outputTokenLimit": 1024,
+                "outputTokenAccounting": "total_generation",
             }, output_tokens=512,
         )
         return {"reply": report["reply"], "analysis_consumption": report["analysis_consumption"]}
 
-    monkeypatch.setattr("functions_workflow_context.resolve_model_token_limits", lambda *args, **kwargs: {
-        "context_window_tokens": context_tokens, "max_input_tokens": context_tokens - 1024, "max_output_tokens": 1024,
-        "tokenizer": None, "source": "deployment", "status": "known", "model_id": "closed-fixture",
-    })
     runner.update(
         _execute_workflow_dispatch=dispatch, persist_workflow_task_result=persist_workflow_task_result,
         authorize_workflow_task_result_read=authorize_workflow_task_result_read,

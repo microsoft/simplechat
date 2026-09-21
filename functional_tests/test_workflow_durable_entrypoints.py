@@ -1,7 +1,7 @@
 # test_workflow_durable_entrypoints.py
 """
 Functional tests for scheduled and inbound-MCP durable workflow admission.
-Version: 0.261.111
+Version: 0.261.122
 Implemented in: 0.261.111
 
 Existing entrypoints queue instead of executing synchronously. Active waits and
@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import pytest
 
 from test_analyze_backend_saved_integration import load_functions
+from functions_m365_workflow_binding import M365_ACTIVE_STATES
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 import functions_workflow_runtime as runtime
 
@@ -45,6 +46,8 @@ def test_scheduler_respects_durable_admission_and_active_runs(scope, trigger, sc
             raise RuntimeError("Scheduling metadata unavailable.")
 
     namespace = {
+        "M365_ACTIVE_STATES": M365_ACTIVE_STATES,
+        "check_m365_workflow_continuations_once": lambda: [],
         "datetime": datetime, "timezone": timezone, "logging": logging,
         "get_settings": lambda: {"allow_user_workflows": True, "allow_group_workflows": True},
         "get_due_personal_workflows": lambda **kwargs: [workflow] if scope == "personal" else [],

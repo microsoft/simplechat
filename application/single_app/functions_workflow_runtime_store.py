@@ -23,6 +23,7 @@ from functions_workflow_journal import WorkflowJournalMixin
 from functions_workflow_identity import workflow_execution_id
 from functions_artifact_publication_readiness import public_publication_status
 from functions_workflow_limits import WORKFLOW_REPEAT_ITERATIONS_DEFAULT, WORKFLOW_REPEAT_ITERATIONS_MAX
+from functions_m365_workflow_binding import M365_WAITING_STATES
 
 
 CONTROL_ID = "workflow-runtime:v1"
@@ -37,7 +38,7 @@ DEFAULT_HEARTBEAT_SECONDS = 10
 NO_WRITE = object()
 
 CLAIM_STATES = frozenset({"queued", "running"})
-WAITING_STATES = frozenset({"waiting_approval", "waiting_output", "waiting_recovery", "paused"})
+WAITING_STATES = frozenset({"waiting_approval", "waiting_output", "waiting_recovery", "paused"}) | M365_WAITING_STATES
 TERMINAL_STATES = frozenset({"completed", "completed_partial", "failed", "invalid", "incomplete", "cancelled", "skipped"})
 RESUMABLE_STATES = frozenset({"failed", "invalid", "incomplete"})
 ALL_STATES = CLAIM_STATES | WAITING_STATES | TERMINAL_STATES | frozenset({"cancelling"})
@@ -85,6 +86,7 @@ GATE_ALLOWED_KEYS = frozenset({
     "repeat",
 })
 GATE_KIND_BY_STATE = {
+    **{state: "pause" for state in M365_WAITING_STATES},
     "waiting_approval": "approval",
     "waiting_output": "output",
     "waiting_recovery": "recovery",
@@ -322,6 +324,10 @@ def _validate_gate(gate, state):
         raise RuntimeConflict("invalid_gate", "Workflow runtime gate choices are invalid.")
     if set(choices) - allowed_choices:
         raise RuntimeConflict("invalid_gate", "Workflow runtime gate choices are not allowed.")
+    if state in M365_WAITING_STATES and (
+        gate.get("reason_code") != "m365_authorization" or choices != ["cancel"]
+    ):
+        raise RuntimeConflict("invalid_gate", "Microsoft 365 authorization must use its dedicated approval or sign-in flow.")
     if kind != "output" and not choices:
         raise RuntimeConflict("invalid_gate", "Workflow runtime gate choices are required.")
     if kind == "output" and choices:
@@ -1105,6 +1111,29 @@ class WorkflowRuntimeStore(WorkflowJournalMixin):
             replacement["gate"] = None
             replacement["lease"] = None
             replacement["version"] = int(current.get("version", 0)) + 1
+            return replacement
+
+        return self._mutate(mutator, attempts=MAX_CAS_RETRIES)
+
+    def requeue_m365(self, *, expected_version, gate_id):
+        """Release only the exact Microsoft 365 gate claimed by its continuation."""
+        if type(expected_version) is not int:
+            raise RuntimeConflict("stale_version", "Workflow runtime version is required.")
+        gate_id = _require_id(gate_id, "gate_id")
+
+        def mutator(current):
+            if current.get("version") != expected_version:
+                raise RuntimeConflict("stale_version", "Workflow runtime version changed. Reload and try again.")
+            gate = current.get("gate") or {}
+            if (
+                current.get("state") not in M365_WAITING_STATES
+                or gate.get("id") != gate_id
+                or gate.get("reason_code") != "m365_authorization"
+                or gate.get("correlation_id") != self.identity["run_id"]
+            ):
+                raise RuntimeConflict("stale_gate", "The Microsoft 365 workflow wait changed.")
+            replacement = self._base_replacement(current)
+            replacement.update(state="queued", gate=None, lease=None, version=current["version"] + 1)
             return replacement
 
         return self._mutate(mutator, attempts=MAX_CAS_RETRIES)

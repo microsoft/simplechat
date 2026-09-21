@@ -20,12 +20,8 @@ from functions_embedding_policy import (
     normalize_embedding_config,
     resolve_embedding_policy,
 )
-from functions_model_endpoint_types import (
-    get_model_endpoint_api_type,
-    resolve_custom_azure_openai_base_url,
-    resolve_custom_openai_base_url,
-    resolve_model_endpoint_request_model,
-)
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_urls import resolve_custom_azure_openai_base_url, resolve_custom_openai_base_url
 
 
 EMBEDDING_VECTOR_PROFILE_KEY = "embedding_vector_profile"
@@ -73,7 +69,7 @@ def normalize_embedding_operation(value):
     return result
 
 
-def _validated_endpoint(value):
+def _validated_endpoint(value, *, custom=False):
     if not isinstance(value, str) or not value.strip():
         raise AIConnectionError("Configure an embedding inference endpoint.")
     try:
@@ -83,10 +79,12 @@ def _validated_endpoint(value):
             or parsed.username or parsed.password or parsed.query or parsed.fragment
         ):
             raise ValueError
+        if custom and parsed.scheme != "https" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError
         _ = parsed.port
     except ValueError as exc:
         raise AIConnectionError(
-            "Use a valid embedding API base URL without credentials, query, or fragment."
+            "Use a valid embedding API base URL without credentials, query, or fragment; custom remote endpoints require HTTPS."
         ) from exc
     if "/api/projects/" in parsed.path.lower():
         raise AIConnectionError(
@@ -102,6 +100,7 @@ def embedding_transport(binding):
     provider = str(binding.endpoint.get("provider") or "aoai").strip().lower()
     endpoint = _validated_endpoint(
         operation.get("endpoint") or connection.get("endpoint"),
+        custom=provider == "openai_compatible",
     )
     api = operation.get("api") or (
         "openai" if provider != "aoai" or urlsplit(endpoint).path.lower().endswith("/openai/v1")
@@ -124,11 +123,7 @@ def embedding_transport(binding):
             version = operation.get("api_version") or ""
             if version not in ("", "v1"):
                 raise AIConnectionError("OpenAI-compatible embeddings do not use a dated API version.")
-            return (
-                "openai",
-                resolve_custom_openai_base_url(endpoint, api_type, connection.get("url_mode")),
-                "", deployment,
-            )
+            return "openai", resolve_custom_openai_base_url(endpoint, api_type, connection.get("url_mode")), "", deployment
         version = operation.get("api_version") or connection.get("api_version") or ""
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", version):
             raise AIConnectionError("The Custom Azure embedding API version must be a dated version.")
@@ -142,10 +137,7 @@ def embedding_transport(binding):
     if provider == "openai_compatible" and str(
         (binding.endpoint.get("auth") or {}).get("type") or "api_key"
     ).strip().lower() not in ("api_key", "key"):
-        raise AIConnectionError(
-            "The embedding-only connection type requires API key authentication.",
-            "embedding_api_unsupported",
-        )
+        raise AIConnectionError("The embedding-only connection type requires API key authentication.", "embedding_api_unsupported")
     deployment = str(
         binding.model.get("deploymentName") or binding.model.get("deployment") or ""
     ).strip()

@@ -2,6 +2,11 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
+import {
+    ModelBudgetValidationError,
+    collectModelBudgetOverrides,
+    createModelBudgetEditor
+} from "../model_budget_editor.js";
 
 const enableMultiEndpointToggle = document.getElementById("enable_multi_model_endpoints");
 const endpointsWrapper = document.getElementById("model-endpoints-wrapper");
@@ -49,7 +54,12 @@ if (embeddingOperationTemplate && endpointModalEl) {
 const endpointIdInput = document.getElementById("model-endpoint-id");
 const endpointNameInput = document.getElementById("model-endpoint-name");
 const endpointProviderSelect = document.getElementById("model-endpoint-provider");
-if (embeddingOperationTemplate && endpointProviderSelect) {
+const endpointApiTypeGroup = document.getElementById("model-endpoint-api-type-group");
+const endpointUrlModeGroup = document.getElementById("model-endpoint-url-mode-group");
+const endpointUrlModeExactInput = document.getElementById("model-endpoint-url-mode-exact");
+const endpointApiTypeSelect = document.getElementById("model-endpoint-api-type");
+if (embeddingOperationTemplate && endpointProviderSelect &&
+    !Array.from(endpointProviderSelect.options).some(option => option.value === "openai_compatible")) {
     endpointProviderSelect.appendChild(new Option("OpenAI-compatible (embeddings only)", "openai_compatible"));
 }
 const endpointUrlInput = document.getElementById("model-endpoint-endpoint");
@@ -63,6 +73,8 @@ const endpointProjectApiVersionCustomInput = document.getElementById("model-endp
 const endpointOpenAiApiVersionGroup = document.getElementById("model-endpoint-openai-api-version-group");
 const endpointOpenAiApiVersionInput = document.getElementById("model-endpoint-openai-api-version");
 const endpointOpenAiApiVersionCustomInput = document.getElementById("model-endpoint-openai-api-version-custom");
+const endpointAnthropicVersionGroup = document.getElementById("model-endpoint-anthropic-version-group");
+const endpointAnthropicVersionInput = document.getElementById("model-endpoint-anthropic-version");
 const endpointSubscriptionGroup = document.getElementById("model-endpoint-subscription-group");
 const endpointResourceGroup = document.getElementById("model-endpoint-resource-group-group");
 const endpointSubscriptionInput = document.getElementById("model-endpoint-subscription-id");
@@ -75,6 +87,7 @@ const endpointCustomAuthorityInput = document.getElementById("model-endpoint-cus
 const endpointFoundryScopeGroup = document.getElementById("model-endpoint-foundry-scope-group");
 const endpointFoundryScopeInput = document.getElementById("model-endpoint-foundry-scope");
 const apiKeyNote = document.getElementById("model-endpoint-api-key-note");
+const apiKeyNoteText = document.getElementById("model-endpoint-api-key-note-text");
 
 const miTypeGroup = document.getElementById("model-endpoint-mi-type-group");
 const miClientGroup = document.getElementById("model-endpoint-mi-client-group");
@@ -104,16 +117,14 @@ const fetchBtn = document.getElementById("model-endpoint-fetch-btn");
 const saveBtn = document.getElementById("model-endpoint-save-btn");
 const modelsListEl = document.getElementById("model-endpoint-models-list");
 const addModelBtn = document.getElementById("model-endpoint-add-model-btn");
+const endpointBudgetContainer = document.getElementById("model-endpoint-budget-editor");
 
 const customEndpointTemplate = document.getElementById("custom-model-endpoint-fields-template");
 if (customEndpointTemplate?.content && endpointModalEl) {
     endpointUrlInput?.closest(".row")?.after(customEndpointTemplate.content.cloneNode(true));
 }
-const customApiTypes = JSON.parse(document.getElementById("model-endpoints")?.dataset?.customApiTypes || "[]");
 const customEndpointFields = document.getElementById("custom-model-endpoint-fields");
-const endpointApiTypeSelect = document.getElementById("model-endpoint-api-type");
 const endpointUrlModeSelect = document.getElementById("model-endpoint-url-mode");
-const endpointAnthropicVersionInput = document.getElementById("model-endpoint-anthropic-version");
 const endpointBearerInput = document.getElementById("model-endpoint-bearer-token");
 const endpointTokenUrlInput = document.getElementById("model-endpoint-token-url");
 const endpointOAuthScopeInput = document.getElementById("model-endpoint-oauth-scope");
@@ -122,7 +133,9 @@ const endpointApiKeyPrefixInput = document.getElementById("model-endpoint-api-ke
 const endpointClientCertInput = document.getElementById("model-endpoint-client-cert-path");
 const endpointClientKeyInput = document.getElementById("model-endpoint-client-key-path");
 if (endpointApiTypeSelect && endpointProviderSelect && endpointAuthTypeSelect) {
-    endpointProviderSelect.add(new Option("Custom", "custom"));
+    if (!Array.from(endpointProviderSelect.options).some(option => option.value === "custom")) {
+        endpointProviderSelect.add(new Option("Custom", "custom"));
+    }
     endpointAuthTypeSelect.add(new Option("Bearer Token", "bearer"));
     endpointAuthTypeSelect.add(new Option("OAuth2 Client Credentials", "oauth2_client_credentials"));
 }
@@ -131,8 +144,10 @@ let modelEndpoints = Array.isArray(window.modelEndpoints) ? [...window.modelEndp
 const savedModelEndpoints = JSON.parse(JSON.stringify(modelEndpoints));
 let connectionDraftChanged = false;
 let modalDraftChanged = false;
-let closeEndpointModalWhenShown = false;
 let modalModels = [];
+let modalEndpoint = {};
+let modalModelProtocol = { provider: "aoai", api_type: "openai" };
+let endpointBudgetEditor = null;
 let modalEndpointSource = null;
 let pendingDeleteEndpointId = null;
 let pendingDeleteTimeout = null;
@@ -151,6 +166,7 @@ let migrationSelectedKeys = new Set();
 const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
 const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
+const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
 const MODEL_CAPABILITIES = [
     { key: "chat", label: "chat", metadataKey: "supportsChat", supportLabel: "Text output support" },
     { key: "image_generation", label: "images", metadataKey: "supportsImageGeneration", supportLabel: "Image generation support" },
@@ -199,17 +215,84 @@ function isFoundryProvider(provider) {
     return provider === "aifoundry" || provider === "new_foundry";
 }
 
-function customApiTypeDescriptor(apiType = endpointApiTypeSelect?.value) {
-    return customApiTypes.find(option => option.value === apiType);
+function isCustomProvider(provider = endpointProviderSelect?.value) {
+    return provider === "custom";
+}
+
+// The API type registry is rendered server-side from
+// functions_model_endpoint_providers so the option list, the model identifier
+// field, and the version field are declared in exactly one place.
+let customApiTypeRegistry = null;
+
+function getCustomApiTypeRegistry() {
+    if (customApiTypeRegistry) {
+        return customApiTypeRegistry;
+    }
+    customApiTypeRegistry = {};
+    const registries = [
+        document.getElementById("model-endpoints")?.dataset?.customApiTypes,
+        endpointApiTypeSelect?.dataset?.apiTypes
+    ];
+    for (const rawRegistry of registries) {
+        try {
+            const apiTypes = JSON.parse(rawRegistry || "[]");
+            apiTypes.forEach((apiType) => {
+                if (!Object.hasOwn(customApiTypeRegistry, apiType.value)) {
+                    customApiTypeRegistry[apiType.value] = apiType;
+                }
+            });
+        } catch (error) {
+            console.error("Unable to parse the model endpoint API type registry.", error);
+        }
+    }
+    return customApiTypeRegistry;
+}
+
+function getCustomApiTypeDescriptor(apiType = getCustomApiType()) {
+    return getCustomApiTypeRegistry()[apiType] || null;
+}
+
+function getCustomApiType() {
+    return endpointApiTypeSelect?.value || "openai";
+}
+
+function customApiTypeUsesModelName(apiType = getCustomApiType()) {
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return descriptor ? Boolean(descriptor.usesModelName) : true;
+}
+
+function customApiTypeRequiresApiVersion(apiType = getCustomApiType()) {
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return Boolean(descriptor?.requiresApiVersion);
+}
+
+function customApiTypeVersionField(apiType = getCustomApiType()) {
+    return getCustomApiTypeDescriptor(apiType)?.versionField || "";
 }
 
 function requestModelName(endpoint, model) {
-    const usesName = endpoint.provider === "custom" && customApiTypeDescriptor(endpoint.api_type)?.usesModelName;
-    return String(usesName ? model.modelName || model.name || "" : model.deploymentName || model.deployment || "").trim();
+    if (isCustomProvider(endpoint?.provider) && customApiTypeUsesModelName(endpoint?.api_type || "openai")) {
+        return String(model?.modelName || model?.name || "").trim();
+    }
+    return String(model?.deploymentName || model?.deployment || "").trim();
 }
 
-function modalUsesModelName() {
-    return endpointProviderSelect?.value === "custom" && customApiTypeDescriptor()?.usesModelName;
+function getModelRequestName(model) {
+    return requestModelName({
+        provider: endpointProviderSelect?.value || "aoai",
+        api_type: getCustomApiType()
+    }, model);
+}
+
+function setModelRequestName(model, value) {
+    const requestName = String(value || "").trim();
+    if (isCustomProvider() && customApiTypeUsesModelName()) {
+        model.modelName = requestName;
+        delete model.deploymentName;
+        delete model.deployment;
+        return;
+    }
+    model.deploymentName = requestName;
 }
 
 function endpointIncludesProject(endpoint) {
@@ -263,31 +346,34 @@ function syncEndpointCopyForProvider() {
             : "Endpoint Fully Qualified Domain Name (FQDN)";
     }
     if (endpointUrlHelp) {
-        endpointUrlHelp.textContent = provider === "openai_compatible"
-            ? "Use the explicit API base, such as https://gateway.example/api/v1. The path is preserved; only text embeddings with API key authentication are supported."
-            : provider === "custom"
-            ? "Enter the Custom API URL. Private hosts and plaintext HTTP require explicit administrator permission."
-            : isFoundryProvider(provider)
-            ? "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name."
-            : "For Azure OpenAI, paste the resource endpoint.";
+        if (isFoundryProvider(provider)) {
+            endpointUrlHelp.textContent = "Paste the Project endpoint from Azure AI Foundry. It can include /api/projects/<project>; Claude deployments are detected from the model name.";
+        } else if (provider === "openai_compatible") {
+            endpointUrlHelp.textContent = "Use the explicit API base, such as https://gateway.example/api/v1. The path is preserved; only text embeddings with API key authentication are supported.";
+        } else if (isCustomProvider(provider)) {
+            endpointUrlHelp.textContent = "Enter the Custom API URL. Private hosts and plaintext HTTP require explicit administrator permission.";
+        } else {
+            endpointUrlHelp.textContent = "For Azure OpenAI, paste the resource endpoint.";
+        }
     }
 }
 
 function defaultEmbeddingApi() {
-    if (endpointProviderSelect?.value === "custom") {
-        return endpointApiTypeSelect?.value === "azure_openai" ? "azure_openai" : "openai";
+    if (isCustomProvider()) {
+        return getCustomApiType() === "azure_openai" ? "azure_openai" : "openai";
     }
+    const endpoint = embeddingOperationInputs.endpoint?.value.trim() || endpointUrlInput?.value.trim() || "";
     return (endpointProviderSelect?.value || "aoai") === "aoai" &&
-        !/\/openai\/v1(?:\/|$)/i.test(endpointUrlInput?.value || "")
+        !/\/openai\/v1\/*$/i.test(endpoint)
         ? "azure_openai" : "openai";
 }
 
 function embeddingConnectionUnavailableReason(endpoint = {
     provider: endpointProviderSelect?.value,
-    api_type: endpointApiTypeSelect?.value,
+    api_type: getCustomApiType(),
     auth: { type: endpointAuthTypeSelect?.value },
 }) {
-    if (endpoint.provider === "custom" && (
+    if (isCustomProvider(endpoint.provider) && (
         !["openai", "azure_openai"].includes(endpoint.api_type)
         || !["api_key", "bearer"].includes(endpoint.auth?.type || "api_key")
     )) {
@@ -306,13 +392,13 @@ function syncEmbeddingOperationVisibility() {
     const api = embeddingOperationInputs.api?.value || defaultEmbeddingApi();
     const azureOption = embeddingOperationInputs.api?.querySelector('option[value="azure_openai"]');
     if (azureOption) {
-        const allowed = provider === "aoai" || provider === "custom" && endpointApiTypeSelect?.value === "azure_openai";
+        const allowed = provider === "aoai" || isCustomProvider(provider) && getCustomApiType() === "azure_openai";
         azureOption.disabled = !allowed;
         azureOption.hidden = !allowed;
     }
     const openaiOption = embeddingOperationInputs.api?.querySelector('option[value="openai"]');
     if (openaiOption) {
-        const allowed = provider !== "custom" || endpointApiTypeSelect?.value === "openai";
+        const allowed = !isCustomProvider(provider) || getCustomApiType() === "openai";
         openaiOption.disabled = !allowed;
         openaiOption.hidden = !allowed;
     }
@@ -323,7 +409,7 @@ function syncEmbeddingOperationVisibility() {
     if (help) {
         help.textContent = isFoundryProvider(provider)
             ? "Foundry project endpoints do not route embeddings. Enter the explicit resource inference base ending /openai/v1/. The project URL is never rewritten."
-            : provider === "custom"
+            : isCustomProvider(provider)
             ? "Optional override using this Custom connection's API type, URL mode and guarded transport. The model name or deployment name remains the request identifier."
             : "Optional when the connection endpoint already serves embeddings. Preserve a custom gateway's explicit API base path exactly.";
     }
@@ -526,12 +612,14 @@ function markModified() {
 }
 
 function formatProviderLabel(provider) {
-    if (provider === "custom") return "Custom";
     if (provider === "aifoundry") {
         return "Foundry (classic)";
     }
     if (provider === "new_foundry") {
         return "New Foundry";
+    }
+    if (provider === "custom") {
+        return "Custom";
     }
     if (provider === "openai_compatible") {
         return "OpenAI-compatible (embeddings only)";
@@ -561,7 +649,7 @@ function syncOpenAiApiVersionForProvider() {
         return;
     }
 
-    if (!currentValue) {
+    if (!currentValue || currentValue === DEFAULT_FOUNDRY_OPENAI_API_VERSION) {
         setSelectedVersionValue(
             endpointOpenAiApiVersionInput,
             endpointOpenAiApiVersionCustomInput,
@@ -593,12 +681,12 @@ function isKnownEmbeddingModel(model) {
         "text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large",
         "embed-v-4-0", "embed-v4.0", "embed-english-v3.0", "embed-multilingual-v3.0",
         "cohere-embed-v3-english", "cohere-embed-v3-multilingual",
-    ].includes(String(model?.modelName || model?.deploymentName || "").trim().toLowerCase());
+    ].includes(String(model?.catalogModelId || model?.modelName || model?.deploymentName || "").trim().toLowerCase());
 }
 
 function modelNeedsEmbeddingGateway(model) {
     return isKnownEmbeddingModel(model) &&
-        !/^text-embedding-(ada-002|3-small|3-large)$/i.test(String(model?.modelName || model?.deploymentName || "").trim());
+        !/^text-embedding-(ada-002|3-small|3-large)$/i.test(String(model?.catalogModelId || model?.modelName || model?.deploymentName || "").trim());
 }
 
 function modelSupportsCapability(model, capability) {
@@ -704,7 +792,8 @@ function renderEndpoints() {
         const operationCounts = document.createElement("div");
         operationCounts.className = "d-flex flex-wrap gap-1 mt-1";
         MODEL_CAPABILITIES.forEach(({ key, label }) => {
-            const count = endpoint.enabled === false || (endpoint.provider === "openai_compatible" && key !== "embeddings") || (key === "embeddings" && embeddingConnectionUnavailableReason(endpoint))
+            const count = endpoint.enabled === false || (endpoint.provider === "openai_compatible" && key !== "embeddings")
+                || (key === "embeddings" && embeddingConnectionUnavailableReason(endpoint))
                 ? 0 : (endpoint.models || []).filter(model => modelPublishesCapability(model, key)).length;
             const badge = document.createElement("span");
             badge.className = count ? "badge text-bg-primary" : "badge text-bg-secondary";
@@ -1012,69 +1101,96 @@ function handleMetadataExtractionModelChange() {
 }
 
 function updateAuthVisibility() {
+    const modelsPlaceholder = document.getElementById("model-endpoint-models-placeholder");
     const provider = endpointProviderSelect?.value || "aoai";
+    const customProvider = isCustomProvider(provider);
     const embeddingOnly = provider === "openai_compatible";
-    const isCustom = provider === "custom";
-    const descriptor = customApiTypeDescriptor();
-    const customAuthTypes = descriptor?.authTypes || ["api_key", "bearer", "oauth2_client_credentials"];
+    const descriptor = getCustomApiTypeDescriptor();
+    const allowedAuthTypes = customProvider
+        ? descriptor?.authTypes || ["api_key", "bearer", "oauth2_client_credentials"]
+        : embeddingOnly ? ["api_key"] : ["managed_identity", "service_principal", "api_key"];
     if (endpointAuthTypeSelect) {
+        endpointAuthTypeSelect.disabled = false;
         Array.from(endpointAuthTypeSelect.options).forEach(option => {
-            const allowed = embeddingOnly ? option.value === "api_key"
-                : isCustom ? customAuthTypes.includes(option.value)
-                : ["managed_identity", "service_principal", "api_key"].includes(option.value);
-            option.disabled = !allowed;
-            option.hidden = !allowed;
+            option.disabled = !allowedAuthTypes.includes(option.value);
+            option.hidden = option.disabled;
         });
-        if (endpointAuthTypeSelect.selectedOptions[0]?.disabled) {
-            endpointAuthTypeSelect.value = isCustom || embeddingOnly ? "api_key" : "managed_identity";
+        if (!allowedAuthTypes.includes(endpointAuthTypeSelect.value)) {
+            endpointAuthTypeSelect.value = customProvider || embeddingOnly ? "api_key" : "managed_identity";
         }
     }
+    setElementVisibility(endpointApiTypeGroup, customProvider);
+    // Keep the shared-modal fallback, but show only one URL mode control in admin.
+    setElementVisibility(endpointUrlModeGroup, customProvider && !endpointUrlModeSelect);
+
+    const apiType = getCustomApiType();
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const isApiKey = authType === "api_key";
-    const isFoundry = isFoundryProvider(provider);
+    const isFoundry = !customProvider && isFoundryProvider(provider);
+    const showOpenAiVersion = !embeddingOnly && (!customProvider || customApiTypeRequiresApiVersion(apiType));
+    const showAnthropicVersion = customProvider && customApiTypeVersionField(apiType) === "anthropic_version";
     const projectNameFromEndpoint = syncProjectNameFromEndpoint();
     syncEndpointCopyForProvider();
     syncVersionCustomVisibility();
     setElementVisibility(endpointProjectGroup, isFoundry && !projectNameFromEndpoint);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
-    setElementVisibility(endpointOpenAiApiVersionGroup, !embeddingOnly && (!isCustom || descriptor?.requiresApiVersion));
-    setElementVisibility(endpointSubscriptionGroup, provider === "aoai" && !isApiKey);
-    setElementVisibility(endpointResourceGroup, provider === "aoai" && !isApiKey);
+    setElementVisibility(endpointOpenAiApiVersionGroup, showOpenAiVersion);
+    setElementVisibility(endpointAnthropicVersionGroup, showAnthropicVersion);
+    setElementVisibility(endpointSubscriptionGroup, !customProvider && provider === "aoai" && !isApiKey);
+    setElementVisibility(endpointResourceGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(miTypeGroup, authType === "managed_identity");
     setElementVisibility(miClientGroup, authType === "managed_identity" && (miTypeSelect?.value === "user_assigned"));
     setElementVisibility(tenantGroup, authType === "service_principal");
-    setElementVisibility(clientGroup, authType === "service_principal" || (isCustom && authType === "oauth2_client_credentials"));
-    setElementVisibility(secretGroup, authType === "service_principal" || (isCustom && authType === "oauth2_client_credentials"));
+    setElementVisibility(clientGroup, authType === "service_principal" || (customProvider && authType === "oauth2_client_credentials"));
+    setElementVisibility(secretGroup, authType === "service_principal" || (customProvider && authType === "oauth2_client_credentials"));
     setElementVisibility(apiKeyGroup, authType === "api_key");
     setElementVisibility(endpointManagementCloudGroup, authType === "service_principal" && isFoundry);
     setElementVisibility(endpointCustomAuthorityGroup, authType === "service_principal" && isFoundry && endpointManagementCloudSelect?.value === "custom");
     setElementVisibility(endpointFoundryScopeGroup, authType === "service_principal" && isFoundry && endpointManagementCloudSelect?.value === "custom");
-    setElementVisibility(apiKeyNote, authType === "api_key" && !isCustom);
-    setElementVisibility(addModelBtn, authType === "api_key" || isCustom);
-    setElementVisibility(fetchBtn, authType !== "api_key" && !isCustom);
-    setElementVisibility(customEndpointFields, isCustom);
-    setElementVisibility(document.getElementById("model-endpoint-anthropic-version-group"), isCustom && descriptor?.versionField === "anthropic_version");
-    setElementVisibility(document.getElementById("model-endpoint-bearer-group"), isCustom && authType === "bearer");
-    setElementVisibility(document.getElementById("model-endpoint-token-url-group"), isCustom && authType === "oauth2_client_credentials");
-    setElementVisibility(document.getElementById("model-endpoint-oauth-scope-group"), isCustom && authType === "oauth2_client_credentials");
-    setElementVisibility(document.getElementById("model-endpoint-api-key-override-group"), isCustom && authType === "api_key");
+    setElementVisibility(apiKeyNote, customProvider || authType === "api_key");
+    setElementVisibility(addModelBtn, customProvider || authType === "api_key");
+    setElementVisibility(fetchBtn, !customProvider && authType !== "api_key");
+    setElementVisibility(customEndpointFields, customProvider);
+    setElementVisibility(document.getElementById("model-endpoint-bearer-group"), customProvider && authType === "bearer");
+    setElementVisibility(document.getElementById("model-endpoint-token-url-group"), customProvider && authType === "oauth2_client_credentials");
+    setElementVisibility(document.getElementById("model-endpoint-oauth-scope-group"), customProvider && authType === "oauth2_client_credentials");
+    setElementVisibility(document.getElementById("model-endpoint-api-key-override-group"), customProvider && authType === "api_key");
     const customHelp = document.getElementById("model-endpoint-api-type-help");
     if (customHelp) customHelp.textContent = descriptor?.description || "";
-    if (apiKeyNote) {
-        apiKeyNote.textContent = embeddingOnly
-            ? "This OpenAI-compatible provider uses API keys and manually configured text embedding models only. There is no Azure discovery or chat test. Test a saved embedding model below."
-            : "API key authentication is for inference only. Use Azure credentials for discovery, or add a model manually using its exact deployment name.";
+
+    if (customProvider || embeddingOnly) {
+        if (apiKeyNoteText) {
+            apiKeyNoteText.textContent = embeddingOnly
+                ? "Embedding-only connections use API keys and manually configured text embedding models. There is no Azure discovery or chat test. Test a saved embedding model below."
+                : isApiKey
+                  ? "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable."
+                  : "Custom endpoints use manual model entry. Model discovery is unavailable.";
+        }
+        if (modelsPlaceholder) {
+            modelsPlaceholder.textContent = "Add a model manually.";
+        }
+    } else {
+        if (apiKeyNoteText) {
+            apiKeyNoteText.textContent = "API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.";
+        }
+        if (modelsPlaceholder) {
+            modelsPlaceholder.textContent = authType === "api_key"
+                ? "Add a model manually, or switch authentication to discover deployments."
+                : "Fetch models or add a model manually.";
+        }
     }
     syncEmbeddingOperationVisibility();
     if (endpointProviderSelect) endpointProviderSelect.dataset.previousProvider = provider;
-    if (endpointApiTypeSelect) endpointApiTypeSelect.dataset.previousApiType = endpointApiTypeSelect.value;
+    if (endpointApiTypeSelect) endpointApiTypeSelect.dataset.previousApiType = apiType;
     if (endpointAuthTypeSelect) endpointAuthTypeSelect.dataset.previousAuthType = authType;
 }
 
 function resetModal() {
+    modalEndpoint = {};
+    renderEndpointBudgetEditor();
     modelVisionRequest += 1;
+    modelVisionCapability = {};
     modalEndpointSource = null;
-    closeEndpointModalWhenShown = false;
     if (endpointModalEl) {
         endpointModalEl.dataset.duplicateDisabledDefault = '';
     }
@@ -1083,11 +1199,12 @@ function resetModal() {
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
     if (endpointApiTypeSelect) endpointApiTypeSelect.value = "openai";
     if (endpointUrlModeSelect) endpointUrlModeSelect.value = "auto";
+    if (endpointUrlModeExactInput) endpointUrlModeExactInput.checked = false;
     [endpointAnthropicVersionInput, endpointBearerInput, endpointTokenUrlInput, endpointOAuthScopeInput,
         endpointApiKeyHeaderInput, endpointClientCertInput, endpointClientKeyInput].forEach(input => {
         if (input) input.value = "";
     });
-    if (endpointApiKeyPrefixInput) endpointApiKeyPrefixInput.value = customApiTypeDescriptor()?.defaultApiKeyPrefix || "";
+    if (endpointApiKeyPrefixInput) endpointApiKeyPrefixInput.value = getCustomApiTypeDescriptor()?.defaultApiKeyPrefix || "";
     if (endpointBearerInput) endpointBearerInput.placeholder = "";
     if (endpointUrlInput) endpointUrlInput.value = "";
     if (endpointProjectInput) endpointProjectInput.value = "";
@@ -1101,6 +1218,7 @@ function resetModal() {
         endpointOpenAiApiVersionCustomInput,
         getDefaultOpenAiApiVersion("aoai")
     );
+    if (endpointAnthropicVersionInput) endpointAnthropicVersionInput.value = DEFAULT_ANTHROPIC_VERSION;
     if (endpointSubscriptionInput) endpointSubscriptionInput.value = "";
     if (endpointResourceGroupInput) endpointResourceGroupInput.value = "";
     if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = "managed_identity";
@@ -1121,9 +1239,21 @@ function resetModal() {
     Object.values(embeddingOperationInputs).forEach(input => { if (input) input.value = ""; });
 
     modalModels = [];
-    if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\">Fetch models to begin selection.</p>";
+    modalModelProtocol = { provider: "aoai", api_type: "openai" };
+    if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">Fetch models to begin selection.</p>";
 
     updateAuthVisibility();
+}
+
+function renderEndpointBudgetEditor() {
+    if (!endpointBudgetContainer) {
+        return;
+    }
+    endpointBudgetEditor = createModelBudgetEditor(modalEndpoint, {
+        scope: "endpoint",
+        idPrefix: "model-endpoint-budget"
+    });
+    endpointBudgetContainer.replaceChildren(endpointBudgetEditor);
 }
 
 function openModalForEndpoint(endpoint) {
@@ -1134,6 +1264,8 @@ function openModalForEndpoint(endpoint) {
     resetModal();
 
     if (endpoint) {
+        modalEndpoint = JSON.parse(JSON.stringify(endpoint));
+        renderEndpointBudgetEditor();
         // Unsaved duplicates already have a new ID, so the registry cannot supply
         // their hidden operation profiles when this editor saves them.
         modalEndpointSource = JSON.parse(JSON.stringify(endpoint));
@@ -1141,8 +1273,11 @@ function openModalForEndpoint(endpoint) {
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
         if (endpointApiTypeSelect) endpointApiTypeSelect.value = endpoint.api_type || "openai";
+        if (endpointUrlModeExactInput) {
+            endpointUrlModeExactInput.checked = (endpoint.connection?.url_mode || "") === "exact";
+        }
         if (endpointUrlModeSelect) endpointUrlModeSelect.value = endpoint.connection?.url_mode || "auto";
-        if (endpointAnthropicVersionInput) endpointAnthropicVersionInput.value = endpoint.connection?.anthropic_version || customApiTypeDescriptor()?.defaultVersion || "";
+        if (endpointAnthropicVersionInput) endpointAnthropicVersionInput.value = endpoint.connection?.anthropic_version || getCustomApiTypeDescriptor()?.defaultVersion || "";
         if (endpointBearerInput) {
             endpointBearerInput.value = endpoint.auth?.bearer_token || "";
             endpointBearerInput.placeholder = endpoint.has_bearer_token ? "Stored" : "";
@@ -1152,7 +1287,7 @@ function openModalForEndpoint(endpoint) {
         if (endpointApiKeyHeaderInput) endpointApiKeyHeaderInput.value = endpoint.auth?.api_key_header || "";
         if (endpointApiKeyPrefixInput) {
             endpointApiKeyPrefixInput.value = endpoint.auth?.api_key_prefix ??
-                (endpoint.auth?.api_key_header ? "" : customApiTypeDescriptor()?.defaultApiKeyPrefix ?? "");
+                (endpoint.auth?.api_key_header ? "" : getCustomApiTypeDescriptor()?.defaultApiKeyPrefix ?? "");
         }
         if (endpointClientCertInput) endpointClientCertInput.value = endpoint.connection?.client_cert_path || "";
         if (endpointClientKeyInput) endpointClientKeyInput.value = endpoint.connection?.client_key_path || "";
@@ -1198,7 +1333,7 @@ function openModalForEndpoint(endpoint) {
             if (input) input.value = endpoint.connection?.operation_settings?.embeddings?.[key] === undefined
                 ? "" : String(endpoint.connection.operation_settings.embeddings[key]);
         });
-        modalModels = Array.isArray(endpoint.models) ? [...endpoint.models] : [];
+        modalModels = Array.isArray(modalEndpoint.models) ? [...modalEndpoint.models] : [];
         refreshModalModels(modalModels);
     }
 
@@ -1504,11 +1639,6 @@ function createModelIconEditor(model, modelId) {
     return editor;
 }
 
-function findModelEditor(modelId) {
-    return Array.from(modelsListEl?.querySelectorAll("[data-model-editor-for]") || [])
-        .find((editor) => editor.dataset.modelEditorFor === String(modelId));
-}
-
 /**
  * Cached vision-capability answers from the server, keyed by deployment name.
  *
@@ -1530,7 +1660,7 @@ let modelVisionRequest = 0;
  * @param {Array<object>} models Models currently in the modal.
  * @returns {Promise<void>}
  */
-async function loadModelVisionCapability(models) {
+async function loadModelVisionCapability(models, request = modelVisionRequest) {
     if (endpointProviderSelect?.value === "openai_compatible") return false;
     const endpoint = { provider: endpointProviderSelect?.value, api_type: endpointApiTypeSelect?.value };
     const wanted = (models || [])
@@ -1540,10 +1670,11 @@ async function loadModelVisionCapability(models) {
             modelName: model.modelName || "",
             displayName: model.displayName || "",
             supportsVision: model.supportsVision,
+            capabilities: model.capabilities,
         }));
 
     if (!wanted.length) {
-        modelVisionCapability = {};
+        if (request === modelVisionRequest) modelVisionCapability = {};
         return false;
     }
 
@@ -1554,13 +1685,14 @@ async function loadModelVisionCapability(models) {
             body: JSON.stringify({ models: wanted })
         });
         const data = await response.json().catch(() => ({}));
+        if (request !== modelVisionRequest) return false;
         modelVisionCapability = data.models || {};
         return Object.keys(modelVisionCapability).length > 0;
     } catch (error) {
         // A failed lookup must not block editing the endpoint. The checkbox falls
         // back to whatever is already stored on the model.
         console.error("Vision capability lookup failed", error);
-        modelVisionCapability = {};
+        if (request === modelVisionRequest) modelVisionCapability = {};
         return false;
     }
 }
@@ -1579,10 +1711,13 @@ function createModelVisionControl(model, modelId) {
     const vision = model.capability_status?.vision;
     const resolved = vision
         ? { supports_vision: vision.supported, source: vision.source }
-        : modelVisionCapability[requestModelName({ provider: endpointProviderSelect?.value, api_type: endpointApiTypeSelect?.value }, model)] || {};
-    const source = typeof model.supportsVision === "boolean" ? "declared" : resolved.source;
-    const checked = typeof model.supportsVision === "boolean"
-        ? model.supportsVision
+        : modelVisionCapability[getModelRequestName(model)] || {};
+    const declaredVision = typeof model.capabilities?.processesImages === "boolean"
+        ? model.capabilities.processesImages
+        : model.supportsVision;
+    const source = typeof declaredVision === "boolean" ? "declared" : resolved.source;
+    const checked = typeof declaredVision === "boolean"
+        ? declaredVision
         : Boolean(resolved.supports_vision);
 
     const wrapper = createElement("div", "form-check mt-4");
@@ -1616,7 +1751,7 @@ function createModelVisionControl(model, modelId) {
     return column;
 }
 
-function createModelEmbeddingControls(model, modelId) {
+function createModelEmbeddingControls(model, modelId, onMetadataChange) {
     const container = createElement("div", "mt-3 border-top pt-2");
     const help = createElement("p", "form-text");
     help.textContent = "Blank overrides retain catalog defaults. Unknown models require declared embedding support, dimensions and an input token limit. Dimensions are never resized implicitly.";
@@ -1631,15 +1766,15 @@ function createModelEmbeddingControls(model, modelId) {
         const input = document.createElement("input");
         input.id = getModelIconDomId(modelId, `embedding-${key}`);
         label.htmlFor = input.id;
-        input.type = type;
+        input.type = "text";
         input.className = "form-control form-control-sm";
         input.dataset.embeddingConfigFor = modelId;
         input.dataset.configKey = key;
         input.value = model.embedding_config?.[key] ?? "";
         input.disabled = Boolean(embeddingConnectionUnavailableReason());
         if (type === "number") {
-            input.min = "1";
-            input.step = "1";
+            input.inputMode = "numeric";
+            input.pattern = "[0-9]*";
             input.placeholder = model.embedding_policy?.[key] ? `Catalog: ${model.embedding_policy[key]}` : isKnownEmbeddingModel(model) ? "Use catalog default" : "Required for an unknown model";
         }
         container.append(label, input);
@@ -1656,14 +1791,7 @@ function createModelEmbeddingControls(model, modelId) {
         select.append(new Option("Use catalog compatibility", ""), new Option("Verified compatible gateway", "true"), new Option("Not compatible", "false"));
         select.value = model.embedding_config?.openai_compatible === undefined ? "" : String(model.embedding_config.openai_compatible);
         select.disabled = Boolean(embeddingConnectionUnavailableReason());
-        select.addEventListener("change", () => {
-            try {
-                modalModels = collectModalModels();
-                renderModalModels(modalModels);
-            } catch (error) {
-                showToast(error.message || "Check the embedding metadata before continuing.", "warning");
-            }
-        });
+        select.addEventListener("change", onMetadataChange);
         const explanation = createElement("p", "form-text");
         explanation.textContent = "Declare only a verified gateway exposing the supported text embedding contract, not a native or deprecated inference API.";
         container.append(label, select, explanation);
@@ -1673,9 +1801,9 @@ function createModelEmbeddingControls(model, modelId) {
 
 function createModelCapabilityControls(model, modelId) {
     const container = createElement("div", "mt-3");
-    const embeddingOnly = endpointProviderSelect?.value === "openai_compatible";
+    const custom = endpointProviderSelect?.value === "openai_compatible";
     const embeddingUnavailableReason = embeddingConnectionUnavailableReason();
-    const capabilities = MODEL_CAPABILITIES.filter(({ key }) => !embeddingOnly || key === "embeddings");
+    const capabilities = MODEL_CAPABILITIES.filter(({ key }) => !custom || key === "embeddings");
     capabilities.forEach(({ key: capability, label: labelText }) => {
         const wrapper = createElement("div", "form-check mt-2");
         const checkbox = document.createElement("input");
@@ -1714,7 +1842,7 @@ function createModelCapabilityControls(model, modelId) {
         container.appendChild(details);
     }
     const imageStatus = model.capability_status?.image_generation;
-    if (!embeddingOnly && imageStatus?.supported) {
+    if (imageStatus?.supported) {
         const imageInfo = createElement("p", "form-text");
         const operation = imageStatus.masking
             ? "Masked and whole-image edits"
@@ -1730,7 +1858,7 @@ function createModelCapabilityControls(model, modelId) {
     const details = document.createElement("details");
     details.className = "mt-2";
     details.dataset.modelCapabilityDetailsFor = String(modelId);
-    if (embeddingOnly) details.open = true;
+    if (custom) details.open = true;
     const summary = document.createElement("summary");
     summary.textContent = "Capability metadata";
     const explanation = createElement("p", "form-text");
@@ -1744,14 +1872,17 @@ function createModelCapabilityControls(model, modelId) {
                 .find(item => item.dataset.modelCapabilityDetailsFor === String(modelId));
             if (disclosure) disclosure.open = true;
         } catch (error) {
-            showToast(error.message || "Check the model metadata before continuing.", "warning");
+            showToast(error?.message || "Unable to update model capability metadata.", "warning");
         }
     };
-    [
-        ...MODEL_CAPABILITIES.map(({ metadataKey, supportLabel }) => [metadataKey, supportLabel]),
-        ["supportsImageEditing", "Source-image editing support"],
-        ["supportsImageMasking", "Uploaded-mask support"],
-    ].filter(([metadataKey]) => !embeddingOnly || metadataKey === "supportsEmbeddings").forEach(([metadataKey, labelText]) => {
+    const metadataFields = capabilities.map(({ metadataKey, supportLabel }) => [metadataKey, supportLabel]);
+    if (!custom) {
+        metadataFields.push(
+            ["supportsImageEditing", "Source-image editing support"],
+            ["supportsImageMasking", "Uploaded-mask support"]
+        );
+    }
+    metadataFields.forEach(([metadataKey, labelText]) => {
         const label = createElement("label", "form-label d-block mt-2");
         label.textContent = labelText;
         const select = document.createElement("select");
@@ -1767,10 +1898,7 @@ function createModelCapabilityControls(model, modelId) {
         select.addEventListener("change", applyMetadataChange);
         details.append(label, select);
     });
-    if (embeddingOnly || modelSupportsCapability(model, "embeddings") || isKnownEmbeddingModel(model) || model.embedding_config) {
-        details.appendChild(createModelEmbeddingControls(model, modelId));
-    }
-    if (!embeddingOnly) {
+    if (!custom) {
         const apiLabel = createElement("label", "form-label d-block mt-2");
         apiLabel.textContent = "Image API for explicit metadata";
         const apiSelect = document.createElement("select");
@@ -1781,7 +1909,7 @@ function createModelCapabilityControls(model, modelId) {
         apiSelect.append(
             new Option("Automatic (catalog)", ""), new Option("Images API", "images"),
             new Option("OpenAI Responses image tool", "responses"), new Option("Foundry MAI Image", "mai"),
-            new Option("Foundry FLUX", "flux"),
+            new Option("Foundry FLUX", "flux")
         );
         apiSelect.value = model.image_generation_api || "";
         apiSelect.disabled = isKnownEmbeddingModel(model);
@@ -1789,6 +1917,9 @@ function createModelCapabilityControls(model, modelId) {
         const apiHelp = createElement("p", "form-text");
         apiHelp.textContent = "Unknown Custom image models need an explicit compatible API. Editing and masks are separate capabilities; provider restrictions still apply.";
         details.append(apiLabel, apiSelect, apiHelp);
+    }
+    if (custom || modelSupportsCapability(model, "embeddings") || isKnownEmbeddingModel(model) || model.embedding_config) {
+        details.appendChild(createModelEmbeddingControls(model, modelId, applyMetadataChange));
     }
     container.appendChild(details);
     return container;
@@ -1806,13 +1937,15 @@ function createModelCapabilityControls(model, modelId) {
 function refreshModalModels(models) {
     const request = ++modelVisionRequest;
     renderModalModels(models);
-    void loadModelVisionCapability(models).then((resolved) => {
+    void loadModelVisionCapability(models, request).then((resolved) => {
         if (resolved && request === modelVisionRequest) {
             try {
                 modalModels = collectModalModels();
                 renderModalModels(modalModels);
             } catch (error) {
-                if (!(error instanceof ModelEndpointValidationError)) throw error;
+                // A background lookup must not erase invalid capacity or
+                // embedding values that the administrator is still editing.
+                showToast(error?.message || "Review the model fields before saving.", "warning");
             }
         }
     });
@@ -1822,24 +1955,31 @@ function renderModalModels(models) {
     if (!modelsListEl) {
         return;
     }
+    modalModelProtocol = {
+        provider: endpointProviderSelect?.value || "aoai",
+        api_type: getCustomApiType()
+    };
     if (!models || !models.length) {
-        modelsListEl.innerHTML = "<p class=\"text-muted\">No models loaded yet.</p>";
+        modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">No models loaded yet.</p>";
         return;
     }
 
     const fragment = document.createDocumentFragment();
-    models.forEach((model) => {
+    models.forEach((model, modelIndex) => {
         const wrapper = document.createElement("div");
         wrapper.className = "border rounded p-2 mb-2";
-        const deploymentName = modalUsesModelName() ? model.modelName || model.name || "" : model.deploymentName || "";
+        const requestName = getModelRequestName(model);
+        const usesModelName = isCustomProvider() && customApiTypeUsesModelName();
         const modelName = model.modelName || "";
-        const displayName = model.displayName || deploymentName;
+        const displayName = model.displayName || requestName;
         const description = model.description || "";
         const custom = endpointProviderSelect?.value === "openai_compatible";
         const responseLength = getModelResponseLength(model);
-        const deploymentReadonly = model.isDiscovered ? "readonly" : "";
+        const requestNameReadonly = model.isDiscovered && !isCustomProvider() && !custom;
+        const requestNameLabel = usesModelName ? "Model Name" : "Deployment Name";
         const modelId = model.id || generateId();
         model.id = modelId;
+        wrapper.dataset.modelRowId = modelId;
 
         const checkWrapper = createElement("div", "form-check mb-2");
         const checkbox = document.createElement("input");
@@ -1848,11 +1988,11 @@ function renderModalModels(models) {
         checkbox.dataset.modelId = modelId;
         checkbox.checked = !!model.enabled;
         checkbox.id = getModelIconDomId(modelId, "enabled");
-        checkbox.setAttribute("aria-label", `Enable ${deploymentName || "model"}`);
+        checkbox.setAttribute("aria-label", `Enable ${requestName || "model"}`);
         const checkboxLabel = createElement("label", "form-check-label");
         checkboxLabel.htmlFor = checkbox.id;
-        checkboxLabel.appendChild(document.createTextNode(deploymentName));
-        if (modelName) {
+        checkboxLabel.appendChild(document.createTextNode(requestName));
+        if (!usesModelName && modelName) {
             checkboxLabel.appendChild(document.createTextNode(" "));
             const modelNameLabel = createElement("span", "text-muted");
             modelNameLabel.textContent = `(${modelName})`;
@@ -1863,11 +2003,11 @@ function renderModalModels(models) {
 
         const fieldsRow = createElement("div", "row g-2");
         const deploymentCol = createElement("div", "col-md-4");
-        const requestNameLabel = createSmallLabel(modalUsesModelName() ? "Model Name" : "Deployment Name");
-        const requestNameInput = createModelTextInput(modelId, modalUsesModelName() ? "modelNameFor" : "deploymentNameFor", deploymentName, Boolean(deploymentReadonly));
+        const requestLabel = createSmallLabel(requestNameLabel);
+        const requestNameInput = createModelTextInput(modelId, "requestModelFor", requestName, Boolean(requestNameReadonly));
         requestNameInput.id = getModelIconDomId(modelId, "request-name");
-        requestNameLabel.htmlFor = requestNameInput.id;
-        deploymentCol.append(requestNameLabel, requestNameInput);
+        requestLabel.htmlFor = requestNameInput.id;
+        deploymentCol.append(requestLabel, requestNameInput);
         const displayCol = createElement("div", "col-md-4");
         displayCol.appendChild(createSmallLabel("Display Name"));
         displayCol.appendChild(createModelTextInput(modelId, "displayNameFor", displayName));
@@ -1888,14 +2028,16 @@ function renderModalModels(models) {
         responseLengthCol.appendChild(createModelResponseLengthInput(modelId, responseLength));
         const responseLengthHelp = createElement("div", "form-text");
         responseLengthHelp.id = getModelIconDomId(modelId, "response-length-help");
-        responseLengthHelp.textContent = "Optional output token ceiling for standard chat responses.";
+        responseLengthHelp.textContent = "Optional per-request generation allowance for standard chat, not model capacity.";
         responseLengthCol.appendChild(responseLengthHelp);
         const descriptionCol = createElement("div", "col-md-8");
         descriptionCol.appendChild(createSmallLabel("Description (optional)"));
         descriptionCol.appendChild(createModelTextInput(modelId, "descriptionFor", description));
         fieldsRow.appendChild(deploymentCol);
         fieldsRow.appendChild(displayCol);
-        if (!modalUsesModelName()) fieldsRow.appendChild(modelNameCol);
+        if (!usesModelName) {
+            fieldsRow.appendChild(modelNameCol);
+        }
         fieldsRow.appendChild(iconCol);
         fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
@@ -1937,6 +2079,9 @@ function renderModalModels(models) {
 
         wrapper.appendChild(checkWrapper);
         wrapper.appendChild(fieldsRow);
+        wrapper.appendChild(createModelBudgetEditor(model, {
+            idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`)
+        }));
         wrapper.appendChild(createModelCapabilityControls(model, modelId));
         wrapper.appendChild(actions);
         if (modelSupportsCapability(model, "embeddings") || modelSupportsCapability(model, "image_generation")) {
@@ -1957,32 +2102,33 @@ function collectModalModels() {
     }
 
     const updated = modalModels.map((model) => ({ ...model }));
-    const inputs = Array.from(modelsListEl.querySelectorAll("input"));
     updated.forEach((model) => {
-        const inputFor = (key) => inputs.find(input => input.dataset[key] === String(model.id));
-        const checkbox = inputFor("modelId");
-        const deploymentInput = inputFor("deploymentNameFor");
-        const displayInput = inputFor("displayNameFor");
-        const modelNameInput = inputFor("modelNameFor");
-        const descriptionInput = inputFor("descriptionFor");
-        const responseLengthInput = inputFor("responseLengthFor");
-        const visionInput = inputFor("supportsVisionFor");
-        const iconEditor = findModelEditor(model.id);
+        const row = Array.from(modelsListEl.querySelectorAll("[data-model-row-id]"))
+            .find((element) => element.dataset.modelRowId === String(model.id));
+        const checkbox = row?.querySelector("input[data-model-id]");
+        const requestModelInput = row?.querySelector("input[data-request-model-for]");
+        const displayInput = row?.querySelector("input[data-display-name-for]");
+        const modelNameInput = row?.querySelector("input[data-model-name-for]");
+        const descriptionInput = row?.querySelector("input[data-description-for]");
+        const responseLengthInput = row?.querySelector("input[data-response-length-for]");
+        const visionInput = row?.querySelector("input[data-supports-vision-for]");
+        const iconEditor = row?.querySelector("[data-model-editor-for]");
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
             throw new ModelEndpointValidationError("Response length must be a positive whole number.");
         }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
-        const nextDeploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
-        const nextModelName = modelNameInput ? modelNameInput.value.trim() : model.modelName;
-        if (model.deploymentName !== nextDeploymentName || model.modelName !== nextModelName) {
+        const previousRequestName = getModelRequestName(model);
+        const previousModelName = model.modelName;
+        setModelRequestName(model, requestModelInput ? requestModelInput.value : getModelRequestName(model));
+        if (!(isCustomProvider() && customApiTypeUsesModelName()) && modelNameInput) {
+            model.modelName = modelNameInput.value.trim();
+        }
+        if (previousRequestName !== getModelRequestName(model) || previousModelName !== model.modelName) {
             delete model.capability_status;
         }
-        model.deploymentName = nextDeploymentName;
-        model.modelName = nextModelName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
-        const metadataInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-metadata-for]"))
-            .filter(input => input.dataset.capabilityMetadataFor === model.id);
+        const metadataInputs = Array.from(row?.querySelectorAll("[data-capability-metadata-for]") || []);
         metadataInputs.forEach(input => {
             const key = input.dataset.metadataKey;
             const next = input.value === "" ? undefined : input.value === "true";
@@ -1990,16 +2136,14 @@ function collectModalModels() {
             if (next === undefined) delete model[key];
             else model[key] = next;
         });
-        const imageApiInput = Array.from(modelsListEl.querySelectorAll("[data-image-api-for]"))
-            .find(input => input.dataset.imageApiFor === String(model.id));
+        const imageApiInput = row?.querySelector("[data-image-api-for]");
         if (imageApiInput) {
             const nextApi = imageApiInput.value;
             if ((model.image_generation_api || "") !== nextApi) delete model.capability_status;
             if (nextApi) model.image_generation_api = nextApi;
             else delete model.image_generation_api;
         }
-        const availabilityInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-for]"))
-            .filter(input => input.dataset.capabilityFor === model.id);
+        const availabilityInputs = Array.from(row?.querySelectorAll("[data-capability-for]") || []);
         if (availabilityInputs.some(input => String(input.checked) !== input.dataset.initialChecked)) {
             const enabled = new Set(model.enabled_capabilities || MODEL_CAPABILITIES.map(({ key }) => key));
             availabilityInputs.forEach(input => {
@@ -2009,19 +2153,21 @@ function collectModalModels() {
             });
             model.enabled_capabilities = [...enabled];
         }
-        const embeddingInputs = Array.from(modelsListEl.querySelectorAll("[data-embedding-config-for]"))
-            .filter(input => input.dataset.embeddingConfigFor === model.id);
+        const embeddingInputs = Array.from(row?.querySelectorAll("[data-embedding-config-for]") || []);
         if (embeddingInputs.length) {
             const config = { ...(model.embedding_config || {}) };
             embeddingInputs.forEach(input => {
                 const key = input.dataset.configKey;
-                let value = input.value;
+                let value = input.value.trim();
                 if (value === "") {
                     if (config[key] !== undefined) delete model.capability_status;
                     delete config[key];
                     return;
                 }
                 if (key === "dimensions" || key === "max_input_tokens") {
+                    if (!/^[0-9]+$/.test(value)) {
+                        throw new ModelEndpointValidationError("Embedding dimensions and input token limits must be positive whole numbers.");
+                    }
                     value = Number(value);
                     if (!Number.isSafeInteger(value) || value <= 0) {
                         throw new ModelEndpointValidationError("Embedding dimensions and input token limits must be positive whole numbers.");
@@ -2039,6 +2185,9 @@ function collectModalModels() {
         // into an administrator override while preserving the rest of the draft.
         if (visionInput && (typeof model.supportsVision === "boolean" || visionInput.dataset.visionEdited === "true")) {
             model.supportsVision = visionInput.checked;
+            if (model.capabilities && Object.hasOwn(model.capabilities, "processesImages")) {
+                model.capabilities = { ...model.capabilities, processesImages: visionInput.checked };
+            }
         }
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
@@ -2047,6 +2196,7 @@ function collectModalModels() {
         } else {
             delete model.responseLength;
         }
+        Object.assign(model, collectModelBudgetOverrides(row?.querySelector("[data-model-budget-editor]"), model));
     });
     return updated;
 }
@@ -2054,14 +2204,17 @@ function collectModalModels() {
 async function testModelConnection(model) {
     if (endpointProviderSelect?.value === "openai_compatible" || !modelSupportsCapability(model, "chat")) return;
     const payload = buildEndpointPayload();
-    if (!payload || !model || !requestModelName(payload, model)) {
-        showToast("A request model name or deployment is required for testing.", "warning");
+    const requestModel = getModelRequestName(model);
+    if (!payload || !requestModel) {
+        showToast(`${isCustomProvider() && customApiTypeUsesModelName() ? "Model" : "Deployment"} name is required for testing.`, "warning");
         return;
     }
 
+    const testModel = { ...model };
+    setModelRequestName(testModel, requestModel);
     const requestBody = {
         ...payload,
-        model: { ...model }
+        model: testModel
     };
 
     try {
@@ -2074,7 +2227,15 @@ async function testModelConnection(model) {
         if (!response.ok) {
             throw new Error(data.error || "Connection test failed.");
         }
-        showToast("Chat request succeeded. Image inference was not tested.", "success");
+        // Report the URL that was actually called. Normalization can rewrite the
+        // configured endpoint, and that rewrite was previously invisible.
+        const resolvedUrl = data.resolved?.request_url || "";
+        showToast(
+            resolvedUrl
+                ? `Chat request succeeded. Called ${resolvedUrl}. Image inference was not tested.`
+                : "Chat request succeeded. Image inference was not tested.",
+            "success"
+        );
     } catch (error) {
         console.error("Model connection failed", error);
         showToast(error.message || "Model connection failed.", "danger");
@@ -2120,7 +2281,15 @@ async function testSavedOperationModel(model, capability) {
     }
 }
 
+async function testSavedImageModel(model) {
+    return testSavedOperationModel(model, "image_generation");
+}
+
 async function fetchModels() {
+    if (isCustomProvider()) {
+        showToast("Model discovery is unavailable for Custom endpoints. Add models manually.", "warning");
+        return;
+    }
     const payload = buildEndpointPayload(true);
     if (!payload) {
         return;
@@ -2174,13 +2343,15 @@ async function fetchModels() {
         markModalDraftChanged();
         showToast(`Fetched ${models.length} models. Added ${addedCount} new.`, "success");
     } catch (error) {
-        if (!(error instanceof ModelEndpointValidationError)) console.error("Model fetch failed", error);
+        if (!(error instanceof ModelBudgetValidationError) && !(error instanceof ModelEndpointValidationError)) {
+            console.error("Model fetch failed", error);
+        }
         showToast(error.message || "Failed to fetch models.", "danger");
     }
 }
 
 function buildCustomEndpointPayload(source, existing, identityHeader) {
-    const descriptor = customApiTypeDescriptor();
+    const descriptor = getCustomApiTypeDescriptor();
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
     const authType = endpointAuthTypeSelect.value;
@@ -2189,7 +2360,9 @@ function buildCustomEndpointPayload(source, existing, identityHeader) {
         return null;
     }
     const connection = {
-        ...(source?.connection || {}), endpoint, url_mode: endpointUrlModeSelect?.value || "auto",
+        ...(source?.connection || {}),
+        endpoint,
+        url_mode: endpointUrlModeSelect?.value || (endpointUrlModeExactInput?.checked ? "exact" : "auto"),
         client_cert_path: endpointClientCertInput?.value.trim() || "",
         client_key_path: endpointClientKeyInput?.value.trim() || ""
     };
@@ -2235,9 +2408,6 @@ function buildCustomEndpointPayload(source, existing, identityHeader) {
         showToast("The Custom authentication method is not supported.", "warning");
         return null;
     }
-    if (!auth.api_key) delete auth.api_key;
-    if (!auth.bearer_token) delete auth.bearer_token;
-    if (!auth.client_secret) delete auth.client_secret;
     collectEmbeddingOperationSettings(connection);
     return {
         id: endpointIdInput?.value.trim() || "", name, provider: "custom", api_type: descriptor.value,
@@ -2253,7 +2423,7 @@ function buildEndpointPayload(requireDiscovery = false) {
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
     const provider = endpointProviderSelect?.value || "aoai";
-    const custom = provider === "openai_compatible";
+    const embeddingOnly = provider === "openai_compatible";
     const projectNameFromEndpoint = isFoundryProvider(provider) ? syncProjectNameFromEndpoint() : "";
     const projectName = projectNameFromEndpoint || endpointProjectInput?.value.trim() || "";
     const projectApiVersion = getSelectedVersionValue(
@@ -2268,7 +2438,7 @@ function buildEndpointPayload(requireDiscovery = false) {
     );
     const subscriptionId = endpointSubscriptionInput?.value.trim() || "";
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
-    const authType = custom ? "api_key" : endpointAuthTypeSelect?.value || "managed_identity";
+    const authType = endpointAuthTypeSelect?.value || (embeddingOnly ? "api_key" : "managed_identity");
     const existingEndpoint = modelEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
     const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
     const identityHeader = normalizeEndpointIdentityHeaderOverride({
@@ -2277,14 +2447,28 @@ function buildEndpointPayload(requireDiscovery = false) {
         value_type: endpointIdentityValueTypeSelect?.value || ""
     });
     if (provider === "custom") {
+        if (requireDiscovery) {
+            showToast("Model discovery is unavailable for Custom endpoints. Add models manually.", "warning");
+            return null;
+        }
         return buildCustomEndpointPayload(sourceEndpoint, existingEndpoint, identityHeader);
     }
 
-    if (!name || !endpoint || (!custom && !openAiApiVersion)) {
-        showToast("Endpoint name, URL, and OpenAI API version are required.", "warning");
+    if (!name || !endpoint) {
+        showToast("Endpoint name and URL are required.", "warning");
         return null;
     }
-    if (custom && requireDiscovery) {
+
+    if (embeddingOnly && authType !== "api_key") {
+        showToast("OpenAI-compatible embedding connections require API key authentication.", "warning");
+        return null;
+    }
+
+    if (!embeddingOnly && !openAiApiVersion) {
+        showToast("OpenAI API version is required.", "warning");
+        return null;
+    }
+    if (embeddingOnly && requireDiscovery) {
         showToast("Custom embedding connections use manually entered models, not Azure discovery.", "warning");
         return null;
     }
@@ -2306,19 +2490,18 @@ function buildEndpointPayload(requireDiscovery = false) {
 
     const auth = {
         type: authType,
-        ...(!custom ? {
-        managed_identity_type: miTypeSelect?.value || "system_assigned",
-        managed_identity_client_id: miClientIdInput?.value.trim() || "",
-        tenant_id: tenantIdInput?.value.trim() || "",
-        client_id: clientIdInput?.value.trim() || "",
-        client_secret: clientSecretInput?.value.trim() || "",
-        management_cloud: endpointManagementCloudSelect?.value || "public",
-        custom_authority: endpointCustomAuthorityInput?.value.trim() || "",
-        foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
+        ...(!embeddingOnly ? {
+            managed_identity_type: miTypeSelect?.value || "system_assigned",
+            managed_identity_client_id: miClientIdInput?.value.trim() || "",
+            tenant_id: tenantIdInput?.value.trim() || "",
+            client_id: clientIdInput?.value.trim() || "",
+            client_secret: clientSecretInput?.value.trim() || "",
+            management_cloud: endpointManagementCloudSelect?.value || "public",
+            custom_authority: endpointCustomAuthorityInput?.value.trim() || "",
+            foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
         } : {}),
         api_key: apiKeyInput?.value.trim() || "",
     };
-
     // A clone's copied marker is not a stored credential under its new ID.
     const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
     const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);
@@ -2351,24 +2534,22 @@ function buildEndpointPayload(requireDiscovery = false) {
         resource_group: resourceGroup
     } : {};
 
-    const connection = {
-        ...(sourceEndpoint?.connection || {}),
-        endpoint,
-        openai_api_version: openAiApiVersion
-    };
+    const connection = { ...(sourceEndpoint?.connection || {}), endpoint };
+    delete connection.api_version;
+    delete connection.openai_api_version;
+    delete connection.anthropic_version;
+    delete connection.url_mode;
+    delete connection.project_api_version;
+    delete connection.project_name;
+    delete connection.client_cert_path;
+    delete connection.client_key_path;
+    if (!embeddingOnly) connection.openai_api_version = openAiApiVersion;
 
     if (isFoundryProvider(provider)) {
         connection.project_api_version = projectApiVersion;
         if (projectName) {
             connection.project_name = projectName;
         }
-    } else {
-        delete connection.project_api_version;
-        delete connection.project_name;
-    }
-    if (custom) {
-        delete connection.openai_api_version;
-        delete connection.api_version;
     }
     collectEmbeddingOperationSettings(connection);
 
@@ -2384,13 +2565,13 @@ function buildEndpointPayload(requireDiscovery = false) {
 }
 
 function validateEmbeddingModels(models, payload) {
-    const embeddingOnly = payload.provider === "openai_compatible";
+    const custom = payload.provider === "openai_compatible";
     const operation = payload.connection.operation_settings?.embeddings || {};
     const api = operation.api || defaultEmbeddingApi();
-    if (!["azure_openai", "openai"].includes(api) || (embeddingOnly && api !== "openai")) {
+    if (!["azure_openai", "openai"].includes(api) || (custom && api !== "openai")) {
         throw new ModelEndpointValidationError("Choose a supported embedding API. Embedding-only OpenAI-compatible connections require the OpenAI-compatible API.");
     }
-    if (payload.provider === "custom" && operation.api && operation.api !== payload.api_type) {
+    if (isCustomProvider(payload.provider) && operation.api && operation.api !== payload.api_type) {
         throw new ModelEndpointValidationError("The embedding operation must match the Custom connection API type.");
     }
     if (api === "openai" && operation.api_version) {
@@ -2398,7 +2579,7 @@ function validateEmbeddingModels(models, payload) {
     }
     const embeddingModels = models.filter(model => model.enabled !== false &&
         (!model.enabled_capabilities || model.enabled_capabilities.includes("embeddings")) &&
-        (embeddingOnly || modelSupportsCapability(model, "embeddings")));
+        (custom || modelSupportsCapability(model, "embeddings")));
     const unavailableReason = embeddingConnectionUnavailableReason(payload);
     if (embeddingModels.length && unavailableReason) {
         throw new ModelEndpointValidationError(unavailableReason);
@@ -2437,7 +2618,6 @@ function saveEndpoint() {
         }
 
         const models = collectModalModels();
-        validateEmbeddingModels(models, payload);
         if (payload.provider === "custom") {
             const names = models.map(model => requestModelName(payload, model).toLowerCase());
             if (!names.length || names.some(name => !name) || new Set(names).size !== names.length) {
@@ -2445,6 +2625,7 @@ function saveEndpoint() {
                 return;
             }
         }
+        validateEmbeddingModels(models, payload);
         const endpointId = endpointIdInput?.value || generateId();
         const existingEndpoint = modelEndpoints.find((endpoint) => endpoint.id === endpointId);
         const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
@@ -2455,6 +2636,8 @@ function saveEndpoint() {
 
         const endpointData = {
             ...sourceEndpoint,
+            ...modalEndpoint,
+            ...collectModelBudgetOverrides(endpointBudgetEditor, modalEndpoint),
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
@@ -2483,11 +2666,12 @@ function saveEndpoint() {
         announceConnectionDraft();
         markModified();
         handleMigrationConfigurationChange();
-        closeEndpointModalWhenShown = true;
         endpointModal?.hide();
         showToast("Please save your settings to persist changes.", "warning");
     } catch (error) {
-        if (!(error instanceof ModelEndpointValidationError)) console.error("Failed to save endpoint", error);
+        if (!(error instanceof ModelBudgetValidationError) && !(error instanceof ModelEndpointValidationError)) {
+            console.error("Failed to save endpoint", error);
+        }
         showToast(error?.message || "Failed to save endpoint.", "danger");
     }
 }
@@ -2496,13 +2680,11 @@ function addManualModel() {
     try {
         modalModels = collectModalModels();
     } catch (error) {
-        showToast(error.message || "Check the model metadata before adding another model.", "warning");
+        showToast(error?.message || "Unable to add a model.", "danger");
         return;
     }
-    modalModels.push({
+    const model = {
         id: generateId(),
-        deploymentName: "",
-        modelName: "",
         displayName: "",
         icon: {},
         description: "",
@@ -2510,7 +2692,9 @@ function addManualModel() {
         isDiscovered: false,
         ...(endpointProviderSelect?.value === "openai_compatible"
             ? { supportsChat: false, supportsImageGeneration: false, supportsVision: false } : {}),
-    });
+    };
+    setModelRequestName(model, "");
+    modalModels.push(model);
     renderModalModels(modalModels);
     markModalDraftChanged();
 }
@@ -2525,7 +2709,7 @@ function handleModelListClick(event) {
     try {
         modalModels = collectModalModels();
     } catch (error) {
-        showToast(error.message || "Check the model metadata before continuing.", "warning");
+        showToast(error?.message || "Unable to update the model.", "danger");
         return;
     }
     const model = modalModels.find((item) => item.id === modelId);
@@ -2995,7 +3179,55 @@ async function runDefaultModelAgentMigration() {
     }
 }
 
+function handleEndpointProtocolChange() {
+    try {
+        modalModels = collectModalModels();
+    } catch (error) {
+        if (endpointProviderSelect) endpointProviderSelect.value = modalModelProtocol.provider;
+        if (endpointApiTypeSelect) endpointApiTypeSelect.value = modalModelProtocol.api_type;
+        updateAuthVisibility();
+        showToast(error?.message || "Unable to update the endpoint protocol.", "warning");
+        return;
+    }
+
+    const descriptor = isCustomProvider() ? getCustomApiTypeDescriptor() : null;
+    if (endpointUrlModeSelect) endpointUrlModeSelect.value = "auto";
+    if (endpointUrlModeExactInput) endpointUrlModeExactInput.checked = false;
+    if (endpointAnthropicVersionInput) {
+        endpointAnthropicVersionInput.value = descriptor?.versionField === "anthropic_version"
+            ? descriptor.defaultVersion || DEFAULT_ANTHROPIC_VERSION
+            : "";
+    }
+    if (isCustomProvider()) {
+        setSelectedVersionValue(
+            endpointOpenAiApiVersionInput,
+            endpointOpenAiApiVersionCustomInput,
+            descriptor?.requiresApiVersion ? descriptor.defaultVersion || DEFAULT_AOAI_OPENAI_API_VERSION : ""
+        );
+    } else {
+        syncOpenAiApiVersionForProvider();
+    }
+    if (endpointApiKeyHeaderInput) endpointApiKeyHeaderInput.value = "";
+    if (endpointApiKeyPrefixInput) endpointApiKeyPrefixInput.value = descriptor?.defaultApiKeyPrefix || "";
+    modalModels = modalModels.map(({ capability_status: status, ...model }) => model);
+    modelVisionRequest += 1;
+    modelVisionCapability = {};
+    renderModalModels(modalModels);
+    updateAuthVisibility();
+    markModalDraftChanged();
+}
+
 function init() {
+    if (endpointApiTypeSelect) {
+        const selectedApiType = getCustomApiType();
+        const apiTypes = Object.values(getCustomApiTypeRegistry());
+        if (apiTypes.length) {
+            endpointApiTypeSelect.replaceChildren(...apiTypes.map(option => new Option(option.label, option.value)));
+            endpointApiTypeSelect.value = selectedApiType;
+        }
+        const apiTypeLabel = endpointApiTypeGroup?.querySelector('label[for="model-endpoint-api-type"]');
+        if (apiTypeLabel) apiTypeLabel.textContent = "Custom API Type";
+    }
     const isMultiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;
 
     renderEndpoints();
@@ -3006,17 +3238,7 @@ function init() {
     if (endpointModalEl) {
         endpointModalEl.addEventListener("input", markModalDraftChanged);
         endpointModalEl.addEventListener("change", markModalDraftChanged);
-        endpointModalEl.addEventListener("shown.bs.modal", () => {
-            // Bootstrap ignores hide() during the opening transition.
-            if (closeEndpointModalWhenShown) {
-                closeEndpointModalWhenShown = false;
-                endpointModal?.hide();
-            }
-        });
-        endpointModalEl.addEventListener("hidden.bs.modal", () => {
-            modalDraftChanged = false;
-            closeEndpointModalWhenShown = false;
-        });
+        endpointModalEl.addEventListener("hidden.bs.modal", () => { modalDraftChanged = false; });
     }
 
     if (enableMultiEndpointToggle) {
@@ -3032,44 +3254,19 @@ function init() {
                 endpointAuthTypeSelect.value = endpointAuthTypeSelect.dataset.previousAuthType || "api_key";
                 return;
             }
+            modalModels = modalModels.map(({ capability_status: status, ...model }) => model);
             updateAuthVisibility();
             renderModalModels(modalModels);
         });
     }
     if (endpointProviderSelect) {
-        endpointProviderSelect.addEventListener("change", () => {
-            try {
-                modalModels = collectModalModels();
-            } catch (error) {
-                showToast(error.message || "Check the model metadata before changing provider.", "warning");
-                endpointProviderSelect.value = endpointProviderSelect.dataset.previousProvider || "aoai";
-                return;
-            }
-            modalModels = modalModels.map(({ capability_status: status, ...model }) => model);
-            updateAuthVisibility();
-            syncOpenAiApiVersionForProvider();
-            renderModalModels(modalModels);
-        });
+        endpointProviderSelect.addEventListener("change", handleEndpointProtocolChange);
     }
     if (endpointApiTypeSelect) {
-        endpointApiTypeSelect.addEventListener("change", () => {
-            try {
-                modalModels = collectModalModels();
-            } catch (error) {
-                showToast(error.message || "Check the model metadata before changing API type.", "warning");
-                endpointApiTypeSelect.value = endpointApiTypeSelect.dataset.previousApiType || "openai";
-                return;
-            }
-            const descriptor = customApiTypeDescriptor();
-            if (endpointAnthropicVersionInput) endpointAnthropicVersionInput.value = descriptor?.defaultVersion || "";
-            if (endpointApiKeyHeaderInput) endpointApiKeyHeaderInput.value = "";
-            if (endpointApiKeyPrefixInput) endpointApiKeyPrefixInput.value = descriptor?.defaultApiKeyPrefix || "";
-            modalModels = modalModels.map(({ capability_status: status, ...model }) => model);
-            updateAuthVisibility();
-            renderModalModels(modalModels);
-        });
+        endpointApiTypeSelect.addEventListener("change", handleEndpointProtocolChange);
     }
     embeddingOperationInputs.api?.addEventListener("change", syncEmbeddingOperationVisibility);
+    embeddingOperationInputs.endpoint?.addEventListener("input", syncEmbeddingOperationVisibility);
     if (endpointUrlInput) {
         endpointUrlInput.addEventListener("input", updateAuthVisibility);
     }

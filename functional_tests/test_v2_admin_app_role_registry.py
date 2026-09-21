@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_app_role_registry.py
+#!/usr/bin/env python3
 """
 Functional test that the app role registry describes every role requirement.
-Version: 0.261.063
+Version: 0.261.122
 Implemented in: 0.261.063
 
 Admin Settings gathers every "require an Entra app role" switch into one place so
@@ -219,10 +219,9 @@ def test_catalog_is_declared_and_rendered():
         )
         if fragment not in source
     ]
-
     assert not missing, (
-        "The roster no longer renders the registry detail it exists to surface, so the "
-        "registry is being maintained for nothing:\n  " + "\n  ".join(missing)
+        "The roster no longer renders the registry detail it exists to surface:\n  "
+        + "\n  ".join(missing)
     )
 
     print("  The catalog is declared by the schema and renders the registry detail.")

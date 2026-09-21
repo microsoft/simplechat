@@ -4,6 +4,8 @@ Implemented in version: **0.261.106**
 
 Updated in version: **0.261.108**
 
+Audited budget integration updated in version: **0.261.122**.
+
 Loop/collection integration updated in version: **0.261.117**.
 
 Version tracking: `application/single_app/config.py`.
@@ -105,9 +107,13 @@ These are transport pages and may split JSON tokens. A model-facing adapter must
 
 Older preview-only runs return an explicit unavailable response instead of a fabricated complete result.
 
+Microsoft 365 consent/sign-in resumption reuses the completed task's authoritative result reference. Older Microsoft 365 checkpoints containing a complete task result are published through the same result store without repeating the task's external work. A preview-only checkpoint cannot stand in for that complete result.
+
 ## Model-aware context
 
-The effective task model is resolved after runner overrides. Verified catalog limits and narrower deployment constraints are used independently for total context, input, and output ceilings.
+The effective task model is resolved after runner overrides. Workflows use the shared `ModelTokenBudget` resolver, retaining independent shared-context, input, and output ceilings and any additional host/protocol-specific effective window. Authorized per-model and endpoint overrides use the same precedence as other model consumers. Configuration IDs and display names do not establish a model's numeric capacity.
+
+Response Length is a request reservation, not a replacement for the model's maximum generation capacity. A known-capacity model also needs verified or explicitly configured total-generation accounting, including reasoning; visible-only or unknown accounting cannot prove that a numeric response cap fits the context. Such requests fail with an explicit configuration error rather than being sent under a false budget guarantee.
 
 Direct model calls and local Semantic Kernel services check requests at the provider boundary. Tool schemas and accumulated tool results participate in the same budget. The response allowance is applied to the actual request, not merely subtracted from an estimate. Model-default output can use the remaining context, while an explicit response-length choice stays reserved.
 

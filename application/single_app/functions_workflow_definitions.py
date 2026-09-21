@@ -23,6 +23,7 @@ WORKFLOW_DEFINITION_FIELDS = (
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
     "definition_version", "reference_inputs", "durable_execution", "flow", "limits",
+    "m365_run_as_user_id",
 )
 SCHEMA_KEYWORDS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",

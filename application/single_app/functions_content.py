@@ -700,7 +700,8 @@ def extract_content_with_extraction_engine(
 def extract_table_file(file_path, file_ext):
     try:
         if file_ext == '.csv':
-            df = pandas.read_csv(file_path)
+            from functions_tabular_csv_query import read_tabular_csv
+            df = read_tabular_csv(file_path)
         elif file_ext in ['.xls', '.xlsx', '.xlsm']:
             df = pandas.read_excel(file_path)
         else:

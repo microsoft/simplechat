@@ -2,7 +2,7 @@
 # test_v2_admin_knowledge_extraction.py
 """
 Functional test for the Knowledge group's Document Extraction tab in V2.
-Version: 0.261.084
+Version: 0.261.122
 Implemented in: 0.261.084
 
 The server-rendered extraction pane is inside out. "Enable Enhanced extraction"
@@ -60,8 +60,7 @@ EXTRACTION_SECTIONS = (
     "content-understanding-section",
     "office-embedded-image-section",
     "chunk-size-section",
-    # Added by the Workspaces work: upload size belongs with extraction because
-    # both upload paths feed the same pipeline.
+    # Both workspace upload paths feed the document extraction pipeline.
     "file-size-limit-section",
     "metadata-extraction-section",
     "multimodal-vision-section",

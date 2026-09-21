@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
 # test_user_profile_idor_authorization.py
+#!/usr/bin/env python3
 """
 Functional test for user profile endpoint object authorization.
-Version: 0.241.203
+Version: 0.261.029
 Implemented in: 0.241.202
+Updated in: 0.261.029
 
 This test ensures that cross-user profile lookups are blocked unless the caller
 is the same user, an admin, or has a legitimate app relationship with the target.
@@ -14,6 +15,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -142,15 +144,16 @@ def install_route_stubs(context):
 
 def load_route_module(context):
     """Load route_backend_users.py with stubbed dependencies."""
-    install_route_stubs(context)
-    module_name = 'route_backend_users_user_profile_test'
-    sys.modules.pop(module_name, None)
-    spec = importlib.util.spec_from_file_location(module_name, ROUTE_FILE)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+    with patch.dict(sys.modules), patch.object(sys, "path", [str(ROUTE_FILE.parent), *sys.path]):
+        install_route_stubs(context)
+        module_name = 'route_backend_users_user_profile_test'
+        spec = importlib.util.spec_from_file_location(module_name, ROUTE_FILE)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load the user-profile route module.")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
 
 
 def load_checker_module():

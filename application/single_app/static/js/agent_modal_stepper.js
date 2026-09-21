@@ -6,6 +6,7 @@ import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 import { AgentInstructionMentions, buildActionToken, buildKnowledgeToken } from "./agent_instruction_mentions.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
+const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
 // Call agent actions attach by reference only; the runtime remains the authoritative
 // cycle guard even though the classic Actions step also warns about direct self-calls.
 const AGENT_DELEGATION_ACTION_TYPE = 'agent';
@@ -3067,7 +3068,10 @@ export class AgentModalStepper {
         
       case 'actions':
         if (!this.isAnyFoundryType()) {
-          // Actions validation would go here if needed
+          if (!this.hasLoadedM365ActionDefinitions()) {
+              this.showError('Wait for Microsoft 365 source capabilities to load, or reopen the editor.');
+              return false;
+          }
         }
         break;
         
@@ -3881,25 +3885,41 @@ export class AgentModalStepper {
   }
 
   getDefaultMsGraphCapabilities(actionId = '', actionName = '') {
-    const defaults = {};
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
-    });
-
     const action = (this.availableActions || []).find(candidate => {
       const candidateId = String(candidate?.id || candidate?.name || '').trim();
       const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
       return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
     });
+    const actionType = action?.type || 'msgraph';
+    const definitions = this.getCapabilityDefinitionsForActionType(actionType);
+    const defaults = {};
+    definitions.forEach(definition => {
+        defaults[definition.key] = definition.default !== false;
+    });
 
-    const rawCapabilities = action?.additionalFields?.msgraph_capabilities
+    const rawCapabilities = action?.additionalFields?.m365_capabilities
+      || action?.additional_fields?.m365_capabilities
+      || action?.additionalFields?.msgraph_capabilities
       || action?.additional_fields?.msgraph_capabilities
       || action?.msgraph_capabilities;
 
     if (rawCapabilities && typeof rawCapabilities === 'object' && !Array.isArray(rawCapabilities)) {
-      MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      definitions.forEach(definition => {
         if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
           defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+        }
+        const runtimeLimits = action?.m365_capabilities || action?.msgraph_capabilities;
+        if (runtimeLimits && typeof runtimeLimits === 'object' && !Array.isArray(runtimeLimits)) {
+            definitions.forEach(definition => {
+                if (Object.prototype.hasOwnProperty.call(runtimeLimits, definition.key)) {
+                    defaults[definition.key] = defaults[definition.key] && runtimeLimits[definition.key] === true;
+                }
+            });
+        }
+        if (Array.isArray(action?.enabled_functions)) {
+            definitions.forEach(definition => {
+                defaults[definition.key] = defaults[definition.key] && action.enabled_functions.includes(definition.function_name || definition.key);
+            });
         }
       });
     }
@@ -3912,9 +3932,9 @@ export class AgentModalStepper {
     const capabilityMap = this.getActionCapabilityMap();
     const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
 
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
-      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
-        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+    Object.keys(defaults).forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, key)) {
+        defaults[key] = defaults[key] && storedCapabilities[key] === true;
       }
     });
 
@@ -3937,22 +3957,26 @@ export class AgentModalStepper {
     }
 
     const selectedMsGraphCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
-      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'msgraph';
+      const type = (card.getAttribute('data-action-type') || '').toLowerCase();
+      return type === 'msgraph' || M365_ACTION_TYPES.includes(type);
     });
 
     if (!selectedMsGraphCards.length || this.isAnyFoundryType()) {
       container.classList.add('d-none');
-      list.innerHTML = '';
+      list.replaceChildren();
       return;
     }
 
     container.classList.remove('d-none');
-    list.innerHTML = '';
+    list.replaceChildren();
 
     selectedMsGraphCards.forEach(card => {
       const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
       const actionName = card.getAttribute('data-action-name') || actionId;
+      const actionType = card.getAttribute('data-action-type') || 'msgraph';
+      const definitions = this.getCapabilityDefinitionsForActionType(actionType);
       const capabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
+      const sourceCapabilities = this.getDefaultMsGraphCapabilities(actionId, actionName);
 
       const section = document.createElement('div');
       section.className = 'border rounded p-3 bg-light';
@@ -3964,10 +3988,14 @@ export class AgentModalStepper {
 
       const helperText = document.createElement('div');
       helperText.className = 'text-muted small mb-3';
-      helperText.textContent = 'These capability toggles apply only to this agent assignment.';
+      helperText.textContent = 'These limits apply only to this agent assignment. The saved source action remains the capability and sharing-policy ceiling.';
       section.appendChild(helperText);
 
-      MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (M365_ACTION_TYPES.includes(actionType) && !definitions.length) {
+          helperText.textContent = 'Loading Microsoft 365 source capabilities. Do not save until the controls are available.';
+          this.loadM365ActionDefinition(actionType, helperText);
+      }
+      definitions.forEach(definition => {
         const wrapper = document.createElement('div');
         wrapper.className = 'form-check mb-2';
 
@@ -3976,11 +4004,18 @@ export class AgentModalStepper {
         checkbox.type = 'checkbox';
         checkbox.id = `msgraph-capability-${actionId}-${definition.key}`;
         checkbox.checked = Boolean(capabilities[definition.key]);
+        checkbox.disabled = !sourceCapabilities[definition.key];
 
         const label = document.createElement('label');
         label.className = 'form-check-label';
         label.setAttribute('for', checkbox.id);
-        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+        const title = document.createElement('span');
+        title.className = 'fw-medium';
+        title.textContent = definition.label;
+        const detail = document.createElement('span');
+        detail.className = 'd-block text-muted small';
+        detail.textContent = checkbox.disabled ? 'Disabled by the source action.' : definition.description;
+        label.append(title, detail);
 
         checkbox.addEventListener('change', () => {
           const updatedCapabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
@@ -3995,6 +4030,33 @@ export class AgentModalStepper {
 
       list.appendChild(section);
     });
+  }
+
+  async loadM365ActionDefinition(actionType, statusElement) {
+    this.m365DefinitionRequests = this.m365DefinitionRequests || {};
+    if (this.m365DefinitionRequests[actionType]) {
+        return;
+    }
+    this.m365DefinitionRequests[actionType] = true;
+    try {
+        const response = await fetch(`/api/plugins/${encodeURIComponent(actionType)}/auth-types`);
+        if (!response.ok) {
+            throw new Error('Microsoft 365 source capabilities are unavailable.');
+        }
+        const result = await response.json();
+        if (result.m365?.type !== actionType || !Array.isArray(result.m365.capabilities) || !result.m365.capabilities.length) {
+            throw new Error('Microsoft 365 source capabilities are unavailable.');
+        }
+        this.m365ActionDefinitions = this.m365ActionDefinitions || {};
+        this.m365ActionDefinitions[actionType] = result.m365;
+        this.renderMsGraphCapabilitySections();
+    } catch (error) {
+        statusElement.className = 'alert alert-danger';
+        statusElement.textContent = 'Microsoft 365 source capabilities could not be loaded. Reopen this editor before saving.';
+        this.showError('Microsoft 365 source capabilities could not be loaded.');
+    } finally {
+        this.m365DefinitionRequests[actionType] = false;
+    }
   }
 
   getDefaultChartCapabilities(actionId = '', actionName = '') {
@@ -4233,6 +4295,9 @@ export class AgentModalStepper {
   }
 
   getCapabilityDefinitionsForActionType(actionType) {
+    if (M365_ACTION_TYPES.includes(actionType)) {
+        return this.m365ActionDefinitions?.[actionType]?.capabilities || [];
+    }
     switch (String(actionType || '').toLowerCase()) {
       case 'simplechat':
         return SIMPLECHAT_CAPABILITY_DEFINITIONS;
@@ -4243,6 +4308,13 @@ export class AgentModalStepper {
       default:
         return [];
     }
+  }
+
+  hasLoadedM365ActionDefinitions() {
+    return Array.from(document.querySelectorAll('.action-card.border-primary')).every(card => {
+        const type = card.getAttribute('data-action-type');
+        return !M365_ACTION_TYPES.includes(type) || this.getCapabilityDefinitionsForActionType(type).length > 0;
+    });
   }
 
   getEnabledCapabilitiesForAction(actionId, actionName, actionType) {
@@ -4257,6 +4329,10 @@ export class AgentModalStepper {
         capabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
         break;
       case 'msgraph':
+      case 'm365_calendar':
+      case 'm365_email':
+      case 'm365_onedrive':
+      case 'm365_sharepoint':
         capabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
         break;
       case 'chart':
@@ -4732,6 +4808,9 @@ export class AgentModalStepper {
   }
 
   getAgentFormData() {
+    if (!this.isAnyFoundryType() && !this.hasLoadedM365ActionDefinitions()) {
+        throw new Error('Microsoft 365 source capabilities must be loaded before saving.');
+    }
     const agentTypeInput = document.querySelector('input[name="agent-type"]:checked');
     const selectedAgentType = agentTypeInput ? agentTypeInput.value : 'local';
 
@@ -4941,7 +5020,9 @@ export class AgentModalStepper {
       // Using global model - need to set at least one deployment field
       // We'll use the selected model as the deployment name for now
       if (formData.model) {
-        const deploymentName = selectedModelOption?.dataset?.deploymentName || formData.model;
+        const deploymentName = selectedModelOption?.dataset?.requestModel
+          || selectedModelOption?.dataset?.deploymentName
+          || formData.model;
         formData.azure_openai_gpt_deployment = deploymentName;
       }
     }

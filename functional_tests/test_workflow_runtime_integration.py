@@ -1,7 +1,7 @@
 # test_workflow_runtime_integration.py
 """
 Functional tests for durable submission and the actual workflow runner.
-Version: 0.261.116
+Version: 0.261.122
 Implemented in: 0.261.111
 
 Queue, recreated worker, task checkpoint, approval, and projections run through
@@ -9,6 +9,7 @@ production functions with isolated service boundaries and deterministic data.
 """
 
 import copy
+from contextlib import nullcontext
 import sys
 import types
 
@@ -87,6 +88,7 @@ def integration(monkeypatch):
     workflow.update(definition_version=2, durable_execution=True)
     definitions = ServiceContainer()
     runs = ServiceContainer()
+    messages = ServiceContainer("conversation_id")
     controls = RuntimeContainer()
     clock = Clock()
     result_store = WorkflowResultStore(controls)
@@ -113,6 +115,8 @@ def integration(monkeypatch):
         *args, **kwargs, save_result=save_result, load_result=load_result,
     ))
     runner.update({
+        "_ensure_execution_context": lambda user_id: nullcontext(),
+        "workflow_m365_manifests": lambda workflow: ([], workflow),
         "WorkflowRunCancelledError": type("WorkflowRunCancelledError", (BaseException,), {}),
         "_save_workflow_run_record": lambda wf, record: (
             workflow_checkpoint_scope_guard(record), runs.upsert_item(record)
@@ -122,8 +126,11 @@ def integration(monkeypatch):
         )[1],
         "_execute_workflow_file_sync": lambda *args: None,
         "_ensure_workflow_conversation": lambda wf: {"id": "conversation-inventory", "user_id": "owner"},
-        "_create_user_message": lambda *args: {"id": "user-message"},
-        "_initialize_workflow_assistant_tracking": lambda *args: ("assistant-message", None),
+        "_create_user_message": lambda conversation_id, *args: messages.upsert_item({
+            "id": "user-message", "conversation_id": conversation_id,
+        }),
+        "cosmos_messages_container": messages,
+        "_initialize_workflow_assistant_tracking": lambda *args, **kwargs: ("assistant-message", None),
         "_prepare_workflow_url_access_context": lambda *args, **kwargs: {},
         "_attach_workflow_url_access_result": lambda result, context: result,
         "_create_assistant_message": lambda *args, **kwargs: {"id": "assistant-message"},

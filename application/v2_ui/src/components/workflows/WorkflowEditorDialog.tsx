@@ -12,6 +12,7 @@ import { WorkflowAgentPicker, WorkflowModelPicker, WorkflowTaskFields } from './
 import { WorkflowFieldDraftsProvider, workflowDraftOwners } from './WorkflowFieldDrafts';
 import { WorkflowHistoryBoundary, useWorkflowAuthoringHistory } from './WorkflowAuthoringHistory';
 import { WorkflowStructuredList } from './WorkflowStructuredList';
+import { WorkflowMicrosoft365RunAs } from './WorkflowMicrosoft365RunAs';
 import { WorkflowFlowAuthoring } from './WorkflowFlowAuthoring';
 import { WorkflowFlowLimitFields } from './WorkflowStructuredFields';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
@@ -451,6 +452,12 @@ export function WorkflowEditorDialog({
                                     }))}
                                 />
                             )}
+                            <WorkflowMicrosoft365RunAs
+                                scope={scope}
+                                value={draft.m365_run_as_user_id ?? ''}
+                                disabled={readOnly || saving}
+                                onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
+                            />
                             <div className="grid gap-3 md:grid-cols-3">
                                 <label className="text-sm text-text-2">
                                     Trigger

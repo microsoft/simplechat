@@ -2,7 +2,7 @@
 # test_v2_admin_inbound_mcp_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Inbound MCP tab.
-Version: 0.261.074
+Version: 0.261.122
 Implemented in: 0.261.074
 
 Two things about this tab are unusual, and both fail silently.
@@ -339,4 +339,3 @@ if __name__ == "__main__":
     results = [test() for test in tests]
     print(f"\nResults: {sum(bool(r) for r in results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)
-

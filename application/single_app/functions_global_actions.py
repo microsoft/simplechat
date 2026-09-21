@@ -6,11 +6,14 @@ This module provides functions for managing global actions stored in the
 global_actions container with id partitioning.
 """
 
+import logging
 import uuid
-import json
-import traceback
 from datetime import datetime
+from azure.core import MatchConditions
+from azure.cosmos import exceptions
 from config import cosmos_global_actions_container
+from functions_action_manifest import McpConfigurationError, bind_action_origin
+from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 from functions_workspace_identities import (
@@ -20,6 +23,40 @@ from functions_workspace_identities import (
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_agent_delegation import validate_agent_action_for_scope
+from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
+from functions_legacy_action_management import (
+    authorize_scoped_mcp_secret_read,
+    prepare_scoped_action,
+    retired_action_management_view,
+    validate_scoped_mcp_action,
+)
+from functions_settings import get_settings
+
+
+def _clean_action(action, return_type, action_id=None):
+    retired_view = retired_action_management_view(action, "global", "global")
+    if retired_view is not None:
+        retired_view.setdefault("is_enabled", True)
+        return retired_view
+    cleaned = {key: value for key, value in action.items() if not key.startswith("_")}
+    cleaned = bind_action_origin(cleaned, "global", "global")
+    if return_type == SecretReturnType.NAME and cleaned["type"] == "mcp":
+        # Workspace identity hydration treats NAME like VALUE, so defer it until authorization.
+        cleaned.setdefault("is_enabled", True)
+        return cleaned
+    if return_type == SecretReturnType.VALUE and cleaned["type"] == "mcp":
+        authorize_scoped_mcp_secret_read(cleaned, get_settings())
+    cleaned = keyvault_plugin_get_helper(
+        cleaned, scope_value=action_id or action.get("id"), scope="global", return_type=return_type
+    )
+    cleaned = hydrate_action_identity_reference(
+        cleaned,
+        WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        return_type=return_type,
+    )
+    cleaned.setdefault("is_enabled", True)
+    return bind_action_origin(cleaned, "global", "global")
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):
     """
@@ -41,25 +78,18 @@ def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=Fa
             query=query,
             enable_cross_partition_query=True
         ))
-        # Resolve Key Vault references for each action
-        actions = [keyvault_plugin_get_helper(a, scope_value=a.get('id'), scope="global", return_type=return_type) for a in actions]
-        actions = [
-            hydrate_action_identity_reference(
-                action,
-                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
-                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
-                return_type=return_type,
-            )
-            for action in actions
-        ]
-        for action in actions:
-            action.setdefault('is_enabled', True)
-        return actions
-        
-    except Exception as e:
-        print(f"❌ Error getting global actions: {str(e)}")
-        traceback.print_exc()
+    except exceptions.CosmosResourceNotFoundError:
         return []
+    except Exception as exc:
+        log_event("[PLUGINS] Global action listing failed", level=logging.ERROR,
+                  extra={"error_type": type(exc).__name__})
+        raise
+    try:
+        return [_clean_action(action, return_type) for action in actions]
+    except Exception as exc:
+        log_event("[PLUGINS] Global action normalization failed", level=logging.WARNING,
+                  extra={"error_type": type(exc).__name__})
+        raise
 
 
 def get_global_action(action_id, return_type=SecretReturnType.TRIGGER):
@@ -77,20 +107,18 @@ def get_global_action(action_id, return_type=SecretReturnType.TRIGGER):
             item=action_id,
             partition_key=action_id
         )
-        # Resolve Key Vault references
-        action = keyvault_plugin_get_helper(action, scope_value=action_id, scope="global", return_type=return_type)
-        action = hydrate_action_identity_reference(
-            action,
-            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
-            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
-            return_type=return_type,
-        )
-        print(f"✅ Found global action: {action_id}")
-        return action
-        
-    except Exception as e:
-        print(f"❌ Error getting global action {action_id}: {str(e)}")
+    except exceptions.CosmosResourceNotFoundError:
         return None
+    except Exception as exc:
+        log_event("[PLUGINS] Global action lookup failed", level=logging.ERROR,
+                  extra={"action_id": action_id, "error_type": type(exc).__name__})
+        raise
+    try:
+        return _clean_action(action, return_type, action_id=action_id)
+    except Exception as exc:
+        log_event("[PLUGINS] Global action normalization failed", level=logging.WARNING,
+                  extra={"action_id": action_id, "error_type": type(exc).__name__})
+        raise
 
 
 def save_global_action(action_data, user_id=None):
@@ -105,8 +133,12 @@ def save_global_action(action_data, user_id=None):
         dict: Saved action data or None if failed
     """
     try:
+        submitted_action = action_data
+        action_data = normalize_m365_action_payload(action_data)
+        action_data = prepare_scoped_action(action_data, "global", "global")
         if user_id is None:
             user_id = get_current_user_id()
+        actor_user_id = user_id
         if not user_id:
             user_id = "system"
 
@@ -115,22 +147,27 @@ def save_global_action(action_data, user_id=None):
         )
 
         # Ensure required fields
-        if 'id' not in action_data:
+        if not action_data.get('id'):
             action_data['id'] = str(uuid.uuid4())
+        if not isinstance(action_data['id'], str):
+            raise ValueError("Action ID must be a string.")
         # Add metadata
         action_data['is_global'] = True
         now = datetime.utcnow().isoformat()
 
         # Check if this is a new action or an update to preserve created_by/created_at
-        existing_action = None
         try:
             existing_action = cosmos_global_actions_container.read_item(
                 item=action_data['id'],
                 partition_key=action_data['id']
             )
-        except Exception:
-            pass
+        except exceptions.CosmosResourceNotFoundError:
+            existing_action = None
 
+        validate_legacy_action_update(submitted_action, existing_action)
+        legacy_type = is_legacy_msgraph_type(action_data.get('type'))
+        if legacy_type:
+            action_data['type'] = 'msgraph'
         if existing_action:
             action_data['created_by'] = existing_action.get('created_by') or user_id
             action_data['created_at'] = existing_action.get('created_at') or now
@@ -146,12 +183,14 @@ def save_global_action(action_data, user_id=None):
         action_data['modified_by'] = user_id
         action_data['modified_at'] = now
         action_data['updated_at'] = now
+        action_data = bind_action_origin(action_data, "global", "global")
+        if action_data["type"] == "mcp":
+            validate_scoped_mcp_action(action_data, actor_user_id, get_settings())
         validate_action_identity_reference(
             action_data,
             WORKSPACE_IDENTITY_SCOPE_GLOBAL,
             WORKSPACE_IDENTITY_SCOPE_GLOBAL,
         )
-        print(f"💾 Saving global action: {action_data.get('name', 'Unknown')}")
         # Store secrets in Key Vault before upsert
         action_data = keyvault_plugin_save_helper(
             action_data,
@@ -159,14 +198,25 @@ def save_global_action(action_data, user_id=None):
             scope="global",
             existing_plugin=existing_action,
         )
-        result = cosmos_global_actions_container.upsert_item(body=action_data)
+        if legacy_type:
+            result = cosmos_global_actions_container.replace_item(
+                item=action_data['id'],
+                body=action_data,
+                etag=existing_action['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            result = cosmos_global_actions_container.upsert_item(body=action_data)
         bump_chat_bootstrap_global_cache_version(reason="global_action_saved")
-        print(f"✅ Global action saved successfully: {result['id']}")
-        return result
+        return bind_action_origin(
+            {key: value for key, value in result.items() if not key.startswith("_")},
+            "global",
+            "global",
+        )
         
-    except Exception as e:
-        print(f"❌ Error saving global action: {str(e)}")
-        traceback.print_exc()
+    except Exception as exc:
+        log_event("[PLUGINS] Global action save failed", level=logging.ERROR,
+                  extra={"error_type": type(exc).__name__})
         raise
 
 
@@ -181,22 +231,20 @@ def delete_global_action(action_id):
         bool: True if successful, False otherwise
     """
     try:
-        print(f"🗑️ Deleting global action: {action_id}")
         # Delete secrets from Key Vault before deleting the action
-        action = get_global_action(action_id, return_type=SecretReturnType.NAME)
-        if action:
-            keyvault_plugin_delete_helper(action, scope_value=action_id, scope="global")
+        action = cosmos_global_actions_container.read_item(item=action_id, partition_key=action_id)
+        action = bind_action_origin(action, "global", "global")
+        keyvault_plugin_delete_helper(action, scope_value=action_id, scope="global")
         cosmos_global_actions_container.delete_item(
             item=action_id,
             partition_key=action_id
         )
         bump_chat_bootstrap_global_cache_version(reason="global_action_deleted")
-        print(f"✅ Global action deleted successfully: {action_id}")
         return True
         
-    except Exception as e:
-        print(f"❌ Error deleting global action {action_id}: {str(e)}")
-        traceback.print_exc()
+    except Exception as exc:
+        log_event("[PLUGINS] Global action deletion failed", level=logging.ERROR,
+                  extra={"action_id": action_id, "error_type": type(exc).__name__})
         return False
 
 
@@ -215,22 +263,33 @@ def update_global_action_enabled(action_id, is_enabled, user_id=None):
     try:
         if user_id is None:
             user_id = get_current_user_id()
+        actor_user_id = user_id
         if not user_id:
             user_id = "system"
 
-        action = cosmos_global_actions_container.read_item(
+        existing_action = cosmos_global_actions_container.read_item(
             item=action_id,
             partition_key=action_id
         )
+        action = prepare_scoped_action(existing_action, "global", "global")
+        if action["type"] == "mcp":
+            validate_scoped_mcp_action(action, actor_user_id, get_settings())
         now = datetime.utcnow().isoformat()
         action['is_enabled'] = bool(is_enabled)
         action['modified_by'] = user_id
         action['modified_at'] = now
         action['updated_at'] = now
-        result = cosmos_global_actions_container.upsert_item(body=action)
+        result = cosmos_global_actions_container.replace_item(
+            item=action_id,
+            body=action,
+            etag=existing_action['_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
         bump_chat_bootstrap_global_cache_version(reason="global_action_enabled_updated")
-        return result
-    except Exception as e:
-        print(f"❌ Error updating enabled state for global action {action_id}: {str(e)}")
-        traceback.print_exc()
+        return bind_action_origin(result, "global", "global")
+    except (McpConfigurationError, PermissionError):
+        raise
+    except Exception as exc:
+        log_event("[PLUGINS] Global action enabled-state update failed", level=logging.ERROR,
+                  extra={"action_id": action_id, "error_type": type(exc).__name__})
         return None

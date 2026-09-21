@@ -4,6 +4,7 @@ title: "Trigger a workflow"
 description: "Run a workflow now, schedule future runs, and inspect run activity."
 section: "Guides"
 audience: user
+version: "0.261.122"
 ---
 
 ## What this does
@@ -71,6 +72,20 @@ undo an email, upload, or other completed external action.
 Classic workflows remain synchronous unless opted in. Classic can run and cancel
 durable definitions, but V2 provides their approval, checkpoint-resume, and
 memory controls. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md).
+
+### Microsoft 365 authorization waits
+
+V2 compatibility in **0.261.122** preserves `awaiting_approval`,
+`awaiting_sharing_approval`, `awaiting_analysis_approval`,
+`awaiting_run_as_approval`, and `awaiting_sign_in` as active waits, not failed
+runs. A `m365_authorization` pause explains which approval or connection step
+is needed.
+
+Follow that reason in **Approvals** or Microsoft 365 connection settings.
+Generic workflow **Resume** and **Approve task** do not satisfy this gate;
+authorized operators can still cancel. After authorization, the dedicated
+Microsoft 365 continuation uses the durable engine to continue the same run.
+Selecting a Run as account in the editor is not itself authorization.
 
 ## Inspect a structured path
 

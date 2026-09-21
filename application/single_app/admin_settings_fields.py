@@ -113,6 +113,7 @@ from functions_model_endpoint_identity_header import (
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
 )
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -4493,6 +4494,37 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "core-plugin-toggles": [
         {
+            "key": "m365_retrieval_provider",
+            "type": "select",
+            "label": "Retrieval provider",
+            "help": (
+                "Auto uses Copilot Retrieval for verified licensed users in supported "
+                "clouds and delegated Microsoft Graph otherwise. Microsoft Graph "
+                "always uses the ordinary file-search and read path. No pay-as-you-go."
+            ),
+            "default": "auto",
+            "options": [
+                {"value": "auto", "label": "Auto"},
+                {"value": "graph", "label": "Microsoft Graph"},
+            ],
+            "group": "Microsoft 365 retrieval",
+        },
+        {
+            "key": "m365_trusted_download_hosts",
+            # Preserve complete host names for transport validation, without client truncation.
+            "type": "textarea",
+            "label": "Additional trusted file-download hosts",
+            "help": (
+                "For custom clouds, enter up to 30 deployment-approved DNS host names "
+                "on separate lines or separated by commas. These are needed "
+                "for file-download redirects, not sites or folders users may search. "
+                "Do not add arbitrary Internet hosts."
+            ),
+            "default": [],
+            "rows": 3,
+            "group": "Microsoft 365 retrieval",
+        },
+        {
             "key": "enable_time_plugin",
             "type": "switch",
             "label": "Time",
@@ -6607,6 +6639,13 @@ def _normalize_field_value(key, value, field):
             return validate_workflow_max_repeat_iterations(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
+
+    if key == "m365_trusted_download_hosts":
+        try:
+            hosts = normalize_m365_transport_settings("auto", value)[key]
+            return hosts, None, None
+        except M365ProviderError as error:
+            return None, error.message, None
 
     if field_type == "switch":
         return _coerce_bool(value), None, None

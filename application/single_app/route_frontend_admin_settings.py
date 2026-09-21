@@ -4,16 +4,22 @@ import copy
 import os
 import re
 
+from azure.core.exceptions import AzureError
+
 from config import *
 from functions_documents import *
 from functions_authentication import *
 from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoints,
+)
 from functions_settings import *
 from functions_appinsights import log_event
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
-from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoints
 from functions_ai_connections import (
     AIConnectionError,
     EMBEDDINGS_CAPABILITY,
@@ -64,7 +70,8 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_orchestration_registry import (
     CAPABILITY_REGISTRY,
     TERMINAL_CAPABILITY_ID,
@@ -668,7 +675,7 @@ def register_route_frontend_admin_settings(bp):
 
         try:
             normalized_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []))
-        except AIConnectionError as exc:
+        except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
         frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
@@ -878,6 +885,8 @@ def register_route_frontend_admin_settings(bp):
             settings['allow_user_agents'] = False
         if 'allow_user_custom_endpoints' not in settings:
             settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
+        if 'allow_private_custom_model_endpoints' not in settings:
+            settings['allow_private_custom_model_endpoints'] = False
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
         if 'allow_user_workflows' not in settings:
@@ -1064,8 +1073,8 @@ def register_route_frontend_admin_settings(bp):
                             new_settings['update_available'] = False
                         
                         # Update settings to persist these values
-                        update_settings(new_settings)
-                        settings.update(new_settings)
+                        if update_settings(new_settings):
+                            settings = get_settings()
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
                     log_event(f"Error checking for updates: {e}", level=logging.ERROR)
@@ -1075,8 +1084,8 @@ def register_route_frontend_admin_settings(bp):
             update_available = _is_update_version_newer(latest_version, current_version)
             if settings.get('update_available') != update_available:
                 try:
-                    update_settings({'update_available': update_available})
-                    settings['update_available'] = update_available
+                    if update_settings({'update_available': update_available}):
+                        settings = get_settings()
                 except Exception as e:
                     log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
             
@@ -1146,6 +1155,10 @@ def register_route_frontend_admin_settings(bp):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+            settings_etag = form_data.get('admin_settings_etag', '')
+            if not settings_etag or settings_etag != settings.get('_etag'):
+                flash("Settings changed since this page was loaded. Review the latest settings and try again.", "warning")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             try:
                 workflow_max_loop_items = (
                     validate_workflow_max_loop_items(form_data['workflow_max_loop_items'])
@@ -1508,6 +1521,8 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'redis_service_type': form_data.get('redis_service_type', '').strip() or 'auto',
+                'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': form_data.get('enable_file_sync_personal') == 'on',
                 'enable_file_sync_group': form_data.get('enable_file_sync_group') == 'on',
@@ -1806,17 +1821,39 @@ def register_route_frontend_admin_settings(bp):
                 migrated_at = datetime.now(timezone.utc).isoformat()
                 migration_notice['created_at'] = migrated_at
 
-            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
-            custom_network_policy = {
-                'allow_private_custom_model_endpoints': form_data.get('allow_private_custom_model_endpoints') == 'on',
-                'allow_insecure_custom_model_endpoints': form_data.get('allow_insecure_custom_model_endpoints') == 'on',
-                'custom_model_endpoint_ca_bundle_path': str(form_data.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
-            }
             try:
+                parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
                 parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
-                validate_custom_model_endpoints(parsed_model_endpoints, {**settings, **custom_network_policy})
-            except (AIConnectionError, ModelEndpointValidationError) as exc:
-                flash(f"AI Connections were not saved. {exc.public_message}", "danger")
+            except (ModelTokenBudgetError, AIConnectionError) as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Model token-budget validation failed",
+                    extra={"exception_type": type(exc).__name__, "code": exc.code},
+                    level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            custom_endpoint_validation_settings = dict(settings)
+            custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
+                form_data.get('allow_private_custom_model_endpoints') == 'on'
+            )
+            custom_endpoint_validation_settings['allow_insecure_custom_model_endpoints'] = (
+                form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+            )
+            custom_endpoint_validation_settings['custom_model_endpoint_ca_bundle_path'] = (
+                form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
+            )
+            try:
+                validate_custom_model_endpoints(
+                    parsed_model_endpoints,
+                    custom_endpoint_validation_settings,
+                )
+            except ModelEndpointValidationError as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Custom model endpoint validation failed",
+                    extra={"exception_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_endpoints_by_id = {
@@ -1912,9 +1949,10 @@ def register_route_frontend_admin_settings(bp):
                         if endpoint_provider:
                             normalized_metadata_model_selection['provider'] = endpoint_provider
                         metadata_extraction_model_deployment = str(
-                            model_cfg.get('deploymentName')
-                            or model_cfg.get('deployment')
-                            or ''
+                            resolve_model_endpoint_request_model(
+                                endpoint_cfg,
+                                model_cfg,
+                            )
                         ).strip()
             else:
                 normalized_metadata_model_selection = {
@@ -2412,7 +2450,16 @@ def register_route_frontend_admin_settings(bp):
             )
 
             # --- Construct new_settings Dictionary ---
+            try:
+                m365_settings = normalize_m365_transport_settings(
+                    form_data.get('m365_retrieval_provider', settings.get('m365_retrieval_provider', 'auto')),
+                    form_data.get('m365_trusted_download_hosts', settings.get('m365_trusted_download_hosts', [])),
+                )
+            except M365ProviderError as error:
+                flash(error.message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **m365_settings,
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,
@@ -2483,7 +2530,15 @@ def register_route_frontend_admin_settings(bp):
                 'gpt_model': gpt_model_obj,
                 'enable_multi_model_endpoints': enable_multi_model_endpoints,
                 'model_endpoints': parsed_model_endpoints,
-                **custom_network_policy,
+                'allow_private_custom_model_endpoints': (
+                    form_data.get('allow_private_custom_model_endpoints') == 'on'
+                ),
+                'allow_insecure_custom_model_endpoints': (
+                    form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+                ),
+                'custom_model_endpoint_ca_bundle_path': (
+                    form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
+                ),
                 'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
@@ -2530,6 +2585,8 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'redis_service_type': form_data.get('redis_service_type', '').strip() or 'auto',
+                'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
                 'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
 
@@ -3199,7 +3256,7 @@ def register_route_frontend_admin_settings(bp):
                         "settings_unavailable",
                     )
                 new_settings = preserve_legacy_embedding_form_settings(
-                    new_settings, form_data, embedding_settings
+                    new_settings, form_data, embedding_settings,
                 )
                 if embedding_settings_use_connections(embedding_settings):
                     embedding_selection, embedding_warning = resolve_capability_model_selection(
@@ -3220,30 +3277,33 @@ def register_route_frontend_admin_settings(bp):
                         new_settings["ai_connection_default_notices"] = notices
                         flash(notices[EMBEDDINGS_CAPABILITY], "warning")
                 preflight_embedding_settings(
-                    embedding_settings, {**embedding_settings, **new_settings}
+                    embedding_settings, {**embedding_settings, **new_settings},
                 )
                 parsed_model_endpoints = [
                     keyvault_model_endpoint_save_helper(
                         endpoint,
-                        endpoint.get('id'),
-                        scope='global',
-                        existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
+                        endpoint.get("id"),
+                        scope="global",
+                        existing_endpoint=existing_endpoints_by_id.get(endpoint.get("id")),
                         stage_new_secrets=True,
                     )
                     for endpoint in parsed_model_endpoints
                 ]
                 new_settings["model_endpoints"] = parsed_model_endpoints
-                settings_saved = update_settings(new_settings)
+                settings_saved = update_settings(new_settings, expected_etag=settings_etag)
             except AIConnectionError as exc:
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
-            except Exception as exc:
+            except (AzureError, OSError, RuntimeError, ValueError) as exc:
                 log_event(
                     "[AI_CONNECTIONS] Admin connection settings could not be stored",
                     extra={"error_type": type(exc).__name__},
                     level=logging.ERROR,
                 )
-                flash("Admin settings were not saved. Review the connection and Key Vault configuration, then try again.", "danger")
+                flash(
+                    "Admin settings were not saved. Review the connection and Key Vault configuration, then try again.",
+                    "danger",
+                )
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
             if settings_saved:
                 for endpoint in parsed_model_endpoints:
@@ -3340,7 +3400,11 @@ def register_route_frontend_admin_settings(bp):
                         print(f"Warning sending chunk size notification: {e}")
 
             else:
-                flash("Failed to update admin settings.", "danger")
+                flash(
+                    "Unable to confirm the settings save. Reload and verify the values before retrying. "
+                    "Another save may be in progress, or Redis may be unavailable.",
+                    "danger",
+                )
 
 
             # Redirect back to settings page

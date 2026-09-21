@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.121
+Version: 0.261.122
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 
@@ -52,6 +52,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_groups": ("login_required", "user_required"),
     "backend_models": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
+    "backend_m365": ("login_required", "user_required"),
     "backend_notifications": ("login_required", "user_required"),
     "backend_orchestration": ("login_required", "user_required"),
     "backend_prompts": ("login_required", "user_required"),

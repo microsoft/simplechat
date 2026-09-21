@@ -16,6 +16,7 @@ from functions_model_endpoint_identity_header import build_model_endpoint_identi
 from functions_model_endpoint_auth import resolve_client_certificate, resolve_custom_endpoint_credentials
 from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -87,6 +88,7 @@ def build_model_endpoint_context(
     auth=None,
     api_version=None,
     api_type=None,
+    anthropic_version=None,
     endpoint_id=None,
     model_id=None,
     model_deployment=None,
@@ -100,6 +102,7 @@ def build_model_endpoint_context(
         'endpoint': str(endpoint or '').strip(),
         'api_version': str(api_version or '').strip(),
         'api_type': str(api_type or '').strip().lower(),
+        'anthropic_version': str(anthropic_version or '').strip(),
         'endpoint_id': str(endpoint_id or '').strip(),
         'model_id': str(model_id or '').strip(),
         'model_deployment': str(model_deployment or '').strip(),
@@ -273,10 +276,15 @@ def build_model_endpoint_sync_chat_client(
     deployment_name='',
     *,
     api_type='',
+    model_id='',
+    url_mode='',
+    anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+    allow_private_custom_endpoints=False,
+    allow_insecure_custom_endpoints=False,
+    custom_endpoint_ca_bundle_path='',
     settings=None,
     endpoint_config=None,
     identity_context=None,
-    model_id='',
 ):
     """Create a synchronous client using canonical metadata for its wire protocol.
 
@@ -292,20 +300,31 @@ def build_model_endpoint_sync_chat_client(
         identity_context=identity_context,
     )
     normalized_provider = str(provider or 'aoai').strip().lower()
-    model_name = model.get('modelName') or model.get('behavior_name') or deployment_name
     api_type = get_model_endpoint_api_type(endpoint_config) or api_type
+    model_name = model.get('modelName') or model.get('behavior_name') or deployment_name
     runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, model_name, api_type)
     if normalized_provider == 'custom':
         connection = dict((endpoint_config or {}).get('connection') or {})
         connection.update(endpoint=endpoint, api_version=connection.get('api_version') or api_version)
+        if url_mode and not connection.get('url_mode'):
+            connection['url_mode'] = url_mode
+        if anthropic_version and not connection.get('anthropic_version'):
+            connection['anthropic_version'] = anthropic_version
+        custom_settings = settings
+        if custom_settings is None:
+            custom_settings = {
+                'allow_private_custom_model_endpoints': allow_private_custom_endpoints is True,
+                'allow_insecure_custom_model_endpoints': allow_insecure_custom_endpoints is True,
+                'custom_model_endpoint_ca_bundle_path': custom_endpoint_ca_bundle_path,
+            }
         custom_config = {
             **(endpoint_config or {}), 'provider': 'custom', 'api_type': api_type,
             'connection': connection, 'auth': auth_settings,
         }
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            return _build_custom_anthropic_client(custom_config, settings, extra_headers), runtime_protocol
+            return _build_custom_anthropic_client(custom_config, custom_settings, extra_headers), runtime_protocol
         kwargs = build_custom_openai_client_kwargs(
-            custom_config, settings, request_model=deployment_name, default_headers=extra_headers,
+            custom_config, custom_settings, request_model=deployment_name, default_headers=extra_headers,
         )
         return OpenAIStyleChatCompletionClient(
             OpenAI(**kwargs), sanitize_errors=True, api_type=api_type, request_url=kwargs['base_url'],
@@ -408,6 +427,12 @@ def build_chat_connection_client(binding, settings, *, strict_credentials=False)
         connection.get('endpoint'),
         connection.get('openai_api_version') or connection.get('api_version'),
         deployment_name=deployment_name,
+        api_type=get_model_endpoint_api_type(endpoint_config),
+        url_mode=connection.get('url_mode', ''),
+        anthropic_version=connection.get('anthropic_version') or DEFAULT_ANTHROPIC_VERSION,
+        allow_private_custom_endpoints=bool(settings.get('allow_private_custom_model_endpoints', False)),
+        allow_insecure_custom_endpoints=bool(settings.get('allow_insecure_custom_model_endpoints', False)),
+        custom_endpoint_ca_bundle_path=str(settings.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
         settings=settings,
         endpoint_config=endpoint_config,
         model_id=model_id,

@@ -11,6 +11,8 @@ import {
     formatWorkflowIterationPath,
     resumeWorkflowRuntime,
     workflowErrorMessage,
+    workflowRuntimeCanResume,
+    workflowRuntimeGateAllowsDecision,
     workflowScopeKey,
     WORKFLOW_RUNTIME_TERMINAL_STATES,
     type WorkflowRuntimeDecisionChoice,
@@ -378,8 +380,7 @@ export function WorkflowRuntimePanel({
             setError('The recovery gate changed while you were reviewing it. Review the current execution and attempt before retrying.');
             return;
         }
-        if (!runtime?.gate || !canDecide || !runtime.gate.choices.includes(choice) ||
-            runtime.gate.publication && ['approve', 'reject', 'retry'].includes(choice)) {
+        if (!runtime?.gate || !canDecide || !workflowRuntimeGateAllowsDecision(runtime.gate, choice)) {
             setError('The gate is no longer available. Reload this run before making another decision.');
             return;
         }
@@ -430,7 +431,7 @@ export function WorkflowRuntimePanel({
     };
 
     const resume = async () => {
-        if (!runtime || action || runtime.gate?.reason_code === 'repeat_iteration_limit') {
+        if (!runtime || action || !canDecide || !workflowRuntimeCanResume(runtime)) {
             return;
         }
         abortRef.current?.abort();
@@ -487,9 +488,7 @@ export function WorkflowRuntimePanel({
     const repeatBlocker = repeatGate ? repeatBudgetBlocker(runtime) : '';
     const unsupportedRuntimeSchema = Boolean(runtime && runtime.schema_version !== undefined && ![1, 2].includes(runtime.schema_version));
     const gateAllows = (choice: WorkflowRuntimeDecisionChoice) =>
-        Boolean(gate?.choices.includes(choice) &&
-            (!repeatGate || choice === 'continue_repeat' || choice === 'cancel') &&
-            (!gate.publication || !['approve', 'reject', 'retry'].includes(choice)));
+        workflowRuntimeGateAllowsDecision(gate, choice);
     const progressLabel = useMemo(() => {
         if (!runtime?.progress) {
             return '';
@@ -497,8 +496,7 @@ export function WorkflowRuntimePanel({
         return `${runtime.progress.completed} of ${runtime.progress.total} units complete`;
     }, [runtime?.progress]);
     const canMutate = canDecide && Boolean(runtime) && !loading && !unsupportedRuntimeSchema;
-    const canResume = canMutate && runtime?.can_resume === true &&
-        ['failed', 'incomplete', 'invalid'].includes(runtime.state);
+    const canResume = canMutate && workflowRuntimeCanResume(runtime);
     const canCancel = canMutate && runtime && !gateAllows('cancel') ? !runtimeIsTerminal(runtime) : false;
 
     if (!enabled) {

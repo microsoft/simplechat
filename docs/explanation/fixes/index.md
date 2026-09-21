@@ -8,6 +8,8 @@ category: Version History
 
 - [Shared Conversation Diagram Editing Fix](SHARED_CONVERSATION_DIAGRAM_EDITING_FIX.md)
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
+- [Distroless Runtime Overlay Path Fix](DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md)
+- [Workspace Shared File Approval Visibility Fix](WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md)
 - [Semantic Kernel Startup Request Context Fix](SEMANTIC_KERNEL_STARTUP_REQUEST_CONTEXT_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
 - [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
@@ -38,6 +40,7 @@ category: Version History
 - [New Chat Conversation Documents Drawer Reset Fix](NEW_CHAT_CONVERSATION_DOCUMENTS_DRAWER_RESET_FIX.md)
 - [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
 - [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md)
+- [Easy Auth Logout Detection Fix](EASY_AUTH_LOGOUT_DETECTION_FIX.md)
 - [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
 - [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
 - [Agent Actions With Workspace Evidence Fix](AGENT_ACTIONS_WITH_WORKSPACE_EVIDENCE_FIX.md)

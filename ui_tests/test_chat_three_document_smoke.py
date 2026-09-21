@@ -1,7 +1,7 @@
 # test_chat_three_document_smoke.py
 """
 Fresh three-source Analyze, saved evidence, downloads, and cross-UI reuse.
-Version: 0.261.115
+Version: 0.261.122
 Implemented in: 0.261.115
 
 Real producer, export builders, saved readers, download route, and both browser
@@ -10,6 +10,7 @@ this does not claim deployed gpt-4o acceptance or live cross-account verificatio
 """
 
 import copy
+from contextlib import ExitStack
 import csv
 import hashlib
 import io
@@ -28,7 +29,9 @@ from playwright.sync_api import expect
 from werkzeug.utils import secure_filename
 
 import test_chat_saved_analysis as shared
-from test_chat_saved_analysis import analysis_assets, analysis_client, analysis_ui, connect_options  # noqa: F401
+from test_chat_saved_analysis import (  # noqa: F401
+    analysis_assets, analysis_client, analysis_ui, compatible_flask_client, connect_options,
+)
 from test_v2_orchestration_plan_editor import make_plan
 from test_analyze_backend_saved_integration import runner_namespace
 from test_analyze_three_document_smoke import FINDINGS, PASSAGES, PROMPT, source_completion
@@ -36,6 +39,7 @@ from test_chat_artifact_download_bytes import load_definitions
 from test_saved_analysis_service import ChatSections, read_options, saved
 from test_support.document_analysis import USER_ID, FixtureAnalysisClient, document_analysis_runtime, original_document
 from content_screening.contracts import ScreeningError
+from functions_generated_artifact_sources import has_generated_artifact_source
 
 
 pytestmark = pytest.mark.ui
@@ -146,6 +150,7 @@ class FreshAnalysisApi(shared.AnalysisApi):
             return next(item["content"] for item in self.fixture["artifacts"].values() if item["blob_path"] == path)
 
         namespace = {
+            "ExitStack": ExitStack, "has_generated_artifact_source": has_generated_artifact_source,
             "hashlib": hashlib, "logging": logging, "mimetypes": mimetypes, "os": os, "quote": quote,
             "Response": Response, "jsonify": jsonify, "request": request, "secure_filename": secure_filename,
             "AzureError": AzureError, "ResourceNotFoundError": ResourceNotFoundError,

@@ -1,7 +1,8 @@
 # test_orchestration_turn_recovery_identifiers.py
+#!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.100
+Version: 0.261.122
 Implemented in: 0.261.099
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
@@ -28,10 +29,14 @@ import ast
 import re
 import sys
 from pathlib import Path
+from unittest.mock import Mock
+
+from flask import g, has_request_context
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_support.app_stubs import import_app_module  # noqa: E402
 
 
 IMPLEMENTED_IN = "0.261.099"
@@ -143,17 +148,30 @@ def test_run_record_keeps_the_turn_and_question_ids():
         def create_run(plan, user_id, **kwargs):
             created_runs.append((plan, user_id, {**kwargs, 'turn_context': dict(kwargs['turn_context'])}))
 
-        namespace = {'_save_turn_message': save_message, 'create_orchestration_run': create_run}
-        exec(compile(_function_source('_persist_planned_turn'), str(ROUTE_FILE), 'exec'), namespace)
+        memory = import_app_module("functions_orchestration_memory")
+        authorize = Mock(return_value={"id": "conversation-1", "user_id": "user-1"})
+        latest_run = Mock(return_value=None)
+        namespace = {
+            '_save_turn_message': save_message, 'create_orchestration_run': create_run,
+            'validate_memory_context': memory.validate_memory_context,
+            '_authorize_context_conversation': authorize,
+            'get_latest_turn_run': latest_run,
+            'g': g, 'has_request_context': has_request_context,
+        }
+        for name in ('_validate_turn_memory_context', '_persist_planned_turn'):
+            exec(compile(_function_source(name), str(ROUTE_FILE), 'exec'), namespace)
         plan = {'run_id': 'run-1'}
         namespace['_persist_planned_turn'](plan, turn_context, 'user-1', 'conversation-1')
 
+        authorize.assert_called_once_with('conversation-1', 'user-1')
+        latest_run.assert_called_once_with('conversation-1', 'user-1', 'turn-1')
         assert saved_messages == [('conversation-1', 'user-1', 'turn-1', 'The original question')]
         assert len(created_runs) == 1, 'the turn must be persisted once'
         stored_plan, stored_user, arguments = created_runs[0]
         assert stored_plan == plan and stored_user == 'user-1'
         assert arguments['conversation_id'] == 'conversation-1'
         assert arguments['idempotent'] is True
+        assert arguments['expected_previous_run'] is None
         assert arguments['turn_context'] == {
             'turn_id': 'turn-1',
             'user_message': 'The original question',
@@ -177,12 +195,15 @@ def test_run_route_refuses_a_plan_that_already_ran():
         body = _function_source("orchestration_run")
 
         guard = re.search(
-            r"if\s+record\.get\('status'\)\s+in\s+\(([^)]*)\)", body
+            r"if\s+(?:record\.get\('started_at'\)\s+or\s+)?record\.get\('status'\)\s+in\s+\(([^)]*)\)", body
         )
         assert guard, "the run route must guard against re-running a plan"
         guarded = guard.group(1)
         assert "PLAN_STATUS_RUNNING" in guarded, "a running plan must not be run again"
         assert "PLAN_STATUS_COMPLETED" in guarded, "a completed plan must not be run again"
+        assert "record.get('started_at') or" in guard.group(0), (
+            "a previously started run must remain protected even after its status changes"
+        )
 
         after = body[guard.end():guard.end() + 400]
         assert "409" in after, (

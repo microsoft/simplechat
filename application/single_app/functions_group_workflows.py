@@ -28,6 +28,7 @@ from functions_file_sync import (
 from functions_global_agents import get_global_agents
 from functions_group import assert_group_role, get_group_model_endpoints
 from functions_group_agents import get_group_agents
+from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_personal_workflows import (
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
     WORKFLOW_FILE_SYNC_MAX_SOURCES,
@@ -659,6 +660,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         workflow['next_run_at'] = None
 
     workflow.update(definition_fields)
+    normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
     if workflow.get('definition_version') == 3:
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 

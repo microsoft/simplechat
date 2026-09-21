@@ -4,6 +4,7 @@
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
 
+from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_workflow_definitions import (
     WorkflowDefinitionConflict,
     workflow_definition_for_editor,
@@ -47,6 +48,7 @@ def save_workflow_definition_record(container, partition_key, workflow, existing
             body["next_run_at"] = workflow.get("next_run_at")
         if workflow.get("conversation_id") != existing.get("conversation_id"):
             body["conversation_id"] = workflow.get("conversation_id")
+        normalize_workflow_run_as(body, workflow, current)
         try:
             saved = container.replace_item(
                 item=workflow["id"], body=body, etag=current["_etag"],

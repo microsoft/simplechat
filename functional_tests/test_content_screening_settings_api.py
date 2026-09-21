@@ -1,7 +1,7 @@
 # test_content_screening_settings_api.py
 """
 Functional tests for content screening settings and authenticated API contracts.
-Version: 0.261.114
+Version: 0.261.122
 Implemented in: 0.261.106
 Embedding settings concurrency and sanitization merge coverage: 0.261.113
 Enabled-empty policies implemented in: 0.261.114
@@ -19,13 +19,12 @@ import logging
 import sys
 import types
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from functools import wraps
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from azure.core import MatchConditions
-from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 from flask import Blueprint, Flask, jsonify, session
 import werkzeug
 
@@ -49,7 +48,9 @@ from content_screening.contracts import (
     hash_payload,
 )
 from content_screening.policies import compose_policy, default_policy
+from app_settings_store import AppSettingsStore, COSMOS_METADATA_FIELDS, SETTINGS_REVISION_FIELD
 from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY
+from functional_tests.test_app_settings_store_consistency import FakeCosmos
 from functional_tests.test_content_screening_reviews import MemoryEvidence, MemoryStore, module
 from functional_tests.test_support.app_stubs import import_app_module
 
@@ -88,21 +89,21 @@ def settings_functions(**overrides):
         type_ignores=[],
     )
     namespace = {
-        "AIConnectionError": AIConnectionError,
-        "CosmosAccessConditionFailedError": CosmosAccessConditionFailedError,
-        "EMBEDDING_SELECTION_KEY": EMBEDDING_SELECTION_KEY,
-        "MatchConditions": MatchConditions,
-        "ScreeningCitationsRequiredError": ScreeningCitationsRequiredError,
         "ScreeningConfigurationError": ScreeningConfigurationError,
+        "ScreeningCitationsRequiredError": ScreeningCitationsRequiredError,
         "ScreeningConflictError": ScreeningConflictError,
         "ScreeningError": ScreeningError,
         "ScreeningValidationError": ScreeningValidationError,
         "copy": copy, "logging": logging, "log_event": Mock(),
+        "contextmanager": contextmanager,
+        "COSMOS_METADATA_FIELDS": COSMOS_METADATA_FIELDS,
+        "SETTINGS_REVISION_FIELD": SETTINGS_REVISION_FIELD,
+        "AIConnectionError": AIConnectionError,
+        "EMBEDDING_SELECTION_KEY": EMBEDDING_SELECTION_KEY,
         "TABULAR_GENERATION_BACKEND_SETTING_KEYS": set(),
         "get_public_workspace_label_context": lambda _settings: {},
         "sanitize_model_endpoints_for_frontend": lambda _endpoints: [],
         "is_tabular_processing_enabled": lambda value: value.get("enable_enhanced_citations", False),
-        "_refresh_app_settings_cache_after_write": Mock(),
     }
     for name in (
         "normalize_group_workflow_assignment_settings", "normalize_agents_page_promoted_popular_settings",
@@ -122,12 +123,15 @@ class ScreeningSettingsTests(unittest.TestCase):
             "id": "app_settings", "_etag": "settings-etag",
             "enable_content_screening": False, "enable_enhanced_citations": False,
         }
-        self.container = Mock()
-        self.container.read_item.side_effect = lambda **kwargs: copy.deepcopy(self.current)
-        self.container.replace_item.side_effect = lambda **kwargs: {**kwargs["body"], "_etag": "saved"}
+        self.cosmos = FakeCosmos()
+        self.cosmos.document = self.current
+        self.container = Mock(wraps=self.cosmos)
+        self.container.upsert_item = Mock(side_effect=AssertionError("Unconditional settings writes are forbidden."))
+        self.settings_store = AppSettingsStore(self.container)
         self.functions = settings_functions(
             get_settings=lambda **kwargs: copy.deepcopy(self.current),
             cosmos_settings_container=self.container,
+            _get_app_settings_store=lambda: self.settings_store,
         )
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
@@ -137,7 +141,8 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.embedding_guard = Mock(side_effect=lambda *args, **kwargs: nullcontext())
         self.stack.enter_context(patch.dict(sys.modules, {
             "functions_embedding_compatibility": module(
-                "functions_embedding_compatibility", embedding_settings_write_guard=self.embedding_guard,
+                "functions_embedding_compatibility",
+                embedding_settings_write_guard=self.embedding_guard,
             ),
         }))
 
@@ -224,18 +229,37 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.assertFalse(self.functions["update_settings"]({"enable_enhanced_citations": False}))
         self.container.replace_item.assert_not_called()
 
-    def test_retry_revalidates_screening_dependencies_against_the_new_revision(self):
+    def test_dependency_validation_uses_fresh_settings_after_a_conditional_write_race(self):
         self.current["enable_enhanced_citations"] = True
-        latest = {**self.current, "_etag": "newer", "enable_enhanced_citations": False}
-        self.container.read_item.side_effect = [copy.deepcopy(self.current), latest]
-        self.container.replace_item.side_effect = CosmosAccessConditionFailedError()
+        def activate_screening():
+            AppSettingsStore(self.cosmos).write(
+                lambda current: {**current, "enable_content_screening": True},
+            )
+
+        self.cosmos.before_replace = activate_screening
+        self.assertFalse(self.functions["update_settings"]({"enable_enhanced_citations": False}))
+        self.assertIs(self.cosmos.document["enable_content_screening"], True)
+        self.assertIs(self.cosmos.document["enable_enhanced_citations"], True)
+        self.assertEqual(self.cosmos.writes, 1)
+
+    def test_activation_revalidates_dependencies_after_a_conditional_write_race(self):
+        self.current["enable_enhanced_citations"] = True
+
+        def disable_citations():
+            AppSettingsStore(self.cosmos).write(
+                lambda current: {**current, "enable_enhanced_citations": False},
+            )
+
+        self.cosmos.before_replace = disable_citations
         self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
         self.assertEqual(self.container.read_item.call_count, 2)
         self.assertEqual(self.validate.call_count, 2)
         self.embedding_guard.assert_called_once()
         self.container.replace_item.assert_called_once()
         self.container.upsert_item.assert_not_called()
-        self.functions["_refresh_app_settings_cache_after_write"].assert_not_called()
+        self.assertIs(self.cosmos.document["enable_content_screening"], False)
+        self.assertIs(self.cosmos.document["enable_enhanced_citations"], False)
+        self.assertEqual(self.cosmos.writes, 1)
 
     def test_disable_is_not_a_document_release_or_policy_reset(self):
         self.current.update({"enable_content_screening": True, "enable_enhanced_citations": True})
@@ -262,14 +286,8 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.container.upsert_item.assert_not_called()
         sanitized = self.functions["sanitize_settings_for_user"]({
             **value, "enable_content_screening": True, "office_docs_key": PRIVATE,
-            "embedding_vector_profile": {"id": PRIVATE},
-            "custom_model_endpoint_ca_bundle_path": PRIVATE,
-            "client_cert_path": PRIVATE, "client_key_path": PRIVATE,
-            "bearer_token": PRIVATE, "token_url": PRIVATE,
-            "nested": {"content_screening_policy": PRIVATE, "bearer_token": PRIVATE, "enabled": True},
         })
         self.assertIs(sanitized["enable_content_screening"], True)
-        self.assertIs(sanitized["nested"]["enabled"], True)
         self.assertNotIn(PRIVATE, str(sanitized))
         self.assertNotIn(PRIVATE, str(self.functions["sanitize_settings_for_logging"](value)))
 

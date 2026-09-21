@@ -47,6 +47,9 @@
                         <option value="warn_user">Warn User</option>
                         <option value="suspend_user">Suspend User</option>
                         <option value="block_user">Block User</option>
+                        <option value="m365_source_sharing">Microsoft 365 source sharing</option>
+                        <option value="m365_extended_analysis">Microsoft 365 extended analysis</option>
+                        <option value="m365_workflow_run_as">Microsoft 365 workflow Run as</option>
                     </select>
                 </div>
                 <div class="col-md-2">
@@ -307,9 +310,29 @@
     </div>
 </div>
 {% endif %}
+{% include "_m365_approvals_modal.html" %}
+<section class="card mt-4" aria-labelledby="m365-outgoing-actions-heading">
+    <div class="card-body">
+        <h3 id="m365-outgoing-actions-heading">Outgoing email and invitations</h3>
+        <p class="text-muted">Review your saved Microsoft 365 deliveries, including scheduled actions. These are the same actions shown in chat and workflow activity, not separate approval requests.</p>
+        <div id="m365-outgoing-actions">Loading outgoing actions...</div>
+    </div>
+</section>
+<div class="card mt-4">
+    <div class="card-body">
+        <h3>Paused Microsoft 365 requests</h3>
+        <p class="text-muted">Resume a conversation after sign-in without opening its chat. Workflow accounts reconnect from Profile.</p>
+        <div id="m365-waiting-requests" role="status">Loading waiting requests...</div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
+<script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>
+<script src="{{ url_for('static', filename='js/approvals/m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/approvals/m365-requests.js') }}"></script>
 <script src="{{ url_for('static', filename='js/content-screening-approvals.js') }}?v={{ config['VERSION'] }}"></script>
 <script>
 // Toast notification helper
@@ -482,6 +505,9 @@ window.ApprovalManager = {
     
     // Render a single approval row
     renderApprovalRow: function(approval) {
+        if (window.SimpleChatM365ApprovalList.isM365Approval(approval)) {
+            return window.SimpleChatM365ApprovalList.renderRow(approval, () => this.loadApprovals(this.currentPage));
+        }
         if (window.ContentScreening.isScreeningApproval(approval)) {
             return window.ContentScreening.renderScreeningApprovalRow(approval);
         }
@@ -568,6 +594,11 @@ window.ApprovalManager = {
                 throw new Error('Failed to fetch approval details');
             }
             const approval = await response.json();
+            if (window.SimpleChatM365ApprovalList.isM365Approval(approval)) {
+                await window.SimpleChatM365Approvals.openApprovals({ approvals: [approval] });
+                this.loadApprovals(this.currentPage);
+                return;
+            }
             if (window.ContentScreening.isScreeningApproval(approval)) {
                 window.location.assign(window.ContentScreening.screeningApprovalLink(approval));
                 return;

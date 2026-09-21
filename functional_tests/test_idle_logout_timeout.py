@@ -15,6 +15,7 @@ import ast
 import traceback
 
 from test_support.templates import compose_if_admin_settings
+from test_support.versioning import assert_app_version_at_least
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -302,12 +303,10 @@ def test_server_idle_timeout_wiring():
             has_heartbeat_refresh_call = True
     assert has_heartbeat_refresh_call, "Missing get_idle_timeout_settings(get_request_settings()) in session_heartbeat"
 
-    required_config_markers = [
-        "VERSION = \"0.250.004\""
-    ]
-
-    missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]
-    assert not missing_config_markers, f"Missing config markers: {missing_config_markers}"
+    assert_app_version_at_least(
+        "0.250.004",
+        reason="Idle session auto-logout wiring was implemented in 0.250.004.",
+    )
 
     auth_register_def = _find_top_level_function(auth_tree, "register_route_frontend_authentication")
     assert auth_register_def is not None, "Missing register_route_frontend_authentication function"

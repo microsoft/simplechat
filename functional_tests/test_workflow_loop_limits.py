@@ -1,7 +1,7 @@
 # test_workflow_loop_limits.py
 """
 Functional tests for strict workflow loop policy and non-secret editor options.
-Version: 0.261.120
+Version: 0.261.122
 Implemented in: 0.261.117
 
 Exercises production settings normalization, the Classic POST validation block,
@@ -10,7 +10,7 @@ the settings writer, and the editor projection without starting application clie
 
 import ast
 import copy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import logging
 from pathlib import Path
 import sys
@@ -25,6 +25,7 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 # Configure local paths before importing the production leaf modules.
+from app_settings_store import AppSettingsStore, COSMOS_METADATA_FIELDS, SETTINGS_REVISION_FIELD
 from functions_workflow_editor import build_workflow_editor_options
 from functions_workflow_limits import (
     WorkflowLoopInputError,
@@ -37,6 +38,7 @@ from functions_workflow_limits import (
     validate_workflow_max_repeat_iterations,
 )
 from test_support.app_stubs import import_app_module
+from test_app_settings_store_consistency import FakeCosmos
 
 
 def _production_function(filename, name, namespace):
@@ -155,30 +157,17 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
         self.assertNotIn("invalid-secret", flashes[0][0])
 
     def test_settings_writer_validates_before_storage_and_preserves_absent_value(self):
-        class Storage:
-            def __init__(self):
-                self.current = {
-                    "id": "app_settings", "_etag": "etag-1",
-                    "workflow_max_loop_items": 1800, "workflow_max_repeat_iterations": 200,
-                }
-                self.reads = 0
-                self.writes = []
-
-            def read_item(self, **_kwargs):
-                self.reads += 1
-                return copy.deepcopy(self.current)
-
-            def replace_item(self, *, body, **_kwargs):
-                self.writes.append(copy.deepcopy(body))
-                self.current = copy.deepcopy(body)
-                return copy.deepcopy(body)
-
         class ClosedError(Exception):
             pass
 
-        storage = Storage()
+        storage = FakeCosmos()
+        storage.document["workflow_max_loop_items"] = 1800
+        storage.document["workflow_max_repeat_iterations"] = 200
         namespace = {
-            "copy": copy, "logging": logging,
+            "copy": copy, "logging": logging, "contextmanager": contextmanager,
+            "COSMOS_METADATA_FIELDS": COSMOS_METADATA_FIELDS,
+            "SETTINGS_REVISION_FIELD": SETTINGS_REVISION_FIELD,
+            "_get_app_settings_store": lambda: AppSettingsStore(storage),
             "validate_workflow_max_loop_items": validate_workflow_max_loop_items,
             "validate_workflow_max_repeat_iterations": validate_workflow_max_repeat_iterations,
             "cosmos_settings_container": storage,
@@ -191,7 +180,6 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
             "ScreeningError": ClosedError,
             "AIConnectionError": ClosedError,
             "EMBEDDING_SELECTION_KEY": "embedding_model_selection",
-            "_refresh_app_settings_cache_after_write": lambda *_args, **_kwargs: None,
             "log_event": lambda *_args, **_kwargs: None,
         }
         for name in (
@@ -210,22 +198,22 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
         for value in (None, "", 0, 1001, True, 25.0, "invalid-secret"):
             with self.subTest(value=value), self.assertRaises(WorkflowLoopLimitError):
                 writer({"workflow_max_repeat_iterations": value, "workflow_max_loop_items": 2500})
-        self.assertEqual(storage.reads, 0)
+        self.assertEqual(storage.tokens, [])
         self.assertFalse(storage.writes)
         embedding = ModuleType("functions_embedding_compatibility")
         embedding.embedding_settings_write_guard = lambda *_args, **_kwargs: nullcontext()
         with patch.dict(sys.modules, {"functions_embedding_compatibility": embedding}):
             self.assertTrue(writer({"allow_user_workflows": True}))
-            self.assertEqual(storage.current["workflow_max_loop_items"], 1800)
-            self.assertEqual(storage.current["workflow_max_repeat_iterations"], 200)
+            self.assertEqual(storage.document["workflow_max_loop_items"], 1800)
+            self.assertEqual(storage.document["workflow_max_repeat_iterations"], 200)
             self.assertTrue(writer({"workflow_max_loop_items": "2500"}))
-            self.assertEqual(storage.current["workflow_max_loop_items"], 2500)
-            self.assertEqual(storage.current["workflow_max_repeat_iterations"], 200)
+            self.assertEqual(storage.document["workflow_max_loop_items"], 2500)
+            self.assertEqual(storage.document["workflow_max_repeat_iterations"], 200)
             for value in ("1", "750", "1000"):
                 update = {"workflow_max_repeat_iterations": value}
                 self.assertTrue(writer(update))
-                self.assertEqual(storage.current["workflow_max_repeat_iterations"], int(value))
-                self.assertEqual(storage.current["workflow_max_loop_items"], 2500)
+                self.assertEqual(storage.document["workflow_max_repeat_iterations"], int(value))
+                self.assertEqual(storage.document["workflow_max_loop_items"], 2500)
                 self.assertEqual(update, {"workflow_max_repeat_iterations": value})
 
     def test_editor_capabilities_and_eligibility_are_safe_and_backwards_compatible(self):

@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_discovery.py
 """
 Functional tests for embedding discovery and chat-test capability isolation.
-Version: 0.261.108
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Exercise the actual global/personal/group Flask discovery and chat-test handlers
@@ -24,10 +24,16 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 import functions_ai_connections as connections
-from functions_model_capabilities import get_model_catalog_capabilities
+from functions_model_capabilities import ModelTokenBudgetError, get_model_catalog_capabilities, normalize_model_budget_overrides
 from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
-from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_ANTHROPIC, MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION, MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    get_model_endpoint_api_type, resolve_model_endpoint_request_model,
+)
 from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint
+from functions_model_endpoint_urls import resolve_custom_openai_base_url
+from model_endpoint_clients import normalize_anthropic_messages_url, normalize_openai_style_base_url
 from admin_settings_secret_utils import is_admin_settings_redacted_secret
 from test_ai_connection_embedding_defaults_api import load_functions
 
@@ -146,6 +152,10 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
             "get_model_catalog_capabilities": get_model_catalog_capabilities,
             "AIConnectionError": connections.AIConnectionError,
             "ModelEndpointValidationError": ModelEndpointValidationError,
+            "ModelTokenBudgetError": ModelTokenBudgetError,
+            "normalize_model_budget_overrides": normalize_model_budget_overrides,
+            "DEFAULT_ANTHROPIC_VERSION": DEFAULT_ANTHROPIC_VERSION,
+            "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
             "SanitizedModelEndpointError": SanitizedModelEndpointError,
             "get_model_endpoint_api_type": get_model_endpoint_api_type,
             "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
@@ -163,6 +173,11 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
             "fetch_foundry_project_deployments": fetch_foundry,
             "infer_model_endpoint_protocol": lambda *_args: "azure_openai",
             "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": "azure_openai",
+            "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+            "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+            "normalize_anthropic_messages_url": normalize_anthropic_messages_url,
+            "normalize_openai_style_base_url": normalize_openai_style_base_url,
+            "resolve_custom_openai_base_url": resolve_custom_openai_base_url,
             "build_inference_client": build_inference,
             "get_current_user_id": lambda: "authorized-user",
             "require_active_group": lambda _user_id: "authorized-group",
@@ -172,6 +187,7 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
             APP_ROOT / "route_backend_models.py",
             {
                 "log_models_debug", "log_models_exception", "build_safe_error_response",
+                "describe_resolved_request_url",
                 "build_group_access_error_response", "extract_provisioning_state", "is_deployment_enabled",
                 "handle_fetch_model_list", "handle_test_model_connection", "test_model_inference_connection",
                 "fetch_model_list", "fetch_model_list_user", "fetch_model_list_group",

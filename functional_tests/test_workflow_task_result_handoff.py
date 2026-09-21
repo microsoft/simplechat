@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.116
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Fictional inventory records pass through the production document analysis,
@@ -27,6 +27,7 @@ from azure.core.exceptions import ServiceRequestError
 from test_document_analysis_lossless_artifacts import build_window, load_module_functions
 from test_workflow_result_store import FakeBlobService, FakeCosmosContainer
 from test_support.workflow_results import workflow_result_helpers
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_result_store import WorkflowResultStore
 from functions_workflow_results import (
     build_workflow_task_result,
@@ -132,7 +133,11 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         if isinstance(node, ast.FunctionDef)
         and node.name in {"save_personal_workflow_run_item", "_strip_cosmos_metadata"}
     ]
-    store_namespace = {"uuid": uuid, "cosmos_personal_workflow_run_items_container": container}
+    store_namespace = {
+        "uuid": uuid,
+        "cosmos_personal_workflow_run_items_container": container,
+        "sanitize_workflow_alert_record": sanitize_workflow_alert_record,
+    }
     exec(compile(ast.Module(body=store_nodes, type_ignores=[]), str(store_source), "exec"), store_namespace)
 
     def unexpected_workspace_write(*args, **kwargs):
@@ -220,7 +225,12 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "_prepare_workflow_analysis_checkpoints": lambda *args, **kwargs: None,
         "_raise_if_workflow_run_cancelled": lambda *args, **kwargs: None,
         "_resolve_model_workflow_client": lambda *args, **kwargs: (
-            runner["WorkflowModelClient"](client, "gpt-4.1", "aoai"), "gpt-4.1", "aoai",
+            runner["WorkflowModelClient"](client, {
+                "modelName": "inventory-fixture",
+                "contextWindow": 128000,
+                "outputTokenLimit": 32768,
+                "outputTokenAccounting": "total_generation",
+            }, "aoai"), "inventory-fixture", "aoai",
         ),
         "save_personal_workflow_run_item": store_namespace["save_personal_workflow_run_item"],
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
@@ -328,6 +338,64 @@ def test_storage_failure_does_not_replay_the_completed_model_task():
     assert not any(item.get("task_id") == "consume" for item in items.values())
 
 
+@pytest.mark.parametrize("legacy_checkpoint", [False, True])
+def test_m365_resume_hands_off_complete_checkpoint_without_repeating_the_producer(legacy_checkpoint):
+    runner, workflow, records, requests, artifacts, items = build_inventory_run(100, 160)
+    checkpoints = {}
+    awaiting_sign_in = True
+    dispatch = runner["_execute_workflow_dispatch"]
+
+    def save_checkpoint(task_id, task_result):
+        checkpoints[task_id] = json.loads(json.dumps(task_result))
+
+    def dispatch_with_sign_in(attempt_workflow, *args, **kwargs):
+        if attempt_workflow["active_task"]["id"] == "consume" and awaiting_sign_in:
+            raise runner["M365SignInRequired"]("m365_connection_required")
+        return dispatch(attempt_workflow, *args, **kwargs)
+
+    runner.update({
+        "read_m365_task_checkpoint": lambda task_id: checkpoints.get(task_id),
+        "save_m365_task_checkpoint": save_checkpoint,
+        "_execute_workflow_dispatch": dispatch_with_sign_in,
+    })
+    with pytest.raises(runner["M365SignInRequired"]):
+        runner["_execute_workflow_task_sequence"](
+            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+        )
+    assert len(requests) == 1
+    assert set(checkpoints) == {"extract"}
+    original_artifacts = dict(artifacts)
+    if legacy_checkpoint:
+        checkpoints["extract"]["result"].pop("workflow_result")
+        checkpoints["extract"].pop("consumed_inputs")
+    awaiting_sign_in = False
+    result = runner["_execute_workflow_task_sequence"](
+        workflow, {}, "conversation-inventory", "run-inventory", None, {},
+    )
+    assert len(requests) == 2, "Resuming must not repeat the producer's external work."
+    assert artifacts == original_artifacts
+    assert set(checkpoints) == {"extract", "consume"}
+    producer = result["task_results"][0]["workflow_result"]
+    consumer = result["task_results"][1]["workflow_result"]
+    assert consumer["consumed_inputs"][0]["result_ref"] == producer["result_ref"]
+    assert consumer["consumed_inputs"][0]["producer"]["task_id"] == "extract"
+    assert all(record["item_id"] in requests[-1]["messages"][-1]["content"] for record in records)
+    stored = items[("run-inventory", runner["_workflow_task_run_item_id"]("run-inventory", "extract"))]
+    assert stored["workflow_result"]["result_ref"] == producer["result_ref"]
+
+
+def test_preview_only_checkpoint_is_not_used_as_a_complete_result():
+    runner, workflow, records, requests, artifacts, items = build_inventory_run()
+    runner["read_m365_task_checkpoint"] = lambda task_id: {
+        "status": "succeeded", "output_summary": "Only a preview is available.",
+    }
+    with pytest.raises(runner["WorkflowResultNotReadyError"], match="no complete task result"):
+        runner["_execute_workflow_task_sequence"](
+            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+        )
+    assert requests == []
+
+
 def test_smaller_downstream_model_blocks_without_losing_source_records():
     runner, workflow, records, requests, artifacts, items = build_inventory_run(100, 160)
     original_resolver = runner["_resolve_model_workflow_client"]
@@ -338,7 +406,9 @@ def test_smaller_downstream_model_blocks_without_losing_source_records():
         if workflow["active_task"]["id"] == "consume":
             client = runner["WorkflowModelClient"](client._delegate, {
                 "modelName": "small-fixture",
-                "tokenLimits": {"contextWindow": 1024, "maxOutputTokens": 256, "tokenizer": "cl100k_base"},
+                "contextWindow": 1024,
+                "outputTokenLimit": 256,
+                "outputTokenAccounting": "total_generation",
             }, provider)
             deployment = "small-fixture"
         return client, deployment, provider

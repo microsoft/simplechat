@@ -2,7 +2,7 @@
 """
 Functional contracts for balanced orchestration research selection and its opt-in evaluator.
 
-Version: 0.261.115
+Version: 0.261.122
 Implemented in: 0.261.099
 
 Runs actual planner, capability projection, request gates and plan normalization with

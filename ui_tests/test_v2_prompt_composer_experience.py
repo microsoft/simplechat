@@ -1,7 +1,7 @@
 # test_v2_prompt_composer_experience.py
 """
 Focused browser regressions for the approved V2 prompt composer experience.
-Version: 0.261.099
+Version: 0.261.122
 Implemented in: 0.261.096
 
 The existing harness bundles the real Composer, MessageList, editors, and stores.
@@ -237,6 +237,7 @@ class PromptApi:
                 "plan_id": "prompt-plan",
                 "run_id": "prompt-run",
                 "turn_id": body["turn_id"],
+                "conversation_id": body["conversation_id"],
                 "intent": {"summary": "Use the attached prompt", "complexity": "simple"},
                 "steps": [{
                     "step_id": "answer",

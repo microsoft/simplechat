@@ -7,6 +7,7 @@ import {
     setEffectiveScopes,
 } from "../chat/chat-documents.js";
 import { escapeHtml, truncateDescription, setupViewToggle, switchViewContainers } from "./view-utils.js";
+import { createMicrosoft365RunAsControl } from "./workspace-m365-workflows.js";
 
 const workflowWorkspaceConfig = {
     scope: "personal",
@@ -85,6 +86,10 @@ const workflowStepNextBtn = document.getElementById("workflow-step-next-btn");
 const workflowIdInput = document.getElementById("workflow-id");
 const workflowNameInput = document.getElementById("workflow-name");
 const workflowDescriptionInput = document.getElementById("workflow-description");
+const microsoft365RunAs = createMicrosoft365RunAsControl(workflowDescriptionInput, () => ({
+    scope: workflowWorkspaceConfig.scope,
+    groupId: getWorkflowActiveGroupId(),
+}));
 const workflowTaskList = document.getElementById("workflow-task-list");
 const workflowAddTaskBtn = document.getElementById("workflow-add-task-btn");
 const workflowTaskNameInput = document.getElementById("workflow-task-name");
@@ -1230,6 +1235,7 @@ function renderWorkflowReview() {
 
     addWorkflowReviewItem("Workflow", normalizeText(workflowNameInput?.value) || "Untitled workflow");
     addWorkflowReviewItem("Default Runner", normalizeText(runnerLabel));
+    addWorkflowReviewItem("Microsoft 365 Run as", microsoft365RunAs?.getLabel() || "Not selected");
     addWorkflowReviewItem("Trigger", normalizeText(triggerLabel));
     addWorkflowReviewItem("Tasks", `${workflowTasks.length} ordered ${workflowTasks.length === 1 ? "task" : "tasks"}`);
     addWorkflowReviewItem(
@@ -3236,7 +3242,7 @@ function buildWorkflowSearchText(workflow) {
 
 function getWorkflowDisplayStatus(workflow) {
     const runtimeStatus = normalizeText(workflow?.status).toLowerCase();
-    if (["queued", "running", "cancelling", "waiting_approval", "waiting_output", "waiting_recovery", "paused"].includes(runtimeStatus)) {
+    if (isWorkflowActiveStatus(runtimeStatus)) {
         return runtimeStatus;
     }
 
@@ -3245,7 +3251,16 @@ function getWorkflowDisplayStatus(workflow) {
 
 function isWorkflowRunActive(workflow) {
     return Boolean(normalizeText(workflow?.active_run_id))
-        || ["queued", "running", "cancelling", "waiting_approval", "waiting_output", "waiting_recovery", "paused"].includes(getWorkflowDisplayStatus(workflow));
+        || isWorkflowActiveStatus(getWorkflowDisplayStatus(workflow));
+}
+
+function isWorkflowActiveStatus(status) {
+    return [
+        "queued", "running", "cancelling", "waiting_approval", "waiting_output",
+        "waiting_recovery", "paused", "awaiting_approval", "awaiting_sharing_approval",
+        "awaiting_analysis_approval", "awaiting_run_as_approval", "awaiting_sign_in",
+        "ready_to_resume", "resuming",
+    ].includes(status);
 }
 
 function getWorkflowActivityState(workflow) {
@@ -3288,7 +3303,7 @@ function buildWorkflowRunButton(workflow, includeLabel = true) {
     const workflowId = escapeHtml(normalizeText(workflow.id));
     const displayStatus = getWorkflowDisplayStatus(workflow);
     const isActive = isWorkflowRunActive(workflow);
-    const label = displayStatus === "cancelling" ? "Cancelling" : displayStatus === "running" ? "Running" : "Run";
+    const label = displayStatus === "cancelling" ? "Cancelling" : displayStatus === "running" ? "Running" : isActive ? "Waiting" : "Run";
     const iconClass = isActive ? "bi bi-hourglass-split" : "bi bi-play-fill";
     const iconSpacing = includeLabel ? " me-1" : "";
     return `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isActive ? "disabled" : ""} title="Run workflow" aria-label="Run workflow"><i class="${iconClass}${iconSpacing}"></i>${includeLabel ? label : ""}</button>`;
@@ -3887,6 +3902,7 @@ function updateFileSyncFields() {
 
 function resetWorkflowForm() {
     currentEditingWorkflow = null;
+    microsoft365RunAs?.reset();
 
     if (workflowForm) {
         workflowForm.reset();
@@ -4052,6 +4068,7 @@ async function openWorkflowModal(workflow = null) {
     await loadFileSyncSourceOptions(true);
     resetWorkflowForm();
     currentEditingWorkflow = workflow;
+    await microsoft365RunAs?.load(workflow);
 
     if (workflow) {
         if (workflowIdInput) {
@@ -4306,6 +4323,7 @@ function buildWorkflowPayload() {
         id: normalizeText(workflowIdInput?.value),
         name: normalizeText(workflowNameInput?.value),
         description: normalizeText(workflowDescriptionInput?.value),
+        m365_run_as_user_id: microsoft365RunAs?.getValue() || "",
         task_prompt: normalizeText(tasks[0]?.instructions),
         tasks,
         error_handling: {

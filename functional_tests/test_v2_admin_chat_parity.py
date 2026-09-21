@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_chat_parity.py
+#!/usr/bin/env python3
 """
 Functional test pinning V1/V2 parity for the Admin Settings Chat group.
-Version: 0.261.059
+Version: 0.261.122
 Implemented in: 0.261.059
 
 The V2 React admin surface renders from ``admin_settings_fields.py`` rather than
@@ -65,14 +65,7 @@ CHAT_PANES = {
 # nothing to configure. Declaring an empty section would imply otherwise.
 SECTIONS_WITHOUT_SETTINGS = {"standard-citations-section"}
 
-# Capabilities declared under a Chat section whose server-rendered control lives
-# in another group's pane, mapped to the pane that actually draws them.
-#
-# The audio cue is the case. It plays a short bundled sound locally when a
-# response finishes and needs no Azure Speech resource -- its own help text says
-# as much -- so V2 files it with the other completion alerts instead of at the
-# top of the AI Voice card, where V1 still draws it. The check below follows it
-# to its real pane rather than skipping it, so it still has to exist in V1.
+# Verify relocated controls in their actual V1 pane rather than exempting them.
 RELOCATED_INTO_CHAT = {
     "enable_chat_completion_audio_cues": "audio-video",
 }
@@ -193,8 +186,6 @@ def test_schema_does_not_invent_chat_fields():
         if not key:
             continue
         legacy = fields_module.LEGACY_FIELD_NAMES.get(key, [key])
-        # A capability relocated into Chat is checked against the pane that
-        # actually draws it, so the "nothing reads this" guarantee still holds.
         names = v1_names
         if key in RELOCATED_INTO_CHAT:
             names = collect_pane_field_names(read_pane(RELOCATED_INTO_CHAT[key]))

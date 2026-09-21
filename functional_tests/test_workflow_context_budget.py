@@ -1,7 +1,7 @@
 # test_workflow_context_budget.py
 """
 Functional tests for workflow provider-boundary context budgets.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 These tests cover complete requests, selected-model limits, tool-result rounds,
@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 
 # Import the app only after adding the worktree's module directory.
 import functions_workflow_context as context
+from functions_model_capabilities import ModelTokenBudgetError, resolve_model_token_budget
 
 
 @pytest.fixture
@@ -40,8 +41,28 @@ def limits(monkeypatch):
         "source": "catalog",
         "model_id": "fixture-model",
         "status": "known",
+        "output_token_accounting": "total_generation",
     }
-    monkeypatch.setattr(context, "resolve_model_token_limits", lambda *args, **kwargs: dict(metadata))
+
+    def resolve(*args, **kwargs):
+        return context.ModelTokenBudget(
+            model_id=metadata["model_id"],
+            provider="openai",
+            context_window=metadata["context_window_tokens"],
+            input_limit=metadata["max_input_tokens"],
+            output_limit=metadata["max_output_tokens"],
+            effective_context_window=metadata.get("effective_context_window_tokens"),
+            output_accounting=metadata["output_token_accounting"],
+            provenance=(("contextWindow", "catalog"),) if metadata["source"] == "catalog" else (),
+        )
+
+    def encoding_name(_model):
+        if not metadata["tokenizer"]:
+            raise KeyError(_model)
+        return metadata["tokenizer"]
+
+    monkeypatch.setattr(context, "resolve_model_token_budget", resolve)
+    monkeypatch.setattr(context.tiktoken, "encoding_name_for_model", encoding_name)
     return metadata
 
 
@@ -118,6 +139,110 @@ def test_known_model_without_tokenizer_uses_a_conservative_bound(limits):
     )
     assert audit["token_estimator"] == "utf8_upper_bound"
     assert audit["input_tokens"] >= len(text.encode("utf-8"))
+
+
+@pytest.mark.parametrize("accounting", ["visible_only", "unknown"])
+def test_numeric_output_limit_does_not_claim_to_bound_hidden_reasoning(limits, accounting):
+    limits["output_token_accounting"] = accounting
+    sent = []
+    client = context.WorkflowModelClient(SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: sent.append(kwargs)),
+    )), "fixture-model", "aoai")
+    with context.workflow_context_budget_scope({}), pytest.raises(ModelTokenBudgetError) as error:
+        client.chat.completions.create(messages=[{"role": "user", "content": "small"}], max_tokens=128)
+    assert error.value.code == "model_generation_unbounded"
+    assert sent == []
+
+
+@pytest.mark.parametrize("input_tokens, decision", [(3488, "full_input"), (3489, "blocked")])
+def test_effective_protocol_window_enforces_exact_request_boundary(limits, monkeypatch, input_tokens, decision):
+    limits.update(
+        context_window_tokens=10000, effective_context_window_tokens=4000,
+        max_input_tokens=6000, max_output_tokens=2000,
+    )
+    monkeypatch.setattr(
+        context, "_count_request_tokens", lambda *args, **kwargs: (input_tokens - 16, "fixture"),
+    )
+    audit = context.calculate_workflow_context_budget(
+        [{"role": "user", "content": "complete input"}], "fixture-model", output_tokens=256,
+    )
+    assert audit["context_window_tokens"] == 10000
+    assert audit["effective_context_window_tokens"] == 4000
+    assert audit["input_budget_tokens"] == 3488
+    assert audit["input_tokens"] == input_tokens
+    assert audit["decision"] == decision
+    assert audit["truncated"] is False
+
+
+def test_known_window_without_generation_allowance_does_not_fall_back_to_unknown_policy(limits):
+    limits["max_output_tokens"] = None
+    with pytest.raises(ModelTokenBudgetError) as error:
+        context.calculate_workflow_context_budget([], "fixture-model")
+    assert error.value.code == "model_context_unavailable"
+
+
+@pytest.mark.parametrize("output_tokens", [False, 0, -1, 1.5])
+def test_invalid_explicit_response_limits_are_not_sent_or_silently_replaced(limits, output_tokens):
+    sent = []
+    client = context.WorkflowModelClient(SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: sent.append(kwargs)),
+    )), "fixture-model", "aoai")
+    with context.workflow_context_budget_scope({}), pytest.raises(ModelTokenBudgetError):
+        client.chat.completions.create(messages=[], max_tokens=output_tokens)
+    assert sent == []
+
+
+def test_real_audited_profile_is_preserved_through_the_workflow_boundary(monkeypatch):
+    budget = resolve_model_token_budget(
+        "gpt-5.5", provider="azure", protocol="responses", request_output_limit=1000,
+    )
+    monkeypatch.setattr(context, "_count_request_tokens", lambda *args, **kwargs: (100, "fixture"))
+    audit = context.calculate_workflow_context_budget(
+        [{"role": "user", "content": "complete input"}], budget,
+    )
+    assert audit["model_provider"] == "azure"
+    assert audit["model_protocol"] == "responses"
+    assert audit["context_window_tokens"] == 1050000
+    assert audit["max_input_tokens"] == 922000
+    assert audit["effective_context_window_tokens"] == 922000
+    assert audit["max_output_tokens"] == 128000
+    assert audit["output_reserve_tokens"] == 1000
+    assert audit["output_reservation"] == "requested"
+    assert audit["input_budget_tokens"] == budget.remaining_input() - audit["safety_tokens"]
+    assert audit["decision"] == "full_input"
+
+
+def test_authorized_endpoint_limits_and_protocol_follow_direct_client_into_agent_wrapper():
+    sent = []
+    original = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: sent.append(kwargs)),
+    ))
+    model = {"modelName": "private-model", "responseLength": 200}
+    endpoint = {
+        "provider": "custom", "tokenLimitProvider": "anthropic",
+        "contextWindow": 8192, "inputTokenLimit": 7000, "outputTokenLimit": 1000,
+        "outputTokenAccounting": "total_generation", "auth": {"api_key": "not-budget-metadata"},
+    }
+    service = RespondingCompletion(ai_model_id="private-model", api_key="test-only")
+    workflow = {}
+    with context.workflow_context_budget_scope(workflow):
+        client = context.wrap_workflow_model_client(
+            original, model, "custom", endpoint_metadata=endpoint, api_type="anthropic",
+        )
+        wrapped_service = context.wrap_workflow_chat_service(service, client.model_metadata, provider="custom")
+        client.chat.completions.create(messages=[{"role": "user", "content": "complete input"}])
+    budget = wrapped_service.model_metadata
+    assert isinstance(budget, context.ModelTokenBudget)
+    assert budget.provider == "anthropic"
+    assert budget.protocol == "messages"
+    assert budget.context_window == 8192
+    assert budget.input_limit == 7000
+    assert budget.output_limit == 1000
+    assert budget.request_output_limit == 200
+    assert "auth" not in vars(budget)
+    assert sent[0]["max_tokens"] == 200
+    assert workflow["context_budget"]["limit_source"] == "configured"
+    assert workflow["context_budget"]["input_budget_tokens"] == 7000 - 256
 
 
 class ToolCallingCompletion(OpenAIChatCompletion):

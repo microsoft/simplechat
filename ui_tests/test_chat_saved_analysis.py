@@ -1,7 +1,7 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.115
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.
@@ -18,11 +18,13 @@ import copy
 import json
 import re
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
+import werkzeug
 from playwright.sync_api import expect
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +46,12 @@ ORIGIN = "http://simplechat.test"
 CONVERSATION = "conversation-1"
 ANSWER = "The review found controls needing an owner."
 EXPLANATION = "This explains the saved review, without a new source pass."
+
+
+@pytest.fixture(autouse=True)
+def compatible_flask_client(monkeypatch):
+    if not hasattr(werkzeug, "__version__"):
+        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
 
 
 @pytest.fixture(scope="session")

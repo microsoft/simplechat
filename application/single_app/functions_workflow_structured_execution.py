@@ -6,6 +6,8 @@ from copy import deepcopy
 
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution import DurableWorkflowExecution, WorkflowSuspended, execution_fingerprint
+from functions_m365_approvals import M365ApprovalRequired
+from m365_interaction import M365SignInRequired
 from functions_workflow_identity import workflow_execution_id
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_result_store import load_workflow_node_result, save_workflow_node_result
@@ -208,10 +210,12 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         if execution_row and execution_row["payload"].get("state") == "paused" and unit.get("state") != "completed":
             self.record_execution(state="queued", reason_code="")
         previous_attempt = int(unit.get("attempt") or 0)
+        resuming_m365 = unit.get("state") == "waiting_m365"
+        attempt = previous_attempt if resuming_m365 else previous_attempt + 1
         task_operation = self.node is not None and key == f"task:{self.node.get('task_id')}"
         if task_operation:
             self.record_execution(
-                state="queued", attempt=previous_attempt + 1,
+                state="queued", attempt=attempt,
                 consumed_inputs=inputs.get("consumed_inputs") or [],
                 reference_sources=inputs.get("references") or [],
             )
@@ -220,7 +224,6 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         ):
             self._gate(key, digest, previous_attempt, "recovery",
                        "Review any external effects before retrying the interrupted task.", inputs)
-        attempt = previous_attempt + 1
         if approval and approval.get("required") is True:
             self._gate(key, digest, attempt, "approval",
                        str(approval.get("message") or "Review this exact task attempt before execution.")[:1000], inputs)
@@ -233,12 +236,13 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             admitted_by_condition = attempt == 1 and self.store.journal_read(
                 "decision", ["control", self.execution_id()],
             ) is not None
-            self.store.journal_commit(
-                self.lease.token, "admission", [self.execution_id(), attempt],
-                {"execution_id": self.execution_id(), "attempt": attempt, "input_digest": digest},
-                admission=not admitted_by_condition, immutable=True,
-                updates={"cursor": self.cursor(), "phase": self.node["id"]},
-            )
+            if not resuming_m365:
+                self.store.journal_commit(
+                    self.lease.token, "admission", [self.execution_id(), attempt],
+                    {"execution_id": self.execution_id(), "attempt": attempt, "input_digest": digest},
+                    admission=not admitted_by_condition, immutable=True,
+                    updates={"cursor": self.cursor(), "phase": self.node["id"]},
+                )
             self.record_execution(state="running", attempt=attempt, started_at=self.store._now().isoformat(),
                                   consumed_inputs=inputs.get("consumed_inputs") or [])
             self._attempt(attempt, state="running")
@@ -246,6 +250,13 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         self.authorize_iteration()
         try:
             result = operation()
+        except (M365ApprovalRequired, M365SignInRequired):
+            self.check()
+            self.store.journal_commit(self.lease.token, "unit", self._key(key), {**unit, "state": "waiting_m365"})
+            if task_operation:
+                self.record_execution(state="paused", attempt=attempt, reason_code="m365_authorization")
+                self._attempt(attempt, state="paused", reason_code="m365_authorization")
+            raise
         except Exception:
             self.check()
             self.authorize_iteration()
@@ -264,6 +275,9 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             **unit, "state": "completed", "result_ref": reference,
         })
         return result
+
+    def wait_for_m365(self, state):
+        return super().wait_for_m365(state, selectors=self.selectors())
 
     def authorize_iteration(self):
         if any("iteration" in frame for frame in self.iteration_path):

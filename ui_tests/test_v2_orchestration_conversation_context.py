@@ -1,7 +1,7 @@
 # test_v2_orchestration_conversation_context.py
 """
 Browser regressions for orchestration follow-up and clarification transport.
-Version: 0.261.103
+Version: 0.261.122
 Implemented in: 0.261.096
 Model selection transport and live answer attribution: 0.261.103
 

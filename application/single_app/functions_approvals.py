@@ -20,10 +20,21 @@ from content_screening.contracts import (
 from content_screening.permissions import can_review_approval, assert_scope_access, reviewer_ids
 from config import cosmos_approvals_container, cosmos_groups_container
 from functions_appinsights import log_event
-from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_notifications import (
+    create_notification,
+    create_m365_approval_notification,
+    delete_notifications_by_metadata,
+)
 from functions_group import find_group_by_id
 from functions_settings import get_settings
 from functions_debug import debug_print
+from functions_m365_approvals import (
+    M365_APPROVAL_TYPES,
+    get_m365_approval_service,
+    is_m365_approval,
+    is_m365_approval_subject,
+    sanitize_m365_approval,
+)
 
 # Approval request statuses
 STATUS_PENDING = "pending"
@@ -66,7 +77,7 @@ PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES = ['approval_request_pending']
 
 def get_approval_roles_for_request_type(request_type: str) -> List[str]:
     """Return role assignments eligible to review the supplied approval type."""
-    if request_type == TYPE_CONTENT_SCREENING_REVIEW:
+    if request_type in M365_APPROVAL_TYPES or request_type == TYPE_CONTENT_SCREENING_REVIEW:
         return []
     if request_type in SAFETY_USER_APPROVAL_TYPES:
         settings = get_settings()
@@ -294,6 +305,8 @@ def create_approval_request(
     Returns:
         Created approval request document
     """
+    if request_type in M365_APPROVAL_TYPES:
+        raise ValueError("Microsoft 365 requests must use the subject-owned approval service.")
     if request_type == TYPE_CONTENT_SCREENING_REVIEW:
         raise PermissionError("Use the dedicated content review workflow.")
     try:
@@ -414,7 +427,8 @@ def get_pending_approvals(
     per_page: int = 20,
     include_completed: bool = False,
     request_type_filter: Optional[str] = None,
-    status_filter: str = 'pending'
+    status_filter: str = 'pending',
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get approval requests that the user is eligible to approve.
@@ -435,7 +449,10 @@ def get_pending_approvals(
         safe_user_roles = _normalize_user_roles(user_roles)
 
         # Build query based on filters
-        filter_parts = []
+        filter_parts = [
+            "(NOT IS_DEFINED(c.record_kind) OR "
+            "(c.record_kind != 'm365_user_policy' AND c.record_kind != 'm365_audit'))"
+        ]
         parameters = []
         
         # Status filter
@@ -473,8 +490,13 @@ def get_pending_approvals(
         eligible_approvals = []
         for approval in items:
             try:
+                if is_m365_approval(approval) and tenant_id != approval.get('tenant_id'):
+                    continue
                 if _can_user_view(approval, user_id, safe_user_roles):
-                    eligible_approvals.append(approval)
+                    eligible_approvals.append(
+                        sanitize_m365_approval(get_m365_approval_service().get_approval(approval['id'], user_id))
+                        if is_m365_approval(approval) else approval
+                    )
             except Exception as ex:
                 log_event("[APPROVALS] Skipping malformed approval during eligibility check", {
                     'approval_id': approval.get('id') if isinstance(approval, dict) else None,
@@ -518,6 +540,7 @@ def approve_request(
     approver_name: str,
     comment: Optional[str] = None,
     approval: Optional[Dict[str, Any]] = None,
+    decision: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Approve an approval request.
@@ -544,6 +567,13 @@ def approve_request(
         if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
             raise PermissionError("Use the dedicated content review workflow.")
         
+        if is_m365_approval(approval):
+            if group_id != approver_id or not is_m365_approval_subject(approval, approver_id):
+                raise PermissionError("Only the data user can approve this Microsoft 365 request.")
+            if decision is None:
+                raise ValueError("An explicit Microsoft 365 decision is required.")
+            return get_m365_approval_service().decide(approval_id, approver_id, decision)
+
         # Validate status
         if approval['status'] != STATUS_PENDING:
             debug_print(f"Cannot approve request with status: {approval['status']}")
@@ -644,6 +674,18 @@ def deny_request(
         if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
             raise PermissionError("Use the dedicated content review workflow.")
         
+        if is_m365_approval(approval):
+            service = get_m365_approval_service()
+            if auto_denied:
+                return sanitize_m365_approval(service.expire(service.get_approval(approval_id, group_id)))
+            if group_id != denier_id or not is_m365_approval_subject(approval, denier_id):
+                raise PermissionError("Only the data user can deny this Microsoft 365 request.")
+            if approval['request_type'] == 'm365_source_sharing':
+                decision = {'decisions': {source: {'duration': 'no'} for source in approval['sources']}}
+            else:
+                decision = {'choice': 'fast' if approval['request_type'] == 'm365_extended_analysis' else 'deny'}
+            return service.decide(approval_id, denier_id, decision)
+
         # Validate status (allow denying pending requests)
         if approval['status'] not in [STATUS_PENDING]:
             debug_print(f"Cannot deny request with status: {approval['status']}")
@@ -737,6 +779,8 @@ def mark_approval_executed(
             item=approval_id,
             partition_key=group_id
         )
+        if is_m365_approval(approval):
+            raise ValueError("Microsoft 365 approval decisions and execution states are separate.")
         if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
             raise PermissionError("Use the dedicated content review workflow.")
         
@@ -784,10 +828,13 @@ def get_approval_by_id(approval_id: str, group_id: str) -> Optional[Dict[str, An
         Approval request document or None if not found
     """
     try:
-        return cosmos_approvals_container.read_item(
+        approval = cosmos_approvals_container.read_item(
             item=approval_id,
             partition_key=group_id
         )
+        if approval.get('record_kind') in {'m365_user_policy', 'm365_audit'}:
+            return None
+        return approval
     except Exception:
         log_event("[APPROVALS] Approval not found", {
             'approval_id': approval_id,
@@ -827,6 +874,8 @@ def get_authorized_approval(
     if not is_authorized:
         raise PermissionError("You are not authorized to access this approval")
 
+    if is_m365_approval(approval):
+        return sanitize_m365_approval(get_m365_approval_service().get_approval(approval_id, user_id))
     return approval
 
 
@@ -853,6 +902,11 @@ def auto_deny_expired_approvals() -> int:
         denied_count = 0
         
         for approval in pending_approvals:
+            if is_m365_approval(approval):
+                updated = get_m365_approval_service().expire(approval)
+                if updated['status'] == 'expired':
+                    denied_count += 1
+                continue
             if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
                 continue
             expires_at = datetime.fromisoformat(approval['expires_at'])
@@ -917,6 +971,10 @@ def _can_user_view(
     Returns:
         True if user can view, False otherwise
     """
+    if is_m365_approval(approval):
+        return is_m365_approval_subject(approval, user_id)
+    if approval.get('record_kind') in {'m365_user_policy', 'm365_audit'}:
+        return False
     if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
         return can_review_approval(approval, user_id)
     safe_user_roles = _normalize_user_roles(user_roles)
@@ -983,6 +1041,10 @@ def _can_user_approve(
     Returns:
         True if user can approve, False otherwise
     """
+    if is_m365_approval(approval):
+        return is_m365_approval_subject(approval, user_id)
+    if approval.get('record_kind') in {'m365_user_policy', 'm365_audit'}:
+        return False
     if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
         return can_review_approval(approval, user_id)
     safe_user_roles = _normalize_user_roles(user_roles)
@@ -1032,6 +1094,8 @@ def _can_user_deny(
     Requesters may deny their own pending approval requests to cancel them,
     while approval remains restricted to a different eligible reviewer.
     """
+    if is_m365_approval(approval):
+        return is_m365_approval_subject(approval, user_id)
     if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
         return can_review_approval(approval, user_id)
     if approval.get('requester_id') == user_id:
@@ -1057,6 +1121,9 @@ def _create_approval_notifications(
         approval: Approval request document
         group: Group document (None for user-related approvals)
     """
+    if is_m365_approval(approval):
+        create_m365_approval_notification(sanitize_m365_approval(approval))
+        return
     try:
         log_event("[APPROVALS] Creating assignment-based approval notifications", {
             'approval_id': approval['id'],
@@ -1187,6 +1254,8 @@ def _create_approval_notifications(
 
 def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
     """Notify the requester that their approval request is awaiting review."""
+    if is_m365_approval(approval):
+        return
     try:
         create_notification(
             user_id=approval['requester_id'],
@@ -1248,6 +1317,9 @@ def _format_request_type(request_type: str) -> str:
         Human-readable request type string
     """
     type_labels = {
+        'm365_source_sharing': "Microsoft 365 source sharing",
+        'm365_extended_analysis': "Microsoft 365 extended analysis",
+        'm365_workflow_run_as': "Microsoft 365 workflow Run as",
         TYPE_TAKE_OWNERSHIP: "Take Ownership",
         TYPE_TRANSFER_OWNERSHIP: "Transfer Ownership",
         TYPE_DELETE_DOCUMENTS: "Delete All Documents",

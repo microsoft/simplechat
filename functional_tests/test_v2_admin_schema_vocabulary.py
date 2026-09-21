@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_schema_vocabulary.py
+#!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.084
+Version: 0.261.122
 Implemented in: 0.261.084
 
 The Knowledge group needs control kinds the schema could not previously express:
@@ -79,7 +79,7 @@ def test_declared_types_are_renderable():
 
 def test_redaction_placeholder_matches_the_settings_module():
     """Two spellings of the placeholder would make secrets unsavable."""
-    print("\nTesting the redaction placeholder against functions_settings...")
+    print("\nTesting the redaction placeholder against admin_settings_secret_utils...")
 
     source = (
         Path(__file__).resolve().parents[1]
@@ -91,10 +91,9 @@ def test_redaction_placeholder_matches_the_settings_module():
     expected_line = f'ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "{REDACTED}"'
     assert expected_line in source, (
         "admin_settings_fields.SECRET_REDACTED_VALUE no longer matches "
-        "functions_settings.ADMIN_SETTINGS_SECRET_REDACTED_VALUE. The schema "
-        "module mirrors that constant rather than importing it, because "
-        "functions_settings reaches config, which builds a Cosmos client at "
-        "import time. Update both together.\n"
+        "admin_settings_secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE. "
+        "The schema and dependency-light secret helper must agree without "
+        "importing functions_settings and initializing its Azure dependencies.\n"
         f"  schema module: {expected_line}"
     )
 

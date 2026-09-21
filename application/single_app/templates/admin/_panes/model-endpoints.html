@@ -9,7 +9,7 @@
                         <i class="bi bi-hdd-network me-2"></i>AI Connections
                     </h5>
                     <p class="text-muted small">
-                        Manage Azure OpenAI, Azure AI Foundry, Custom APIs and embedding-only OpenAI-compatible connections once. Publish each model for its supported operations. Chat, images and embeddings keep independent defaults, and images and embeddings work independently of the chat mode switch.
+                        Manage Azure OpenAI, Foundry (classic), New Foundry, Custom API connections, and embedding-only OpenAI-compatible connections once. Publish each model for the operations its provider and API support. Images and embeddings work independently of the chat mode switch.
                     </p>
 
                     {% if not settings.enable_multi_model_endpoints %}
@@ -205,6 +205,7 @@
                         <div class="form-check mb-2">
                             <input type="checkbox" class="form-check-input" id="allow_private_custom_model_endpoints" name="allow_private_custom_model_endpoints" {% if settings.allow_private_custom_model_endpoints %}checked{% endif %} />
                             <label class="form-check-label" for="allow_private_custom_model_endpoints">Allow private Custom endpoint hosts</label>
+                            <div class="form-text">For approved on-premises inference, permits IP addresses, short host names, and hosts resolving to private ranges. Always-blocked addresses remain rejected, and every address is revalidated when the connection is made.</div>
                         </div>
                         <div class="form-check mb-2">
                             <input type="checkbox" class="form-check-input" id="allow_insecure_custom_model_endpoints" name="allow_insecure_custom_model_endpoints" {% if settings.allow_insecure_custom_model_endpoints %}checked{% endif %} />
@@ -213,7 +214,7 @@
                         <p class="text-warning small">HTTP sends prompts and credentials without encryption. Prefer HTTPS with a private CA bundle.</p>
                         <label for="custom_model_endpoint_ca_bundle_path" class="form-label">Custom CA bundle path</label>
                         <input type="text" class="form-control" id="custom_model_endpoint_ca_bundle_path" name="custom_model_endpoint_ca_bundle_path" value="{{ settings.custom_model_endpoint_ca_bundle_path or '' }}" />
-                        <p class="form-text">Optional deployment-mounted trust bundle. Empty uses public roots. HTTPS certificate verification cannot be disabled.</p>
+                        <p class="form-text">Optional deployment-mounted PEM trust bundle for approved internal certificate authorities. Empty uses public roots. Ambient environment variables cannot widen that trust, and HTTPS certificate verification cannot be disabled.</p>
                     </details>
 
                     <div id="ai-connections-migration-notice" class="alert alert-info d-none mt-3" role="status"></div>
@@ -442,7 +443,7 @@
                             <div class="col-md-6" id="model-endpoint-embedding-version-group">
                                 <label for="model-endpoint-embedding-version" class="form-label">Embedding API version</label>
                                 <input id="model-endpoint-embedding-version" type="text" class="form-control" />
-                                <p class="form-text">Azure OpenAI versioned operations only. Leave blank to use the connection version; OpenAI-compatible APIs must leave this blank.</p>
+                                <p class="form-text">Azure OpenAI versioned operations only. Leave blank to use the operation default; OpenAI-compatible APIs must leave this blank.</p>
                             </div>
                             <div class="col-md-6">
                                 <label for="model-endpoint-embedding-auth-header" class="form-label">Embedding authentication header</label>
@@ -466,17 +467,9 @@
                     </fieldset>
                     <p class="alert alert-warning mt-3 d-none" id="model-endpoint-embedding-unavailable" role="status"></p>
                 </template>
+
                 <template id="custom-model-endpoint-fields-template">
                     <div id="custom-model-endpoint-fields" class="row g-3 mt-1 d-none">
-                        <div class="col-md-6">
-                            <label for="model-endpoint-api-type" class="form-label">Custom API Type</label>
-                            <select class="form-select" id="model-endpoint-api-type">
-                                {% for option in custom_model_endpoint_api_types|default([]) %}
-                                <option value="{{ option.value }}">{{ option.label }}</option>
-                                {% endfor %}
-                            </select>
-                            <p class="form-text" id="model-endpoint-api-type-help"></p>
-                        </div>
                         <div class="col-md-6">
                             <label for="model-endpoint-url-mode" class="form-label">URL Handling</label>
                             <select class="form-select" id="model-endpoint-url-mode">
@@ -484,10 +477,6 @@
                                 <option value="exact">Exact API base / messages URL</option>
                             </select>
                             <p class="form-text">Exact adds no version or deployment prefix. For Anthropic, enter the full messages URL.</p>
-                        </div>
-                        <div class="col-md-6" id="model-endpoint-anthropic-version-group">
-                            <label for="model-endpoint-anthropic-version" class="form-label">Anthropic Version</label>
-                            <input type="text" class="form-control" id="model-endpoint-anthropic-version" />
                         </div>
                         <div class="col-md-6" id="model-endpoint-bearer-group">
                             <label for="model-endpoint-bearer-token" class="form-label">Bearer Token</label>
@@ -523,9 +512,11 @@
                             </details>
                         </div>
                         <div class="col-12">
-                            <p class="alert alert-info mb-0">Custom connections use manual model identifiers. Protocol compatibility alone does not grant image capabilities. Save settings before selecting defaults.</p>
+                            <p class="alert alert-info mb-0">Custom connections use manual model identifiers. Protocol compatibility alone does not grant operation capabilities. Save settings before selecting defaults.</p>
                         </div>
                     </div>
                 </template>
-                {% include '_multiendpoint_modal.html' %}
+                {% with model_endpoint_api_types=custom_model_endpoint_api_types|default(model_endpoint_api_types|default([]), true) %}
+                    {% include '_multiendpoint_modal.html' %}
+                {% endwith %}
             </div>

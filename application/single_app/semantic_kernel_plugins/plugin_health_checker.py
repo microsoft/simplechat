@@ -10,6 +10,12 @@ from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_action_manifest import (
+    MCP_STDIO_REMOVED_MESSAGE,
+    McpConfigurationError,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
 from functions_azure_endpoint_validation import (
     validate_azure_blob_endpoint,
     validate_azure_cosmos_endpoint,
@@ -58,6 +64,7 @@ from functions_yamcs_operations import (
     YAMCS_AUTH_METHOD_BEARER_TOKEN,
     YAMCS_AUTH_METHOD_NONE,
     YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_BASIC_AUTH_CONFLICT_MESSAGE,
     YAMCS_MAX_MAX_ROWS,
     YAMCS_MAX_TIMEOUT,
     YAMCS_MIN_MAX_ROWS,
@@ -67,6 +74,7 @@ from functions_yamcs_operations import (
     YAMCS_SUPPORTED_AUTH_TYPES,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    yamcs_basic_auth_conflicts_with_auth_method,
 )
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
@@ -136,6 +144,15 @@ class PluginHealthChecker:
         if not isinstance(manifest, dict):
             errors.append("Manifest must be a dictionary")
             return False, errors
+        try:
+            plugin_type = resolve_action_type(manifest)
+        except ValueError:
+            return False, ["Action type must be a string."]
+        manifest = manifest.copy()
+        if plugin_type:
+            manifest['type'] = plugin_type
+        if is_retired_mcp_stdio(manifest):
+            return False, [MCP_STDIO_REMOVED_MESSAGE]
         
         # Required fields
         required_fields = ['name', 'type']
@@ -362,6 +379,18 @@ class PluginHealthChecker:
             elif auth_method == YAMCS_AUTH_METHOD_NONE and auth_type not in {'NoAuth', 'identity'}:
                 errors.append("Yamcs unauthenticated access requires auth.type='NoAuth'")
 
+            if additional_fields.get('enable_basic_auth'):
+                basic_auth_identity_id = str(additional_fields.get('basic_auth_identity_id') or '').strip()
+                if yamcs_basic_auth_conflicts_with_auth_method(auth_method):
+                    errors.append(YAMCS_BASIC_AUTH_CONFLICT_MESSAGE)
+                # A referenced identity supplies both values at runtime, so only unreferenced
+                # configurations must carry an inline username and password.
+                if not basic_auth_identity_id:
+                    if not additional_fields.get('basic_auth_username'):
+                        errors.append("Yamcs HTTP Basic authentication requires additionalFields.basic_auth_username")
+                    if not additional_fields.get('basic_auth_password'):
+                        errors.append("Yamcs HTTP Basic authentication requires additionalFields.basic_auth_password")
+
             yamcs_range_fields = {
                 'max_rows': (YAMCS_MIN_MAX_ROWS, YAMCS_MAX_MAX_ROWS),
                 'timeout': (YAMCS_MIN_TIMEOUT, YAMCS_MAX_TIMEOUT),
@@ -462,7 +491,10 @@ class PluginHealthChecker:
                 errors.append("SimpleChat plugin requires auth.type='user'")
 
         elif plugin_type == MCP_PLUGIN_TYPE:
-            additional_fields = normalize_mcp_additional_fields(manifest.get('additionalFields', {}))
+            try:
+                additional_fields = normalize_mcp_additional_fields(manifest.get('additionalFields', {}))
+            except McpConfigurationError as exc:
+                return False, [exc.public_message]
             transport = additional_fields.get('transport')
             endpoint = str(manifest.get('endpoint') or '').strip()
             auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
@@ -470,14 +502,10 @@ class PluginHealthChecker:
             auth_method = normalize_mcp_auth_method(additional_fields.get('auth_method'))
 
             if transport not in MCP_SUPPORTED_TRANSPORTS:
-                errors.append("MCP plugin requires additionalFields.transport to be streamable_http, sse, websocket, or stdio")
+                errors.append("MCP plugin requires additionalFields.transport to be streamable_http, sse, or websocket")
 
             if transport in MCP_REMOTE_TRANSPORTS:
                 errors.extend(validate_mcp_endpoint_for_transport(endpoint, transport))
-            elif transport == 'stdio':
-                command = str(additional_fields.get('command') or '').strip()
-                if not command:
-                    errors.append("MCP stdio transport requires additionalFields.command")
 
             if auth_type not in {'NoAuth', 'key', 'identity'}:
                 errors.append("MCP plugin supports auth.type values 'NoAuth', 'key', or 'identity'")
@@ -714,7 +742,25 @@ class PluginHealthChecker:
         """
         errors = []
         plugin_instance = None
-        
+        if resolve_action_type({'type': plugin_class.__name__}) == MCP_PLUGIN_TYPE:
+            if resolve_action_type(manifest) != MCP_PLUGIN_TYPE:
+                return None, ["MCP action type is invalid."]
+            valid, errors = PluginHealthChecker.validate_plugin_manifest(manifest, MCP_PLUGIN_TYPE)
+            if not valid:
+                return None, errors
+            try:
+                plugin_instance = plugin_class(manifest)
+            except (ValueError, TypeError, KeyError, PermissionError) as exc:
+                log_event(
+                    "[PLUGIN_CREATION] MCP descriptor creation rejected",
+                    extra={"error_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+                return None, ["MCP action configuration is invalid."]
+            health_report = PluginHealthChecker.check_plugin_health(plugin_instance, plugin_name)
+            PluginHealthChecker.log_plugin_health(health_report)
+            return plugin_instance, health_report.get('errors', [])
+
         try:
             # Try manifest-based instantiation first
             try:

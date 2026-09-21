@@ -2,7 +2,7 @@
 # test_v2_admin_security_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Security group.
-Version: 0.261.107
+Version: 0.261.122
 Implemented in: 0.261.063
 
 The V2 React admin surface renders from ``admin_settings_fields.py`` rather than
@@ -59,12 +59,6 @@ SECURITY_PANES = {
     "network": ("front-door-section",),
     "rate-limiting": ("rate-limit-message-section",),
 }
-
-# Panes this test reads for V1 parity. Workspace Identities is excluded: its
-# parity is held by test_v2_admin_workspaces_parity.py, which owns that work.
-SECURITY_PARITY_PANES = tuple(
-    tab for tab in SECURITY_PANES if tab != "workspace-identities"
-)
 
 # Settings that must be declared as secrets, so the browser is handed a placeholder
 # instead of the stored credential. Declaring one of these as plain text would put
@@ -128,7 +122,7 @@ def security_schema_fields():
     """Return ``{key: field}`` for every field the Security sections declare."""
     section_ids = {
         section_id
-        for sections in (SECURITY_PANES[tab] for tab in SECURITY_PARITY_PANES)
+        for sections in SECURITY_PANES.values()
         for section_id in sections
     }
     return {
@@ -181,7 +175,7 @@ def test_every_v1_security_field_is_claimed():
 
     unclaimed = []
     total = 0
-    for pane_id in SECURITY_PARITY_PANES:
+    for pane_id in SECURITY_PANES:
         for name in sorted(collect_pane_field_names(read_pane(pane_id))):
             total += 1
             if name not in claimed and name not in excused:
@@ -203,7 +197,7 @@ def test_schema_does_not_invent_security_fields():
     print("\nTesting that the schema does not invent Security fields...")
 
     pane_fields = set()
-    for pane_id in SECURITY_PARITY_PANES:
+    for pane_id in SECURITY_PANES:
         pane_fields |= collect_pane_field_names(read_pane(pane_id))
 
     invented = []
@@ -251,7 +245,7 @@ def test_select_options_match_v1():
 
     checked = 0
     mismatches = []
-    for pane_id in SECURITY_PARITY_PANES:
+    for pane_id in SECURITY_PANES:
         for match in SELECT_BLOCK_RE.finditer(read_pane(pane_id)):
             name = match.group("name")
             field = schema_fields.get(name)
@@ -283,7 +277,7 @@ def test_number_bounds_match_v1():
 
     checked = 0
     mismatches = []
-    for pane_id in SECURITY_PARITY_PANES:
+    for pane_id in SECURITY_PANES:
         for match in NUMBER_BLOCK_RE.finditer(read_pane(pane_id)):
             attrs = dict(ATTR_RE.findall(match.group("attrs")))
             name = attrs.get("name")

@@ -73,7 +73,7 @@ interface Transaction {
 
 const authoredFields = [
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
-    'chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling',
+    'chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
     'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits',
 ] as const;
 

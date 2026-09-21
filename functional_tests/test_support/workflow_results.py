@@ -1,7 +1,7 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.109
+Version: 0.261.122
 Implemented in: 0.261.106
 """
 
@@ -10,6 +10,13 @@ import json
 import logging
 
 from azure.core.exceptions import AzureError
+from functions_m365_approvals import M365ApprovalRequired
+from functions_m365_workflow_checkpoints import (
+    m365_workflow_task_context,
+    read_m365_task_checkpoint,
+    save_m365_task_checkpoint,
+)
+from m365_interaction import M365SignInRequired
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, WorkflowResultTooLargeError
 from functions_workflow_context import (
     WorkflowContextBudgetError,
@@ -29,6 +36,7 @@ from functions_workflow_results import (
     workflow_result_summary,
     authorize_workflow_task_result_read,
 )
+from functions_saved_analysis import SavedAnalysisInput, explain_saved_analysis
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_bindings import (
     WorkflowInputError,
@@ -73,6 +81,11 @@ def workflow_result_helpers():
         return json.loads(stored[(workflow["id"], run_id, task_id, reference["sha256"])])
 
     return {
+        "M365ApprovalRequired": M365ApprovalRequired,
+        "M365SignInRequired": M365SignInRequired,
+        "m365_workflow_task_context": m365_workflow_task_context,
+        "read_m365_task_checkpoint": read_m365_task_checkpoint,
+        "save_m365_task_checkpoint": save_m365_task_checkpoint,
         "AzureError": AzureError,
         "WorkflowResultStorageUnavailableError": WorkflowResultStorageUnavailableError,
         "WorkflowResultTooLargeError": WorkflowResultTooLargeError,

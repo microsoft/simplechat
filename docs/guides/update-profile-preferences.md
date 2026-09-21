@@ -46,6 +46,32 @@ Profile preferences are for personal comfort and control: font size, navigation 
 
 6. If shown, configure **Desktop Conversation Notifications**, **Fact Memory**, retention settings, microphone permission, or text-to-speech settings.
 
+## Microsoft 365 data preferences
+
+Calendar, Email, OneDrive, and SharePoint have independent sharing preferences,
+so users can control disclosure even when they cannot edit the agent or action.
+OneDrive and SharePoint also have separate fast/deeper-analysis preferences.
+Workflow connections are explicit, revocable opt-ins and are not implied by
+ordinary sign-in.
+
+The workflow connection status is not the status of interactive chat. When
+an agent needs Microsoft 365 consent, Chat offers **Connect Microsoft 365**
+in the conversation and resumes the saved request after sign-in.
+For workflows, select each source once; its supported read/write permissions
+are explained before Microsoft's consent step, without extra permission
+checkboxes. Action capability limits and outgoing-delivery review still apply.
+
+Use the separate **Microsoft 365 chat connection** card to reconnect even when
+no chat is waiting or a saved sign-in is already present. Select sources, choose
+**Reconnect Microsoft 365 for chat**, and verify your same-account sign-in with
+Microsoft. Then retry the original question. This renews the current interactive
+session without changing saved workflow connections, permissions at the source,
+or sharing approvals.
+
+See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
+for approval duration, retained-evidence sharing, and Run as behavior
+introduced in **0.261.029** and updated in **0.261.034**.
+
 ## Verify it worked
 
 Each card shows a status message after saving. Reload the app and confirm the preference still applies.

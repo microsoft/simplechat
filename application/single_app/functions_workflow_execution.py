@@ -10,6 +10,8 @@ from copy import deepcopy
 
 from functions_workflow_result_store import load_workflow_task_result, save_workflow_task_result
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
+from functions_m365_approvals import M365ApprovalRequired
+from m365_interaction import M365SignInRequired
 
 
 _execution = ContextVar("durable_workflow_execution", default=None)
@@ -188,7 +190,10 @@ class DurableWorkflowExecution:
                 record = self.check()
                 units = deepcopy(record.get("units") or {})
         self._approval(record, key, digest, approval)
-        attempt = int((units.get(key) or {}).get("attempt") or 0) + 1
+        previous = units.get(key) or {}
+        attempt = int(previous.get("attempt") or 0)
+        if previous.get("state") != "waiting_m365":
+            attempt += 1
         units[key] = {
             "state": "running", "attempt": attempt, "input_digest": digest,
             "replay_safe": bool(replay_safe),
@@ -196,6 +201,12 @@ class DurableWorkflowExecution:
         self._update(record, {"units": units, "phase": key})
         try:
             result = operation()
+        except (M365ApprovalRequired, M365SignInRequired):
+            record = self.check()
+            units = deepcopy(record.get("units") or {})
+            units[key]["state"] = "waiting_m365"
+            self._update(record, {"units": units})
+            raise
         except Exception:
             # The exception remains visible to the existing runner. Only a
             # durable explicit decision can replay a possibly side-effecting unit.
@@ -261,6 +272,18 @@ class DurableWorkflowExecution:
         units = deepcopy(record.get("units") or {})
         units[key]["result_ref"] = reference
         self._update(record, {"units": units})
+
+    def wait_for_m365(self, state, *, selectors=None):
+        record = self.check()
+        self.store.wait(self.lease.token, state=state, gate={
+            "id": uuid.uuid4().hex, "kind": "pause",
+            "unit_id": record.get("phase") or "m365-authorization",
+            "input_digest": record["definition_revision"],
+            "reason_code": "m365_authorization", "correlation_id": self.run_id,
+            "reason": "Waiting for Microsoft 365 approval or sign-in. Resolve it in Approvals or your Microsoft 365 connection settings.",
+            "choices": ["cancel"], **(selectors or {}),
+        })
+        raise WorkflowSuspended(state)
 
     def wait_for_output(self, key, references):
         record = self.check()

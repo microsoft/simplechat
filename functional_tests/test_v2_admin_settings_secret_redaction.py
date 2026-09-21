@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_settings_secret_redaction.py
+#!/usr/bin/env python3
 """
 Functional test that the V2 admin settings endpoint never ships a stored secret.
-Version: 0.261.063
+Version: 0.261.122
 Implemented in: 0.261.063
 
 ``GET /api/v2/admin/settings`` returns the settings document so an administrator can
@@ -31,6 +31,7 @@ This reads the route source rather than exercising the endpoint, because importi
 requires a live Cosmos client.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -63,10 +64,11 @@ MUST_BE_REDACTED = (
 TUPLE_RE = r"{name}\s*=\s*\((?P<body>.*?)\)"
 
 fields_module = import_app_module("admin_settings_fields")
+secret_utils = import_app_module("admin_settings_secret_utils")
 
 
 def read_secret_field_tuple(name):
-    """Return the string entries of a secret-field tuple in functions_settings."""
+    """Return the string entries of a secret-field tuple in the shared helper."""
     source = SETTINGS_MODULE.read_text(encoding="utf-8")
     match = re.search(TUPLE_RE.format(name=name), source, re.DOTALL)
     assert match, f"Could not find {name} in admin_settings_secret_utils.py"
@@ -94,37 +96,38 @@ def test_api_secret_list_covers_every_known_credential():
 
 
 def test_form_list_is_left_alone():
-    """Redacting a form field the form submits back verbatim stores the placeholder.
-
-    ``office_docs_key`` and its siblings are rendered by the server-rendered page and
-    saved with a plain ``form_data.get``, not through ``admin_secret``. Adding them to
-    the form list would make that page render the placeholder and then store it, so they
-    belong in the API-only list instead.
-    """
-    print("\nTesting that the API-only keys stay out of the form list...")
-
-    form_fields = read_secret_field_tuple("ADMIN_SETTINGS_FORM_SECRET_FIELDS")
+    """Read-only storage keys stay masked without introducing writable form controls."""
+    print("\nTesting read-only storage credentials on both settings surfaces...")
     api_only = read_secret_field_tuple("ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS")
+    stored = {key: f"fixture-secret-{key}" for key in api_only}
+    for redact in (
+        secret_utils.redact_admin_settings_secrets_for_form,
+        secret_utils.redact_admin_settings_secrets_for_api,
+    ):
+        masked = redact(stored)
+        assert all(masked[key] == secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE for key in api_only)
+        assert all(stored[key] == f"fixture-secret-{key}" for key in api_only)
 
-    overlap = sorted(form_fields & api_only)
-    assert not overlap, (
-        "These keys are in both lists. The server-rendered page submits them back "
-        "verbatim, so redacting them there would save the placeholder as the "
-        "credential:\n  " + "\n  ".join(overlap)
+    panes = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (APP_ROOT / "templates" / "admin" / "_panes").glob("*.html")
     )
-
     admin_route = (APP_ROOT / "route_frontend_admin_settings.py").read_text(encoding="utf-8")
-    unprotected = sorted(
-        key for key in api_only if f"admin_secret('{key}'" not in admin_route
-    )
-    assert unprotected == sorted(api_only), (
-        "The premise of the API-only list is that the server-rendered save path does "
-        "not resolve these through admin_secret. That changed for: "
-        + ", ".join(sorted(set(api_only) - set(unprotected)))
-        + ". They can now move into the form list."
-    )
+    route_tree = ast.parse(admin_route)
+    for key in api_only:
+        assert not re.search(rf"""\bname\s*=\s*['"]{re.escape(key)}['"]""", panes), key
+        getters = [
+            node for node in ast.walk(route_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "form_data"
+            and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == key
+        ]
+        assert len(getters) == 1, key
+        expression = compile(ast.Expression(getters[0]), str(APP_ROOT / "route_frontend_admin_settings.py"), "eval")
+        assert eval(expression, {"form_data": {}, "settings": stored}) == stored[key]
 
-    print(f"  {len(api_only)} API-only key(s) are correctly kept out of the form list.")
+    print(f"  {len(api_only)} read-only key(s) are masked and not posted by the form.")
     return True
 
 
@@ -176,15 +179,9 @@ def test_schema_secrets_are_declared_as_secret_type():
     form_fields = read_secret_field_tuple("ADMIN_SETTINGS_FORM_SECRET_FIELDS")
     api_only = read_secret_field_tuple("ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS")
     nested = read_secret_field_tuple("ADMIN_SETTINGS_NESTED_SECRET_FIELDS")
-
-    # Compared by storage location rather than field key. A field is named after
-    # its control, and a credential is not always stored under that name -- the
-    # Web Search client secret lives inside `web_search_agent`, so its field key
-    # would never appear in any of these lists while the value itself is covered.
     declared = fields_module.get_secret_storage_paths()
 
-    # Every credential the schema names must be redacted somewhere, or the control
-    # would show a placeholder the endpoint never sends.
+    # A field key can differ from its credential's nested storage location.
     unredacted = sorted(declared - form_fields - api_only - nested)
 
     assert not unredacted, (

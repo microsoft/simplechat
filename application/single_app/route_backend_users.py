@@ -11,6 +11,7 @@ from collaboration_models import (
     normalize_collaboration_user,
 )
 from functions_appinsights import log_event
+from functions_action_manifest import McpConfigurationError
 from functions_ai_notice import (
     AI_NOTICE_USER_SETTINGS_KEY,
     build_ai_notice_dismissal_record,
@@ -25,6 +26,11 @@ from functions_group import (
 from functions_latest_features_nav import (
     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
     normalize_latest_features_hidden_version,
+)
+from functions_legacy_action_management import (
+    LegacyActionConflictError,
+    legacy_action_management_view,
+    legacy_action_snapshots,
 )
 from functions_message_visual_styles import (
     VisualStyleError,
@@ -468,26 +474,30 @@ def register_route_backend_users(bp):
     def user_settings():
         try:
             user_id = get_current_user_id()
-            if not user_id: # Redundant if get_current_user_id raises error, but safe
-                 return jsonify({"error": "Unable to identify user"}), 401
-        except ValueError as e:
-             # Handle case where get_current_user_id fails (e.g., session issue)
-             print(f"Error getting user ID: {e}")
-             return jsonify({"error": str(e)}), 401
+            if not user_id:
+                return jsonify({"error": "Unable to identify user"}), 401
+        except ValueError:
+            log_event("Unable to identify settings user", level=logging.WARNING)
+            return jsonify({"error": "Unable to identify user"}), 401
         except Exception as e:
-             # Catch other potential errors during user ID retrieval
-             print(f"Unexpected error getting user ID: {e}")
-             return jsonify({"error": "Internal server error identifying user"}), 500
+            log_event(
+                "Unable to identify settings user",
+                extra={"error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Internal server error identifying user"}), 500
 
 
         # --- Handle POST Request (Update Settings) ---
         if request.method == 'POST':
             try:
                 # Expect JSON data, as sent by the fetch API in chat-layout.js
-                data = request.get_json()
+                data = request.get_json(silent=True)
 
-                if not data:
+                if data is None:
                     return jsonify({"error": "Missing JSON body"}), 400
+                if not isinstance(data, dict):
+                    return jsonify({"error": "Request body must be an object"}), 400
 
                 # The JS sends { settings: { key: value, ... } }
                 # Extract the inner 'settings' dictionary
@@ -557,7 +567,11 @@ def register_route_backend_users(bp):
                 } # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
-                    print(f"Warning: Received invalid settings keys: {invalid_keys}")
+                    log_event(
+                        "Ignored unsupported user settings fields",
+                        extra={"field_count": len(invalid_keys)},
+                        level=logging.WARNING,
+                    )
                     settings_to_update = {
                         key: value
                         for key, value in settings_to_update.items()
@@ -677,6 +691,20 @@ def register_route_backend_users(bp):
                         return jsonify({"error": "Invalid Latest Features hidden version"}), 400
                     settings_to_update[LATEST_FEATURES_HIDDEN_VERSION_SETTING] = hidden_version
 
+                if "plugins" in settings_to_update:
+                    # Action storage is only needed for imports, not settings/profile bootstrap.
+                    from functions_personal_actions import prepare_legacy_personal_actions_update
+
+                    prepared_actions = prepare_legacy_personal_actions_update(
+                        user_id, settings_to_update["plugins"]
+                    )
+                    if prepared_actions["has_imports"] and not get_settings().get("allow_user_plugins", False):
+                        return jsonify({"error": "Personal action imports are disabled."}), 403
+                    if prepared_actions["changed"]:
+                        settings_to_update["plugins"] = prepared_actions["plugins"]
+                    else:
+                        settings_to_update.pop("plugins")
+
                 active_group_updated = False
                 active_public_workspace_updated = False
 
@@ -722,20 +750,48 @@ def register_route_backend_users(bp):
                     # update_user_settings should ideally log the specific error
                     return jsonify({"error": "Failed to update settings"}), 500
 
+            except (McpConfigurationError, LegacyActionConflictError) as exc:
+                log_event(
+                    "Rejected legacy action settings update",
+                    extra={"user_id": user_id, "error_type": exc.code},
+                    level=logging.WARNING,
+                )
+                status = 409 if isinstance(exc, LegacyActionConflictError) else 400
+                return jsonify({"error": exc.public_message, "error_type": exc.code}), status
+            except PermissionError:
+                log_event("User settings update denied", extra={"user_id": user_id}, level=logging.WARNING)
+                return jsonify({"error": "You are not authorized to import or change these actions."}), 403
+            except ValueError:
+                log_event("Invalid user settings update", extra={"user_id": user_id}, level=logging.WARNING)
+                return jsonify({"error": "Invalid action configuration."}), 400
             except Exception as e:
-                # Catch potential JSON parsing errors or other unexpected issues
-                print(f"Error processing POST /api/user/settings: {e}")
+                log_event(
+                    "Failed to update user settings",
+                    extra={"user_id": user_id, "error_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
                 return jsonify({"error": "Internal server error processing request"}), 500
 
 
-        # --- Handle GET Request (Retrieve Settings) ---
-        # This part remains largely the same as your original
         try:
-            user_settings_data = get_user_settings(user_id) # This fetches the whole document
-            # The frontend JS expects the document structure, including the 'settings' key inside it.
-            return jsonify(user_settings_data), 200 # Return the full document or {} if not found
+            user_settings_data = get_user_settings(user_id)
+            public_user_settings = sanitize_settings_for_user(user_settings_data)
+            stored_settings = user_settings_data.get("settings", {})
+            if "plugins" in stored_settings:
+                stored_plugins = stored_settings["plugins"]
+                if stored_plugins is None:
+                    stored_plugins = []
+                public_user_settings["settings"]["plugins"] = [
+                    legacy_action_management_view(snapshot)
+                    for snapshot in legacy_action_snapshots(user_id, stored_plugins)
+                ]
+            return jsonify(public_user_settings), 200
         except Exception as e:
-            print(f"Error retrieving settings for user {user_id}: {e}")
+            log_event(
+                "Failed to retrieve user settings",
+                extra={"user_id": user_id, "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({"error": "Failed to retrieve user settings"}), 500
 
     @bp.route('/api/user/profile-image/<user_id>', methods=['GET'])

@@ -2,49 +2,710 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "title": "SimpleChat model capability catalog",
+  "description": "Schema version 3: independently evidenced chat/generation capacities coexist with closed capability, reasoning-only, and embedding-policy records plus provider-qualified image profiles. Missing metadata remains unknown. Root token limits describe the publisher-native specification, not every hosting service. Image operations, reasoning policies, and embedding dimensions/input/batch policies do not authorize chat-token budgets.",
   "type": "object",
-  "required": ["schemaVersion", "models", "imageOperationProfiles", "sources"],
+  "required": ["schemaVersion", "lastUpdated", "capabilityFields", "sources", "models", "imageOperationProfiles"],
   "properties": {
-    "schemaVersion": {"const": 2},
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 3
+    },
+    "lastUpdated": {
+      "$ref": "#/$defs/verificationDate"
+    },
+    "description": {
+      "$ref": "#/$defs/nonemptyString"
+    },
+    "capabilityFields": {
+      "type": "object",
+      "description": "Human-readable description of every capability flag a model record may declare.",
+      "required": [
+        "processesText", "generatesText", "processesImages", "generatesImages",
+        "processesAudio", "generatesAudio", "processesVideo", "generatesVideo",
+        "processesBinaryFiles", "optimizedForCoding", "toolCalling",
+        "structuredOutput", "supportsStreaming", "reasoning"
+      ],
+      "propertyNames": {
+        "$ref": "#/$defs/capabilityName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/nonemptyString"
+      }
+    },
+    "coverageNotes": {
+      "$ref": "#/$defs/stringList"
+    },
     "imageOperationProfiles": {
       "type": "object",
-      "additionalProperties": {"$ref": "#/$defs/imageOperation"}
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/imageOperation"
+      }
     },
     "sources": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "object",
-        "required": ["id", "url"],
-        "properties": {"id": {"type": "string", "minLength": 1}, "url": {"type": "string", "format": "uri"}}
+        "$ref": "#/$defs/source"
       }
     },
     "models": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
-          "imageProfiles": {
-            "type": "object",
-            "propertyNames": {"enum": ["openai", "azure_openai", "foundry"]},
-            "additionalProperties": {"type": "string", "minLength": 1}
-          },
-          "imageLifecycle": {
-            "type": "object",
-            "additionalProperties": {"enum": ["current", "preview", "limited_access_preview", "deprecated", "retired"]}
-          }
-        }
+        "$ref": "#/$defs/modelRecord"
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
-    "strings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "nonemptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "stringList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonemptyString"
+      }
+    },
+    "sourceIdList": {
+      "allOf": [
+        {"$ref": "#/$defs/stringList"},
+        {"minItems": 1}
+      ]
+    },
+    "verificationDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "publicSourceUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "provider", "title", "url", "verifiedAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "provider": {
+          "enum": ["openai", "azure", "anthropic", "google", "vertex", "xai", "meta", "microsoft", "publisher", "cohere"]
+        },
+        "title": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "url": {
+          "$ref": "#/$defs/publicSourceUrl"
+        },
+        "verifiedAt": {
+          "$ref": "#/$defs/verificationDate"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "archivedFrom": {
+          "$ref": "#/$defs/publicSourceUrl"
+        },
+        "notes": {
+          "$ref": "#/$defs/stringList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenCapacity": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "A documented positive token capacity, or null when not independently verified/applicable. Never a request default, rate quota, or inferred sum."
+    },
+    "outputTokenAccounting": {
+      "enum": ["total_generation", "visible_only", "unknown"],
+      "description": "Whether the native protocol's generation cap includes reasoning and other generated tokens. A visible-only cap cannot reserve all generation."
+    },
+    "toolReasoningEfforts": {
+      "allOf": [
+        {"$ref": "#/$defs/stringList"},
+        {"minItems": 1}
+      ],
+      "description": "Verified request reasoning-effort values permitted with function tools in this profile. A constraint, not a default: preserve explicit none and never silently change effort or protocol. Omit when no additional restriction is verified."
+    },
+    "tokenEvidence": {
+      "type": "object",
+      "required": ["status", "sourceIds", "verifiedAt", "note"],
+      "properties": {
+        "status": {
+          "enum": ["verified", "unknown", "hosting-dependent", "not-applicable", "configuration-only"]
+        },
+        "sourceIds": {
+          "$ref": "#/$defs/sourceIdList"
+        },
+        "verifiedAt": {
+          "$ref": "#/$defs/verificationDate"
+        },
+        "note": {
+          "$ref": "#/$defs/nonemptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenEvidenceMap": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "contextWindow": {"$ref": "#/$defs/tokenEvidence"},
+        "inputTokenLimit": {"$ref": "#/$defs/tokenEvidence"},
+        "outputTokenLimit": {"$ref": "#/$defs/tokenEvidence"},
+        "effectiveContextWindow": {"$ref": "#/$defs/tokenEvidence"},
+        "outputTokenAccounting": {"$ref": "#/$defs/tokenEvidence"},
+        "toolReasoningEfforts": {"$ref": "#/$defs/tokenEvidence"}
+      },
+      "additionalProperties": false
+    },
+    "capacityEvidenceConsistency": {
+      "description": "Every declared capacity/accounting override and tool-effort constraint needs matching evidence. Only verified capacities are numeric; configuration-only values belong in evidence notes.",
+      "dependentSchemas": {
+        "contextWindow": {
+          "properties": {"tokenLimitEvidence": {"required": ["contextWindow"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "inputTokenLimit": {
+          "properties": {"tokenLimitEvidence": {"required": ["inputTokenLimit"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "outputTokenLimit": {
+          "properties": {"tokenLimitEvidence": {"required": ["outputTokenLimit"]}},
+          "required": ["tokenLimitEvidence"]
+        },
+        "effectiveContextWindow": {
+          "properties": {"tokenLimitEvidence": {"required": ["effectiveContextWindow"]}},
+          "required": ["tokenLimitEvidence"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["contextWindow"]}}
+          },
+          "then": {
+            "required": ["contextWindow"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"contextWindow": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"contextWindow": {"type": "integer"}}},
+            "else": {"properties": {"contextWindow": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["inputTokenLimit"]}}
+          },
+          "then": {
+            "required": ["inputTokenLimit"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"inputTokenLimit": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"inputTokenLimit": {"type": "integer"}}},
+            "else": {"properties": {"inputTokenLimit": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["outputTokenLimit"]}}
+          },
+          "then": {
+            "required": ["outputTokenLimit"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"outputTokenLimit": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"outputTokenLimit": {"type": "integer"}}},
+            "else": {"properties": {"outputTokenLimit": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["effectiveContextWindow"]}}
+          },
+          "then": {
+            "required": ["effectiveContextWindow"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"effectiveContextWindow": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"effectiveContextWindow": {"type": "integer"}}},
+            "else": {"properties": {"effectiveContextWindow": {"type": "null"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["outputTokenAccounting"]}}
+          },
+          "then": {
+            "required": ["outputTokenAccounting"],
+            "if": {
+              "properties": {"tokenLimitEvidence": {"properties": {"outputTokenAccounting": {"properties": {"status": {"const": "verified"}}}}}}
+            },
+            "then": {"properties": {"outputTokenAccounting": {"enum": ["total_generation", "visible_only"]}}},
+            "else": {"properties": {"outputTokenAccounting": {"const": "unknown"}}}
+          }
+        },
+        {
+          "if": {
+            "required": ["tokenLimitEvidence"],
+            "properties": {"tokenLimitEvidence": {"required": ["toolReasoningEfforts"]}}
+          },
+          "then": {
+            "required": ["toolReasoningEfforts"],
+            "properties": {
+              "tokenLimitEvidence": {
+                "properties": {"toolReasoningEfforts": {"properties": {"status": {"const": "verified"}}}}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tokenLimitProfile": {
+      "type": "object",
+      "description": "Apply a matching generic provider profile before more specific protocol/version profiles. Omitted fields inherit; an explicit null overrides inherited capacity with unknown. Equally specific overlapping profiles are prohibited by offline integrity tests.",
+      "required": ["id", "provider", "tokenLimitEvidence"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "provider": {
+          "enum": ["azure", "openai", "anthropic", "google", "vertex", "xai", "publisher"]
+        },
+        "protocol": {
+          "enum": ["chat_completions", "responses", "messages", "generate_content"]
+        },
+        "modelVersions": {
+          "allOf": [
+            {"$ref": "#/$defs/stringList"},
+            {"minItems": 1}
+          ]
+        },
+        "contextWindow": {"$ref": "#/$defs/tokenCapacity"},
+        "inputTokenLimit": {"$ref": "#/$defs/tokenCapacity"},
+        "outputTokenLimit": {"$ref": "#/$defs/tokenCapacity"},
+        "effectiveContextWindow": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "An additional host/protocol combined prompt-and-generation ceiling, not a replacement for advertised context. Preserve any approximation and counting margin in evidence.note."
+        },
+        "outputTokenAccounting": {"$ref": "#/$defs/outputTokenAccounting"},
+        "toolReasoningEfforts": {"$ref": "#/$defs/toolReasoningEfforts"},
+        "tokenLimitEvidence": {"$ref": "#/$defs/tokenEvidenceMap"},
+        "notes": {"$ref": "#/$defs/stringList"}
+      },
+      "anyOf": [
+        {"required": ["contextWindow"]},
+        {"required": ["inputTokenLimit"]},
+        {"required": ["outputTokenLimit"]},
+        {"required": ["effectiveContextWindow"]},
+        {"required": ["outputTokenAccounting"]},
+        {"required": ["toolReasoningEfforts"]}
+      ],
+      "allOf": [
+        {"$ref": "#/$defs/capacityEvidenceConsistency"}
+      ],
+      "dependentSchemas": {
+        "outputTokenAccounting": {
+          "properties": {"tokenLimitEvidence": {"required": ["outputTokenAccounting"]}}
+        },
+        "toolReasoningEfforts": {
+          "properties": {"tokenLimitEvidence": {"required": ["toolReasoningEfforts"]}}
+        }
+      },
+      "additionalProperties": false
+    },
+    "modelRecord": {
+      "description": "Audited token records retain the complete v3 evidence contract. Operation-only records declare documented qualitative facts; reasoning-only records declare no capabilities or token metadata. Embedding records have separately sourced operation limits, never chat context or generation capacity.",
+      "oneOf": [
+        {"$ref": "#/$defs/tokenModelRecord"},
+        {"$ref": "#/$defs/operationModelRecord"},
+        {"$ref": "#/$defs/reasoningOnlyModelRecord"},
+        {"$ref": "#/$defs/embeddingModelRecord"}
+      ]
+    },
+    "tokenModelRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "provider",
+        "displayName",
+        "aliases",
+        "family",
+        "lifecycle",
+        "capabilities",
+        "sourceIds",
+        "verifiedAliases",
+        "contextWindow",
+        "inputTokenLimit",
+        "outputTokenLimit",
+        "tokenLimitsApplicability",
+        "outputTokenAccounting",
+        "tokenLimitEvidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "provider": {
+          "enum": ["openai", "anthropic", "google", "xai", "meta", "microsoft", "blackforestlabs"]
+        },
+        "displayName": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "aliases": {
+          "$ref": "#/$defs/stringList",
+          "description": "Legacy qualitative-capability aliases. Their presence is not evidence for numeric capacity matching."
+        },
+        "verifiedAliases": {
+          "$ref": "#/$defs/stringList",
+          "description": "Only first-party verified identifiers for numeric matching; never display labels, guessed family names or arbitrary deployment suffixes."
+        },
+        "family": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "current",
+            "preview",
+            "limited-availability",
+            "legacy",
+            "deprecated",
+            "retired"
+          ]
+        },
+        "releaseDate": {
+          "type": ["string", "null"],
+          "format": "date"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilityMap"
+        },
+        "reasoningPolicy": {
+          "$ref": "#/$defs/reasoningPolicy"
+        },
+        "imageProfiles": {
+          "$ref": "#/$defs/imageProfiles"
+        },
+        "imageLifecycle": {
+          "$ref": "#/$defs/imageLifecycle"
+        },
+        "notes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "sourceIds": {
+          "$ref": "#/$defs/sourceIdList"
+        },
+        "contextWindow": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "Shared prompt-plus-generation context in tokens; not an independent input allowance."
+        },
+        "inputTokenLimit": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "An independently documented maximum input, not context renamed or context minus output."
+        },
+        "outputTokenLimit": {
+          "$ref": "#/$defs/tokenCapacity",
+          "description": "The documented generation maximum, not an adjustable API default or requested response length."
+        },
+        "tokenLimitsApplicability": {
+          "enum": ["text", "non-text", "unknown"]
+        },
+        "outputTokenAccounting": {
+          "$ref": "#/$defs/outputTokenAccounting"
+        },
+        "tokenLimitEvidence": {
+          "allOf": [
+            {"$ref": "#/$defs/tokenEvidenceMap"},
+            {"required": ["contextWindow", "inputTokenLimit", "outputTokenLimit"]}
+          ]
+        },
+        "tokenLimitProfiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/tokenLimitProfile"}
+        }
+      },
+      "allOf": [
+        {"$ref": "#/$defs/capacityEvidenceConsistency"},
+        {
+          "if": {"properties": {"tokenLimitsApplicability": {"const": "non-text"}}},
+          "then": {
+            "properties": {
+              "outputTokenLimit": {"type": "null"},
+              "outputTokenAccounting": {"const": "unknown"},
+              "tokenLimitEvidence": {
+                "properties": {"outputTokenLimit": {"properties": {"status": {"const": "not-applicable"}}}}
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"tokenLimitsApplicability": {"const": "text"}}},
+          "then": {
+            "properties": {
+              "tokenLimitEvidence": {
+                "properties": {"outputTokenLimit": {"properties": {"status": {"not": {"const": "not-applicable"}}}}}
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "operationModelRecord": {
+      "type": "object",
+      "description": "Documented operation/capability metadata without an independent token-capacity audit. No numeric limits, verified numeric aliases, accounting, or token profiles are permitted. Omitted qualitative flags are unknown, not false.",
+      "required": [
+        "id", "provider", "displayName", "aliases", "family", "lifecycle",
+        "capabilities", "sourceIds"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonemptyString"},
+        "provider": {"$ref": "#/$defs/tokenModelRecord/properties/provider"},
+        "displayName": {"$ref": "#/$defs/nonemptyString"},
+        "aliases": {"$ref": "#/$defs/tokenModelRecord/properties/aliases"},
+        "family": {"$ref": "#/$defs/nonemptyString"},
+        "lifecycle": {"$ref": "#/$defs/tokenModelRecord/properties/lifecycle"},
+        "releaseDate": {"$ref": "#/$defs/tokenModelRecord/properties/releaseDate"},
+        "capabilities": {"$ref": "#/$defs/operationCapabilityMap"},
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"},
+        "notes": {"$ref": "#/$defs/stringList"},
+        "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"},
+        "imageProfiles": {"$ref": "#/$defs/imageProfiles"},
+        "imageLifecycle": {"$ref": "#/$defs/imageLifecycle"}
+      },
+      "additionalProperties": false
+    },
+    "embeddingModelRecord": {
+      "type": "object",
+      "description": "Sourced text-embedding operation metadata. Lifecycle and unrelated capabilities remain absent unless documented. An embedding input limit is not a chat context window, and a conservative batch budget is not a published aggregate-token maximum.",
+      "required": [
+        "id", "provider", "displayName", "aliases", "family",
+        "capabilities", "embeddingPolicy", "sourceIds"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonemptyString"},
+        "provider": {"enum": ["openai", "cohere"]},
+        "displayName": {"$ref": "#/$defs/nonemptyString"},
+        "aliases": {"$ref": "#/$defs/tokenModelRecord/properties/aliases"},
+        "family": {"$ref": "#/$defs/nonemptyString"},
+        "lifecycle": {"$ref": "#/$defs/tokenModelRecord/properties/lifecycle"},
+        "releaseDate": {"$ref": "#/$defs/tokenModelRecord/properties/releaseDate"},
+        "capabilities": {"$ref": "#/$defs/embeddingCapabilityMap"},
+        "embeddingPolicy": {"$ref": "#/$defs/embeddingPolicy"},
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"},
+        "notes": {"$ref": "#/$defs/stringList"}
+      },
+      "additionalProperties": false
+    },
+    "embeddingCapabilityMap": {
+      "type": "object",
+      "required": [
+        "processesText", "generatesText", "generatesEmbeddings", "processesImages",
+        "generatesImages", "imageGenerationTool", "toolCalling"
+      ],
+      "properties": {
+        "processesText": {"const": true},
+        "generatesText": {"const": false},
+        "generatesEmbeddings": {"const": true},
+        "processesImages": {"type": "boolean"},
+        "generatesImages": {"const": false},
+        "imageGenerationTool": {"const": false},
+        "toolCalling": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "embeddingDimensions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65536
+    },
+    "embeddingInputTokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    },
+    "embeddingRevision": {
+      "allOf": [
+        {"$ref": "#/$defs/nonemptyString"},
+        {
+          "maxLength": 256,
+          "not": {"pattern": "[\\u0000-\\u001f\\u007f]"}
+        }
+      ]
+    },
+    "embeddingPrefix": {
+      "type": "string",
+      "maxLength": 8192,
+      "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+    },
+    "embeddingPolicy": {
+      "type": "object",
+      "required": [
+        "default_dimensions", "supports_dimensions", "min_dimensions", "max_dimensions",
+        "max_input_tokens", "max_batch_size", "max_batch_tokens", "tokenizer",
+        "model_revision", "document_prefix", "query_prefix", "api", "requires_input_type"
+      ],
+      "properties": {
+        "default_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "supports_dimensions": {"type": "boolean"},
+        "min_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "max_dimensions": {"$ref": "#/$defs/embeddingDimensions"},
+        "allowed_dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/embeddingDimensions"}
+        },
+        "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"},
+        "model_context_tokens": {
+          "$ref": "#/$defs/embeddingInputTokens",
+          "description": "Publisher model context, not permission to increase a hosting input limit."
+        },
+        "max_batch_size": {"type": "integer", "minimum": 1, "maximum": 2048},
+        "max_batch_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "description": "Operation batch budget. A conservative application bound is not evidence of a vendor's aggregate-token maximum."
+        },
+        "tokenizer": {"enum": ["cl100k_base", "conservative"]},
+        "model_revision": {"$ref": "#/$defs/embeddingRevision"},
+        "document_prefix": {"$ref": "#/$defs/embeddingPrefix"},
+        "query_prefix": {"$ref": "#/$defs/embeddingPrefix"},
+        "api": {"enum": ["openai", "unsupported"]},
+        "requires_input_type": {"type": "boolean"},
+        "hosting_limits": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"enum": ["azure", "openai", "cohere"]},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_input_tokens"],
+            "properties": {
+              "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "versions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "allOf": [
+              {"$ref": "#/$defs/embeddingRevision"},
+              {"maxLength": 64}
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_input_tokens", "model_revision"],
+            "properties": {
+              "max_input_tokens": {"$ref": "#/$defs/embeddingInputTokens"},
+              "model_revision": {"$ref": "#/$defs/embeddingRevision"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "reasoningOnlyModelRecord": {
+      "type": "object",
+      "description": "An allowlisted reasoning-parameter policy only. It cannot assert vision, chat, image operations, lifecycle, provider-native limits, or verified numeric aliases.",
+      "required": ["id", "reasoningPolicy"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonemptyString"},
+        "aliases": {"$ref": "#/$defs/stringList"},
+        "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"}
+      },
+      "additionalProperties": false
+    },
+    "reasoningPolicy": {
+      "type": "object",
+      "required": ["status", "efforts", "default_effort", "sourceIds"],
+      "properties": {
+        "status": {"enum": ["supported", "unsupported", "unknown"]},
+        "efforts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["none", "minimal", "low", "medium", "high", "xhigh"]}
+        },
+        "default_effort": {
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh", null],
+          "description": "Application fallback for an invalid explicit selection, not the provider default for an omitted parameter."
+        },
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"}
+      },
+      "if": {"properties": {"status": {"const": "supported"}}},
+      "then": {
+        "properties": {"efforts": {"minItems": 1}},
+        "anyOf": [
+          {"properties": {"default_effort": {"const": "none"}, "efforts": {"contains": {"const": "none"}}}},
+          {"properties": {"default_effort": {"const": "minimal"}, "efforts": {"contains": {"const": "minimal"}}}},
+          {"properties": {"default_effort": {"const": "low"}, "efforts": {"contains": {"const": "low"}}}},
+          {"properties": {"default_effort": {"const": "medium"}, "efforts": {"contains": {"const": "medium"}}}},
+          {"properties": {"default_effort": {"const": "high"}, "efforts": {"contains": {"const": "high"}}}},
+          {"properties": {"default_effort": {"const": "xhigh"}, "efforts": {"contains": {"const": "xhigh"}}}}
+        ]
+      },
+      "else": {
+        "properties": {
+          "efforts": {"maxItems": 0},
+          "default_effort": {"type": "null"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "imageProvider": {
+      "enum": ["openai", "azure_openai", "foundry"]
+    },
+    "imageProfiles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/imageProvider"},
+      "additionalProperties": {"$ref": "#/$defs/nonemptyString"}
+    },
+    "imageLifecycle": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/imageProvider"},
+      "additionalProperties": {
+        "enum": ["current", "preview", "limited_access_preview", "deprecated", "retired"]
+      }
+    },
     "imageOperation": {
       "type": "object",
-      "required": ["api", "editing", "masking", "sizes", "qualities", "backgrounds", "inputFormats", "outputFormats", "availability", "sourceIds"],
-      "additionalProperties": false,
+      "required": [
+        "api", "editing", "masking", "sizes", "qualities", "backgrounds",
+        "inputFormats", "outputFormats", "availability", "sourceIds"
+      ],
       "properties": {
         "api": {"enum": ["images", "responses", "mai", "flux"]},
         "modelPath": {"enum": ["flux-2-pro", "flux-2-flex", "flux-kontext-pro", "flux-pro-1.1"]},
@@ -52,12 +713,19 @@
         "editing": {"type": "boolean"},
         "masking": {"type": "boolean"},
         "maskEvidence": {"enum": ["documented", "unknown", "unsupported"]},
-        "sizes": {"$ref": "#/$defs/strings"},
-        "qualities": {"$ref": "#/$defs/strings"},
-        "backgrounds": {"$ref": "#/$defs/strings"},
-        "inputFormats": {"$ref": "#/$defs/strings"},
-        "outputFormats": {"$ref": "#/$defs/strings"},
-        "sourceIds": {"$ref": "#/$defs/strings"},
+        "sizes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[1-9][0-9]*x[1-9][0-9]*$"}
+        },
+        "qualities": {"$ref": "#/$defs/stringList"},
+        "backgrounds": {"$ref": "#/$defs/stringList"},
+        "inputFormats": {"$ref": "#/$defs/imageFormats"},
+        "outputFormats": {
+          "allOf": [{"$ref": "#/$defs/imageFormats"}, {"minItems": 1}]
+        },
+        "sourceIds": {"$ref": "#/$defs/sourceIdList"},
         "maxMaskBytes": {"type": "integer", "minimum": 1},
         "maxReferenceImages": {"type": "integer", "minimum": 1},
         "minDimension": {"type": "integer", "minimum": 1},
@@ -65,8 +733,91 @@
         "availability": {
           "type": "object",
           "required": ["commercial", "government", "unknown"],
-          "additionalProperties": {"enum": ["documented", "unknown", "unavailable"]}
+          "properties": {
+            "commercial": {"enum": ["documented", "unknown", "unavailable"]},
+            "government": {"enum": ["documented", "unknown", "unavailable"]},
+            "unknown": {"const": "unknown"}
+          },
+          "additionalProperties": false
         }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"masking": {"const": true}}},
+          "then": {
+            "properties": {
+              "editing": {"const": true},
+              "maskEvidence": {"const": "documented"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"editing": {"const": true}}},
+          "then": {"properties": {"inputFormats": {"minItems": 1}}},
+          "else": {"properties": {"inputFormats": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"api": {"const": "flux"}}},
+          "then": {"required": ["modelPath"]},
+          "else": {"not": {"required": ["modelPath"]}}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "imageFormats": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["image/png", "image/jpeg", "image/webp"]}
+    },
+    "capabilityName": {
+      "enum": [
+        "processesText", "generatesText", "processesImages", "generatesImages",
+        "processesAudio", "generatesAudio", "processesVideo", "generatesVideo",
+        "processesBinaryFiles", "optimizedForCoding", "toolCalling",
+        "structuredOutput", "supportsStreaming", "reasoning", "imageGenerationTool",
+        "generatesEmbeddings"
+      ]
+    },
+    "operationCapabilityMap": {
+      "type": "object",
+      "description": "Only documented flags may be declared. The core operation flags are required; absent streaming, reasoning, and other optional flags remain unknown.",
+      "required": [
+        "processesText", "generatesText", "processesImages", "generatesImages",
+        "imageGenerationTool", "toolCalling"
+      ],
+      "properties": {
+        "generatesEmbeddings": {"const": false}
+      },
+      "propertyNames": {"$ref": "#/$defs/capabilityName"},
+      "additionalProperties": {"type": "boolean"}
+    },
+    "capabilityMap": {
+      "type": "object",
+      "description": "Every original audited flag is required. Later operation flags are optional and must not be inferred from the original flags.",
+      "required": [
+        "processesText",
+        "generatesText",
+        "processesImages",
+        "generatesImages",
+        "processesAudio",
+        "generatesAudio",
+        "processesVideo",
+        "generatesVideo",
+        "processesBinaryFiles",
+        "optimizedForCoding",
+        "toolCalling",
+        "structuredOutput",
+        "supportsStreaming",
+        "reasoning"
+      ],
+      "properties": {
+        "generatesEmbeddings": {"const": false}
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/capabilityName"
+      },
+      "additionalProperties": {
+        "type": "boolean"
       }
     }
   }

@@ -40,6 +40,7 @@ from functions_public_workspaces import (
 )
 from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
+    _write_temp_generated_file,
     assert_generated_chat_artifact_is_published_for_user,
     download_blob_content,
     queue_generated_document_processing,
@@ -485,10 +486,21 @@ def _publish_generated_chat_artifact_for_user(
         if recheck_effect:
             reauthorize()
         try:
-            create_document(
-                file_name=name, user_id=user_id, document_id=receipt["document_id"], num_file_chunks=0,
-                status="Queued for processing" if scope == "personal" else "Pending approval", **scope_args,
-            )
+            with ExitStack() as cleanup:
+                source_file_path = None
+                if scope == "personal" and os.path.splitext(name)[1].lower() == ".xsd":
+                    if artifact_bytes is None:
+                        artifact_bytes = download_blob_content(artifact["blob_container"], artifact["blob_path"])
+                    if hashlib.sha256(artifact_bytes).hexdigest() != content_sha256:
+                        raise ValueError("The generated artifact bytes changed.")
+                    source_file_path = _write_temp_generated_file(artifact_bytes, ".xsd")
+                    cleanup.callback(os.remove, source_file_path)
+                create_document(
+                    file_name=name, user_id=user_id, document_id=receipt["document_id"], num_file_chunks=0,
+                    status="Queued for processing" if scope == "personal" else "Pending approval",
+                    source_file_path=source_file_path, allow_deferred_xsd_source=scope != "personal",
+                    **scope_args,
+                )
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain("create", exc)
         document = _destination_document(container, receipt)

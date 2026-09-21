@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.115"
+version: "0.261.122"
 ---
 
 ## How to use this reference
@@ -25,9 +25,14 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Conversation header and status
 
+The conversation details dialog includes a paginated **Microsoft 365 sharing
+and analysis acknowledgements** section. It shows the recorded source, decision,
+effective duration, and approval reference without exposing credentials or
+private profile preferences.
+
 ### React V2 navigation on narrow screens
 
-Since **0.261.115**, **Expand navigation** opens the navigation rail above the
+Since **0.261.113**, **Expand navigation** opens the navigation rail above the
 chat on screens narrower than 768 pixels. **Collapse navigation**, Escape, or
 the shaded **Close navigation** backdrop closes it. Choosing a destination or
 conversation also closes the mobile rail. These actions do not change the
@@ -58,6 +63,18 @@ arrived during streaming. After granting access, send the message again.
 
 ## Chat tools and composer
 
+Microsoft 365 agents can pause for a source-sharing or deeper-analysis decision.
+The local approval dialog offers only the durations permitted by the action.
+The same request is available in **Approvals** and notifications; declining a
+source keeps unrelated tools available. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
+**Connect Microsoft 365** appears on a paused request when the selected source
+needs delegated sign-in or consent. It opens Microsoft's authorization flow
+for that request's sources and returns to the same conversation to resume it.
+It does not send you to Profile, approve data sharing, or create a workflow
+Run as binding. Connection failures stay visible in the request instead of
+being presented as a model answer that no documents exist.
+
 {% include media.html src="reference/chat-controls-composer-tools.png" alt="Message composer with quick tools, upload controls, URL review, web search, and send button visible." title="Chat tools and composer" capture="Capture the message composer with quick tools, upload controls, URL review, web search, and send button visible." %}
 
 | Control | What it does | Why you would use it | Enabled by |
@@ -74,6 +91,31 @@ arrived during streaming. After granting access, send the message again.
 | `chat-mobile-tools-toggle` | Opens the mobile tools panel containing quick actions, voice controls, and selectors. | Use it on smaller screens when desktop toolbar controls move into the offcanvas panel. | Always available |
 | `chat-tutorial-btn` | Launches the guided chat walkthrough. | Use it when onboarding users or when you want a reminder of the main chat workflow. | Always available |
 
+## Microsoft 365 outgoing action cards
+
+Implemented in version: **0.261.038** (`application/single_app/config.py`).
+Manual and delayed email/invitation tools display a saved review card separately
+from the agent's text and citations. Cards remain available after reload and
+through **Approvals** and workflow activity.
+
+| Control | Purpose and limits |
+| --- | --- |
+| Send | Sends a manually prepared message or invitation after checking the current owner, permissions, and reviewed revision. |
+| Send now | Claims an eligible delayed action before its scheduled delivery. It is not a retry for an uncertain remote outcome. |
+| Cancel | Stops an unclaimed delivery without mailbox authentication. It leaves Outlook drafts and does not recall sent messages. |
+| Full review | Loads the complete owner-only body when the initial preview is truncated. Send stays unavailable until that detail is loaded. |
+| Reconnect | Renews sign-in and returns to the same saved card. It does not resend the agent request or automatically confirm the action. |
+| Refresh | Retrieves current server state after an interrupted request or a change in another tab. It never sends merely by refreshing. |
+
+Only the data owner receives send/cancel controls and private body/recipient
+details. Shared viewers get a read-only summary. The countdown is informational;
+loading an overdue card never submits a send. Check Outlook before preparing a
+replacement when delivery has an unknown outcome. Immediate operations keep
+their existing tool-result receipts without a second Send button.
+
+For email, Send submits the reviewed content and leaves the original Outlook
+draft. **Do not send the retained draft again.** See
+[Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
 ## Generated image editor
 
 From version **0.261.107**, the image editor uses the selected global image model's

@@ -1,5 +1,5 @@
 # postconfig.py
-import azure.cosmos as azure_cosmos
+import copy
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
 import json
@@ -8,7 +8,16 @@ import shutil
 import subprocess
 from urllib.parse import urlparse
 
-credential = AzureCliCredential()
+from deployment_configuration import (
+    configure_redis,
+    configure_search,
+    load_deployment_environment,
+    persist_settings,
+)
+from deployment_cosmos import create_deployment_cosmos_client
+
+load_deployment_environment()
+credential = AzureCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"])
 
 STANDARD_AZURE_OPENAI_HOST_SUFFIXES = (
     ".openai.azure.com",
@@ -63,6 +72,39 @@ def run_azure_cli_command(command_args, description):
 
     print(f"Retrieved {description}")
     return value
+
+
+def ensure_azure_cli_extension(extension_name):
+    """Install or upgrade an Azure CLI extension, tolerating an already-current install.
+
+    Unlike run_azure_cli_command this does not raise, because a missing extension should be
+    reported by the command that needs it rather than aborting the whole postprovision hook.
+    """
+    azure_cli_executable = get_azure_cli_executable()
+    result = subprocess.run(
+        [
+            azure_cli_executable,
+            "extension",
+            "add",
+            "--name",
+            extension_name,
+            "--upgrade",
+            "--only-show-errors",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print(
+            f"Warning: could not install Azure CLI extension '{extension_name}': "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return False
+
+    print(f"Azure CLI extension '{extension_name}' is available")
+    return True
 
 
 def get_endpoint_hostname(endpoint):
@@ -171,13 +213,39 @@ def get_search_service_key(resource_name, resource_group, subscription_id):
     )
 
 
-def get_redis_cache_key(resource_name, resource_group, subscription_id):
+def get_redis_cache_key(resource_name, resource_group, subscription_id, cache_kind="managed"):
+    if cache_kind == "classic":
+        return run_azure_cli_command(
+            [
+                "redis",
+                "list-keys",
+                "--name",
+                resource_name,
+                "--resource-group",
+                resource_group,
+                "--subscription",
+                subscription_id,
+                "--query",
+                "primaryKey",
+                "-o",
+                "tsv",
+            ],
+            "Redis cache primary key",
+        )
+
+    # az redisenterprise ships in a separate CLI extension rather than the core command set.
+    ensure_azure_cli_extension("redisenterprise")
+
+    # Azure Managed Redis keys live on the database, which is always named "default".
     return run_azure_cli_command(
         [
-            "redis",
+            "redisenterprise",
+            "database",
             "list-keys",
-            "--name",
+            "--cluster-name",
             resource_name,
+            "--database-name",
+            "default",
             "--resource-group",
             resource_group,
             "--subscription",
@@ -187,7 +255,7 @@ def get_redis_cache_key(resource_name, resource_group, subscription_id):
             "-o",
             "tsv",
         ],
-        "Redis cache primary key",
+        "Azure Managed Redis primary key",
     )
 
 
@@ -225,6 +293,7 @@ def get_core_service_keys(
     document_intelligence_endpoint,
     redis_cache_host_name,
     speech_service_endpoint,
+    redis_cache_kind="managed",
 ):
     openai_resource_name = extract_resource_name_from_endpoint(openai_endpoint)
     search_resource_name = extract_resource_name_from_endpoint(search_service_endpoint)
@@ -283,18 +352,12 @@ def get_core_service_keys(
             redis_resource_name,
             resource_group,
             subscription_id,
+            cache_kind=redis_cache_kind,
         )
 
     return keys
 
-cosmosEndpoint = os.getenv("var_cosmosDb_uri")
-cosmosKey = os.getenv("var_cosmosDb_key")
-
-if cosmosKey:
-    client = azure_cosmos.CosmosClient(cosmosEndpoint, cosmosKey)
-else:
-    credential.get_token("https://cosmos.azure.com/.default")
-    client = azure_cosmos.CosmosClient(cosmosEndpoint, credential=credential)
+client = create_deployment_cosmos_client()
 
 database_name = "SimpleChat"
 container_name = "settings"
@@ -315,6 +378,8 @@ except CosmosResourceNotFoundError:
         "partition_key": partition_key
     }
 
+original_item = copy.deepcopy(item)
+
 # Get values from environment variables
 var_authenticationType = os.getenv("var_authenticationType")
 var_redisAuthenticationType = os.getenv("var_redisAuthenticationType") or var_authenticationType
@@ -333,6 +398,19 @@ var_contentSafetyEndpoint = os.getenv("var_contentSafetyEndpoint")
 var_searchServiceEndpoint = os.getenv("var_searchServiceEndpoint")
 var_documentIntelligenceServiceEndpoint = os.getenv("var_documentIntelligenceServiceEndpoint")
 var_redisCacheHostName = os.getenv("var_redisCacheHostName")
+var_redisCacheKind = os.getenv("var_redisCacheKind") or ""
+var_redisCachePort = os.getenv("var_redisCachePort") or ""
+
+if not var_redisCacheKind and var_redisCacheHostName:
+    # Fall back to the host name suffix when the deployment did not report a cache kind,
+    # so a stale environment cannot mislabel an Azure Cache for Redis instance. Match the
+    # full suffix rather than a substring so a lookalike host name cannot be misread.
+    _redis_host_name = var_redisCacheHostName.strip().rstrip(".").lower()
+    var_redisCacheKind = (
+        "managed"
+        if _redis_host_name.endswith((".redis.azure.net", ".redisenterprise.cache.azure.net"))
+        else "classic"
+    )
 var_videoIndexerName = os.getenv("var_videoIndexerName")
 var_videoIndexerLocation = os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
@@ -352,6 +430,7 @@ core_service_keys = get_core_service_keys(
     document_intelligence_endpoint=var_documentIntelligenceServiceEndpoint,
     redis_cache_host_name=var_redisCacheHostName,
     speech_service_endpoint=var_speechServiceEndpoint,
+    redis_cache_kind=var_redisCacheKind,
 )
 openai_key = core_service_keys.get("azure_openai_key")
 
@@ -416,7 +495,8 @@ item["enable_semantic_kernel"] = False
 item["enable_appinsights_global_logging"] = True
 
 # Scale > Redis Cache
-# todo support redis cache configuration
+configure_redis(item, var_redisCacheHostName, var_redisCacheKind,
+                var_redisCachePort, var_redisAuthenticationType, core_service_keys)
 
 # Workspaces > Metadata Extraction
 item["enable_extract_meta_data"] = True
@@ -447,14 +527,6 @@ item["content_safety_endpoint"] = var_contentSafetyEndpoint
 item["content_safety_authentication_type"] = var_authenticationType
 if var_authenticationType == "key" and "content_safety_key" in core_service_keys:
     item["content_safety_key"] = core_service_keys["content_safety_key"]
-
-# Redis Cache Configuration
-if var_redisCacheHostName and var_redisCacheHostName.strip():
-    item["enable_redis_cache"] = True
-item["redis_url"] = var_redisCacheHostName
-item["redis_auth_type"] = var_redisAuthenticationType
-if var_redisAuthenticationType == "key" and "redis_key" in core_service_keys:
-    item["redis_key"] = core_service_keys["redis_key"]
 
 # Safety > Conversation Archiving
 item["enable_conversation_archiving"] = True
@@ -491,7 +563,8 @@ item["speech_service_location"] = var_speechServiceLocation
 if var_authenticationType == "key" and "speech_service_key" in core_service_keys:
     item["speech_service_key"] = core_service_keys["speech_service_key"]
 
-# 5. Upsert the updated items back into Cosmos DB
-response = container.upsert_item(item)
-print(
-    f"Updated item: {response['id']} with enable_external_healthcheck = {response['enable_external_healthcheck']}")
+created_indexes = configure_search(item, credential)
+response = persist_settings(container, original_item, item, credential)
+print(f"Settings saved and verified. Search indexes created: {', '.join(created_indexes) or 'none (already exist)'}.")
+print("Restart the web service to activate any changed Redis session configuration.")
+client.close()

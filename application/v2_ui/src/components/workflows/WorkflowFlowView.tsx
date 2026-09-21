@@ -13,7 +13,7 @@ import {
     type WorkflowExecutionPage, type WorkflowExecutionRecord,
 } from '../../lib/workflowExecutionHistory';
 import {
-    formatWorkflowIterationPath, workflowErrorMessage, workflowScopeKey,
+    formatWorkflowIterationPath, workflowErrorMessage, workflowRuntimeGateNotice, workflowScopeKey,
     type WorkflowIterationFrame, type WorkflowRuntimeProjection, type WorkflowScope,
 } from '../../lib/workflowEditor';
 import { GlassButton, GlassPanel } from '../ui/primitives';
@@ -323,6 +323,7 @@ export function WorkflowFlowView({
         Array.from(buttons ?? []).find((button) => button.dataset.workflowNodeId === focusRequest.id)?.focus();
     }, [focusRequest, view]);
     const cancelOnly = runtime?.gate?.choices.length === 1 && runtime.gate.choices[0] === 'cancel';
+    const microsoft365Gate = runtime?.gate?.reason_code === 'm365_authorization';
 
     return <section className="min-w-0 space-y-4" aria-label="Workflow Flow">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -348,9 +349,9 @@ export function WorkflowFlowView({
             {stableTarget.kind === 'run' ? <div className="space-y-2 rounded-lg border border-edge p-3">
                 <p className="break-all text-xs text-text-2">Selected instance: {formatWorkflowIterationPath(path) || 'Root scope'}.</p>
                 {path.length ? <GlassButton size="sm" onClick={() => setPath([])}>Return to root instance</GlassButton> : null}
-                {runtime?.gate ? <p className={`text-xs ${cancelOnly ? 'text-danger' : 'text-warn'}`}>
+                {runtime?.gate ? <p className={`text-xs ${cancelOnly && !microsoft365Gate ? 'text-danger' : 'text-warn'}`}>
                     Current run gate: {runtime.gate.reason_code || runtime.gate.kind}.
-                    {cancelOnly ? ' Cancel only. Retained Repeat progress does not permit another batch.' : ' Decisions remain in the separate runtime panel.'}
+                    {' '}{workflowRuntimeGateNotice(runtime.gate)}
                 </p> : null}
                 <WorkflowRepeatProgress summary={runtime?.repeat_progress} label="Run-wide retained Repeat observation" />
                 {runtime?.repeat_progress ? <p className="text-xs text-text-3">

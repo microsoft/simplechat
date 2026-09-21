@@ -1,8 +1,10 @@
 # test_action_connection_test_secret_redaction.py
+#!/usr/bin/env python3
 """
 Functional test for action connection test error sanitization.
 Version: 0.261.096
 Implemented in: 0.250.217
+Updated in: 0.261.029
 
 This test ensures that action Test Connection failures never echo stored
 credentials back to the browser. It covers manifest-sourced secrets, generic
@@ -59,7 +61,7 @@ def _install_test_stubs():
 
 def _load_tester_module():
     """Load functions_action_connection_tests.py without the full app config."""
-    with patch.dict(sys.modules):
+    with patch.dict(sys.modules), patch.object(sys, "path", [os.path.dirname(TESTER_FILE), *sys.path]):
         _install_test_stubs()
         spec = importlib.util.spec_from_file_location("functions_action_connection_tests", TESTER_FILE)
         if spec is None or spec.loader is None:

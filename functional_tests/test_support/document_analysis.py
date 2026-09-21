@@ -1,7 +1,7 @@
 # document_analysis.py
 """Original-source fixtures and isolated SDK seams for the real Analyze producer.
 
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.109
 """
 
@@ -91,7 +91,6 @@ def document_analysis_runtime(documents):
         fixture['document']['group_id'] for fixture in documents.values()
         if fixture['document'].get('group_id')
     ]
-
     def assert_group_role(user_id, group_id, **kwargs):
         if user_id != USER_ID or group_id not in group_ids:
             raise PermissionError('Fixture group access denied.')

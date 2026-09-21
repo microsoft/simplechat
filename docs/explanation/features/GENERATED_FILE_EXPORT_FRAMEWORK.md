@@ -37,6 +37,7 @@ replace original records, gather missing evidence, or decide workflow control fl
 - `functions_assistant_table_exports.py` for CSV intent, table parsing, safe headers, and formula-injection protection
 - `functions_simplechat_operations.py` for authorized generated chat-artifact upload, download, promotion, and rollback
 - `functions_tabular_generated_exports.py` for durable CSV batching, checkpoints, cancellation, reauthorization, and publication
+- `functions_xsd_schema.py` for closed schema-graph compilation and final-byte validation when an XSD is explicitly selected
 - `python-docx` for DOCX rendering and PyMuPDF for PDF rendering
 
 ## Technical Specifications
@@ -45,7 +46,7 @@ replace original records, gather missing evidence, or decide workflow control fl
 
 - **CSV**: Renders structured rows with safe headers, formula neutralization, quoted/multiline values, and durable background execution when the existing row or batch threshold is exceeded.
 - **JSON**: Persists a valid generated JSON payload as a concise completed artifact with `Download JSON`, `View JSON`, and workspace-promotion actions.
-- **XML**: Persists one hardened, well-formed XML document as a concise completed artifact with `Download XML`, `View XML`, and workspace-promotion actions.
+- **XML**: Persists one hardened, well-formed XML document as a concise completed artifact with `Download XML`, `View XML`, and workspace-promotion actions. When a ready XSD is explicitly selected, generic XML publication is suppressed and the complete final bytes must validate against that schema before upload.
 - **DOCX**: Renders a titled document with final assistant content and, when present, a structured function-result table.
 - **PDF**: Renders a titled PDF with final assistant content and, when present, a structured function-result table.
 

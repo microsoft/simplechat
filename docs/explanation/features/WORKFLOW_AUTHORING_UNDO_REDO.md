@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.123**
 
+Microsoft 365 Run as history integration fixed in version: **0.261.124**.
+
 Application version tracking: `application\single_app\config.py`.
 
 ## Purpose and dependencies
@@ -46,7 +48,7 @@ errors before saving.
 
 | Area | Retained state |
 | --- | --- |
-| Common fields | Name, description, runner/model/agent, schedule, enabled/chat choices, reliability, shared references, and run limits |
+| Common fields | Name, description, runner/model/agent, Microsoft 365 Run as, schedule, enabled/chat choices, reliability, shared references, and run limits |
 | Tasks and controls | Configuration, bindings, predicates, routes, joins, outputs, For each/Collect, Repeat, Analyze and publication configuration |
 | Structural edits | Exact catalogue, node, region and join identities and executable order; Redo does not allocate replacements |
 | Unfinished forms | Raw schema text, errors, decision/enum builder inputs, query-tag spacing, accepted baselines, and Repeat-row mappings |
@@ -54,6 +56,9 @@ errors before saving.
 An unset Repeat maximum remains unset. Missing values, explicit `undefined`,
 `NaN`, false, zero, null, Unicode, and whitespace are not normalized by replay.
 Only ordinary Save serialization produces a transport payload.
+
+Run as history changes only the unsaved account selection. It does not grant
+Microsoft 365 consent or restore an approval for a different workflow revision.
 
 Selection recovers to the affected canonical block, or a surviving sibling,
 parent, or root. Geometry, collapse, pan/zoom, fetched pages, preview responses,
@@ -127,6 +132,8 @@ Save continues to use `workflowForSave(draft, original, scope)`. Preview uses
 the existing compiler-preview path, debounce, abort and candidate fencing.
 Neither payload contains history, buffers, selection, or geometry. Raw-only
 formatting does not request a semantically identical compiler preview.
+The selected Microsoft 365 Run as account is an authored definition field, so
+both Save and preview retain it and calculate the same authored digest.
 
 ## Save and session lifecycle
 

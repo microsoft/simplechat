@@ -1,5 +1,5 @@
 // test_shared_ai_connections_ui_logic.mjs
-// Version: 0.261.108
+// Version: 0.261.122
 // Implemented in: 0.261.105; embeddings added in 0.261.106
 // Shared selection identity, technical metadata, publication policy and safe transport.
 

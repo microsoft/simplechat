@@ -51,6 +51,11 @@ from config import (
     cosmos_settings_container,
 )
 from functions_appinsights import log_event
+from functions_m365_data_lifecycle import (
+    is_live_m365_authorization,
+    strip_m365_runtime_references,
+    validate_m365_admin_record_edit,
+)
 from content_screening.repository import preserve_screening_on_transfer
 from functions_cosmos_throughput import (
     CosmosThroughputError,
@@ -3466,8 +3471,18 @@ def _write_cosmos_migration_record(
     cancel_event=None,
 ):
     """Write one provenance-tagged Cosmos record with bounded transient retries."""
+    if is_live_m365_authorization(document):
+        log_event(
+            "[DATA_MANAGEMENT] Excluded non-transferable Microsoft 365 authority or deprecated action.",
+            {"document_id": document.get("id")}, level=logging.WARNING,
+        )
+        return {
+            "copied": False, "skipped": True, "bytes": 0, "request_units": 0,
+            "attempt": 0, "elapsed_seconds": 0, "reason": "m365_non_transferable",
+        }
+    writable_document = strip_m365_runtime_references(copy.deepcopy(document), log_event=log_event)
     writable_document = preserve_screening_on_transfer(
-        document, operation="migration", previous_document=target_document,
+        writable_document, operation="migration", previous_document=target_document,
     )
     add_cosmos_migration_provenance(
         writable_document,
@@ -13198,6 +13213,16 @@ def save_data_management_cosmos_editor_document(container_name, document_id, par
         raise DataManagementCosmosEditorError("Document partition key value cannot be changed in the Cosmos DB editor.")
 
     original_document = container.read_item(item=safe_document_id, partition_key=partition_key_value)
+    try:
+        validate_m365_admin_record_edit(original_document, document)
+    except ValueError as error:
+        log_event(
+            "[DATA_MANAGEMENT] Rejected a Microsoft 365 authority or retired-action edit.",
+            {"document_id": safe_document_id}, level=logging.WARNING,
+        )
+        raise DataManagementCosmosEditorError(
+            "Microsoft 365 consent cannot be edited here, and retired Graph actions cannot be created or restored."
+        ) from error
     change_summary = _summarize_cosmos_editor_changes(original_document, document)
     clean_document = _strip_cosmos_system_fields(copy.deepcopy(document))
     replace_target = safe_document_id
@@ -13507,7 +13532,10 @@ def _iter_cosmos_container_items(container, since_epoch=None):
         parameters=parameters,
         enable_cross_partition_query=True,
     ):
-        yield _strip_cosmos_system_fields(item)
+        if is_live_m365_authorization(item):
+            log_event("[AUTH] Live Microsoft 365 authority excluded from backup.", debug_only=True)
+            continue
+        yield strip_m365_runtime_references(_strip_cosmos_system_fields(item), log_event=log_event)
 
 
 def _export_cosmos_artifacts(container_client, base_prefix, settings, job, fernet=None):
@@ -15084,10 +15112,16 @@ def _iter_backup_cosmos_source_items(
     def normalize_item(raw_item):
         if not isinstance(raw_item, dict):
             return None
+        if is_live_m365_authorization(raw_item):
+            log_event(
+                "[DATA_MANAGEMENT] Excluded non-transferable Microsoft 365 authority or deprecated action.",
+                {"document_id": raw_item.get("id")}, level=logging.WARNING,
+            )
+            return None
         source_timestamp = _safe_int(raw_item.get("_ts"), default=0, minimum=0)
         if source_cutoff_epoch and source_timestamp > source_cutoff_epoch:
             return None
-        record = _strip_cosmos_system_fields(raw_item)
+        record = strip_m365_runtime_references(_strip_cosmos_system_fields(raw_item), log_event=log_event)
         partition_key = _get_document_path_value(record, artifact["partition_key_path"])
         source_identity = _build_backup_source_identity(
             "cosmos",
@@ -17707,6 +17741,12 @@ def _execute_restore_cosmos_resources(job, state, settings, restore_plan, contai
                 _assert_restore_job_lease(job)
                 result["processed_count"] += 1
                 result["bytes"] += len(json.dumps(record, default=_json_default).encode("utf-8"))
+                if is_live_m365_authorization(record):
+                    result["skipped_count"] += 1
+                    result["excluded_m365_authorizations"] = result.get("excluded_m365_authorizations", 0) + 1
+                    log_event("[AUTH] Restored Microsoft 365 authority requires fresh authorization.", debug_only=True)
+                    continue
+                record = strip_m365_runtime_references(record, log_event=log_event)
                 document_id = _safe_text((record or {}).get("id"))
                 partition_key = _get_document_path_value(record, artifact["partition_key_path"])
                 if not document_id or partition_key is None:

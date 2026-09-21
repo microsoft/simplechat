@@ -1,7 +1,7 @@
 # test_content_screening_model.py
 """
 Behavioral regression tests for the isolated content-screening model evaluator.
-Version: 0.261.106
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Exercise the real evaluator and existing endpoint/capability/parameter helpers.

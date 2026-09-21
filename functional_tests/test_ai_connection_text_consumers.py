@@ -1,7 +1,7 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
 Custom request identity and strict hydration merge coverage: 0.261.113
@@ -34,14 +34,19 @@ import functions_ai_connections as connections
 from functions_model_capabilities import (
     REASONING_IDENTIFIER_FIELDS,
     is_vision_capable_model,
+    project_model_budget_metadata,
     resolve_model_reasoning_policy,
 )
-from functions_model_endpoint_providers import MODEL_ENDPOINT_PROVIDER_CUSTOM, get_model_endpoint_provider
+from functions_model_endpoint_providers import get_model_endpoint_provider, normalize_custom_endpoint_url_mode
 from functions_model_endpoint_types import (
-    ModelEndpointValidationError,
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_workflow_context import wrap_workflow_model_client
+from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_model_endpoint_urls import normalize_endpoint_text
 
 
 def model(name="gpt-4o", **overrides):
@@ -96,10 +101,19 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "filter_model_endpoints_by_capability": connections.filter_model_endpoints_by_capability,
         "REASONING_IDENTIFIER_FIELDS": REASONING_IDENTIFIER_FIELDS,
         "resolve_model_reasoning_policy": resolve_model_reasoning_policy,
+        "project_model_budget_metadata": project_model_budget_metadata,
+        "normalize_custom_endpoint_url_mode": normalize_custom_endpoint_url_mode,
+        "DEFAULT_ANTHROPIC_VERSION": DEFAULT_ANTHROPIC_VERSION,
+        "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
+        "ModelEndpointValidationError": ModelEndpointValidationError,
+        "get_model_endpoint_provider": get_model_endpoint_provider,
+        "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
         "normalize_model_endpoints": lambda values: (deepcopy(values), False),
-        "sanitize_model_endpoints_for_frontend": lambda values, **kwargs: deepcopy(values),
+        "sanitize_model_endpoints_for_frontend": lambda endpoints, **_kwargs: deepcopy(endpoints),
+        "wrap_workflow_model_client": wrap_workflow_model_client,
         "keyvault_model_endpoint_get_helper": Mock(side_effect=lambda value, *args, **kwargs: deepcopy(value)),
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_model_endpoint_identity_headers": Mock(return_value={}),
@@ -108,11 +122,6 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": "azure_openai",
         "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": "anthropic",
         "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": "openai_style",
-        "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
-        "ModelEndpointValidationError": ModelEndpointValidationError,
-        "get_model_endpoint_provider": get_model_endpoint_provider,
-        "get_model_endpoint_api_type": get_model_endpoint_api_type,
-        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "infer_model_endpoint_protocol": lambda *args: "azure_openai",
         "AzureOpenAI": Mock(return_value=sentinel.client),
         "_build_azure_chat_completion": Mock(return_value=sentinel.service),
@@ -295,14 +304,18 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         builder.assert_called_once_with(
             hydrated["auth"], "aoai", selected["connection"]["endpoint"],
             selected["connection"]["openai_api_version"], deployment_name="custom-deployment",
+            api_type="", url_mode="", anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+            allow_private_custom_endpoints=False, allow_insecure_custom_endpoints=False,
+            custom_endpoint_ca_bundle_path="",
             settings=settings, endpoint_config=hydrated, model_id="selected-model",
         )
 
     def test_sync_factory_uses_canonical_identity_and_keeps_legacy_name_only_calls(self):
         protocols = load_boundaries("model_endpoint_clients.py", {
-            "normalize_endpoint_text", "get_endpoint_path", "is_anthropic_model",
+            "get_endpoint_path", "is_anthropic_model",
             "endpoint_uses_openai_style_protocol", "infer_model_endpoint_protocol",
-        }, {"urlparse": urlparse}, constants=("ANTHROPIC_MODEL_MARKERS",))
+        }, {"urlparse": urlparse, "normalize_endpoint_text": normalize_endpoint_text},
+            constants=("ANTHROPIC_MODEL_MARKERS",))
         for record, deployment, expected in (
             (model("claude-sonnet-4"), "custom-deployment", "anthropic"),
             (model("", behavior_name="claude-sonnet-4"), "custom-deployment", "anthropic"),
@@ -555,7 +568,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
 
     def test_workflow_runtime_rechecks_disabled_and_incompatible_saved_models(self):
         builder = Mock(return_value=(sentinel.client, "azure_openai"))
-        wrapper = Mock(side_effect=lambda client, model, provider: client)
+        wrapper = Mock(wraps=wrap_workflow_model_client)
         helpers = load_boundaries("functions_workflow_runner.py", {"_build_multi_endpoint_client"}, {
             "build_model_endpoint_sync_chat_client": builder,
             "wrap_workflow_model_client": wrapper,
@@ -574,7 +587,10 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         self.assertEqual(helpers["_build_multi_endpoint_client"](
             "reader", selected["id"], "selected-model", {"model_endpoints": [selected]},
         ), (sentinel.client, "custom-deployment", "aoai"))
-        wrapper.assert_called_once_with(sentinel.client, selected["models"][0], "aoai")
+        wrapper.assert_called_once()
+        self.assertEqual(wrapper.call_args.args, (sentinel.client, selected["models"][0], "aoai"))
+        self.assertEqual(wrapper.call_args.kwargs["endpoint_metadata"], {**selected, "scope": "global"})
+        self.assertEqual(wrapper.call_args.kwargs["api_type"], get_model_endpoint_api_type(selected))
 
     def test_metadata_rejects_incompatible_models_before_loading_credentials(self):
         builder = Mock(return_value=sentinel.client)

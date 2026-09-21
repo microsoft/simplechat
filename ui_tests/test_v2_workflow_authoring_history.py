@@ -1,7 +1,7 @@
 # test_v2_workflow_authoring_history.py
 """
 Offline real-bundle cross-surface workflow Undo/Redo regressions.
-Version: 0.261.123
+Version: 0.261.124
 Implemented in: 0.261.123
 
 Reuses the closed M5B authoring harness, local production assets, and actual
@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 # The shared fixture imports pure application helpers after setting their paths.
 from ui_tests import test_v2_workflow_flow_authoring as authoring
+from ui_tests.fixtures.workflow_editor import OWNER_ID
 from ui_tests.test_v2_workflow_flow_authoring import authoring_ui, connect_options  # noqa: F401
 
 
@@ -91,6 +92,34 @@ def test_common_fields_group_typing_and_replay_across_surfaces(authoring_ui, sur
     expect(name).to_have_value(f"{original['name']} revised")
     payload = authoring.save(ui, editor)
     assert payload["name"] == f"{original['name']} revised"
+    assert payload["definition_revision"] == original["definition_revision"]
+    assert not {"history", "fields", "repeatRows"} & payload.keys()
+
+
+@pytest.mark.parametrize("surface", ["List", "Flow"])
+def test_m365_run_as_selection_and_clear_replay_across_surfaces(authoring_ui, surface):
+    ui = authoring_ui
+    original, editor = open_seed(ui)
+    if surface == "Flow":
+        authoring.switch_surface(editor, "Flow")
+    selection = editor.get_by_label("Microsoft 365 Run as", exact=True)
+    expect(selection).to_be_enabled()
+    expect(selection).to_have_value(original.get("m365_run_as_user_id", ""))
+    selection.select_option(OWNER_ID)
+    authoring.switch_surface(editor, "List" if surface == "Flow" else "Flow")
+    expect(selection).to_have_value(OWNER_ID)
+    replay(ui, editor, "Undo")
+    expect(selection).to_have_value(original.get("m365_run_as_user_id", ""))
+    replay(ui, editor, "Redo")
+    expect(selection).to_have_value(OWNER_ID)
+    selection.select_option("")
+    replay(ui, editor, "Undo")
+    expect(selection).to_have_value(OWNER_ID)
+    replay(ui, editor, "Redo")
+    expect(selection).to_have_value("")
+    assert not ui.workflow_writes
+    payload = authoring.save(ui, editor)
+    assert payload["m365_run_as_user_id"] == ""
     assert payload["definition_revision"] == original["definition_revision"]
     assert not {"history", "fields", "repeatRows"} & payload.keys()
 

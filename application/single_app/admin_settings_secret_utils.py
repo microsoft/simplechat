@@ -33,6 +33,12 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
     "redis_key",
     "office_docs_storage_account_url",
     "office_docs_storage_account_blob_endpoint",
+    # Storage account keys used to sign SAS tokens for citation file access. No
+    # form submits these, so they are read-only from the interface's point of
+    # view, but they are live credentials and must not be sent to a browser.
+    "office_docs_key",
+    "video_files_key",
+    "audio_files_key",
     "video_files_storage_account_url",
     "audio_files_storage_account_url",
     "content_safety_key",
@@ -52,12 +58,8 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 
-# Credentials the server-rendered form submits back verbatim rather than through
-# ``admin_secret``, so they cannot be redacted for it: it would render the
-# placeholder and then store it. The V2 admin endpoint returns the whole settings
-# document rather than the subset a form draws, so its exposure is wider and it
-# redacts these as well. ``office_docs_key`` in particular is an Azure Storage
-# account key used to sign SAS URLs.
+# Retain the native editor's API contract; these read-only storage credentials
+# are also masked for server-rendered forms, which do not submit them.
 ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = (
     "office_docs_key",
     "video_files_key",
@@ -127,22 +129,14 @@ def redact_admin_settings_secrets_for_form(settings):
 
 
 def get_admin_settings_api_secret_fields():
-    """Return every top-level secret key an API response must withhold.
-
-    Wider than the form list, because an endpoint that returns the whole settings
-    document exposes more than the subset a form draws.
-    """
-    return tuple(ADMIN_SETTINGS_FORM_SECRET_FIELDS) + ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
+    """Return the ordered, unique secret fields withheld by full-settings APIs."""
+    return tuple(dict.fromkeys(
+        ADMIN_SETTINGS_FORM_SECRET_FIELDS + ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
+    ))
 
 
 def redact_admin_settings_secrets_for_api(settings):
-    """Return settings with every known secret replaced by the placeholder.
-
-    For endpoints that hand back the whole settings document rather than the
-    subset a form renders. ``resolve_admin_settings_secret_value`` turns the
-    placeholder back into the stored value on the way in, so a caller that
-    round-trips an untouched secret does not overwrite it with this string.
-    """
+    """Mask both form credentials and credentials included only in API settings."""
     redacted_settings = redact_admin_settings_secrets_for_form(settings)
     for field_name in ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS:
         if redacted_settings.get(field_name):

@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 # test_v2_admin_knowledge_web_research.py
+#!/usr/bin/env python3
 """
 Functional test for the Knowledge group's Web & Research tab in the V2 admin UI.
 Version: 0.261.084

@@ -21,6 +21,9 @@ from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
 from functions_approvals import _can_user_approve, _can_user_deny
+from functions_m365_approvals import is_m365_approval
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
+from route_backend_m365 import m365_approval_decision_response
 from functions_documents import update_document, delete_document, delete_document_chunks
 from functions_group import delete_group
 from functions_safety_remediation import (
@@ -5827,25 +5830,24 @@ def register_route_backend_control_center(bp):
             # Update admin settings with refresh timestamp
             debug_print("🔄 [REFRESH DEBUG] Updating admin settings...")
             try:
-                from functions_settings import get_settings, update_settings
-                
-                settings = get_settings()
-                if settings:
-                    settings['control_center_last_refresh'] = datetime.now(timezone.utc).isoformat()
-                    update_success = update_settings(settings)
-                    
-                    if not update_success:
-                        debug_print("⚠️ [REFRESH DEBUG] Failed to update admin settings")
-                        debug_print("Failed to update admin settings with refresh timestamp")
-                    else:
-                        debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
-                        debug_print("Updated admin settings with refresh timestamp")
-                else:
-                    debug_print("⚠️ [REFRESH DEBUG] Could not get admin settings")
+                update_success = update_settings({
+                    'control_center_last_refresh': datetime.now(timezone.utc).isoformat(),
+                })
+                if not update_success:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Data refreshed, but the refresh timestamp could not be saved.'
+                    }), 500
+                debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
+                debug_print("Updated admin settings with refresh timestamp")
                     
             except Exception as admin_error:
                 debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
                 debug_print(f"Error updating admin settings: {admin_error}")
+                return jsonify({
+                    'success': False,
+                    'error': 'Data refreshed, but the refresh timestamp could not be saved.'
+                }), 500
             
             debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Users - Refreshed: {refreshed_count}, Failed: {failed_count}. Groups - Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
             debug_print(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
@@ -6584,7 +6586,8 @@ def register_route_backend_control_center(bp):
                 page=page,
                 per_page=page_size,
                 include_completed=include_completed,
-                request_type_filter=request_type_filter
+                request_type_filter=request_type_filter,
+                tenant_id=user.get('tid'),
             )
             
             # Add can_approve field to each approval
@@ -6606,10 +6609,8 @@ def register_route_backend_control_center(bp):
             }), 200
             
         except Exception as e:
-            debug_print(f"Error fetching approvals: {e}")
-            import traceback
-            debug_print(traceback.format_exc())
-            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+            log_event("[APPROVALS] Failed to fetch approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to fetch approvals'}), 500
 
     def _get_authorized_route_approval(
         approval_id,
@@ -6631,6 +6632,8 @@ def register_route_backend_control_center(bp):
             require_approval_rights=require_approval_rights,
             require_denial_rights=require_denial_rights,
         )
+        if is_m365_approval(approval) and approval.get('context', {}).get('tenant_id') != user.get('tid'):
+            raise LookupError("Microsoft 365 approval not found")
         return approval, user_id, user_roles, user_email, user_name
 
     @bp.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
@@ -6665,10 +6668,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not authorized to view this approval'}), 403
             
         except Exception as e:
-            debug_print(f"Error fetching approval {approval_id}: {e}")
-            import traceback
-            debug_print(traceback.format_exc())
-            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+            log_event("[APPROVALS] Failed to fetch approval", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to fetch approval'}), 500
 
     @bp.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6695,6 +6696,8 @@ def register_route_backend_control_center(bp):
                 group_id,
                 require_approval_rights=True,
             )
+            if is_m365_approval(approval):
+                return m365_approval_decision_response(approval, user_id, data)
             
             # Approve the request
             approval = approve_request(
@@ -6722,8 +6725,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not eligible to approve this request'}), 403
             
         except Exception as e:
-            debug_print(f"Error approving request: {e}")
-            return jsonify({'error': str(e)}), 500
+            log_event("[APPROVALS] Failed to approve request", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to approve request'}), 500
 
     @bp.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6745,14 +6748,15 @@ def register_route_backend_control_center(bp):
             if not group_id:
                 return jsonify({'error': 'group_id is required'}), 400
             
-            if not comment:
-                return jsonify({'error': 'comment is required for denial'}), 400
-
             approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
                 approval_id,
                 group_id,
                 require_denial_rights=True,
             )
+            if is_m365_approval(approval):
+                return m365_approval_decision_response(approval, user_id, data, deny=True)
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
             
             # Deny the request
             approval = deny_request(
@@ -6777,8 +6781,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not eligible to deny this request'}), 403
             
         except Exception as e:
-            debug_print(f"Error denying request: {e}")
-            return jsonify({'error': str(e)}), 500
+            log_event("[APPROVALS] Failed to deny request", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to deny request'}), 500
     
     # New standalone approvals API endpoints (accessible to all users with permissions)
     @bp.route('/api/approvals', methods=['GET'])
@@ -6826,7 +6830,8 @@ def register_route_backend_control_center(bp):
                 per_page=page_size,
                 include_completed=include_completed,
                 request_type_filter=request_type_filter,
-                status_filter=status_filter
+                status_filter=status_filter,
+                tenant_id=user.get('tid'),
             )
             
             # Add can_approve field to each approval
@@ -6847,10 +6852,8 @@ def register_route_backend_control_center(bp):
             }), 200
             
         except Exception as e:
-            debug_print(f"Error fetching approvals: {e}")
-            import traceback
-            debug_print(traceback.format_exc())
-            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+            log_event("[APPROVALS] Failed to fetch approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to fetch approvals'}), 500
 
     @bp.route('/api/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -6883,10 +6886,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not authorized to view this approval'}), 403
             
         except Exception as e:
-            debug_print(f"Error fetching approval {approval_id}: {e}")
-            import traceback
-            debug_print(traceback.format_exc())
-            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+            log_event("[APPROVALS] Failed to fetch approval", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to fetch approval'}), 500
 
     @bp.route('/api/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6912,6 +6913,8 @@ def register_route_backend_control_center(bp):
                 group_id,
                 require_approval_rights=True,
             )
+            if is_m365_approval(approval):
+                return m365_approval_decision_response(approval, user_id, data)
             
             # Approve the request
             approval = approve_request(
@@ -6939,8 +6942,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not eligible to approve this request'}), 403
             
         except Exception as e:
-            debug_print(f"Error approving request: {e}")
-            return jsonify({'error': str(e)}), 500
+            log_event("[APPROVALS] Failed to approve request", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to approve request'}), 500
 
     @bp.route('/api/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6961,14 +6964,15 @@ def register_route_backend_control_center(bp):
             if not group_id:
                 return jsonify({'error': 'group_id is required'}), 400
             
-            if not comment:
-                return jsonify({'error': 'comment is required for denial'}), 400
-
             approval, user_id, _user_roles, user_email, user_name = _get_authorized_route_approval(
                 approval_id,
                 group_id,
                 require_denial_rights=True,
             )
+            if is_m365_approval(approval):
+                return m365_approval_decision_response(approval, user_id, data, deny=True)
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
             
             # Deny the request
             approval = deny_request(
@@ -6993,8 +6997,8 @@ def register_route_backend_control_center(bp):
             return jsonify({'error': 'You are not eligible to deny this request'}), 403
             
         except Exception as e:
-            debug_print(f"Error denying request: {e}")
-            return jsonify({'error': str(e)}), 500
+            log_event("[APPROVALS] Failed to deny request", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to deny request'}), 500
 
     def _execute_approved_action(approval, executor_id, executor_email, executor_name):
         """
@@ -7009,6 +7013,8 @@ def register_route_backend_control_center(bp):
         Returns:
             Result dictionary with success status and message
         """
+        if is_m365_approval(approval):
+            raise ValueError("Microsoft 365 decisions must resume their own authorized continuation.")
         try:
             request_type = approval['request_type']
             group_id = approval['group_id']
@@ -7821,21 +7827,35 @@ def register_route_backend_control_center(bp):
         """Execute delete entire group action."""
         try:
             group_id = approval['group_id']
-            
-            # First delete all documents
-            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
-            
-            # Delete group conversations (optional - could keep for audit)
+
             try:
                 query = "SELECT * FROM c WHERE c.group_id = @group_id"
                 parameters = [{"name": "@group_id", "value": group_id}]
-                
                 conversations = list(cosmos_group_conversations_container.query_items(
                     query=query,
                     parameters=parameters,
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 ))
-                
+                for conversation in conversations:
+                    if conversation.get('group_id') != group_id:
+                        raise PermissionError('Conversation is outside the approved group.')
+                    cancel_m365_conversation_deliveries(conversation['id'])
+            except Exception as error:
+                log_event(
+                    "[CONTROL_CENTER] Unable to stop outgoing Microsoft 365 actions before group deletion.",
+                    extra={"group_id": group_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
+                return {
+                    'success': False,
+                    'message': 'Pending Microsoft 365 actions could not be stopped. The group was not deleted.',
+                }
+
+            # First delete all documents
+            _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+
+            # Delete group conversations (optional - could keep for audit)
+            try:
                 for conv in conversations:
                     cosmos_group_conversations_container.delete_item(
                         item=conv['id'],

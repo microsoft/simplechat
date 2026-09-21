@@ -1,7 +1,7 @@
 # test_analyze_native_saved_integration.py
 """
 Native Analyze output, adapter and saved-consumer integration regressions.
-Version: 0.261.115
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Real native checkpoint serialization, adaptation and saved-section readers run

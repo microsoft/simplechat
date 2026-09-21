@@ -1,7 +1,7 @@
 # test_workflow_loop_inputs.py
 """
 Closed production-backed tests for workflow document/query loop inputs.
-Version: 0.261.117
+Version: 0.261.122
 Implemented in: 0.261.117
 
 Runs the real loop adapter, paged Cosmos/Search readers, metadata filtering, and
@@ -196,10 +196,6 @@ class LoopInputTests(unittest.TestCase):
         self.profile_slots = []
         self.embedding_calls = []
         self.units = {}
-        self.settings_store.items["document_access_index_backfill_state"] = {
-            "id": "document_access_index_backfill_state", "schema_version": 2,
-            "status": "succeeded", "completed_source_scopes": ["personal", "group", "public"],
-        }
         config = module(
             "config",
             CLIENTS={
@@ -282,6 +278,11 @@ class LoopInputTests(unittest.TestCase):
         self.module_patch.start()
         self.addCleanup(self.module_patch.stop)
         self.catalog = self.load_production_module("functions_document_access_index")
+        self.settings_store.items["document_access_index_backfill_state"] = {
+            "id": "document_access_index_backfill_state",
+            "schema_version": self.catalog.DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION,
+            "status": "succeeded", "completed_source_scopes": ["personal", "group", "public"],
+        }
         self.search = self.load_production_module("functions_search")
 
     def load_production_module(self, name):

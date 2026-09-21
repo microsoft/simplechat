@@ -12,7 +12,11 @@ import requests
 import tiktoken
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 
-from functions_model_capabilities import resolve_model_token_limits
+from functions_model_capabilities import (
+    ModelTokenBudget,
+    normalize_token_limit,
+    resolve_model_token_budget,
+)
 from model_endpoint_clients import ModelEndpointBehavior
 from functions_workflow_execution import assert_workflow_execution_owned
 from functions_workflow_loop_runners import assert_workflow_loop_agent_type
@@ -62,53 +66,65 @@ def _count_request_tokens(messages, tools, tokenizer, *, bounded_model=False):
 
 
 def calculate_workflow_context_budget(messages, model, *, provider=None, tools=None, output_tokens=None):
-    limits = resolve_model_token_limits(model, provider=provider)
-    context_limit = limits.get("context_window_tokens")
-    input_limit = limits.get("max_input_tokens")
-    output_limit = limits.get("max_output_tokens")
-    requested_output = (
-        output_tokens if isinstance(output_tokens, int) and not isinstance(output_tokens, bool)
-        and output_tokens > 0 else None
+    budget = resolve_model_token_budget(model, provider=provider)
+    context_limit = budget.context_window
+    input_limit = budget.input_limit
+    output_limit = budget.output_limit
+    requested_output = normalize_token_limit(
+        budget.request_output_limit if output_tokens is None else output_tokens,
+        "Workflow response length",
     )
     if requested_output and output_limit and requested_output > output_limit:
         raise ValueError("The requested workflow response length exceeds the model's output limit.")
+    try:
+        tokenizer = tiktoken.encoding_name_for_model(budget.model_id)
+    except KeyError:
+        tokenizer = None
+    windows = [value for value in (context_limit, budget.effective_context_window) if value is not None]
+    bounded_model = bool(windows or input_limit)
     token_count, estimator = _count_request_tokens(
-        messages, tools, limits.get("tokenizer"), bounded_model=bool(context_limit or input_limit),
+        messages, tools, tokenizer, bounded_model=bounded_model,
     )
     token_count += 16 * len(messages) + (256 if tools else 0)
     output_reserve = requested_output or output_limit
-    input_ceiling = min(input_limit, context_limit) if input_limit and context_limit else (
-        input_limit or context_limit or UNKNOWN_MODEL_INPUT_TOKENS
-    )
+    input_bounds = [*windows, *([input_limit] if input_limit is not None else [])]
+    input_ceiling = min(input_bounds) if input_bounds else UNKNOWN_MODEL_INPUT_TOKENS
     safety_tokens = max(256, math.ceil(input_ceiling * 0.02))
-    if context_limit and output_limit and not requested_output:
+    if windows and output_limit and not requested_output:
         # With model-default response length, use the remaining context rather
         # than reserving an impossible full window for both input and output.
         output_reserve = min(
             output_limit,
-            max(min(output_limit, 256), context_limit - safety_tokens - token_count),
+            max(min(output_limit, 256), min(windows) - safety_tokens - token_count),
         )
-    has_context_budget = bool(context_limit and output_reserve)
-    if has_context_budget:
-        available = context_limit - output_reserve
-        if input_limit:
-            available = min(available, input_limit)
-        source = limits["source"]
-    elif input_limit:
-        available = input_limit
-        source = limits["source"]
+    if bounded_model or budget.applicability != "text":
+        # The shared contract also rejects visible-only/unknown generation
+        # accounting; a numeric response cap alone does not bound reasoning.
+        available = budget.with_request_limit(output_reserve).remaining_input()
+        sources = {origin for _field, origin in budget.provenance}
+        configured = bool(sources & {"model", "endpoint"})
+        source = "catalog+configured" if configured and "catalog" in sources else (
+            "configured" if configured else "catalog"
+        )
     else:
         available = UNKNOWN_MODEL_INPUT_TOKENS
         source = "compatibility_policy"
 
     input_budget = max(0, available - safety_tokens)
     audit = {
-        "model_id": limits.get("model_id"),
-        "limit_status": limits.get("status"),
+        "model_id": budget.model_id or None,
+        "model_provider": budget.provider,
+        "model_protocol": budget.protocol,
+        "model_version": budget.model_version,
+        "limit_status": "known" if bounded_model and output_limit else (
+            "partial" if bounded_model or output_limit else "unknown"
+        ),
         "limit_source": source,
         "context_window_tokens": context_limit,
+        "effective_context_window_tokens": budget.effective_context_window,
         "max_input_tokens": input_limit,
         "max_output_tokens": output_limit,
+        "output_token_accounting": budget.output_accounting,
         "output_reserve_tokens": output_reserve,
         "output_reservation": "requested" if requested_output else "automatic",
         "safety_tokens": safety_tokens,
@@ -159,6 +175,8 @@ def _check_request(messages, model, *, provider=None, tools=None, output_tokens=
 
 
 def _configured_response_tokens(model):
+    if isinstance(model, ModelTokenBudget):
+        return model.request_output_limit
     value = model.get("responseLength") if isinstance(model, Mapping) else None
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
@@ -196,13 +214,15 @@ class _BudgetedCompletions:
         return getattr(self._delegate, name)
 
     def create(self, **kwargs):
-        requested_output = kwargs.get("max_completion_tokens") or kwargs.get("max_tokens")
+        requested_output = kwargs.get("max_completion_tokens")
+        if requested_output is None:
+            requested_output = kwargs.get("max_tokens")
         audit = _check_request(
             kwargs.get("messages") or [],
             self._model,
             provider=self._provider,
             tools=kwargs.get("tools"),
-            output_tokens=requested_output or _configured_response_tokens(self._model),
+            output_tokens=_configured_response_tokens(self._model) if requested_output is None else requested_output,
         )
         if audit and audit["output_reserve_tokens"] and not requested_output:
             kwargs[_response_parameter(audit, self._model, self._provider)] = audit["output_reserve_tokens"]
@@ -230,10 +250,17 @@ class WorkflowModelClient:
         return getattr(self._delegate, name)
 
 
-def wrap_workflow_model_client(client, model, provider):
+def wrap_workflow_model_client(client, model, provider, *, endpoint_metadata=None, api_type=None):
     if _active_workflow.get() is None:
         return client
-    return WorkflowModelClient(client, model, provider)
+    budget = resolve_model_token_budget(
+        model,
+        endpoint_metadata,
+        provider="azure" if api_type == "azure_openai" else provider,
+        protocol="messages" if api_type == "anthropic" or provider == "claude" else "chat_completions",
+        request_output_limit=_configured_response_tokens(model),
+    )
+    return WorkflowModelClient(client, budget, provider)
 
 
 class WorkflowBudgetChatCompletion(ChatCompletionClientBase):
@@ -266,10 +293,11 @@ class WorkflowBudgetChatCompletion(ChatCompletionClientBase):
 
     def _check(self, chat_history, settings):
         messages = self.delegate._prepare_chat_history_for_request(chat_history)
-        requested_output = (
-            getattr(settings, "max_completion_tokens", None) or getattr(settings, "max_tokens", None)
-            or _configured_response_tokens(self.model_metadata)
-        )
+        requested_output = getattr(settings, "max_completion_tokens", None)
+        if requested_output is None:
+            requested_output = getattr(settings, "max_tokens", None)
+        if requested_output is None:
+            requested_output = _configured_response_tokens(self.model_metadata)
         workflow = _active_workflow.get()
         if workflow is not None:
             # A previous automatic allowance must not become a user-specified

@@ -1,11 +1,11 @@
 ---
 layout: page
 title: "AI Models settings"
-description: "Configure shared chat and image connections, independent task defaults, embeddings, APIM, and model request identity."
+description: "Configure shared chat, image, and embedding connections, independent task defaults, APIM, and model request identity."
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.108"
+version: "0.261.107"
 ---
 
 
@@ -26,18 +26,18 @@ Model endpoints are production dependencies for every generated answer, embeddin
 ## Before you change anything
 
 - Provision Azure OpenAI, APIM, and image resources before pointing SimpleChat to them.
-- Choose key or managed identity authentication and grant required permissions.
+- Choose authentication supported by the connection and grant required permissions: Azure discovery uses managed identity or a service principal; Custom API connections support API keys, bearer tokens, or OAuth2 client credentials.
 - Identify the models used by background tasks before retiring a connection.
 
 ## AI Connections {#model-endpoints}
 
 ### Shared connection manager {#multi-endpoint-configuration}
 
-A connection records a resource's address, provider, authentication, and deployed models. Configure those details once, then select compatible models for chat or image generation without copying endpoint and key settings into each task. Different resources remain separate connections, including an image-only resource in another region.
+A connection records a resource's address, provider, authentication, and deployed models. Configure those details once, then select compatible models for chat, image generation, or embeddings without copying endpoint and key settings into each task. Different resources remain separate connections, including an image-only resource in another region.
 
-**Use AI Connections for chat** controls chat only. With it off, chat uses the classic endpoint under Chat, but image generation can still use AI Connections. Do not enable this irreversible chat switch merely to configure images.
+**Use AI Connections for chat** controls chat only. With it off, chat uses the classic endpoint under Chat, but image generation and embeddings can still use AI Connections. Do not enable this irreversible chat switch merely to configure images or embeddings.
 
-Each connection is stored on its own. Adding, editing, or deleting one takes effect when you save that connection, rather than when the surrounding settings page is saved. Task defaults retain connection/model IDs, so equally named deployments on different resources are not confused.
+In React V2, each connection is stored on its own: adding, editing, or deleting one takes effect when you save that connection. In the classic admin editor, **Save Endpoint** stages the change in the form; save the main settings form to persist it. Task defaults retain connection/model IDs, so equally named deployments on different resources are not confused.
 
 For a task-oriented walkthrough, see [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
 
@@ -48,7 +48,7 @@ The authentication method determines whether SimpleChat can enumerate a resource
 - **Managed identity** and **service principal**, with the required read permissions, can list existing deployments through Azure Resource Manager or the Foundry project API. For an Azure OpenAI resource this needs the subscription id and resource group, because that is how the deployment list is addressed.
 - **API key** authenticates to inference only. Discovery is unavailable, so deployment names have to be entered by hand.
 
-Discovered models arrive switched off. Finding a deployment is not the same as publishing it, so each one has to be enabled and made available for the intended task before it can be selected. Discovery includes supported image models as well as chat models; it does not perform paid image generation or prove that an image operation works.
+Discovered models arrive switched off. Finding a deployment is not the same as publishing it, so each one has to be enabled and made available for the intended task before it can be selected. Discovery includes supported image and embedding models as well as chat models; it does not perform paid inference or prove that an operation works.
 
 Secrets are never returned to the browser. When a key or client secret is already stored, its field shows that it exists and stays empty; leaving it empty keeps the stored value, and typing a new one replaces it. Deleting a connection removes the secrets it owned.
 
@@ -57,8 +57,9 @@ Secrets are never returned to the browser. When a key or client secret is alread
 Use **Custom** for direct OpenAI, an approved OpenAI-compatible gateway, Custom Azure
 OpenAI, Anthropic messages, or Gemini's compatible API. Select the API contract and
 enter model names manually; the Azure OpenAI contract instead uses deployment names.
-A Custom connection test validates configuration rather than listing Azure deployments.
-Use the separate chat or image test to exercise the intended inference operation.
+The React V2 **Test connection** action validates Custom configuration rather than
+listing Azure deployments. **Test chat** exercises chat only, not image generation
+or embeddings. Image and embedding tests use saved bindings and may incur charges.
 
 Custom authentication supports API keys with optional header/prefix overrides, bearer
 tokens, and OAuth2 client credentials. Token requests use the same outbound network
@@ -73,6 +74,11 @@ are deployment-mounted paths, not PEM contents pasted into settings.
 Configure the **Custom endpoint network policy** only when an approved private
 destination or trust bundle requires it. HTTPS verification and the hard blocks on
 loopback, link-local, and platform metadata addresses remain in effect.
+
+For an embedding-only gateway, choose **OpenAI-compatible (embeddings only)**.
+This is distinct from the general Custom API contracts above: it uses API key
+authentication, manual embedding model identifiers, and the explicit embedding API
+base. It does not publish chat or image models.
 
 ### Identity header
 
@@ -90,10 +96,10 @@ The checkbox arrives pre-filled. The application ships capability data for known
 uses it to answer the question before you are asked, and the field says where its answer
 came from:
 
-- **Set here** — recorded on this model. This wins over everything else.
+- **Set here** — recorded on this model. This wins over the catalog.
 - **From the built-in model capability data** — matched against the shipped catalog, by
-  model id or a declared alias, including deployments named after a known model with a
-  suffix such as a date or region.
+  model id or a declared alias, including supported deployment suffixes such as a region.
+  Numeric version changes require an explicit catalog match.
 - **Inferred from the model name** — neither of the above matched, so the name was used as
   a guess. This is the case worth reviewing: a self-hosted or internally named model may
   well read images without its name saying so.
@@ -140,8 +146,8 @@ as a fabricated available deployment or a blanket ban.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Use AI Connections for chat | Migrates chat from the classic endpoint to shared connections. Switching this on cannot be undone; it carries over the classic chat configuration when needed without replacing image connections. | Off | `enable_multi_model_endpoints`; chat-only capability toggle, not required for images |
-| AI Connections | Shared resource/authentication/model records, each saved individually. Chat and image defaults reference these records. | Empty before configuration/import | `model_endpoints`; edited through its own API |
+| Use AI Connections for chat | Migrates chat from the classic endpoint to shared connections. Switching this on cannot be undone; it carries over the classic chat configuration when needed without replacing image or embedding connections. | Off | `enable_multi_model_endpoints`; chat-only capability toggle, not required for images or embeddings |
+| AI Connections | Shared resource/authentication/model records. Chat, image, and embedding defaults reference these records. | Empty before configuration/import | `model_endpoints`; React V2 saves each connection through its own API; classic edits are staged in the settings form |
 | Model availability | Limits a model to the supported tasks administrators intend to publish. Changing availability does not change the model's technical capabilities. | No task-specific restriction when absent | Model `enabled_capabilities`; `chat`, `image_generation`, and `embeddings` are the implemented operations |
 | Allow private Custom endpoint hosts | Permits approved private-network Custom destinations without permitting loopback, link-local, or platform metadata addresses. | Off | `allow_private_custom_model_endpoints`; global Custom network policy |
 | Allow plaintext HTTP | Allows a Custom HTTP connection only when private-host permission is also enabled. Traffic, including credentials and prompts, is then unencrypted. | Off | `allow_insecure_custom_model_endpoints`; prefer HTTPS with a private CA |
@@ -149,6 +155,55 @@ as a fabricated available deployment or a blanket ban.
 | Send an identity header with model requests | Adds a header identifying the signed-in user to every model request. | Off | `model_endpoint_identity_header_enabled` |
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
 | Identity sent in the header | Object id is stable across a rename; UPN is readable in gateway logs. Tenant variants qualify the value for a multi-tenant gateway. | Object id and tenant id | `model_endpoint_identity_header_value_type` |
+
+### Verified model capacity
+
+Capacity overrides implemented in version: **0.261.035** (application version in
+`application/single_app/config.py`).
+
+Use **Advanced endpoint capacity** for verified defaults shared by the models on
+an endpoint. Use **Advanced model capacity** in an individual model row when a
+deployment has different limits or an arbitrary deployment name needs an exact
+catalog identity. These controls are also available in authorized personal and
+group workspace endpoint editors.
+
+| Field | Meaning | Scope |
+| --- | --- | --- |
+| Context Window (tokens) | Shared total that input and generation consume together. | Endpoint and model; `contextWindow` |
+| Input Token Limit (tokens) | Independently documented maximum input, not a synonym for context window. | Endpoint and model; `inputTokenLimit` |
+| Output Token Limit (tokens) | Hard provider generation ceiling, not the amount requested on each call. | Endpoint and model; `outputTokenLimit` |
+| Catalog Model ID | Actual published model ID behind an arbitrary deployment alias; a display name is not authoritative. | Model; `catalogModelId` |
+| Model Version | Exact deployed model version or snapshot, separate from the endpoint's API version. | Model; `modelVersion` |
+| Token Limit Provider | Hosting profile for the verified limits: Auto / inherit, Azure, OpenAI, Anthropic, Google, Vertex AI, xAI, Publisher, or Custom. This does not reroute requests. | Endpoint and model; `tokenLimitProvider` |
+| Output Token Accounting | Whether the allowance covers total generation including reasoning, visible output only, or an unknown accounting contract. Inherit uses the next applicable source. | Endpoint and model; `outputTokenAccounting` |
+| Response Length | Per-request generation allowance for standard chat, kept separate from model capacity. | Model; `responseLength` |
+
+Each capacity inherits independently: **model override -> endpoint override ->
+exact catalog model**. Leave a field blank to inherit; clearing an existing
+override saves `null`. A missing or unknown maximum does not mean unlimited
+capacity. Only enter positive whole numbers up to `9007199254740991`; fractions,
+scientific notation, negative values, and zero are rejected.
+
+Server-side validation also rejects invalid overrides before saving the submitted
+endpoint configuration or credentials. Personal/group saves return HTTP 400 with
+`error_code: model_context_invalid` and a safe field message. The admin settings
+form returns to the settings page with the same message instead of saving the bad value.
+
+Independent input and output maxima need not fit simultaneously inside the
+context window. The actual request must still fit its shared context and any
+independent ceilings. Verify deployment/provider/version specifications before
+overriding limits, especially for custom gateways, on-premises deployments, or a
+different hosting cloud. Select **Total generation** only when the provider/API
+actually includes reasoning and other generated tokens in its allowance.
+
+Embedding dimensions and per-text embedding input limits are separate
+`embedding_config` fields, not chat response allowances. Capacity overrides do not
+resize embedding vectors or establish vector-space compatibility.
+
+In classic Admin Settings, **Save Endpoint** updates the form; save the main settings
+form to persist it. Workspace editors persist through their existing scoped
+save routes. See [declaring verified model capacity]({{ '/guides/model-endpoint-identity-setup/#declare-verified-model-capacity' | relative_url }})
+for the workflow and validation checks.
 
 ### Chat {#gpt-config}
 
@@ -200,13 +255,29 @@ Embedding Model action. Chat and image defaults do not change it.
 
 Azure OpenAI versioned/APIM routes are preserved on import. Current Foundry
 connections require an explicit compatible inference endpoint; the project URL
-alone cannot serve embeddings. OpenAI-compatible custom connections support API
-key/token authentication and manual model entry, not Azure deployment discovery.
+alone cannot serve embeddings. **OpenAI-compatible (embeddings only)** connections
+use the API-key credential field with the configured embedding authentication
+header and manual model entry, not Azure deployment discovery.
 Vendor-native and deprecated Azure Model Inference routes are not supported.
 
 Known models supply catalog-backed limits. Unknown custom models require declared
 dimensions and a maximum input budget. The runtime validates returned dimensions
 and uses conservative input-size bounds rather than downloading a tokenizer.
+In the model's **Capability metadata**, declare **Text embedding support** and,
+when needed, set **Embedding dimensions**, **Embedding input token limit**, and
+**Embedding model revision**. Blank overrides inherit catalog policy only when
+the model has a matching catalog entry; they are not guessed defaults for unknown
+models. Enter positive whole numbers, not fractions or scientific notation.
+Keep the endpoint's **Embedding inference** operation settings separate from its
+chat/image route and authentication controls. Editing embedding settings preserves
+the other operation profiles.
+
+The embedding default saves independently of the classic settings form and uses
+only saved, enabled, published embedding models. Save connection edits first,
+then refresh choices before changing the default. A successful embedding test
+reports vector dimensions without storing vectors or changing the default; it
+does not bypass the compatibility checks below.
+
 See [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }})
 for the workflow and [Change embedding models safely]({{ '/guides/configure-ai-connections/' | relative_url }}#change-embedding-models-safely)
 for detailed compatibility requirements.
@@ -370,9 +441,8 @@ For API integrations, both `GET` and `PUT /api/v2/admin/model-selection/image`
 return `409` with `code: image_catalog_migrated` after import or an explicit shared
 selection. This is an intentional handoff, not a successful legacy save. Read or
 write the current image reference through
-`/api/v2/admin/capability-models/image_generation` instead. Embedding configuration
-has an independent handoff: after its import, the legacy embedding selector also
-returns `409`; use `/api/v2/admin/capability-models/embeddings`.
+`/api/v2/admin/capability-models/image_generation` instead. The legacy embedding
+model-selection API is unchanged.
 
 | Legacy value | What the import preserves | Original default | Settings key |
 | --- | --- | --- | --- |
@@ -395,10 +465,10 @@ returns `409`; use `/api/v2/admin/capability-models/embeddings`.
 1. **Publish models from a new resource.** Add a connection, configure its provider/authentication, discover or enter deployments, then enable and publish the intended operations. Save the connection. Outcome to verify: compatible models appear in the corresponding task picker, not every picker.
 2. **Rotate a stored connection key.** Edit the connection, type the replacement into the empty secret field, and save. Outcome to verify: each task using that connection works with the replacement; no copied image key needs updating.
 3. **Choose the model chat starts from.** With connections in force, pick a default under Chat. Outcome to verify: a new conversation opens on that model without anyone selecting it.
-4. **Retire a connection.** Review chat/image/embedding defaults before disabling or deleting it. Unavailable defaults are reported, not silently substituted; an embedding replacement may require the controlled rebuild procedure.
-5. **Configure embeddings.** Save an AI Connection with a compatible model and inference endpoint, publish embeddings, and select its independent global default. Use the embedding-specific test and configure matching search indexes before indexing documents.
+4. **Retire a connection.** Disable it, review affected chat/image defaults, and select replacements before deleting it. Outcome to verify: its models stop being offered and unavailable defaults are reported instead of silently substituted.
+5. **Configure embeddings.** Set the endpoint, authentication and — with managed identity — the subscription id and resource group, then save. Fetch the deployments, choose one, and index a small document. Outcome to verify: indexing completes and the document's citations are found by a question that does not repeat its wording.
 6. **Enable image generation.** Select an image-compatible model from AI Connections, then enable the image feature. Outcome to verify: a real Image request returns and stores a picture from that binding without changing chat mode.
-7. **Rotate an embedding key.** Update the selected shared connection's stored credential. No separate copy belongs to the embedding default; review every operation using that connection.
+7. **Rotate an embedding key.** Update the embedding route's own stored key and save. Outcome to verify: indexing still works. Image keys are rotated in their shared connection instead.
 8. **Move images behind API Management.** Configure an APIM-backed connection with the published path, authentication, and image operation, then select its image model. Outcome to verify: generation succeeds through the gateway and no request bypasses it.
 
 ## Troubleshooting

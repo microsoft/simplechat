@@ -1,7 +1,7 @@
 # test_workflow_react_v2_integration.py
 """
 Functional tests for the workflow and React V2 connection integration.
-Version: 0.261.112
+Version: 0.261.122
 Implemented in: 0.261.112
 
 The real agent configuration resolver must retain workflow budget metadata and
@@ -23,7 +23,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 # Pure application helpers follow the standalone test's module-path setup.
-from functions_model_capabilities import resolve_model_token_limits
+from functions_model_capabilities import project_model_budget_metadata, resolve_model_token_budget
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 
 
@@ -31,7 +31,8 @@ from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_
 def test_agent_preserves_custom_routing_and_workflow_budget_metadata(per_user_enabled):
     model = {
         "id": "model", "modelName": "gpt-4.1", "deploymentName": "azure-deployment",
-        "contextWindow": 8192, "maxOutputTokens": 1024, "enabled": True,
+        "contextWindow": 8192, "outputTokenLimit": 1024, "enabled": True,
+        "outputTokenAccounting": "total_generation",
     }
     endpoint = {
         "id": "connection", "provider": "custom", "api_type": "openai", "enabled": True,
@@ -55,6 +56,7 @@ def test_agent_preserves_custom_routing_and_workflow_budget_metadata(per_user_en
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "get_model_endpoint_api_type": get_model_endpoint_api_type,
         "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
+        "project_model_budget_metadata": project_model_budget_metadata,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
     config = namespace["resolve_agent_config"](
@@ -64,6 +66,9 @@ def test_agent_preserves_custom_routing_and_workflow_budget_metadata(per_user_en
     assert config["api_type"] == "openai"
     assert config["model_endpoint_config"] == endpoint
     assert config["model_metadata"] == model
-    limits = resolve_model_token_limits(config["model_metadata"], provider=config["model_provider"])
-    assert limits["context_window_tokens"] == 8192
-    assert limits["max_output_tokens"] == 1024
+    assert config["model_budget_model"] == project_model_budget_metadata(model)
+    limits = resolve_model_token_budget(config["model_metadata"], provider=config["model_provider"])
+    assert limits.context_window == 8192
+    assert limits.output_limit == 1024
+    assert limits.output_accounting == "total_generation"
+    assert limits.remaining_input() == 7168

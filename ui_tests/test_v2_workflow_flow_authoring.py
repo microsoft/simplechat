@@ -1,7 +1,7 @@
 # test_v2_workflow_flow_authoring.py
 """
 Offline real-bundle browser regressions for M5B workflow Flow authoring.
-Version: 0.261.122
+Version: 0.261.124
 Implemented in: 0.261.122
 
 Uses the existing fictional, closed API harness and real Python compiler.
@@ -299,6 +299,7 @@ def save(ui, editor):
 def expected_saved_payload(record):
     """The existing editor's explicit wire defaults, not a graph serializer."""
     expected = copy.deepcopy(record)
+    expected.setdefault("m365_run_as_user_id", "")
     expected["tasks"].sort(key=lambda task: task["order"])
     for index, task in enumerate(expected["tasks"], 1):
         task["order"] = index
@@ -778,6 +779,9 @@ def test_delayed_preview_cannot_cross_closed_editor_workflow_or_group_scope(auth
     ui, page = authoring_ui, authoring_ui.page
     if group:
         editor = open_editor(ui, group_id=GROUP_ID)
+        accounts = editor.get_by_label("Microsoft 365 Run as", exact=True)
+        expect(accounts).to_be_enabled()
+        expect(accounts.locator('option[value="group-reviewer"]')).to_have_count(1)
     else:
         install_seed(ui)
         editor = open_editor(ui)
@@ -801,6 +805,11 @@ def test_delayed_preview_cannot_cross_closed_editor_workflow_or_group_scope(auth
         page.get_by_role("button", name="Edit Authoring seed", exact=True).click()
     editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
     expect(editor.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
+    if group:
+        accounts = editor.get_by_label("Microsoft 365 Run as", exact=True)
+        expect(accounts).to_be_enabled()
+        expect(accounts.locator('option[value="group-beta-reviewer"]')).to_have_count(1)
+        expect(accounts.locator('option[value="group-reviewer"]')).to_have_count(0)
     view = switch_surface(editor, "Flow")
     expect_compiled(view)
     expected_id, expected_name = ("evaluate", "Evaluate") if group else ("seed", "Seed decision")

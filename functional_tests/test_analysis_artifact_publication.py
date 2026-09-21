@@ -1,11 +1,11 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.119
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Exercise real publication, normalization, and route bodies with Cosmos/queue
-doubles. No Azure calls, model calls, temporary files, or result materialization.
+doubles. No Azure or model calls. XSD source files are scoped and cleaned up.
 """
 
 import ast
@@ -14,10 +14,12 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
+from importlib.metadata import version
 import io
 import os
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import types
 from typing import Any, Dict, Iterable, Optional
@@ -26,6 +28,7 @@ import uuid
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from flask import Flask, jsonify, request
 import pytest
+import werkzeug
 
 from test_support.app_stubs import import_app_module
 
@@ -235,7 +238,7 @@ def publication(monkeypatch):
     install("functions_appinsights", log_event=lambda *args, **kwargs: None)
     install("functions_collaboration", build_conversation_participation_context=check_conversation)
     install("functions_documents", create_document=create_document, update_document=update_document,
-        allowed_file=lambda name: name.endswith((".md", ".csv", ".json", ".xml", ".docx", ".pdf")))
+        allowed_file=lambda name: name.endswith((".md", ".csv", ".json", ".xml", ".xsd", ".docx", ".pdf")))
     install("functions_generated_file_approvals", assert_generated_file_approval_allows_download=check_artifact)
     install("functions_group", assert_group_role=assert_group_role, find_group_by_id=group_doc,
         check_group_status_allows_operation=group_helpers["check_group_status_allows_operation"])
@@ -248,8 +251,13 @@ def publication(monkeypatch):
         check_public_workspace_status_allows_operation=public_helpers["check_public_workspace_status_allows_operation"],
     )
     install("functions_saved_analysis", authorize_analysis_artifact=authorize_analysis)
+    temporary_source = load_functions(
+        "functions_simplechat_operations.py", {"_write_temp_generated_file"},
+        {"Any": Any, "os": os, "tempfile": tempfile},
+    )
     install("functions_simplechat_operations", assert_generated_chat_artifact_is_published_for_user=check_artifact,
-        download_blob_content=download, queue_generated_document_processing=queue)
+        download_blob_content=download, queue_generated_document_processing=queue,
+        _write_temp_generated_file=temporary_source["_write_temp_generated_file"])
     install("utils_cache", invalidate_group_search_cache=lambda *args: None, invalidate_personal_search_cache=lambda *args: None)
     spec = importlib.util.spec_from_file_location("publication_under_test", APP / "functions_artifact_publication.py")
     module = importlib.util.module_from_spec(spec)
@@ -294,6 +302,34 @@ def test_personal_publication_reuses_bytes_and_receipt(publication):
     assert not any(field.startswith("analysis_") for field in document)
 
 
+@pytest.mark.parametrize("failure", [None, "create_before"])
+def test_personal_xsd_publication_supplies_exact_source_and_always_cleans_it(publication, failure):
+    content = b'<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"/>'
+    artifact = deepcopy(publication.artifact)
+    artifact["filename"] = "accepted.xsd"
+    artifact["metadata"].update(
+        generated_artifact_output_format="xsd",
+        generated_artifact_content_sha256=hashlib.sha256(content).hexdigest(),
+    )
+    publication.messages.put(artifact)
+    publication.state.update(content=content, failure=failure)
+    observed_sources = []
+
+    def verify_source():
+        create = publication.calls["create"][-1]
+        path = Path(create["source_file_path"])
+        assert path.read_bytes() == content
+        assert create["allow_deferred_xsd_source"] is False
+        observed_sources.append(path)
+
+    publication.state["create_hook"] = verify_source
+    result = publish(publication)
+    assert observed_sources and all(not path.exists() for path in observed_sources)
+    assert result["publication"]["state"] == ("uncertain" if failure else "queued")
+    if not failure:
+        assert publication.calls["queue"][0]["file_content_bytes"] == content
+
+
 @pytest.mark.parametrize("scope", ["group", "public"])
 def test_shared_destinations_create_pending_approvals_once(publication, scope):
     first = publish(publication, scope)
@@ -302,6 +338,8 @@ def test_shared_destinations_create_pending_approvals_once(publication, scope):
     assert first["publication"]["state"] == "pending_approval"
     assert first["approval_required"] is True
     assert len(publication.calls["create"]) == 1
+    assert publication.calls["create"][0]["allow_deferred_xsd_source"] is True
+    assert publication.calls["create"][0]["source_file_path"] is None
     assert len(publication.calls["notify"]) == 2
     assert not publication.calls["queue"]
     document = next(iter(publication.destinations[scope].records.values()))
@@ -546,7 +584,9 @@ def test_publication_configuration_never_infers_missing_intent_or_destination(co
         normalizers()["normalize_workflow_publication"](config)
 
 
-def test_manual_route_uses_same_receipt_service_and_safe_errors(publication):
+def test_manual_route_uses_same_receipt_service_and_safe_errors(publication, monkeypatch):
+    if not hasattr(werkzeug, "__version__"):
+        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
     namespace = {
         "request": request, "jsonify": jsonify, "get_current_user_id": lambda: "actor",
         "get_current_user_info": lambda: {"displayName": "Actor"},

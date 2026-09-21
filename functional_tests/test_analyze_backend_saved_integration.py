@@ -1,7 +1,7 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.109
 
 Real adapter, artifact, history, chat route and shared section-reader functions
@@ -22,10 +22,13 @@ import time
 import uuid
 from copy import deepcopy
 from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+import werkzeug
 from flask import Flask, Response, g, has_request_context, jsonify, request, session
 from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
@@ -36,7 +39,7 @@ from semantic_kernel.functions import kernel_function
 
 from test_document_analysis_lossless_artifacts import load_module_functions
 from test_saved_analysis_service import ChatSections, read_options, saved, saved_chat
-from test_support.app_stubs import import_app_module
+from test_support.app_stubs import import_app_module, stubbed_config
 
 from content_screening import access as screening_access
 from content_screening.contracts import DocumentHeldError, ScreeningError
@@ -49,6 +52,37 @@ mixed = import_app_module("functions_mixed_source_orchestration")
 budget = import_app_module("functions_workflow_context")
 agent_runtime = import_app_module("agent_delegation_runtime")
 result_storage = import_app_module("functions_workflow_result_store")
+tabular = import_app_module("functions_tabular_orchestration")
+
+
+def load_m365_runtime():
+    """Keep real request/provenance helpers while isolating conversation storage."""
+    collaboration = ModuleType("functions_collaboration")
+
+    def unexpected_collaboration_read(*args, **kwargs):
+        raise AssertionError("Conversation storage must use the authorized fixture seam.")
+
+    for name in (
+        "assert_user_can_participate_in_collaboration_conversation",
+        "build_conversation_participation_context", "get_collaboration_conversation",
+    ):
+        setattr(collaboration, name, unexpected_collaboration_read)
+    with stubbed_config(
+        TENANT_ID="fixture-tenant", cosmos_conversations_container=None,
+        cosmos_m365_execution_runs_container=None,
+    ), patch.dict(sys.modules, {"functions_collaboration": collaboration}):
+        return import_app_module("functions_m365_runtime")
+
+
+def model_budget(limits):
+    """Build the shared hard-capacity contract for deterministic model fixtures."""
+    return budget.ModelTokenBudget(
+        model_id=limits["model_id"], provider="azure",
+        context_window=limits["context_window_tokens"],
+        input_limit=limits["max_input_tokens"], output_limit=limits["max_output_tokens"],
+        output_accounting="total_generation",
+        provenance=(("contextWindow", "catalog" if limits["source"] == "catalog" else "model"),),
+    )
 
 
 def load_functions(filename, names, namespace):
@@ -105,6 +139,7 @@ def runner_namespace(**extra):
         "SELECTION_MODE_SELECTED": "selected",
         "time": time,
         "analysis_artifact_metadata": saved.analysis_artifact_metadata,
+        "attach_m365_message_provenance": load_m365_runtime().attach_m365_message_provenance,
         "serialize_generated_xml": exports.serialize_generated_xml,
         "DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT": 3,
         "DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT": 3,
@@ -298,7 +333,10 @@ class MessageStore:
 
 @pytest.fixture
 def chat(saved_chat, monkeypatch):
+    if not hasattr(werkzeug, "__version__"):
+        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
     fixture = saved_chat
+    m365_runtime = load_m365_runtime()
     messages = MessageStore(fixture["message"])
     source_state = fixture["state"]
 
@@ -350,10 +388,17 @@ def chat(saved_chat, monkeypatch):
         "context_window_tokens": 200000, "max_input_tokens": None, "max_output_tokens": 4096,
         "tokenizer": None, "source": "catalog", "model_id": "actual-selected-model", "status": "known",
     }
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: dict(limits))
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget(limits))
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete)))
     app = Flask(__name__)
     app.secret_key = "offline-test-key"
+    app.testing = True
+
+    def read_m365_conversation(user_id, conversation_id):
+        fixture["message_loader"](user_id, conversation_id, fixture["message"]["id"])
+        return deepcopy(conversation), None, None
+
+    monkeypatch.setattr(m365_runtime, "_conversation_access", read_m365_conversation)
     scope = {
         "active_group_ids": [], "active_group_id": None,
         "active_public_workspace_ids": [], "active_public_workspace_id": None,
@@ -362,6 +407,15 @@ def chat(saved_chat, monkeypatch):
         "asyncio": asyncio, "json": json, "logging": logging, "random": random, "uuid": uuid,
         "datetime": datetime, "time": time, "g": g, "has_request_context": has_request_context,
         "request": request, "session": session, "jsonify": jsonify,
+        "initialize_m365_chat_context": m365_runtime.initialize_m365_chat_context,
+        "get_m365_execution_context": m365_runtime.get_m365_execution_context,
+        "attach_m365_message_provenance": m365_runtime.attach_m365_message_provenance,
+        "complete_m365_request": m365_runtime.complete_m365_request,
+        "M365ApprovalRequired": m365_runtime.M365ApprovalRequired,
+        "M365PolicyError": m365_runtime.M365PolicyError,
+        "record_m365_pending": m365_runtime.record_m365_pending,
+        "preflight_m365_manifests": m365_runtime.preflight_m365_manifests,
+        "workflow_m365_manifests": m365_runtime.workflow_m365_manifests,
         "ScreeningError": ScreeningError,
         "PROVENANCE_FIELD": screening_access.PROVENANCE_FIELD,
         "assert_evidence_available": screening_access.assert_evidence_available,
@@ -371,6 +425,7 @@ def chat(saved_chat, monkeypatch):
         "current_request_source_provenance": screening_access.current_request_source_provenance,
         "get_current_user_id": lambda: "owner", "get_current_user_info": lambda: {"user_id": "owner"},
         "get_settings": lambda: {"conversation_history_limit": 10},
+        "get_tabular_generated_output_format": tabular.get_tabular_generated_output_format,
         "log_event": lambda *args, **kwargs: None, "debug_print": lambda *args, **kwargs: None,
         "make_json_serializable": lambda value: deepcopy(value),
         "cosmos_messages_container": messages,

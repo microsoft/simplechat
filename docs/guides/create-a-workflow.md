@@ -4,6 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
+version: "0.261.122"
 ---
 
 ## What this does
@@ -51,6 +52,30 @@ draft instead of overwriting another editor's changes.
 
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
+
+## Choose the Microsoft 365 Run as account
+
+Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
+**Microsoft 365 Run as** in the editor when a workflow needs someone's Microsoft
+365 account for manual or scheduled actions. Personal workflows offer your
+account; group workflows load eligible choices for the selected group.
+
+New workflows start with **No Microsoft 365 account selected**. Neither workflow
+ownership nor having an account in the list grants consent. The selected person
+must connect Microsoft 365 and approve the workflow. Changes to instructions,
+capabilities, or destinations require approval again; choosing an account does
+not establish that the current revision is approved.
+
+Save the workflow to persist your choice. To explicitly remove it, choose **No
+Microsoft 365 account selected** and save. If the list cannot load or a saved
+account is absent from it, V2 retains the current selection rather than silently
+clearing it or choosing someone else. Retry the account list or review the
+unavailable selection before running; unrelated edits can still be saved without
+changing that account, subject to the usual workflow permissions and validation.
+
+In a structured workflow, Undo and Redo also restore unsaved Run as selections
+across List and Flow, including an explicitly cleared account (version
+**0.261.124**). This does not grant consent or restore an earlier approval.
 
 ## Choose branches and optional work
 
@@ -303,6 +328,25 @@ for readiness, recovery, and cancellation limits.
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 9. In **Reliability**, choose retry and failure behavior, then review and save.
+
+## Microsoft 365 Run as
+
+When a workflow uses Calendar, Email, OneDrive, or SharePoint actions, select an
+explicit **Microsoft 365 Run as** account. Manual and scheduled runs use that
+account, not the person pressing Run or an application identity.
+
+The selected person must connect Microsoft 365 from Profile and approve the
+workflow's sources, instructions, and destinations. Material changes require
+renewed approval. Missing approval or sign-in pauses the operation and creates
+a notification; the person can respond from Approvals without reopening the
+conversation.
+
+When a mail or calendar action uses manual delivery, its separate review is sent
+to the Run as user and shown in workflow activity. Other group members can see
+the run without gaining permission to send from that person's account.
+
+See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
+for the controls introduced in **0.261.029**.
 
 ## Verify it worked
 

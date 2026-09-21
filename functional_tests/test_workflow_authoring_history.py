@@ -1,7 +1,7 @@
 # test_workflow_authoring_history.py
 """
 Compiler contracts for actual TypeScript workflow history replay.
-Version: 0.261.123
+Version: 0.261.124
 Implemented in: 0.261.123
 
 Validates exact replay-produced Save payloads and authored digests without
@@ -55,6 +55,7 @@ def test_history_never_advances_cas_or_serializes_editor_state(replay_payloads):
     for payload in replay_payloads.values():
         assert payload["definition_revision"] == original["definition_revision"]
         assert payload["id"] == original["id"]
+        assert payload["m365_run_as_user_id"] == "history-run-as-user"
         assert not {"history", "fields", "repeatRows", "positions", "selectedId"} & payload.keys()
     assert workflow_definition_revision(replay_payloads["edited"]) != workflow_definition_revision(original)
     assert replay_payloads["undone"] == original

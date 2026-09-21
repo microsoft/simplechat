@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_secret_fields.py
+#!/usr/bin/env python3
 """
 Functional test for the credentials the AI Models sections store.
-Version: 0.261.083
+Version: 0.261.122
 Implemented in: 0.261.083
 
 The embedding and image-generation routes each hold an API key and an APIM subscription
@@ -53,12 +53,7 @@ EXPECTED_SECRET_KEYS = {
 
 
 def load_secret_utils():
-    """Import ``admin_settings_secret_utils`` directly.
-
-    It depends on nothing but ``copy``, so unlike ``functions_settings`` -- which reaches
-    config.py and a live Cosmos client, and is stubbed out for these tests -- it can be
-    loaded and exercised as the real module rather than lifted out of source.
-    """
+    """Import the dependency-light secret helpers without application bootstrap."""
     spec = importlib.util.spec_from_file_location(
         "admin_settings_secret_utils", SECRET_UTILS_FILE
     )
@@ -79,13 +74,7 @@ def declared_fields_by_key():
 
 
 def apply_patch(submitted, stored):
-    """Port of ``v2_admin_patch_settings``' write path for the keys under test.
-
-    The order is the point. The schema normalizes first, then the route resolves any
-    placeholder against the stored document. Resolving first would mean the resolver's
-    own reading of the empty string -- which it treats as a deliberate clear -- reached
-    the schema, which cannot tell that apart from a field nobody filled in.
-    """
+    """Normalize fields before resolving credential placeholders, as the route does."""
     normalized, errors, _warnings = fields_module.normalize_admin_settings_updates(
         submitted, stored
     )
@@ -104,7 +93,6 @@ def apply_patch(submitted, stored):
 def test_credentials_are_declared_as_secrets():
     """A credential declared as text renders into a readable input."""
     print("Testing that credential fields declare the secret type...")
-
     assert_app_version_at_least("0.261.083")
 
     by_key = declared_fields_by_key()
@@ -123,14 +111,10 @@ def test_credentials_are_declared_as_secrets():
         "render them in plain text:\n  " + "\n  ".join(problems)
     )
 
-    # Declaring the type is also what puts them in the route's resolution set, so this
-    # is not merely cosmetic.
     missing = EXPECTED_SECRET_KEYS - fields_module.get_secret_field_keys()
-    assert not missing, (
-        "These keys are not returned by get_secret_field_keys(), so the settings PATCH "
-        f"would not resolve a placeholder for them: {', '.join(sorted(missing))}"
-    )
-
+    assert not missing, missing
+    assert "secret" in fields_module.FIELD_TYPES
+    assert "secret" not in fields_module.NON_PATCHABLE_TYPES
     print(f"  All {len(EXPECTED_SECRET_KEYS)} credential field(s) declare 'secret'.")
     return True
 
@@ -138,7 +122,6 @@ def test_credentials_are_declared_as_secrets():
 def test_the_api_withholds_stored_credentials():
     """The read must not hand a working key to the browser."""
     print("\nTesting that the settings API redacts these credentials...")
-
     marker = secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
 
     stored = {
@@ -156,30 +139,24 @@ def test_the_api_withholds_stored_credentials():
     for secret in ("sk-live-embedding", "sk-live-image"):
         assert secret not in serialized, f"{secret} survived redaction"
 
-    # A key that is not set stays empty rather than gaining a marker, or the control
+    # A key that is not set must stay empty rather than gaining a marker, or the UI
     # would claim a credential exists where none does.
     assert redacted["azure_apim_embedding_subscription_key"] == "", redacted
 
     # Non-secret configuration is exactly what an administrator is here to manage.
     assert redacted["azure_openai_embedding_endpoint"] == stored["azure_openai_embedding_endpoint"]
 
-    # Redaction must not mutate the document the application goes on using.
+    # And redaction must not mutate the document the application goes on using.
     assert stored["azure_openai_embedding_key"] == "sk-live-embedding", stored
 
-    # And every key under test has to be covered by the list the route actually uses.
     covered = set(secret_utils.get_admin_settings_api_secret_fields())
-    missing = EXPECTED_SECRET_KEYS - covered
-    assert not missing, (
-        "These credentials are not in the API secret field list, so the read would "
-        f"return them in the clear: {', '.join(sorted(missing))}"
-    )
-
+    assert EXPECTED_SECRET_KEYS.issubset(covered), EXPECTED_SECRET_KEYS - covered
     print("  Stored credentials are replaced with the shared redaction marker.")
     return True
 
 
 def test_the_v2_read_and_write_use_the_shared_mechanism():
-    """A second, parallel secret mechanism would drift from the form's."""
+    """A second, parallel secret mechanism would drift from the classic form's."""
     print("\nTesting that the V2 routes reuse the shared helpers...")
 
     source = ROUTES_FILE.read_text(encoding="utf-8")
@@ -190,12 +167,12 @@ def test_the_v2_read_and_write_use_the_shared_mechanism():
             "the settings read redacts before responding",
         ),
         (
-            "resolve_admin_settings_secret_value",
-            "the settings write resolves a returned placeholder",
-        ),
-        (
             "get_secret_field_keys()",
             "the resolution set includes every key the schema declares as secret",
+        ),
+        (
+            "resolve_admin_settings_secret_value",
+            "resolution reuses the classic form's helper",
         ),
     ):
         assert fragment in source, f"route_backend_v2.py no longer ensures that {why}"
@@ -221,30 +198,26 @@ def test_the_save_reload_save_round_trip_preserves_the_key():
     assert from_api["azure_openai_embedding_key"] == marker
 
     # 3. The administrator edits only the API version, and the client returns the whole
-    #    section -- including the placeholder it was given.
-    merged, errors = apply_patch(
-        {
-            "azure_openai_embedding_api_version": "2025-01-01-preview",
-            "azure_openai_embedding_key": from_api["azure_openai_embedding_key"],
-        },
-        stored,
-    )
+    #    section -- including the redacted marker it was given.
+    submitted = {
+        "azure_openai_embedding_api_version": "2025-01-01-preview",
+        "azure_openai_embedding_key": from_api["azure_openai_embedding_key"],
+    }
+
+    merged, errors = apply_patch(submitted, stored)
     assert not errors, errors
+
     assert merged["azure_openai_embedding_key"] == "sk-original", (
         "The round trip overwrote the stored key with "
-        f"{merged['azure_openai_embedding_key']!r}. The placeholder must never be "
-        "stored, and an untouched key must survive a save of the field next to it."
+        f"{merged['azure_openai_embedding_key']!r}. The marker must never be stored, and "
+        "an untouched key must survive a save of the field next to it."
     )
     assert merged["azure_openai_embedding_api_version"] == "2025-01-01-preview", merged
 
-    # 4. The same round trip for an image key, which is a separate entry in the list.
     image_stored = {"azure_apim_image_gen_subscription_key": "sk-image-original"}
     image_from_api = secret_utils.redact_admin_settings_secrets_for_api(image_stored)
     merged, errors = apply_patch(
-        {
-            "azure_apim_image_gen_subscription_key":
-                image_from_api["azure_apim_image_gen_subscription_key"]
-        },
+        {"azure_apim_image_gen_subscription_key": image_from_api["azure_apim_image_gen_subscription_key"]},
         image_stored,
     )
     assert not errors, errors
@@ -255,62 +228,38 @@ def test_the_save_reload_save_round_trip_preserves_the_key():
 
 
 def test_a_typed_secret_replaces_the_stored_one():
-    """The ordinary case: a new credential is stored, trimmed."""
-    print("\nTesting that a typed secret is stored...")
-
+    """A pasted replacement is stored without its surrounding whitespace."""
     merged, errors = apply_patch(
         {"azure_apim_image_gen_subscription_key": "  new-secret\n"},
         {"azure_apim_image_gen_subscription_key": "old-secret"},
     )
-
     assert not errors, errors
-    # A key pasted from a portal or a terminal routinely carries a trailing newline, and
-    # a credential that fails only because of an invisible character is undiagnosable.
     assert merged["azure_apim_image_gen_subscription_key"] == "new-secret", merged
-
-    print("  A typed secret replaces the stored one and is trimmed.")
     return True
 
 
 def test_removal_stays_possible():
-    """Blank must stay distinguishable from the placeholder, or nothing can be deleted."""
-    print("\nTesting that a credential can still be removed...")
-
+    """An explicit clear stays distinct from the unchanged-secret placeholder."""
     marker = secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
-
-    # This is the distinction the whole design rests on. If an empty submission were read
-    # as the placeholder, "keep what is stored" would be the only reachable outcome and a
-    # key pasted by mistake could never be taken back.
-    assert not secret_utils.is_admin_settings_redacted_secret("")
-    assert not secret_utils.is_admin_settings_redacted_secret(None)
     assert secret_utils.is_admin_settings_redacted_secret(marker)
-
-    merged, errors = apply_patch(
-        {"azure_openai_image_gen_key": ""},
-        {"azure_openai_image_gen_key": "sk-original"},
-    )
-    assert not errors, errors
-    assert merged["azure_openai_image_gen_key"] == "", merged
-
-    print("  Blank clears; only the placeholder means keep.")
+    for value in ("", None):
+        assert not secret_utils.is_admin_settings_redacted_secret(value)
+        merged, errors = apply_patch(
+            {"azure_openai_image_gen_key": value},
+            {"azure_openai_image_gen_key": "sk-original"},
+        )
+        assert not errors, errors
+        assert merged["azure_openai_image_gen_key"] == "", merged
     return True
 
 
 def test_the_secret_control_never_renders_a_stored_value():
-    """A declared secret must not reach an ordinary text input."""
-    print("\nTesting the V2 secret control...")
-
+    """The secret renderer must recognize the withheld-credential placeholder."""
     controls = (
         REPO_ROOT / "application" / "v2_ui" / "src" / "components" / "admin" / "fields.tsx"
     ).read_text(encoding="utf-8")
-
-    assert "case 'secret':" in controls, "fields.tsx has no branch for the secret type"
-    assert "SECRET_PLACEHOLDER" in controls, (
-        "The secret control no longer recognises the placeholder, so it cannot tell "
-        "'a secret is stored' from 'no secret set'."
-    )
-
-    print("  The secret control recognises the placeholder rather than showing a value.")
+    assert "case 'secret':" in controls
+    assert "SECRET_PLACEHOLDER" in controls
     return True
 
 

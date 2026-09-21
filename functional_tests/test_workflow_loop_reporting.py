@@ -1,7 +1,7 @@
 # test_workflow_loop_reporting.py
 """
 Functional tests for exact, bounded saved workflow record reporting.
-Version: 0.261.117
+Version: 0.261.122
 Implemented in: 0.261.117
 
 The production compiler, record-tree writer, private result transport, authorized
@@ -53,8 +53,9 @@ def selected_model(context=50000, output=2048):
         "id": f"offline-deployment-{context}",
         "modelName": "offline-workflow-report-model",
         "contextWindow": context,
-        "maxInputTokens": context,
-        "maxOutputTokens": output,
+        "inputTokenLimit": context,
+        "outputTokenLimit": output,
+        "outputTokenAccounting": "total_generation",
         "responseLength": output,
     }
 

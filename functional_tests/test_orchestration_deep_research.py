@@ -1,7 +1,7 @@
 # test_orchestration_deep_research.py
 """
 Functional tests for bounded multi-query research in orchestration.
-Version: 0.261.099
+Version: 0.261.122
 Implemented in: 0.261.099
 
 Exercise the real adapter, shared search loop, query generator, and result contracts

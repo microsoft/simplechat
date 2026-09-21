@@ -1,7 +1,7 @@
 # test_v2_elicitation_composer.py
 """
 Browser regressions for composer-aware inline clarification answers.
-Version: 0.261.100
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Exercise the real cards, composer, stores, controller, and request builders.

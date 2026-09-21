@@ -1,36 +1,14 @@
 # functions_model_capabilities.py
-"""Resolve catalog-backed model capabilities, reasoning effort, and token limits.
+"""Resolve catalog-backed model capabilities and reasoning effort.
 
-Multi-Modal Vision Analysis sends page images to a model, so it can only offer
-models that actually read them. Working that out used to be a regular expression
-over the model's name: anything containing "vision" or "gpt-4o", or matching
-``gpt-[5-9]`` or ``o<digits>``, was assumed to see.
+Capability answers resolve through a precedence chain so that a model which is not
+present in the shipped catalog -- a customer's on-premises or bespoke model -- can
+still be described accurately instead of being guessed at from its name:
 
-That guess is wrong in both directions. It admits ``gpt-5.3-chat``, which is a
-text-only chat variant, and it has nothing to say about a model whose name does
-not follow an OpenAI convention -- a self-hosted or on-premises deployment is
-simply invisible to it. An administrator could correct neither case, because the
-rule lived in the code.
+    per-model override -> endpoint override -> catalog entry -> name heuristic
 
-``static/json/model_capabilities.json`` has shipped in this repository for some
-time carrying real per-model capability data, including ``processesImages``, and
-nothing read it. It does now, in three tiers:
-
-1. **An explicit flag on the model record.** ``supportsVision`` on a model inside
-   a ``model_endpoints`` entry. The Model Endpoints editor pre-fills this from
-   the catalog when models are fetched, so the common case needs no work, and an
-   administrator can correct it for a deployment the catalog does not know.
-
-2. **The catalog.** Matched on model id and declared aliases, which is what lets
-   a deployment named after a known model resolve without anyone saying so.
-
-3. **The name heuristic.** Kept for a model in neither of the above, because
-   refusing to guess at all would hide working models from an existing
-   deployment. Reported as inferred rather than known, so a caller can say so.
-
-Token limits deliberately do not use that heuristic. Only exact catalog
-identities, declared snapshots, and authorized deployment constraints establish
-capacity; unknown limits stay unknown.
+Only stdlib imports are used here on purpose. This module sits below the settings,
+logging, and route layers, so pulling those in would risk import cycles.
 """
 
 import copy
@@ -39,12 +17,14 @@ import os
 import re
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import date
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
 GPT_VISION_MODEL_PATTERN = re.compile(r"(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)")
 O_SERIES_MODEL_PATTERN = re.compile(r"(?:^|-)o\d+(?:-|$)")
+REASONING_MODEL_PATTERN = re.compile(r"(?:^|-)(?:o\d+|gpt-(?:[5-9]|\d{2,}))(?:-|$)")
 MODEL_IDENTIFIER_FIELDS = (
     "modelName",
     "displayName",
@@ -54,41 +34,46 @@ MODEL_IDENTIFIER_FIELDS = (
 )
 REASONING_IDENTIFIER_FIELDS = ("modelName", "behavior_name", "deploymentName", "deployment")
 REASONING_EFFORTS = frozenset(("none", "minimal", "low", "medium", "high", "xhigh"))
-TOKEN_LIMIT_IDENTIFIER_FIELDS = (
-    "modelName", "behavior_name", "model_name", "model",
-    "deploymentName", "deployment_name", "model_deployment", "deployment", "name",
-)
-TOKEN_LIMIT_FIELDS = {
-    "context_window_tokens": (
-        "contextWindow", "context_window", "context_window_tokens",
-        "maxContextTokens", "max_context_tokens", "contextLength", "context_length",
-    ),
-    "max_input_tokens": (
-        "maxInputTokens", "max_input_tokens", "inputTokenLimit", "input_token_limit",
-    ),
-    "max_output_tokens": (
-        "maxOutputTokens", "max_output_tokens", "outputTokenLimit", "output_token_limit",
-        "responseLength", "response_length", "maxCompletionTokens", "max_completion_tokens",
-        "maxTokens", "max_tokens",
-    ),
-}
-TOKEN_LIMIT_CONTAINER_FIELDS = ("tokenLimits", "token_limits", "limits")
 
-# Fields an explicit administrator decision may be recorded under. The camelCase
-# spelling is what the Model Endpoints editor writes; the snake_case one is
-# accepted so a settings document edited by hand still resolves.
+CATALOG_RELATIVE_PATH = ("static", "json", "model_capabilities.json")
+CATALOG_FILENAME = os.path.join(*CATALOG_RELATIVE_PATH)
 VISION_OVERRIDE_FIELDS = ("supportsVision", "supports_vision")
-
-CATALOG_FILENAME = os.path.join("static", "json", "model_capabilities.json")
-
-# How a decision was reached, most authoritative first.
 VISION_SOURCE_DECLARED = "declared"
 VISION_SOURCE_CATALOG = "catalog"
 VISION_SOURCE_INFERRED = "inferred"
 
+CAPABILITY_PROCESSES_IMAGES = "processesImages"
+CAPABILITY_TOOL_CALLING = "toolCalling"
+CAPABILITY_STRUCTURED_OUTPUT = "structuredOutput"
+CAPABILITY_SUPPORTS_STREAMING = "supportsStreaming"
+CAPABILITY_REASONING = "reasoning"
+
+CAPABILITY_FIELD_NAMES = (
+    "processesText",
+    "generatesText",
+    CAPABILITY_PROCESSES_IMAGES,
+    "generatesImages",
+    "processesAudio",
+    "generatesAudio",
+    "processesVideo",
+    "generatesVideo",
+    "processesBinaryFiles",
+    "optimizedForCoding",
+    CAPABILITY_TOOL_CALLING,
+    CAPABILITY_STRUCTURED_OUTPUT,
+    CAPABILITY_SUPPORTS_STREAMING,
+    CAPABILITY_REASONING,
+)
+
+MODEL_BUDGET_LIMIT_FIELDS = ("contextWindow", "inputTokenLimit", "outputTokenLimit")
+MODEL_BUDGET_PROVIDERS = frozenset(
+    ("azure", "openai", "anthropic", "google", "vertex", "xai", "publisher", "custom")
+)
+MODEL_OUTPUT_ACCOUNTING = frozenset(("total_generation", "visible_only", "unknown"))
+MAX_DECLARED_TOKEN_LIMIT = 9007199254740991
+
 _CATALOG_LOCK = threading.Lock()
 _CATALOG_CACHE = None
-_IMAGE_OPERATION_PROFILES = {}
 
 
 def _normalize_model_identifier(value):
@@ -98,98 +83,250 @@ def _normalize_model_identifier(value):
     )
 
 
-def load_model_capability_catalog(force_refresh=False):
-    """Return ``{normalized identifier: capabilities}`` from the shipped catalog.
+def get_model_capability_catalog_path():
+    """Return the absolute path of the shipped model capability catalog."""
+    return os.path.join(os.path.dirname(__file__), CATALOG_FILENAME)
 
-    Read once and cached. The file is part of the deployment rather than
-    configuration, so re-reading it per lookup would cost disk access on a path
-    that runs for every model in every dropdown.
 
-    A missing or malformed catalog yields an empty mapping rather than raising.
-    Vision keeps its legacy heuristic; reasoning support remains unknown.
-    """
-    global _CATALOG_CACHE, _IMAGE_OPERATION_PROFILES
+def reset_model_capability_catalog_cache():
+    """Clear the cached catalog so a later read picks the file up again."""
+    global _CATALOG_CACHE
+    with _CATALOG_LOCK:
+        _CATALOG_CACHE = None
 
-    if _CATALOG_CACHE is not None and not force_refresh:
-        return _CATALOG_CACHE
 
+def _load_model_capability_catalog_document(force_refresh=False):
+    """Return the parsed catalog, caching it after the first successful read."""
+    global _CATALOG_CACHE
     with _CATALOG_LOCK:
         if _CATALOG_CACHE is not None and not force_refresh:
             return _CATALOG_CACHE
-
-        catalog = {}
-        image_profiles = {}
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CATALOG_FILENAME)
         try:
-            with open(path, "r", encoding="utf-8") as handle:
-                document = json.load(handle)
-
-            image_profiles = document.get("imageOperationProfiles") or {}
-            if not isinstance(image_profiles, Mapping):
-                raise ValueError("Image operation profiles must be an object.")
-            for model in document.get("models", []):
-                if not isinstance(model, Mapping):
-                    continue
-                capabilities = model.get("capabilities") or {}
-                if not isinstance(capabilities, Mapping):
-                    continue
-                capabilities = dict(capabilities)
-                if isinstance(model.get("reasoningPolicy"), Mapping):
-                    capabilities["reasoningPolicy"] = model["reasoningPolicy"]
-                if isinstance(model.get("tokenLimits"), Mapping):
-                    capabilities["tokenLimits"] = model["tokenLimits"]
-                if "embeddingPolicy" in model:
-                    capabilities["embeddingPolicy"] = copy.deepcopy(model["embeddingPolicy"])
-                for field_name in ("imageProfiles", "imageLifecycle"):
-                    if isinstance(model.get(field_name), Mapping):
-                        capabilities[field_name] = copy.deepcopy(model[field_name])
-                if model.get("provider"):
-                    capabilities["publisher"] = model["provider"]
-                if not capabilities:
-                    continue
-                capabilities["_model_id"] = model.get("id")
-                capabilities["_provider"] = model.get("provider")
-
-                for identifier in [model.get("id")] + list(model.get("aliases") or []):
-                    normalized = _normalize_model_identifier(identifier)
-                    if normalized:
-                        catalog[normalized] = capabilities
-        except (OSError, ValueError, TypeError, AttributeError):
+            with open(get_model_capability_catalog_path(), "r", encoding="utf-8") as catalog_file:
+                catalog = json.load(catalog_file)
+        except (OSError, json.JSONDecodeError):
             catalog = {}
-            image_profiles = {}
-
-        _IMAGE_OPERATION_PROFILES = copy.deepcopy(image_profiles)
+        if not isinstance(catalog, dict):
+            catalog = {}
         _CATALOG_CACHE = catalog
         return _CATALOG_CACHE
 
 
+def load_model_capability_catalog(force_refresh=False, *, strict_identity=False):
+    """Return the identifier-indexed capability view used by the V2 model editors."""
+    document = _load_model_capability_catalog_document(force_refresh)
+    catalog = {}
+    for record in document.get("models") or []:
+        if not isinstance(record, Mapping):
+            continue
+        capabilities = record.get("capabilities") or {}
+        if not isinstance(capabilities, Mapping):
+            continue
+        capabilities = copy.deepcopy(dict(capabilities))
+        if isinstance(record.get("reasoningPolicy"), Mapping):
+            capabilities["reasoningPolicy"] = copy.deepcopy(record["reasoningPolicy"])
+        if "embeddingPolicy" in record:
+            capabilities["embeddingPolicy"] = copy.deepcopy(record["embeddingPolicy"])
+        for field_name in ("imageProfiles", "imageLifecycle"):
+            if isinstance(record.get(field_name), Mapping):
+                capabilities[field_name] = copy.deepcopy(record[field_name])
+        if record.get("provider"):
+            capabilities["publisher"] = record["provider"]
+        identifiers = _iter_catalog_record_identifiers(record)
+        if strict_identity:
+            identifiers = (
+                _normalize_model_identifier(identifier)
+                for identifier in [record.get("id"), *(record.get("aliases") or [])]
+                if identifier
+            )
+        for identifier in identifiers:
+            catalog[identifier] = copy.deepcopy(capabilities)
+    return catalog
+
+
 def get_image_operation_profile(profile_id):
     """Return an isolated provider operation profile from the same cached catalog."""
-    load_model_capability_catalog()
-    profile = _IMAGE_OPERATION_PROFILES.get(profile_id)
+    profiles = _load_model_capability_catalog_document().get("imageOperationProfiles") or {}
+    profile = profiles.get(profile_id) if isinstance(profiles, Mapping) else None
     return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
 
 
-def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):
-    """Return catalog capabilities for one identifier, or None.
+def get_model_capability_catalog_records():
+    """Return isolated copies of every model record defined by the catalog."""
+    catalog = _load_model_capability_catalog_document()
+    return copy.deepcopy([
+        record for record in catalog.get("models") or [] if isinstance(record, dict)
+    ])
 
-    A deployment is usually named after the model it serves, but not exactly:
-    "gpt-4o-prod", "gpt-4o-2024-11-20". An exact match is tried first, then the
-    longest catalog identifier the name starts with, so "gpt-4o-2024-11-20"
-    resolves to "gpt-4o" rather than being swallowed by a shorter entry.
+
+def _get_record_field(record, field_name):
+    if isinstance(record, Mapping):
+        return record.get(field_name)
+    return getattr(record, field_name, None)
+
+
+def _iter_model_identifiers(model):
+    """Yield every normalized identifier that could name the supplied model."""
+    if model is None:
+        return
+    if isinstance(model, str):
+        normalized = _normalize_model_identifier(model)
+        if normalized:
+            yield normalized
+        return
+    for field_name in MODEL_IDENTIFIER_FIELDS:
+        normalized = _normalize_model_identifier(_get_record_field(model, field_name))
+        if normalized:
+            yield normalized
+
+
+def _iter_catalog_record_identifiers(record):
+    """Yield every normalized identifier a catalog record answers to.
+
+    "family" is deliberately excluded. It is a grouping attribute rather than an
+    identifier, and members of one family disagree on capabilities -- "phi-4"
+    covers both the multimodal and the text-only Phi models, and the "gpt-5.x"
+    families each contain a non-vision "-chat" member. Matching on it would let a
+    model inherit a sibling's capabilities.
     """
+    for field_name in ("id", "displayName"):
+        normalized = _normalize_model_identifier(record.get(field_name))
+        if normalized:
+            yield normalized
+    aliases = record.get("aliases")
+    if isinstance(aliases, (list, tuple)):
+        for alias in aliases:
+            normalized = _normalize_model_identifier(alias)
+            if normalized:
+                yield normalized
+
+
+def _is_variant_suffix_match(requested_identifier, record_identifier):
+    """Return whether requested is a variant of record rather than a later version.
+
+    Identifier normalization collapses "." and "-" to the same separator, so
+    "gpt-5.3" becomes "gpt-5-3" and would otherwise look like a suffixed variant of
+    "gpt-5". A remainder that starts with a digit is a version continuation, not a
+    variant, so it is rejected. A remainder starting with a letter -- the "eastus"
+    in "gpt-5.6-sol-eastus", or the "mini" in "gpt-4o-mini" -- is a real variant.
+    """
+    prefix = f"{record_identifier}-"
+    if not requested_identifier.startswith(prefix):
+        return False
+    remainder = requested_identifier[len(prefix):]
+    return bool(remainder) and not remainder[0].isdigit()
+
+
+def find_model_catalog_record(model):
+    """Return the catalog record naming this model, or None when it is unknown.
+
+    An exact identifier match always wins. Otherwise the longest matching
+    identifier prefix wins, so a deployment named "gpt-5.6-sol-eastus" resolves to
+    "gpt-5.6-sol", and "gpt-5.1-chat-v2" resolves to "gpt-5.1-chat" rather than to
+    the shorter, and differently capable, "gpt-5.1".
+    """
+    requested_identifiers = list(_iter_model_identifiers(model))
+    if not requested_identifiers:
+        return None
+
+    requested_identifier_set = set(requested_identifiers)
+    best_prefix_match = None
+    best_prefix_length = 0
+    for record in get_model_capability_catalog_records():
+        record_identifiers = list(_iter_catalog_record_identifiers(record))
+        if requested_identifier_set.intersection(record_identifiers):
+            return record
+        for record_identifier in record_identifiers:
+            if len(record_identifier) <= best_prefix_length:
+                continue
+            for requested_identifier in requested_identifiers:
+                if _is_variant_suffix_match(requested_identifier, record_identifier):
+                    best_prefix_match = record
+                    best_prefix_length = len(record_identifier)
+                    break
+    return best_prefix_match
+
+
+def _read_declared_capabilities(source):
+    """Return the explicit capability map declared on a model or endpoint record."""
+    if source is None:
+        return {}
+    capabilities = _get_record_field(source, "capabilities")
+    if not isinstance(capabilities, Mapping):
+        capabilities = {}
+    declared = {}
+    for capability_name, capability_value in capabilities.items():
+        if isinstance(capability_value, bool):
+            declared[str(capability_name)] = capability_value
+    if CAPABILITY_PROCESSES_IMAGES not in declared:
+        for field_name in VISION_OVERRIDE_FIELDS:
+            value = _get_record_field(source, field_name)
+            if isinstance(value, bool):
+                declared[CAPABILITY_PROCESSES_IMAGES] = value
+                break
+            if isinstance(value, str) and value.strip():
+                declared[CAPABILITY_PROCESSES_IMAGES] = value.strip().lower() in ("true", "on", "yes", "1")
+                break
+    return declared
+
+
+def get_model_catalog_capabilities(model, *, strict_identity=False):
+    """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
+
+    Vision retains its legacy deployment-name heuristic separately. Image tool
+    support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    """
+    underlying = ""
+    for field_name in ("modelName", "behavior_name"):
+        value = _get_record_field(model, field_name)
+        if isinstance(value, str) and value.strip():
+            underlying = value
+            break
+    identifiers = [underlying] if underlying else _iter_model_identifiers(model)
+    if strict_identity and not underlying and not isinstance(model, str):
+        identifiers = next((
+            [_get_record_field(model, field_name)]
+            for field_name in ("deploymentName", "deployment", "name")
+            if isinstance(_get_record_field(model, field_name), str)
+            and _get_record_field(model, field_name).strip()
+        ), [])
+    catalog = (
+        load_model_capability_catalog(strict_identity=True)
+        if strict_identity else load_model_capability_catalog()
+    )
+    for identifier in identifiers:
+        normalized = _normalize_model_identifier(identifier)
+        if normalized not in catalog:
+            if strict_identity:
+                continue
+            snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
+            if not snapshot or snapshot.group(1) not in catalog:
+                continue
+            try:
+                date(*(int(value) for value in snapshot.groups()[1:]))
+            except ValueError:
+                continue
+            normalized = snapshot.group(1)
+        capabilities = catalog[normalized]
+        if any(isinstance(value, bool) for value in capabilities.values()):
+            return copy.deepcopy(capabilities)
+    return None
+
+
+def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):
+    """Resolve the V2 reasoning policy independently of audited token-capacity matching."""
     normalized = _normalize_model_identifier(identifier)
     if not normalized:
         return None
-
     catalog = load_model_capability_catalog()
-    if normalized in catalog:
-        record = catalog[normalized]
-        return record if capability is None or capability in record else None
+    if normalized in catalog and (capability is None or capability in catalog[normalized]):
+        return catalog[normalized]
 
     best = None
     best_length = 0
     for candidate, capabilities in catalog.items():
+        if capability is not None and capability not in capabilities:
+            continue
         if len(candidate) <= best_length or not normalized.startswith(f"{candidate}-"):
             continue
         if reject_version_suffix and re.match(
@@ -199,8 +336,6 @@ def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False)
             continue
         best = capabilities
         best_length = len(candidate)
-    if best is not None and capability is not None and capability not in best:
-        return None
     return best
 
 
@@ -268,272 +403,17 @@ def resolve_model_reasoning_effort(model_name, requested_effort):
     return resolution
 
 
-def _model_identifiers(model, fields=MODEL_IDENTIFIER_FIELDS):
-    """Return the names a model record might be known by."""
-    if isinstance(model, str):
-        return [model]
-    if isinstance(model, Mapping):
-        return [model.get(field) for field in fields]
-    return [getattr(model, field, None) for field in fields]
-
-
-def get_model_catalog_capabilities(model, *, strict_identity=False):
-    """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
-
-    Vision retains its legacy deployment-name heuristic separately. Image tool
-    support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
-    Strict identity uses only a canonical/deployment name and exact catalog
-    aliases, never display labels, configuration ids, or unverified snapshots.
-    """
-    underlying = ""
-    for field_name in ("modelName", "behavior_name"):
-        value = model.get(field_name) if isinstance(model, Mapping) else getattr(model, field_name, None)
-        if isinstance(value, str) and value.strip():
-            underlying = value
-            break
-    identifiers = [underlying] if underlying else _model_identifiers(model)
-    if strict_identity and not underlying and not isinstance(model, str):
-        identifiers = []
-        for field_name in ("deploymentName", "deployment", "name"):
-            value = model.get(field_name) if isinstance(model, Mapping) else getattr(model, field_name, None)
-            if isinstance(value, str) and value.strip():
-                identifiers = [value]
-                break
-    catalog = load_model_capability_catalog()
-    for identifier in identifiers:
-        normalized = _normalize_model_identifier(identifier)
-        if normalized in catalog:
-            return copy.deepcopy(catalog[normalized])
-        if strict_identity:
-            continue
-        snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
-        if snapshot and snapshot.group(1) in catalog:
-            try:
-                date(*(int(value) for value in snapshot.groups()[1:]))
-            except ValueError:
-                continue
-            return copy.deepcopy(catalog[snapshot.group(1)])
+def _heuristic_capability(capability_name, model):
+    """Return the legacy name-based answer for the capabilities that have one."""
+    if capability_name == CAPABILITY_PROCESSES_IMAGES:
+        return _heuristic_is_vision_capable(model)
+    if capability_name == CAPABILITY_REASONING:
+        return _heuristic_is_reasoning_model(model)
     return None
 
 
-def _model_field(record, field):
-    return record.get(field) if isinstance(record, Mapping) else getattr(record, field, None)
-
-
-def _positive_token_limit(value):
-    """Accept integers and decimal form values without truncating floats or bools."""
-    if isinstance(value, str):
-        value = value.strip()
-        if not re.fullmatch(r"[0-9]+", value):
-            return None
-        try:
-            value = int(value)
-        except ValueError:
-            return None
-    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
-
-
-def _token_limit_containers(record):
-    if record is None or isinstance(record, (str, bytes)):
-        return []
-    containers = [record]
-    for field in TOKEN_LIMIT_CONTAINER_FIELDS:
-        nested = _model_field(record, field)
-        if isinstance(nested, Mapping):
-            containers.append(nested)
-    return containers
-
-
-def _token_limit_provider(provider):
-    normalized = _normalize_model_identifier(provider) if isinstance(provider, str) else ""
-    if normalized in ("aoai", "azure-openai", "azureopenai"):
-        return "azure-openai"
-    if normalized in (
-        "azure", "aifoundry", "new-foundry", "foundry", "azure-ai-foundry", "microsoft-foundry",
-    ):
-        return "azure"
-    return "anthropic" if normalized == "claude" else normalized
-
-
-def _token_limit_catalog_record(identifier):
-    """Resolve declared snapshots only; a plausible date is not verified metadata."""
-    normalized = _normalize_model_identifier(identifier)
-    if not normalized:
-        return {}
-    catalog = load_model_capability_catalog()
-    if normalized in catalog:
-        return catalog[normalized]
-    for record in catalog.values():
-        limits = record.get("tokenLimits")
-        snapshots = limits.get("snapshots") if isinstance(limits, Mapping) else None
-        if not isinstance(snapshots, Mapping):
-            continue
-        for snapshot, overrides in snapshots.items():
-            if (
-                isinstance(snapshot, str) and _normalize_model_identifier(snapshot) == normalized
-                and isinstance(overrides, Mapping)
-            ):
-                return {
-                    **record,
-                    "_model_id": snapshot,
-                    "tokenLimits": {**limits, **overrides},
-                }
-    return {}
-
-
-def resolve_model_token_limits(model, *, provider=None, deployment_limits=None):
-    """Return independent, bounded token limits without invoking a model or tokenizer.
-
-    Version: 0.261.106
-    Implemented in: 0.261.106
-
-    The caller must authorize model records and deployment metadata first.
-    Canonical names take precedence even when unknown; configuration IDs and
-    display labels are never identities. A deployment name must itself exactly
-    match a catalog ID, declared alias, or explicitly documented snapshot.
-    ``modelVersion``/``model_version`` may pin a named model to a snapshot.
-
-    Positive integers and decimal strings are accepted in the record or the
-    ``deployment_limits`` argument, directly or under tokenLimits/token_limits/
-    limits. Every valid constraint can shrink, but never enlarge, a catalog or
-    provider ceiling. maxTokens/max_tokens are output limits, never context.
-    Input/output caps are bounded by a known context window, but neither is
-    subtracted from it or used to invent a missing context/input cap.
-
-    ``known`` means context and output ceilings are present; ``partial`` means
-    at least one limit or tokenizer is present; otherwise status is ``unknown``.
-    Input caps and tokenizer names are independently optional. Source is
-    catalog, configured, catalog+configured, or unknown. model_id is the
-    resolved catalog identity (including a pinned snapshot), otherwise None.
-    Deployment SKU, endpoint, beta-header, and request-specific restrictions
-    still apply; these ceilings do not promise live capacity or availability.
-    """
-    identifier = next((
-        value.strip() for value in _model_identifiers(model, TOKEN_LIMIT_IDENTIFIER_FIELDS)
-        if isinstance(value, str) and value.strip()
-    ), "")
-    version = next((
-        value.strip() for value in (
-            _model_field(model, "modelVersion"), _model_field(model, "model_version"),
-        ) if isinstance(value, str) and value.strip()
-    ), "")
-    if version and identifier and not identifier.endswith(f"-{version}"):
-        identifier = f"{identifier}-{version}"
-    record = _token_limit_catalog_record(identifier)
-    provider = (
-        _token_limit_provider(provider) or _token_limit_provider(_model_field(model, "provider"))
-    )
-    publisher = _token_limit_provider(record.get("_provider"))
-    if provider and publisher and not (
-        provider == publisher or provider == "azure"
-        or (provider == "azure-openai" and publisher == "openai")
-    ):
-        record = {}
-
-    catalog_limits = record.get("tokenLimits")
-    catalog_limits = catalog_limits if isinstance(catalog_limits, Mapping) else {}
-    catalog_containers = [catalog_limits]
-    provider_limits = catalog_limits.get("providerLimits")
-    if isinstance(provider_limits, Mapping):
-        provider_key = "azure" if provider == "azure-openai" else provider
-        if isinstance(provider_limits.get(provider_key), Mapping):
-            catalog_containers.append(provider_limits[provider_key])
-    configured_containers = (
-        _token_limit_containers(model) + _token_limit_containers(deployment_limits)
-    )
-    result = {field: None for field in TOKEN_LIMIT_FIELDS}
-    sources = set()
-    for field, spellings in TOKEN_LIMIT_FIELDS.items():
-        for source, containers in (
-            ("catalog", catalog_containers), ("configured", configured_containers),
-        ):
-            for container in containers:
-                for spelling in spellings:
-                    value = _positive_token_limit(_model_field(container, spelling))
-                    if value is not None:
-                        sources.add(source)
-                        result[field] = min(result[field], value) if result[field] else value
-
-    context = result["context_window_tokens"]
-    if context is not None:
-        for field in ("max_input_tokens", "max_output_tokens"):
-            if result[field] is not None:
-                result[field] = min(result[field], context)
-
-    result["tokenizer"] = None
-    for source, containers in (
-        ("catalog", catalog_containers), ("configured", configured_containers),
-    ):
-        for container in containers:
-            tokenizer = _model_field(container, "tokenizer")
-            if result["tokenizer"] is None and isinstance(tokenizer, str) and tokenizer.strip():
-                result["tokenizer"] = tokenizer.strip()
-                sources.add(source)
-    result["source"] = "+".join(
-        source for source in ("catalog", "configured") if source in sources
-    ) or "unknown"
-    result["model_id"] = record.get("_model_id")
-    result["status"] = (
-        "known" if context is not None and result["max_output_tokens"] is not None
-        else "partial" if sources else "unknown"
-    )
-    return result
-
-
-def _declared_vision_support(model):
-    """Return an administrator's explicit decision, or None if none was made."""
-    if isinstance(model, str):
-        return None
-
-    for field in VISION_OVERRIDE_FIELDS:
-        if isinstance(model, Mapping):
-            value = model.get(field)
-        else:
-            value = getattr(model, field, None)
-
-        if isinstance(value, bool):
-            return value
-        # A stored document may hold the form-shaped string instead.
-        if isinstance(value, str) and value.strip():
-            return value.strip().lower() in ("true", "on", "yes", "1")
-    return None
-
-
-def resolve_model_vision_support(model):
-    """Return ``(supports_vision, source)`` for a model record or identifier.
-
-    ``source`` is one of ``declared``, ``catalog`` or ``inferred``, so a caller
-    can tell an administrator whether the answer is known or guessed. That
-    matters in the Model Endpoints editor, where a guessed value is exactly the
-    one worth reviewing. Embedding-only models cannot produce the text needed
-    for vision analysis, even when the model itself accepts image input.
-    """
-    catalog = get_model_catalog_capabilities(model)
-    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
-        return False, VISION_SOURCE_CATALOG
-
-    declared = _declared_vision_support(model)
-    if declared is not None:
-        return declared, VISION_SOURCE_DECLARED
-
-    identifiers = _model_identifiers(model)
-    for identifier in identifiers:
-        capabilities = _catalog_lookup(identifier, capability="processesImages")
-        if capabilities is not None:
-            return bool(capabilities.get("processesImages")), VISION_SOURCE_CATALOG
-
-    return is_vision_capable_model_name(*identifiers), VISION_SOURCE_INFERRED
-
-
-def is_vision_capable_model_name(*model_names):
-    """Return whether any supplied identifier names a supported vision model.
-
-    The name heuristic on its own. Kept as the last resort in
-    ``resolve_model_vision_support`` and still exported, because a caller holding
-    only a deployment string has nothing better to go on.
-    """
-    for model_name in model_names:
-        normalized_name = _normalize_model_identifier(model_name)
+def _heuristic_is_vision_capable(model):
+    for normalized_name in _iter_model_identifiers(model):
         if (
             "vision" in normalized_name
             or "gpt-4o" in normalized_name
@@ -543,11 +423,398 @@ def is_vision_capable_model_name(*model_names):
             or O_SERIES_MODEL_PATTERN.search(normalized_name)
         ):
             return True
+    return False
+
+
+def _heuristic_is_reasoning_model(model):
+    for normalized_name in _iter_model_identifiers(model):
+        if REASONING_MODEL_PATTERN.search(normalized_name) or "gpt-5" in normalized_name:
+            return True
+    return False
+
+
+def resolve_model_capability(capability_name, model=None, endpoint=None, default=None):
+    """Resolve one capability through the override, catalog, then heuristic chain."""
+    declared_model_capabilities = _read_declared_capabilities(model)
+    if capability_name in declared_model_capabilities:
+        return declared_model_capabilities[capability_name]
+
+    declared_endpoint_capabilities = _read_declared_capabilities(endpoint)
+    if capability_name in declared_endpoint_capabilities:
+        return declared_endpoint_capabilities[capability_name]
+
+    catalog_record = find_model_catalog_record(model)
+    if catalog_record is not None:
+        catalog_capabilities = catalog_record.get("capabilities")
+        if isinstance(catalog_capabilities, Mapping):
+            catalog_value = catalog_capabilities.get(capability_name)
+            if isinstance(catalog_value, bool):
+                return catalog_value
+
+    heuristic_value = _heuristic_capability(capability_name, model)
+    if heuristic_value is not None:
+        return heuristic_value
+    return default
+
+
+def resolve_model_capabilities(model=None, endpoint=None):
+    """Return every known capability for a model as a name to boolean-or-None map."""
+    return {
+        capability_name: resolve_model_capability(capability_name, model, endpoint)
+        for capability_name in CAPABILITY_FIELD_NAMES
+    }
+
+
+class ModelTokenBudgetError(ValueError):
+    """A user-safe, explicit configuration error, not an authentication failure."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+
+    @property
+    def payload(self):
+        return {"error": self.public_message, "error_code": self.code}
+
+
+def normalize_token_limit(value, field_name="token limit"):
+    """Accept explicit integer counts without truncating floats or coercing bools."""
+    if isinstance(value, str):
+        value = value.strip()
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+        digits = value.lstrip("0") or "0"
+        if len(digits) <= len(str(MAX_DECLARED_TOKEN_LIMIT)):
+            value = int(digits)
+    if type(value) is not int or not 1 <= value <= MAX_DECLARED_TOKEN_LIMIT:
+        raise ModelTokenBudgetError(
+            "model_context_invalid",
+            f"{field_name} must be a positive whole number of tokens.",
+        )
+    return value
+
+
+def normalize_model_budget_overrides(record):
+    """Normalize only present allowlisted metadata; never copy endpoint secrets."""
+    if not isinstance(record, Mapping):
+        return {}
+    normalized = {}
+    for field_name in MODEL_BUDGET_LIMIT_FIELDS:
+        if field_name in record:
+            normalized[field_name] = normalize_token_limit(record[field_name], field_name)
+    for field_name in ("catalogModelId", "modelVersion", "tokenLimitProvider", "outputTokenAccounting"):
+        if field_name not in record:
+            continue
+        value = record[field_name]
+        if value is not None and not isinstance(value, str):
+            raise ModelTokenBudgetError("model_context_invalid", f"{field_name} must be text.")
+        value = value.strip() if value else None
+        if value and (len(value) > 256 or any(ord(character) < 32 for character in value)):
+            raise ModelTokenBudgetError("model_context_invalid", f"{field_name} is invalid.")
+        if field_name == "tokenLimitProvider" and value not in (None, *MODEL_BUDGET_PROVIDERS):
+            raise ModelTokenBudgetError("model_context_invalid", "Select a supported token-limit provider.")
+        if field_name == "outputTokenAccounting" and value not in (None, *MODEL_OUTPUT_ACCOUNTING):
+            raise ModelTokenBudgetError("model_context_invalid", "Select a supported output-token accounting mode.")
+        normalized[field_name] = value
+    return normalized
+
+
+@dataclass(frozen=True)
+class ModelTokenBudget:
+    """Secret-free model capacity and request allowance, safe to attach to an agent."""
+
+    model_id: str = ""
+    provider: str = ""
+    protocol: str = "chat_completions"
+    model_version: str = ""
+    context_window: int | None = None
+    input_limit: int | None = None
+    output_limit: int | None = None
+    effective_context_window: int | None = None
+    request_output_limit: int | None = None
+    output_accounting: str = "unknown"
+    output_accounting_source: str = "unresolved"
+    applicability: str = "text"
+    tool_reasoning_efforts: tuple[str, ...] = ()
+    provenance: tuple[tuple[str, str], ...] = ()
+
+    def with_request_limit(self, value):
+        return replace(self, request_output_limit=normalize_token_limit(value, "Response Length"))
+
+    def remaining_input(self, input_tokens=0):
+        """Apply independent ceilings without subtracting output from input-only limits."""
+        if type(input_tokens) is not int or input_tokens < 0:
+            raise ModelTokenBudgetError("model_context_invalid", "The input token count is invalid.")
+        if self.applicability != "text":
+            raise ModelTokenBudgetError(
+                "model_context_unavailable", "Select a text-generation model for file evidence."
+            )
+        if self.output_accounting != "total_generation":
+            raise ModelTokenBudgetError(
+                "model_generation_unbounded",
+                "This endpoint needs a verified total-generation token allowance, including reasoning, before file evidence can be added.",
+            )
+        output = self.request_output_limit or self.output_limit
+        if output is None or not (self.context_window or self.input_limit):
+            raise ModelTokenBudgetError(
+                "model_context_unavailable",
+                "Configure the selected model's published token limits and Response Length in Model Endpoints before using file evidence.",
+            )
+        if self.output_limit is not None and output > self.output_limit:
+            raise ModelTokenBudgetError(
+                "model_context_invalid", "Response Length exceeds this model's documented output limit."
+            )
+        bounds = []
+        if self.input_limit is not None:
+            bounds.append(self.input_limit)
+        for window in (self.context_window, self.effective_context_window):
+            if window is not None:
+                bounds.append(window - output)
+        return max(0, min(bounds) - input_tokens)
+
+
+def _numeric_catalog_record(model, records=None):
+    if isinstance(model, str):
+        identifier = model
+    else:
+        identifier = next((
+            _get_record_field(model, field_name)
+            for field_name in ("catalogModelId", "modelName", "deploymentName", "deployment", "name")
+            if _get_record_field(model, field_name)
+        ), "")
+    normalized = _normalize_model_identifier(identifier)
+    if not normalized:
+        return None
+    for record in get_model_capability_catalog_records() if records is None else records:
+        identifiers = (record["id"], *(record.get("verifiedAliases") or ()))
+        if any(normalized == _normalize_model_identifier(value) for value in identifiers):
+            return record
+    return None
+
+
+def _budget_provider(model, endpoint, record, provider):
+    override = (
+        _get_record_field(model, "tokenLimitProvider")
+        or _get_record_field(endpoint, "tokenLimitProvider")
+    )
+    if override:
+        return override
+    selected = str(provider or _get_record_field(endpoint, "provider") or "").strip().lower()
+    if selected in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "azure_openai"):
+        return "azure"
+    if selected == "claude":
+        return "anthropic"
+    if selected in MODEL_BUDGET_PROVIDERS and selected != "custom":
+        return selected
+    return (record or {}).get("provider") or selected
+
+
+def _catalog_budget_profile(record, provider, protocol, model_version):
+    if record is None:
+        return {}
+    profile = dict(record)
+    profile["tokenLimitEvidence"] = dict(record.get("tokenLimitEvidence") or {})
+    matches = []
+    for candidate in record.get("tokenLimitProfiles") or ():
+        if candidate.get("provider") != provider:
+            continue
+        if candidate.get("protocol") and candidate["protocol"] != protocol:
+            continue
+        versions = candidate.get("modelVersions") or ()
+        if versions and model_version not in versions:
+            continue
+        specificity = bool(candidate.get("protocol")) + 2 * bool(versions)
+        matches.append((specificity, candidate))
+    applied = {}
+    for specificity, candidate in sorted(matches, key=lambda item: item[0]):
+        for field_name in (
+            *MODEL_BUDGET_LIMIT_FIELDS, "effectiveContextWindow", "outputTokenAccounting",
+            "toolReasoningEfforts",
+        ):
+            if field_name not in candidate:
+                continue
+            if (specificity, field_name) in applied and applied[(specificity, field_name)] != candidate[field_name]:
+                raise ModelTokenBudgetError("model_context_invalid", "The model's token-limit profiles are ambiguous.")
+            applied[(specificity, field_name)] = candidate[field_name]
+            profile[field_name] = candidate[field_name]
+        profile["tokenLimitEvidence"].update(candidate.get("tokenLimitEvidence") or {})
+    return profile
+
+
+def resolve_model_token_budget(
+    model=None, endpoint=None, *, provider=None, protocol="chat_completions",
+    model_version=None, request_output_limit=None, catalog_records=None,
+):
+    """Resolve each numeric field independently, with exact, scoped catalog identity."""
+    if isinstance(model, ModelTokenBudget):
+        return model if request_output_limit is None else model.with_request_limit(request_output_limit)
+    model_overrides = normalize_model_budget_overrides(model)
+    endpoint_overrides = normalize_model_budget_overrides(endpoint)
+    record = _numeric_catalog_record(model, catalog_records)
+    provider = _budget_provider(
+        model_overrides, endpoint_overrides, record, provider or _get_record_field(endpoint, "provider"),
+    )
+    version = str(
+        model_version or model_overrides.get("modelVersion")
+        or _get_record_field(model, "version")
+        or endpoint_overrides.get("modelVersion") or ""
+    )
+    profile = _catalog_budget_profile(record, provider, protocol, version)
+    evidence = profile.get("tokenLimitEvidence") or {}
+    provenance = []
+    values = {}
+    for field_name in (*MODEL_BUDGET_LIMIT_FIELDS, "effectiveContextWindow"):
+        value = None
+        for name, source in (("model", model_overrides), ("endpoint", endpoint_overrides), ("catalog", profile)):
+            candidate = source.get(field_name)
+            if candidate is None:
+                continue
+            if name == "catalog" and evidence.get(field_name, {}).get("status") in (
+                "configuration-only", "unknown", "not-applicable", "hosting-dependent",
+            ):
+                continue
+            value = normalize_token_limit(candidate, field_name)
+            provenance.append((field_name, name))
+            break
+        values[field_name] = value
+    output_accounting = "unknown"
+    accounting_source = "unresolved"
+    for name, source in (("model", model_overrides), ("endpoint", endpoint_overrides), ("catalog", profile)):
+        if source.get("outputTokenAccounting"):
+            output_accounting = source["outputTokenAccounting"]
+            accounting_source = name
+            break
+    return ModelTokenBudget(
+        model_id=(record or {}).get("id") or str(
+            model_overrides.get("catalogModelId") or _get_record_field(model, "modelName")
+            or _get_record_field(model, "deploymentName") or (model if isinstance(model, str) else "")
+        ),
+        provider=provider,
+        protocol=protocol,
+        model_version=version,
+        context_window=values["contextWindow"],
+        input_limit=values["inputTokenLimit"],
+        output_limit=values["outputTokenLimit"],
+        effective_context_window=values["effectiveContextWindow"],
+        request_output_limit=normalize_token_limit(request_output_limit, "Response Length"),
+        output_accounting=output_accounting,
+        output_accounting_source=accounting_source,
+        applicability=profile.get("tokenLimitsApplicability", "text"),
+        tool_reasoning_efforts=tuple(profile.get("toolReasoningEfforts") or ()),
+        provenance=tuple(provenance),
+    )
+
+
+def project_model_budget_metadata(record):
+    """Copy identifiers/capacities only; callers retain ownership of all credentials."""
+    if not isinstance(record, Mapping):
+        return {}
+    normalized = normalize_model_budget_overrides(record)
+    fields = (
+        *MODEL_BUDGET_LIMIT_FIELDS, "catalogModelId", "modelVersion", "tokenLimitProvider",
+        "outputTokenAccounting", "modelName", "deploymentName", "deployment", "name", "version",
+        "responseLength", "reasoning_effort", "reasoningEffort", "provider",
+    )
+    projection = {
+        field: record[field] for field in fields
+        if field in record and isinstance(record[field], (str, int, type(None)))
+    }
+    projection.update(normalized)
+    return projection
+
+
+def resolve_model_token_limits(model=None, endpoint=None):
+    """Compatibility view; new callers use the separate fields on ModelTokenBudget."""
+    budget = resolve_model_token_budget(model, endpoint)
+    bounds = [
+        value for value in (budget.context_window, budget.input_limit, budget.effective_context_window)
+        if value is not None
+    ]
+    return min(bounds) if bounds else None, budget.output_limit
+
+
+def resolve_model_output_token_limit(model=None, endpoint=None, default=None):
+    """Return the output token limit for a model, falling back to the supplied default."""
+    _, output_limit = resolve_model_token_limits(model, endpoint)
+    return output_limit or default
+
+
+def is_vision_capable_model_name(*model_names):
+    """Return whether any supplied identifier names a supported vision model."""
+    for model_name in model_names:
+        if model_name in (None, ""):
+            continue
+        if resolve_model_capability(CAPABILITY_PROCESSES_IMAGES, model_name, default=False):
+            return True
 
     return False
 
 
-def is_vision_capable_model(model):
+def resolve_model_vision_support(model, endpoint=None):
+    """Return the shared vision decision and its source for model-editor controls."""
+    catalog = get_model_catalog_capabilities(model)
+    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
+        return False, VISION_SOURCE_CATALOG
+    supports_vision = bool(
+        resolve_model_capability(
+            CAPABILITY_PROCESSES_IMAGES,
+            model,
+            endpoint,
+            default=False,
+        )
+    )
+    for source in (model, endpoint):
+        if CAPABILITY_PROCESSES_IMAGES in _read_declared_capabilities(source):
+            return supports_vision, VISION_SOURCE_DECLARED
+    record = find_model_catalog_record(model)
+    if record is not None:
+        capabilities = record.get("capabilities")
+        if isinstance(capabilities, Mapping) and isinstance(
+            capabilities.get(CAPABILITY_PROCESSES_IMAGES), bool
+        ):
+            return supports_vision, VISION_SOURCE_CATALOG
+    return supports_vision, VISION_SOURCE_INFERRED
+
+
+def is_vision_capable_model(model, endpoint=None):
     """Return whether a model record or identifier can accept image input."""
-    supports_vision, _source = resolve_model_vision_support(model)
+    supports_vision, _source = resolve_model_vision_support(model, endpoint)
     return supports_vision
+
+
+def is_reasoning_model(model, endpoint=None):
+    """Return whether a model uses reasoning-style response length parameters."""
+    return bool(
+        resolve_model_capability(
+            CAPABILITY_REASONING,
+            model,
+            endpoint,
+            default=False,
+        )
+    )
+
+
+def supports_streaming(model=None, endpoint=None):
+    """Return whether a model can stream. Unknown models are assumed to stream."""
+    return bool(
+        resolve_model_capability(
+            CAPABILITY_SUPPORTS_STREAMING,
+            model,
+            endpoint,
+            default=True,
+        )
+    )
+
+
+def supports_tool_calling(model=None, endpoint=None, default=True):
+    """Return whether a model supports tool or function calling."""
+    return bool(
+        resolve_model_capability(
+            CAPABILITY_TOOL_CALLING,
+            model,
+            endpoint,
+            default=default,
+        )
+    )

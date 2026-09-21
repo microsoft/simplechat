@@ -1,7 +1,7 @@
 # test_custom_model_endpoint_foundation.py
 """
 Functional tests for the Custom endpoint foundation.
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.107
 Semantic Kernel screening/workflow guard merge coverage: 0.261.113
 
@@ -50,6 +50,7 @@ import functions_workflow_context as workflow_context
 import model_endpoint_clients as clients
 from functions_model_endpoint_providers import get_model_endpoint_provider, get_model_endpoint_provider_ui_options
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_capabilities import project_model_budget_metadata, resolve_model_token_budget
 from test_model_endpoint_normalization_backend import _load_functions_settings_module, _restore_modules
 from test_v2_admin_model_endpoints_api import _load_persistence_helper
 from test_workflow_context_budget import ToolCallingCompletion
@@ -98,6 +99,109 @@ def no_live_requests(monkeypatch):
     monkeypatch.setattr(httpcore.SyncBackend, "connect_tcp", Mock(side_effect=AssertionError("Unexpected live TCP request")))
     monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", AsyncMock(side_effect=AssertionError("Unexpected live TCP request")))
     endpoint_auth.clear_oauth2_token_cache()
+
+
+@pytest.mark.parametrize("registration_index", range(3))
+@pytest.mark.parametrize("blocked_by", [None, "screening", "budget"])
+def test_loader_registration_preserves_screening_and_workflow_tool_round_guards(
+    monkeypatch, registration_index, blocked_by,
+):
+    """Run all merged registration paths with the real SK automatic tool loop."""
+    source = ast.parse((APP / "semantic_kernel_loader.py").read_text(encoding="utf-8"))
+    registrations = []
+    for node in ast.walk(source):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list):
+            continue
+        for index, statement in enumerate(body[:-1]):
+            if (
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Call)
+                and isinstance(statement.value.func, ast.Name)
+                and statement.value.func.id == "wrap_workflow_chat_service"
+            ):
+                registrations.append([statement, body[index + 1]])
+    registrations.sort(key=lambda statements: statements[0].lineno)
+    assert len(registrations) == 3
+    budget_model = {
+        "modelName": "fixture-model", "contextWindow": 4096,
+        "outputTokenLimit": 512, "outputTokenAccounting": "total_generation",
+    }
+    held = False
+
+    def verify_sources():
+        if held:
+            raise DocumentHeldError()
+
+    monkeypatch.setattr(screening_access, "assert_current_request_sources_available", verify_sources)
+    original = ToolCallingCompletion(ai_model_id="fixture-model", service_id="loader-model", api_key="test-only")
+    kernel = Kernel()
+
+    @kernel_function(name="load", description="Read the full inventory.")
+    def load() -> str:
+        nonlocal held
+        held = blocked_by == "screening"
+        return "inventory " * (10000 if blocked_by == "budget" else 1)
+
+    kernel.add_function(plugin_name="evidence", function=load)
+    history = ChatHistory()
+    history.add_user_message("Review the inventory using the evidence tool.")
+    settings = PromptExecutionSettings()
+    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=3)
+    agent_config = {
+        "model_metadata": {"modelName": "fixture-model", "id": "agent-model"},
+        "model_budget_model": budget_model,
+        "deployment": "agent-deployment", "model_provider": "new_foundry",
+    }
+    orchestrator_config = {
+        "model_metadata": {"modelName": "fixture-model", "id": "orchestrator-model"},
+        "model_budget_model": budget_model,
+        "deployment": "orchestrator-deployment", "model_provider": "aoai",
+    }
+    namespace = {
+        "chat_service": original, "kernel": kernel,
+        "agent_config": agent_config, "orchestrator_config": orchestrator_config,
+        "guard_chat_service": screening_access.guard_chat_service,
+        "wrap_workflow_chat_service": workflow_context.wrap_workflow_chat_service,
+        "settings": {},
+        "project_model_budget_metadata": project_model_budget_metadata,
+        "resolve_model_token_budget": resolve_model_token_budget,
+        "infer_model_endpoint_protocol": clients.infer_model_endpoint_protocol,
+        "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": clients.MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    }
+    budget_helpers = [
+        node for node in source.body if isinstance(node, ast.FunctionDef)
+        and node.name in {"build_agent_model_budget", "resolve_agent_endpoint_protocol"}
+    ]
+    assert len(budget_helpers) == 2
+    exec(compile(ast.Module(body=budget_helpers, type_ignores=[]), str(APP / "semantic_kernel_loader.py"), "exec"), namespace)
+    workflow = {}
+    with workflow_context.workflow_context_budget_scope(workflow):
+        exec(compile(
+            ast.Module(body=registrations[registration_index], type_ignores=[]),
+            str(APP / "semantic_kernel_loader.py"), "exec",
+        ), namespace)
+        service = namespace["chat_service"]
+        expected_config = orchestrator_config if registration_index == 2 else agent_config
+        expected_budget = namespace["build_agent_model_budget"](expected_config, {})
+        assert service.model_metadata == expected_budget
+        assert expected_budget.model_id == "fixture-model"
+        assert expected_budget.context_window == 4096
+        assert expected_budget.output_limit == 512
+        assert expected_budget.output_accounting == "total_generation"
+        assert service.provider == expected_config["model_provider"]
+        assert kernel.get_service(service_id="loader-model") is service
+        if blocked_by:
+            error = DocumentHeldError if blocked_by == "screening" else workflow_context.WorkflowContextBudgetError
+            with pytest.raises(error):
+                asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
+            assert original.request_count == 1
+        else:
+            messages = asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
+            assert messages[-1].content == "Finished."
+            assert original.request_count == 2
+    if blocked_by == "budget":
+        assert workflow["context_budget"]["decision"] == "blocked"
 
 
 @pytest.fixture
@@ -463,91 +567,6 @@ def test_normalization_merge_and_admin_user_projections_keep_the_contract():
         assert "auth" not in public and "connection" not in public and "management" not in public
     finally:
         _restore_modules(originals)
-
-
-@pytest.mark.parametrize("registration_index", range(3))
-@pytest.mark.parametrize("blocked_by", [None, "screening", "budget"])
-def test_loader_registration_preserves_screening_and_workflow_tool_round_guards(
-    monkeypatch, registration_index, blocked_by,
-):
-    """Run all merged registration paths with the real SK automatic tool loop."""
-    source = ast.parse((APP / "semantic_kernel_loader.py").read_text(encoding="utf-8"))
-    registrations = []
-    for node in ast.walk(source):
-        body = getattr(node, "body", None)
-        if not isinstance(body, list):
-            continue
-        for index, statement in enumerate(body[:-1]):
-            if (
-                isinstance(statement, ast.Assign)
-                and isinstance(statement.value, ast.Call)
-                and isinstance(statement.value.func, ast.Name)
-                and statement.value.func.id == "wrap_workflow_chat_service"
-            ):
-                registrations.append([statement, body[index + 1]])
-    registrations.sort(key=lambda statements: statements[0].lineno)
-    assert len(registrations) == 3
-    monkeypatch.setattr(workflow_context, "resolve_model_token_limits", lambda *args, **kwargs: {
-        "context_window_tokens": 4096, "max_input_tokens": None, "max_output_tokens": 512,
-        "tokenizer": "cl100k_base", "source": "catalog", "model_id": "fixture-model", "status": "known",
-    })
-    held = False
-
-    def verify_sources():
-        if held:
-            raise DocumentHeldError()
-
-    monkeypatch.setattr(screening_access, "assert_current_request_sources_available", verify_sources)
-    original = ToolCallingCompletion(ai_model_id="fixture-model", service_id="loader-model", api_key="test-only")
-    kernel = Kernel()
-
-    @kernel_function(name="load", description="Read the full inventory.")
-    def load() -> str:
-        nonlocal held
-        held = blocked_by == "screening"
-        return "inventory " * (10000 if blocked_by == "budget" else 1)
-
-    kernel.add_function(plugin_name="evidence", function=load)
-    history = ChatHistory()
-    history.add_user_message("Review the inventory using the evidence tool.")
-    settings = PromptExecutionSettings()
-    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=3)
-    agent_config = {
-        "model_metadata": {"modelName": "fixture-model", "id": "agent-model"},
-        "deployment": "agent-deployment", "model_provider": "new_foundry",
-    }
-    orchestrator_config = {
-        "model_metadata": {"modelName": "fixture-model", "id": "orchestrator-model"},
-        "deployment": "orchestrator-deployment", "model_provider": "aoai",
-    }
-    namespace = {
-        "chat_service": original, "kernel": kernel,
-        "agent_config": agent_config, "orchestrator_config": orchestrator_config,
-        "guard_chat_service": screening_access.guard_chat_service,
-        "wrap_workflow_chat_service": workflow_context.wrap_workflow_chat_service,
-    }
-    workflow = {}
-    with workflow_context.workflow_context_budget_scope(workflow):
-        exec(compile(
-            ast.Module(body=registrations[registration_index], type_ignores=[]),
-            str(APP / "semantic_kernel_loader.py"), "exec",
-        ), namespace)
-        service = namespace["chat_service"]
-        expected_config = orchestrator_config if registration_index == 2 else agent_config
-        assert service.model_metadata == expected_config["model_metadata"]
-        assert service.provider == expected_config["model_provider"]
-        assert kernel.get_service(service_id="loader-model") is service
-        if blocked_by:
-            error = DocumentHeldError if blocked_by == "screening" else workflow_context.WorkflowContextBudgetError
-            with pytest.raises(error):
-                asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
-            assert original.request_count == 1
-        else:
-            messages = asyncio.run(service.get_chat_message_contents(history, settings, kernel=kernel))
-            assert messages[-1].content == "Finished."
-            assert original.request_count == 2
-    if blocked_by == "budget":
-        assert workflow["context_budget"]["decision"] == "blocked"
 
 
 @pytest.fixture

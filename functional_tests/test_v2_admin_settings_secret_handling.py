@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_settings_secret_handling.py
+#!/usr/bin/env python3
 """
 Functional test for credential handling on the V2 Admin Settings endpoint.
-Version: 0.261.084
+Version: 0.261.122
 Implemented in: 0.261.084
 
 The server-rendered admin form runs every settings document through
@@ -99,8 +99,8 @@ def test_redaction_covers_both_the_form_list_and_the_schema():
     body = helper.group(0)
 
     assert "redact_admin_settings_secrets_for_api" in body, (
-        "The helper should build on the API redaction list, which covers what the "
-        "server-rendered form protects plus the keys only this endpoint returns."
+        "The helper should reuse the API redaction list, including credentials "
+        "that are not represented by an editable form control."
     )
     assert "get_secret_storage_paths()" in body, (
         "The helper should also redact anything the V2 schema declares as a "
@@ -133,18 +133,13 @@ def test_patch_echo_is_redacted():
 
 def test_untouched_credentials_are_never_written():
     """This is the destructive case: writing the placeholder loses the key."""
-    print("\nTesting that an untouched credential is left alone...")
+    print("\nTesting that an untouched credential is dropped from the update...")
 
-    # A flat secret is resolved by the route, which holds the settings document.
-    # A secret stored at a declared path cannot be: _apply_nested_paths folds it
-    # into its containing object before the route sees it, so it never appears as
-    # a key the route could resolve. That one is dropped by the normalizer.
+    # Nested fields are folded into their parent before route-level resolution.
     section = "__secret_handling_probe__"
     fields_module.ADMIN_SETTINGS_FIELDS[section] = [
         {
-            "key": "probe_nested_secret",
-            "type": "secret",
-            "label": "Probe secret",
+            "key": "probe_nested_secret", "type": "secret", "label": "Probe secret",
             "paths": ["probe_container.secret"],
         }
     ]
@@ -154,21 +149,34 @@ def test_untouched_credentials_are_never_written():
         untouched, errors, _ = normalize({"probe_nested_secret": REDACTED}, current)
         assert not errors, errors
         assert untouched.get("probe_container", {}).get("secret") != REDACTED, (
-            "The placeholder was written into the containing object. The route "
-            "resolves by settings key and never sees this one, so saving any "
-            "unrelated toggle would overwrite the stored credential with "
+            "The placeholder was carried into the update. Saving any unrelated "
+            "toggle would overwrite the stored credential with "
             f"{REDACTED!r}, which cannot be recovered without a backup."
         )
 
-        # A real edit still lands, and its siblings survive.
+        # A save that touches a toggle alongside an untouched credential must
+        # still apply the toggle.
+        mixed, errors, _ = normalize(
+            {"probe_nested_secret": REDACTED, "enable_something": True}, current
+        )
+        assert not errors, errors
+        assert mixed == {"enable_something": True}, mixed
+
+        # A genuine edit still lands.
         changed, errors, _ = normalize({"probe_nested_secret": "a-new-key"}, current)
         assert not errors, errors
         assert changed["probe_container"]["secret"] == "a-new-key", changed
         assert changed["probe_container"]["other"] == "keep-me", changed
+
+        # Deliberately clearing a credential is a real edit, not "unchanged".
+        cleared, errors, _ = normalize({"probe_nested_secret": ""}, current)
+        assert not errors, errors
+        assert cleared["probe_container"]["secret"] == "", cleared
+        assert cleared["probe_container"]["other"] == "keep-me", cleared
     finally:
         del fields_module.ADMIN_SETTINGS_FIELDS[section]
 
-    print("  A nested credential survives an unrelated save; a real edit still lands.")
+    print("  Untouched credentials are dropped; real edits and clears still save.")
     return True
 
 

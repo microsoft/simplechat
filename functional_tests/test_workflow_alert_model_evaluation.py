@@ -2,7 +2,7 @@
 # test_workflow_alert_model_evaluation.py
 """
 Functional test for model evaluated workflow alert conditions.
-Version: 0.250.213
+Version: 0.261.030
 Implemented in: 0.250.213
 
 This test ensures plain-English alert conditions are judged in a single batched
@@ -27,6 +27,10 @@ from functions_workflow_alerts import (  # noqa: E402
     evaluate_workflow_alert_rules,
     normalize_alert_rules,
     parse_model_evaluation_response,
+)
+from functions_workflow_alert_safety import (  # noqa: E402
+    WORKFLOW_ALERT_EVALUATION_ERROR_CODE,
+    WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE,
 )
 
 
@@ -227,7 +231,8 @@ def test_malformed_and_failed_evaluations_honor_on_error():
         model_evaluator=RecordingEvaluator(RuntimeError('model endpoint unavailable')),
     )
     assert decision['should_alert'] is True
-    assert 'model endpoint unavailable' in decision['model_evaluation']['error']
+    assert decision['model_evaluation']['error'] == WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE
+    assert decision['model_evaluation']['error_code'] == WORKFLOW_ALERT_EVALUATION_ERROR_CODE
 
     # Without an evaluator the rule is reported as unevaluated rather than matched.
     decision = decide(

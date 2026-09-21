@@ -1,7 +1,7 @@
 # test_content_screening_read_boundaries.py
 """
 Behavioral tests for search, native caches, and resumed source consumption.
-Version: 0.261.113
+Version: 0.261.122
 Implemented in: 0.261.106
 
 Executes the actual boundary function bodies with isolated fake dependencies.
@@ -74,9 +74,9 @@ class SearchBoundaryTests(ScreeningAccessFixture):
             "cache_search_results": cache,
             "generate_embedding": lambda _query, **_kwargs: [0.1],
             "read_embedding_settings": lambda: {},
-            "active_embedding_profile": lambda _settings: SimpleNamespace(profile_id="fixture-profile"),
+            "active_embedding_profile": lambda _settings: SimpleNamespace(profile_id="test-profile"),
             "embedding_query_slot": lambda _profile_id: nullcontext(),
-            "embedding_search_filter": lambda *_args: None,
+            "embedding_search_filter": lambda *_args: "embedding_profile_id eq 'test-profile'",
             "search_with_embedding_profile": lambda client, _profile, **kwargs: client.search(**kwargs),
             "VectorizedQuery": lambda **kwargs: kwargs,
             "CLIENTS": {f"search_client_{scope}": SimpleNamespace(search=search) for scope in ("user", "group", "public")},

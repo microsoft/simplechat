@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_capability_placement.py
+#!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.047
+Version: 0.261.122
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -84,14 +84,9 @@ RELOCATED_CAPABILITIES = {
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
     # Matched the token "image" and landed in Image Generation, which is about producing
-    # pictures rather than reading them out of Word and PowerPoint files. It now has a
-    # section of its own: the setting turns on a separate pass with its own model and
-    # cost, and burying it in Document Intelligence implied it was part of that engine's
-    # configuration rather than an independent choice made after it.
-    "enable_office_embedded_image_analysis": (
-        "office-embedded-image-section",
-        "extraction",
-    ),
+    # pictures rather than reading them out of Word and PowerPoint files. The
+    # independent image-analysis pass has its own model and cost.
+    "enable_office_embedded_image_analysis": ("office-embedded-image-section", "extraction"),
     # Agents & Actions. Before these were declared, enable_semantic_kernel matched
     # no section at all and was filed under "Other capabilities", and the plugin
     # toggles were scattered: enable_text_plugin matched "text" in
@@ -112,12 +107,7 @@ RELOCATED_CAPABILITIES = {
     # "file" all reached chat-file-uploads-section, and "enhanced" reached
     # enhanced-citations-section.
     "enable_audio_file_support": ("ai-voice-chat-section", "audio-video"),
-    # Declared under Chat rather than AI Voice deliberately. It plays a short
-    # bundled sound locally when a response finishes and needs no Speech
-    # resource -- its own help text says so -- yet in V1 it is the first control
-    # in the AI Voice card, above the Speech configuration it has nothing to do
-    # with. The V1 pane is unchanged, which is why the pane below still reads
-    # "audio-video".
+    # Local completion sounds belong with notifications, not Azure Speech.
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
     "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),

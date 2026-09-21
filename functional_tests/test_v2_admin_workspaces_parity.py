@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 # test_v2_admin_workspaces_parity.py
+#!/usr/bin/env python3
 """
 Functional test pinning V1/V2 parity for the Admin Settings Workspaces group.
 Version: 0.261.060

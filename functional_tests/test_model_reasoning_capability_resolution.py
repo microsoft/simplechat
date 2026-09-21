@@ -1,7 +1,7 @@
 # test_model_reasoning_capability_resolution.py
 """
 Functional tests for canonical reasoning policies and bounded provider recovery.
-Version: 0.261.105
+Version: 0.261.122
 Implemented in: 0.261.104
 
 Exercises real catalog matching and SDK errors without Azure clients or network

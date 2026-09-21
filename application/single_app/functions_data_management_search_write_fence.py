@@ -2,6 +2,7 @@
 """Cross-app Azure AI Search write fencing for Data Management migrations."""
 
 import copy
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ DATA_MANAGEMENT_TARGET_MIGRATION_COORDINATOR_ID = (
 DATA_MANAGEMENT_TARGET_MIGRATION_COORDINATOR_TYPE = (
     "data_management_target_migration_coordinator"
 )
+DATA_MANAGEMENT_SEARCH_WRITE_GATE_LOCAL_LOCK = threading.Lock()
 
 
 class DataManagementSearchWriteGateError(RuntimeError):
@@ -198,7 +200,8 @@ def _preserve_embedding_gate_state(source, target):
 
 def acquire_data_management_search_write_slot(container, *, embedding_profile_id=None, records_vectors=True):
     """Reserve one bounded target Search write before issuing the data-plane request."""
-    for _attempt in range(12):
+    deadline = time.monotonic() + DATA_MANAGEMENT_SEARCH_WRITE_REQUEST_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
         now = _now_utc()
         gate = _create_or_read_gate(container)
         if gate.get("type") != DATA_MANAGEMENT_SEARCH_WRITE_GATE_TYPE:
@@ -211,6 +214,7 @@ def acquire_data_management_search_write_slot(container, *, embedding_profile_id
             )
         if gate.get("state") != DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_OPEN:
             if _open_expired_gate(container, gate, now) is None:
+                time.sleep(DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS)
                 continue
             continue
         if embedding_profile_id and gate.get("embedding_profile_id") not in (None, "", embedding_profile_id):
@@ -239,8 +243,9 @@ def acquire_data_management_search_write_slot(container, *, embedding_profile_id
         })
         if _replace_gate(container, gate, replacement) is not None:
             return lease_token
+        time.sleep(DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS)
     raise DataManagementSearchWriteGateError(
-        "The Data Management Search write gate changed too often to reserve a write slot."
+        "The Data Management Search write gate could not reserve a write slot before the request timeout."
     )
 
 
@@ -273,16 +278,17 @@ def release_data_management_search_write_slot(container, lease_token):
 @contextmanager
 def hold_data_management_search_write_slot(container, *, embedding_profile_id=None, records_vectors=True):
     """Hold a target Search write slot until a response is known or its ambiguity lease expires."""
-    lease_token = acquire_data_management_search_write_slot(
-        container, embedding_profile_id=embedding_profile_id, records_vectors=records_vectors,
-    )
-    response_confirmed = False
-    try:
-        yield
-        response_confirmed = True
-    finally:
-        if response_confirmed:
-            release_data_management_search_write_slot(container, lease_token)
+    with DATA_MANAGEMENT_SEARCH_WRITE_GATE_LOCAL_LOCK:
+        lease_token = acquire_data_management_search_write_slot(
+            container, embedding_profile_id=embedding_profile_id, records_vectors=records_vectors,
+        )
+        response_confirmed = False
+        try:
+            yield
+            response_confirmed = True
+        finally:
+            if response_confirmed:
+                release_data_management_search_write_slot(container, lease_token)
 
 
 def acquire_data_management_search_write_fence(

@@ -14,6 +14,8 @@ from functions_appinsights import log_event
 CORRELATION_ID_LENGTH = 8
 MAX_LOGGED_DETAIL_LENGTH = 2000
 _REDACTION_PATTERNS = (
+    re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?)([^\"'\r\n,}]+)"),
+    re.compile(r"(?i)([?&](?:key|api[-_]?key|access[-_]?token)=)([^&\s\"']+)"),
     re.compile(r'(?i)((?:api[-_]?key|x-goog-api-key|client[-_]?secret|access[-_]?token|refresh[-_]?token|bearer[-_]?token|password)["\']?\s*[:=]\s*["\']?)([^"\'\s,&]+)'),
     re.compile(r'(?i)(bearer\s+)([A-Za-z0-9\-._~+/]+=*)'),
     re.compile(r'(sk-[A-Za-z0-9_-]{8,})'),
@@ -65,6 +67,10 @@ def log_custom_model_endpoint_failure(
         try:
             parsed = urlsplit(str(request_url))
             host = parsed.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
             context["request_url"] = redact_model_endpoint_secrets(
                 urlunsplit((parsed.scheme, host, parsed.path, "", ""))
             )
@@ -80,10 +86,16 @@ def log_custom_model_endpoint_failure(
         )
         if exception.__cause__ is not None:
             context["cause_type"] = type(exception.__cause__).__name__
-    log_event(
-        f"[MODEL_ENDPOINT] {summary} (reference {correlation_id})",
-        extra=context, level=logging.ERROR,
-    )
+    try:
+        log_event(
+            f"[CUSTOM_MODEL_ENDPOINT] {summary} (correlation_id={correlation_id})",
+            extra=context, level=logging.ERROR,
+        )
+    except (RuntimeError, OSError, ValueError, TypeError) as logging_error:
+        logging.getLogger(__name__).error(
+            "[CUSTOM_MODEL_ENDPOINT] Telemetry logging failed; reference %s; logger error type %s",
+            correlation_id, type(logging_error).__name__, extra=context,
+        )
     return correlation_id
 
 

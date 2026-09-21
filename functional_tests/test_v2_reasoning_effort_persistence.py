@@ -1,7 +1,7 @@
 # test_v2_reasoning_effort_persistence.py
 """
 Functional regressions for canonical reasoning projection and preference contracts.
-Version: 0.261.105
+Version: 0.261.122
 Implemented in: 0.261.104
 
 Executes actual catalog/initial-selection functions without Flask/Azure startup, then the

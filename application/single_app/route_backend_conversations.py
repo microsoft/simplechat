@@ -58,6 +58,9 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_m365_context import M365PolicyError
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
+import functions_msgraph_pending_actions
 from functions_simplechat_operations import (
     ConversationForkConflictError,
     create_personal_conversation_for_current_user,
@@ -841,6 +844,13 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     return conversation_item
 
 
+def hydrate_m365_pending_action_cards(messages, viewer_user_id, conversation_id):
+    """Project current cards only after the caller authorizes message history."""
+    return functions_msgraph_pending_actions.hydrate_m365_pending_action_cards(
+        messages, viewer_user_id, conversation_id,
+    )
+
+
 def _rebuild_authorized_personal_conversation_used_documents(
     user_id,
     conversation_id,
@@ -1085,6 +1095,20 @@ def register_route_backend_conversations(bp):
                 all_items,
                 image_url_builder=lambda image_id: f"/api/image/{image_id}",
             )
+
+            try:
+                messages = hydrate_m365_pending_action_cards(messages, user_id, conversation_id)
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_METADATA] Microsoft 365 action cards could not be loaded.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
+                status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+                return jsonify({
+                    "error": "m365_pending_actions_unavailable",
+                    "message": "Microsoft 365 action cards could not be loaded. Reload the conversation to try again.",
+                }), status_code
 
             return jsonify({'messages': messages})
         except PermissionError:
@@ -1475,6 +1499,18 @@ def register_route_backend_conversations(bp):
             }), 500
 
         try:
+            cancel_m365_conversation_deliveries(conversation_id)
+        except Exception as error:
+            log_event(
+                "[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.",
+                extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({
+                "error": "Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.",
+            }), 503
+
+        try:
             cleanup_conversation_checkpoints(
                 conversation_id, user_id,
                 lambda: _authorize_personal_conversation_read(user_id, conversation_id),
@@ -1536,7 +1572,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results)
+            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1614,6 +1650,7 @@ def register_route_backend_conversations(bp):
                     failed_ids.append(conversation_id)
                     continue
 
+                cancel_m365_conversation_deliveries(conversation_id)
                 cleanup_conversation_checkpoints(
                     conversation_id, user_id,
                     lambda: _authorize_personal_conversation_read(user_id, conversation_id),
@@ -1646,7 +1683,7 @@ def register_route_backend_conversations(bp):
                 cleanup_chat_analysis_conversation(conversation_id, user_id, messages)
 
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages)
+                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:
@@ -1682,8 +1719,12 @@ def register_route_backend_conversations(bp):
                 
                 success_count += 1
                 
-            except Exception as e:
-                print(f"Error deleting conversation {conversation_id}: {str(e)}")
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_DELETE] Conversation deletion failed.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
                 failed_ids.append(conversation_id)
 
         if success_count:

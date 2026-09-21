@@ -33,12 +33,18 @@ from functions_file_sync import (
     list_file_sync_sources,
     sanitize_file_sync_source,
 )
-from functions_group import require_active_group
+from functions_group import find_group_by_id, require_active_group
 from functions_public_workspaces import require_active_public_workspace
 from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_NONE, build_analyze_config
 from functions_thoughts import get_thoughts_for_message
 from functions_workflow_activity import build_workflow_activity_snapshot
 from functions_msgraph_pending_actions import list_msgraph_pending_actions, sanitize_msgraph_pending_action_for_client
+from functions_m365_workflow_binding import (
+    M365_ACTIVE_STATES,
+    workflow_result_is_waiting,
+    workflow_result_runtime_status,
+)
+from functions_m365_runtime import cancel_m365_workflow_requests
 from functions_personal_workflows import (
     compute_next_run_at,
     delete_personal_workflow,
@@ -251,6 +257,22 @@ def _request_workflow_run_cancellation(
         raise WorkflowCancellationConflictError('This workflow run has already finished.')
 
     requested_at = datetime.now(timezone.utc).isoformat()
+    if run_status in M365_ACTIVE_STATES:
+        run_record = {
+            **run_record,
+            'status': 'cancelled',
+            'completed_at': requested_at,
+            'cancellation_requested_at': requested_at,
+            'cancellation_requested_by': requested_by,
+        }
+        run_record = save_run(run_record)
+        updated_workflow = update_runtime_fields({
+            'status': 'idle', 'last_run_status': 'cancelled',
+            'active_run_id': '', 'cancellation_requested_at': requested_at,
+            'cancellation_requested_by': requested_by,
+        })
+        cancel_m365_workflow_requests(workflow_id, target_run_id)
+        return updated_workflow, run_record
     if run_record:
         run_record = dict(run_record)
         run_record.update({
@@ -1009,7 +1031,10 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
             run_id=_normalize_identifier((run_record or {}).get('id')),
             limit=100,
         )
-        pending_actions = [sanitize_msgraph_pending_action_for_client(action) for action in raw_pending_actions]
+        pending_actions = [
+            sanitize_msgraph_pending_action_for_client(action, viewer_user_id=user_id)
+            for action in raw_pending_actions
+        ]
 
     run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
     if not analysis_access_available:
@@ -1087,13 +1112,20 @@ def _resolve_group_workflow_activity_context(user_id, group_id, conversation_id=
     pending_actions = []
     if run_record or conversation_id or workflow_id:
         raw_pending_actions = list_msgraph_pending_actions(
-            run_owner_user_id,
+            _normalize_identifier(
+                (run_record or {}).get('m365_run_as_user_id')
+                or (workflow or {}).get('m365_run_as_user_id')
+                or run_owner_user_id
+            ),
             conversation_id=conversation_id or _normalize_identifier((run_record or {}).get('conversation_id')),
             workflow_id=workflow_id or _normalize_identifier((workflow or {}).get('id')),
             run_id=_normalize_identifier((run_record or {}).get('id')),
             limit=100,
         )
-        pending_actions = [sanitize_msgraph_pending_action_for_client(action) for action in raw_pending_actions]
+        pending_actions = [
+            sanitize_msgraph_pending_action_for_client(action, viewer_user_id=user_id)
+            for action in raw_pending_actions
+        ]
 
     run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
     if not analysis_access_available:
@@ -1131,7 +1163,7 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
             yield ': keep-alive\n\n'
 
         run_status = str(((snapshot.get('run') or {}).get('status') or '')).strip().lower()
-        if run_status and run_status not in {'running', 'cancelling'}:
+        if run_status and run_status not in ({'running', 'cancelling'} | M365_ACTIVE_STATES) and not snapshot.get('live'):
             terminal_snapshots_seen += 1
             if terminal_snapshots_seen >= 2:
                 break
@@ -1164,7 +1196,7 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
             yield ': keep-alive\n\n'
 
         run_status = str(((snapshot.get('run') or {}).get('status') or '')).strip().lower()
-        if run_status and run_status not in {'running', 'cancelling'}:
+        if run_status and run_status not in ({'running', 'cancelling'} | M365_ACTIVE_STATES) and not snapshot.get('live'):
             terminal_snapshots_seen += 1
             if terminal_snapshots_seen >= 2:
                 break
@@ -1176,6 +1208,55 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
 
 def register_route_backend_workflows(bp):
     bp.after_request(_workflow_inspection_cache_response)
+
+    @bp.route('/api/workflows/m365-run-as-users', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def m365_workflow_run_as_users():
+        actor_id = get_current_user_id()
+        scope = request.args.get('scope', 'personal')
+        if scope not in {'personal', 'group'}:
+            return jsonify({'error': 'Unsupported workflow scope.'}), 400
+        user_info = get_current_user_info() or {}
+        users = {
+            actor_id: {
+                'id': actor_id,
+                'display_name': user_info.get('displayName')
+                or user_info.get('name') or user_info.get('email') or actor_id,
+            }
+        }
+        if scope == 'group':
+            group_id = str(request.args.get('group_id') or '').strip()
+            if not group_id:
+                return jsonify({'error': 'Select a group for this workflow.'}), 400
+            try:
+                assert_group_role(
+                    actor_id, group_id,
+                    allowed_roles=get_group_workflow_management_roles(get_settings()),
+                )
+                group = find_group_by_id(group_id)
+                if not group:
+                    return jsonify({'error': 'Group not found.'}), 404
+                members = [
+                    group.get('owner') or {},
+                    *(group.get('admins') or []),
+                    *(group.get('documentManagers') or []),
+                    *(group.get('users') or []),
+                ]
+                for member in members:
+                    member_id = str(member.get('userId') or member.get('id') or '').strip()
+                    if member_id:
+                        users[member_id] = {
+                            'id': member_id,
+                            'display_name': member.get('displayName')
+                            or member.get('email') or member_id,
+                        }
+            except PermissionError:
+                return jsonify({'error': 'You cannot configure this group workflow.'}), 403
+            except LookupError:
+                return jsonify({'error': 'Group not found.'}), 404
+        return jsonify({'users': list(users.values())})
 
     @bp.route('/api/user/workflows/<workflow_id>/flow', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -1876,7 +1957,7 @@ def register_route_backend_workflows(bp):
                 run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
-            update_fields['status'] = 'idle'
+            update_fields['status'] = workflow_result_runtime_status(result)
             run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
             if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
                 not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
@@ -1890,6 +1971,8 @@ def register_route_backend_workflows(bp):
                 'run': result.get('run'),
                 'resumed_item_count': len(failed_items),
             }
+            if workflow_result_is_waiting(result):
+                return jsonify(response_body), 202
             if result.get('success'):
                 return jsonify(response_body)
             return jsonify(response_body), 500
@@ -2369,7 +2452,7 @@ def register_route_backend_workflows(bp):
                 run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
-            update_fields['status'] = 'idle'
+            update_fields['status'] = workflow_result_runtime_status(result)
             run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
             if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
                 not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
@@ -2383,6 +2466,8 @@ def register_route_backend_workflows(bp):
                 'run': result.get('run'),
                 'resumed_item_count': len(failed_items),
             }
+            if workflow_result_is_waiting(result):
+                return jsonify(response_body), 202
             if result.get('success'):
                 return jsonify(response_body)
             return jsonify(response_body), 500
@@ -2512,6 +2597,12 @@ def register_route_backend_workflows(bp):
         workflow = get_group_workflow(group_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('status') in M365_ACTIVE_STATES:
+            return jsonify({
+                'error': 'This workflow is waiting for Microsoft 365 approval or sign-in.',
+                'active_run_id': workflow.get('active_run_id'),
+                'status': workflow.get('status'),
+            }), 409
         if workflow.get('durable_execution') is True:
             return _queue_workflow_response(workflow, user_id)
 
@@ -2544,7 +2635,7 @@ def register_route_backend_workflows(bp):
                 run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
-            update_fields['status'] = 'idle'
+            update_fields['status'] = workflow_result_runtime_status(result)
             run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
             if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
                 not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
@@ -2557,6 +2648,8 @@ def register_route_backend_workflows(bp):
                 'workflow': updated_workflow,
                 'run': result.get('run'),
             }
+            if workflow_result_is_waiting(result):
+                return jsonify(response_body), 202
             if result.get('success'):
                 return jsonify(response_body)
             return jsonify(response_body), 500
@@ -2668,6 +2761,12 @@ def register_route_backend_workflows(bp):
         workflow = get_personal_workflow(user_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('status') in M365_ACTIVE_STATES:
+            return jsonify({
+                'error': 'This workflow is waiting for Microsoft 365 approval or sign-in.',
+                'active_run_id': workflow.get('active_run_id'),
+                'status': workflow.get('status'),
+            }), 409
         if workflow.get('durable_execution') is True:
             return _queue_workflow_response(workflow, user_id)
 
@@ -2699,7 +2798,7 @@ def register_route_backend_workflows(bp):
                 run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
-            update_fields['status'] = 'idle'
+            update_fields['status'] = workflow_result_runtime_status(result)
             run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
             if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
                 not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
@@ -2712,6 +2811,8 @@ def register_route_backend_workflows(bp):
                 'workflow': updated_workflow,
                 'run': result.get('run'),
             }
+            if workflow_result_is_waiting(result):
+                return jsonify(response_body), 202
             if result.get('success'):
                 return jsonify(response_body)
             return jsonify(response_body), 500

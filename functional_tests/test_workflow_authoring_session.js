@@ -1,7 +1,7 @@
 // test_workflow_authoring_session.js
 /*
 Atomic authoring-session, buffer, replay, and Save payload contracts.
-Version: 0.261.123
+Version: 0.261.124
 Implemented in: 0.261.123
 
 Executes the production TypeScript session and field store, without a browser,
@@ -86,7 +86,7 @@ function replay(state, direction) {
 }
 
 function historyPayloads() {
-    const state = setup();
+    const state = setup((draft) => { draft.m365_run_as_user_id = 'history-run-as-user'; });
     for (const item of fixture.commands) assert.equal(command(state, structuredClone(item), true).status, 'applied');
     const scope = { type: 'personal' };
     const payload = () => editor.workflowForSave(state.session.draft, state.original, scope);
@@ -128,6 +128,37 @@ if (process.argv.includes('--emit-history-payloads')) {
         assert.equal(session.getSnapshot().redoLabel, '');
         assert.equal(session.draft.definition_revision, original.definition_revision);
         assert.deepEqual(session.draft.future_envelope, original.future_envelope);
+    });
+
+    test('Microsoft 365 Run as selection and clearing replay without changing saved authority', () => {
+        for (const initialAccount of [undefined, '', 'saved-account']) {
+            const state = setup((draft) => {
+                if (initialAccount === undefined) delete draft.m365_run_as_user_id;
+                else draft.m365_run_as_user_id = initialAccount;
+            });
+            const { session, original } = state;
+            assert.equal(session.changeDraft((draft) => ({
+                ...draft, m365_run_as_user_id: 'selected-account',
+            })), true, state.errors.join('; '));
+            assert.equal(session.draft.m365_run_as_user_id, 'selected-account');
+            replay(state, 'undo');
+            assert.equal(session.draft.m365_run_as_user_id, initialAccount);
+            assert.equal(Object.hasOwn(session.draft, 'm365_run_as_user_id'), initialAccount !== undefined);
+            replay(state, 'redo');
+            assert.equal(session.draft.m365_run_as_user_id, 'selected-account');
+            const selected = editor.workflowForSave(session.draft, original, { type: 'personal' });
+            assert.equal(editor.workflowForFlowPreview(selected).m365_run_as_user_id, 'selected-account');
+            assert.equal(session.changeDraft((draft) => ({ ...draft, m365_run_as_user_id: '' })), true);
+            replay(state, 'undo');
+            assert.equal(session.draft.m365_run_as_user_id, 'selected-account');
+            replay(state, 'redo');
+            assert.equal(session.draft.m365_run_as_user_id, '');
+            const payload = editor.workflowForSave(session.draft, original, { type: 'personal' });
+            assert.equal(payload.m365_run_as_user_id, '');
+            assert.equal(payload.definition_revision, original.definition_revision);
+            assert.deepEqual(session.draft.future_envelope, original.future_envelope);
+            assert.equal(state.errors.some(Boolean), false);
+        }
     });
 
     test('canonical schema and raw text publish and replay as one complete transaction', () => {

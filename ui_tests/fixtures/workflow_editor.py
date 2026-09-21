@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.116
+Version: 0.261.124
 Implemented in: 0.261.108
 """
 
@@ -226,6 +226,17 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             SECOND_GROUP_ID: {},
         }
         self.workflow_writes = []
+        self.m365_run_as_users = {
+            "personal": [{"id": OWNER_ID, "display_name": "Workspace editor"}],
+            GROUP_ID: [
+                {"id": OWNER_ID, "display_name": "Workspace editor"},
+                {"id": "group-reviewer", "display_name": "Group reviewer"},
+            ],
+            SECOND_GROUP_ID: [
+                {"id": OWNER_ID, "display_name": "Workspace editor"},
+                {"id": "group-beta-reviewer", "display_name": "Beta group reviewer"},
+            ],
+        }
         self.workflow_runs = {
             DURABLE_WORKFLOW_ID: [{
                 "id": "durable-run-1",
@@ -381,6 +392,10 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 self.failures.pop(index)
                 self._json(route, payload, status)
                 return
+        if (entry.method, path) in self.deferred_paths:
+            self.deferred_paths.remove((entry.method, path))
+            self.pending_responses.append((route, entry))
+            return
         self._dispatch(route, entry)
 
     def _dispatch(self, route, entry):
@@ -413,6 +428,16 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             else:
                 assert not entry.query, entry
                 self._json(route, editor_options())
+        elif path == "/api/workflows/m365-run-as-users" and method == "GET":
+            if entry.query.get("scope") == ["group"]:
+                group_id = entry.query.get("group_id", [None])[0]
+                assert group_id in self.group_workflows, entry
+                assert entry.query == {"scope": ["group"], "group_id": [group_id]}, entry
+                users = self.m365_run_as_users[group_id]
+            else:
+                assert entry.query == {"scope": ["personal"]}, entry
+                users = self.m365_run_as_users["personal"]
+            self._json(route, {"users": users})
         elif path == "/api/user/workflows" and method in ("GET", "POST"):
             self._workflow_collection(route, entry, self.personal_workflows, "personal")
         elif path == "/api/group/workflows" and method in ("GET", "POST"):

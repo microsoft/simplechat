@@ -43,6 +43,8 @@ export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
 export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison';
 export type WorkflowRuntimeState =
     'queued' | 'running' | 'waiting_approval' | 'waiting_output' | 'waiting_recovery' |
+    'awaiting_approval' | 'awaiting_sharing_approval' | 'awaiting_analysis_approval' |
+    'awaiting_run_as_approval' | 'awaiting_sign_in' |
     'paused' | 'cancelling' | 'cancelled' | 'failed' | 'invalid' | 'incomplete' |
     'completed' | 'completed_partial' | 'skipped';
 export type WorkflowRuntimeGateKind = 'approval' | 'output' | 'recovery' | 'pause';
@@ -295,6 +297,7 @@ export interface WorkflowDefinition {
     selected_agent?: WorkflowAgentReference;
     model_endpoint_id?: string;
     model_id?: string;
+    m365_run_as_user_id?: string;
     chat_capabilities_enabled: boolean;
     trigger_type: WorkflowTriggerType;
     schedule: WorkflowSchedule;
@@ -618,6 +621,31 @@ export const WORKFLOW_RUNTIME_TERMINAL_STATES = new Set<WorkflowRuntimeState>([
     'skipped',
 ]);
 
+export function workflowRuntimeGateAllowsDecision(
+    gate: WorkflowRuntimeGate | undefined,
+    choice: WorkflowRuntimeDecisionChoice,
+): boolean {
+    return Boolean(gate?.choices.includes(choice) &&
+        (gate.reason_code !== 'm365_authorization' || choice === 'cancel') &&
+        (gate.reason_code !== 'repeat_iteration_limit' || choice === 'continue_repeat' || choice === 'cancel') &&
+        (!gate.publication || !['approve', 'reject', 'retry'].includes(choice)));
+}
+
+export function workflowRuntimeCanResume(runtime: WorkflowRuntimeProjection | null): boolean {
+    return Boolean(runtime?.can_resume === true &&
+        ['failed', 'incomplete', 'invalid'].includes(runtime.state) &&
+        !['m365_authorization', 'repeat_iteration_limit'].includes(runtime.gate?.reason_code ?? ''));
+}
+
+export function workflowRuntimeGateNotice(gate: WorkflowRuntimeGate): string {
+    if (gate.reason_code === 'm365_authorization') {
+        return 'Cancel only. Complete Microsoft 365 authorization through Approvals or Microsoft 365 connection settings, not workflow Resume or Approve task.';
+    }
+    return gate.choices.length === 1 && gate.choices[0] === 'cancel'
+        ? 'Cancel only. Retained Repeat progress does not permit another batch.'
+        : 'Decisions remain in the separate runtime panel.';
+}
+
 function outputKindMatches(actual: WorkflowOutputKind, expected: WorkflowOutputKind): boolean {
     return expected === 'any' || actual === expected ||
         (expected === 'json' && (actual === 'records' || actual === 'document_results'));
@@ -766,6 +794,7 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
         runner_type: 'model',
         model_endpoint_id: '',
         model_id: '',
+        m365_run_as_user_id: '',
         chat_capabilities_enabled: false,
         trigger_type: 'manual',
         schedule: { unit: 'minutes', value: 15 },
@@ -1002,6 +1031,7 @@ export function normalizeWorkflowDefinition(
         selected_agent: agentReference(record.selected_agent),
         model_endpoint_id: text(record.model_endpoint_id),
         model_id: text(record.model_id),
+        m365_run_as_user_id: text(record.m365_run_as_user_id),
         chat_capabilities_enabled: record.chat_capabilities_enabled === true,
         trigger_type: trigger,
         schedule: {
@@ -1051,6 +1081,7 @@ export function workflowForSave(
         ...(draft.runner_type === 'agent' && draft.selected_agent ? { selected_agent: draft.selected_agent } : { selected_agent: undefined }),
         model_endpoint_id: draft.runner_type === 'model' ? draft.model_endpoint_id || '' : '',
         model_id: draft.runner_type === 'model' ? draft.model_id || '' : '',
+        m365_run_as_user_id: text(draft.m365_run_as_user_id ?? original?.m365_run_as_user_id),
         chat_capabilities_enabled: draft.chat_capabilities_enabled,
         trigger_type: draft.trigger_type,
         schedule: draft.schedule,
@@ -1073,7 +1104,7 @@ export function workflowForSave(
 export const WORKFLOW_DEFINITION_FIELDS = [
     'name', 'description', 'task_prompt', 'tasks', 'runner_type', 'chat_capabilities_enabled',
     'trigger_type', 'is_enabled', 'schedule', 'error_handling', 'document_action', 'analyze',
-    'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider',
+    'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'm365_run_as_user_id',
     'url_access_enabled', 'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
     'definition_version', 'reference_inputs', 'durable_execution', 'flow', 'limits',
 ] as const;
@@ -1104,6 +1135,7 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'selected_agent',
         'model_endpoint_id',
         'model_id',
+        'm365_run_as_user_id',
         'chat_capabilities_enabled',
         'trigger_type',
         'schedule',
@@ -1415,6 +1447,40 @@ export function workflowErrorMessage(cause: unknown, fallback: string): string {
         return `${cause.message || 'This workflow could not be updated.'} Your draft has been retained; reload the saved workflow before retrying.`;
     }
     return cause instanceof Error ? cause.message : fallback;
+}
+
+export interface WorkflowM365RunAsUser {
+    id: string;
+    display_name: string;
+}
+
+export async function fetchWorkflowM365RunAsUsers(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowM365RunAsUser[]> {
+    const path = withScopeQuery(
+        '/api/workflows/m365-run-as-users',
+        scope,
+        new URLSearchParams({ scope: scope.type }),
+    );
+    const response = await api.get<unknown>(path, signal);
+    if (!isRecord(response) || !Array.isArray(response.users)) {
+        throw new Error('The Microsoft 365 account list returned an invalid response.');
+    }
+    const users = new Map<string, WorkflowM365RunAsUser>();
+    for (const entry of response.users) {
+        if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id.trim() ||
+            entry.display_name !== undefined && typeof entry.display_name !== 'string') {
+            throw new Error('The Microsoft 365 account list returned an invalid response.');
+        }
+        users.set(entry.id, {
+            id: entry.id,
+            display_name: typeof entry.display_name === 'string' && entry.display_name.trim()
+                ? entry.display_name
+                : entry.id,
+        });
+    }
+    return [...users.values()];
 }
 
 export async function fetchWorkflowEditorOptions(

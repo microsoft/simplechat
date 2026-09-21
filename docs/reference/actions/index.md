@@ -39,7 +39,11 @@ If an action type does not appear, check Agents settings, workspace action permi
 
 | Action | What it does | Typical use | Depth |
 | --- | --- | --- | --- |
-| [Microsoft Graph](./msgraph/) | Uses delegated Microsoft Graph permissions for profile, mail, calendar, directory, OneDrive, and security-alert operations. | User-context Microsoft 365 workflows. | full guide |
+| [Microsoft 365 Calendar](./m365-calendar/) | Reads calendar context and prepares invitations under delegated user permissions. | Meeting planning without unrelated mailbox or file tools. | full guide |
+| [Microsoft 365 Email](./m365-email/) | Reads mail, changes read state, and prepares or sends messages with configured delivery controls. | Mailbox questions and reviewed correspondence. | full guide |
+| [Microsoft 365 OneDrive](./m365-onedrive/) | Retrieves file evidence without a workspace sync. | Questions grounded in accessible OneDrive files. | full guide |
+| [Microsoft 365 SharePoint Online](./m365-sharepoint/) | Retrieves document-library evidence using delegated source access. | SharePoint-grounded conversation RAG and staged analysis. | full guide |
+| [Microsoft Graph (legacy)](./msgraph/) | Keeps existing combined Graph actions working; new combined actions cannot be created. | Maintaining existing assignments while adopting source-specific actions. | full guide |
 
 ## Protocols and integration
 
