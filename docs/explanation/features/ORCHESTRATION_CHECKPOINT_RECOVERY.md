@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.105**
+**Version: 0.261.125**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -104,6 +104,13 @@ This also applies when a retry worker stops before copying inherited results:
 completed work remains bound to its saved checkpoint in an earlier attempt.
 
 ## Durable state and validation
+
+The [retained-result foundation](ORCHESTRATION_RENDERING_HARNESS.md), implemented
+in **0.261.125** (Refs #1509), stores large original datasets in private result
+sections and exposes small immutable descriptors. It does not add production
+`RunContext` or checkpoint fields in this layer. Existing v1 state serialization,
+input fingerprints, source-bound Analyze references, and recovery behavior stay
+unchanged; a foundation descriptor is not automatically a reusable checkpoint.
 
 Completed results include their evidence, notes, citations, artifact references,
 required context changes, and execution provenance. A summary alone cannot

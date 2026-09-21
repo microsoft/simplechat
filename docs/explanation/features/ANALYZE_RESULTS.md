@@ -1,5 +1,7 @@
 # Saved Analyze results
 
+**Version: 0.261.125**
+
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
 
@@ -41,6 +43,14 @@ second workflow engine.
 Storage version, result version, and calculation-specification version are
 independent. They are internal compatibility boundaries, not settings users
 must choose before asking a question.
+
+The [orchestration result foundation](ORCHESTRATION_RENDERING_HARNESS.md),
+implemented in **0.261.125** (Refs #1509), can wrap an already authorized bounded
+`SavedAnalysisInput` in `SavedAnalysisRecordSource`. Its ordered public-values
+projection retains complete records, evidence, coverage, and source snapshots
+through the original reader. Generic text, comparisons, and structured values
+have separate versioned kinds; they do not weaken `analyze-final-v1` validation.
+This internal compatibility API does not change standalone Analyze or workflows.
 
 ## Final data and coverage
 

@@ -24,6 +24,10 @@ with the real assistant message ID as run_id. Orchestration records use
 'orchestration_analysis_result_chunk' there with their real run_id and step_id.
 None of these payloads enter the message feed or orchestration UI step list.
 
+Generic orchestration results reuse that same private run/step namespace and
+mandatory lifecycle fence. Digest-keyed commits resolve their transport references
+server-side; they do not claim the strict analyze-final-v1 result contract.
+
 References contain only storage, schema_version (the storage format, not the
 envelope contract), sha256, size_bytes, and chunk_count. Paths are reconstructed
 from hashed identities. JSON is canonical ASCII, so page offsets count serialized
@@ -51,6 +55,7 @@ RESULT_RECORD_TYPE = "workflow_result_chunk"
 CHAT_RESULT_RECORD_TYPE = "chat_analysis_result_chunk"
 ORCHESTRATION_RESULT_RECORD_TYPE = "orchestration_analysis_result_chunk"
 ANALYSIS_CONTROL_RECORD_TYPE = "analysis_work_unit_checkpoint"
+ORCHESTRATION_RESULT_COMMIT_KEY = "orchestration-task-result-v1"
 RESULT_MEDIA_TYPE = "application/json"
 DEFAULT_MAX_RESULT_SIZE_MB = 500
 MAX_COSMOS_CHUNK_BYTES = 256 * 1024
@@ -450,6 +455,42 @@ class WorkflowResultStore:
             _orchestration_identity(user_id, conversation_id, run_id, step_id), result,
             guard_token=guard_token, require_analysis_guard=require_analysis_guard,
         )
+
+    def prepare_orchestration_result(self, user_id, conversation_id, run_id, step_id, *, guard_token):
+        """Register an authorized producer using the existing execution/deletion fence."""
+        return self.prepare_analysis_attempt(
+            _orchestration_identity(user_id, conversation_id, run_id, step_id), token=guard_token,
+        )
+
+    def commit_orchestration_result(
+        self, user_id, conversation_id, run_id, step_id, reference, *, guard_token,
+    ):
+        """Commit a private digest-addressed manifest pointer, never a downloadable file."""
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        reference, manifest = self._read_manifest(identity, reference)
+        if manifest.get("analysis_fenced") is not True:
+            raise WorkflowResultIntegrityError("An orchestration result requires its lifecycle fence.")
+        key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{reference['sha256']}"
+        row = {
+            **identity, "id": _analysis_control_id(identity, "final", key),
+            "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+            "record_kind": "final", "key": key, "reference": reference,
+        }
+        self._write_analysis_record(identity, row, token=guard_token, immutable=True)
+
+    def load_committed_orchestration_result(self, user_id, conversation_id, run_id, step_id, manifest_sha256):
+        """Resolve storage only from a producer-bound immutable server commit."""
+        if not isinstance(manifest_sha256, str) or not _DIGEST_PATTERN.fullmatch(manifest_sha256):
+            raise WorkflowResultIntegrityError("The orchestration result digest is invalid.")
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{manifest_sha256}"
+        row = self.read_analysis_checkpoint(identity, "final", key)
+        if row is None:
+            raise WorkflowResultIntegrityError("The orchestration result has not been committed.")
+        reference = _validate_reference(row.get("reference"))
+        if reference["sha256"] != manifest_sha256:
+            raise WorkflowResultIntegrityError("The orchestration result commit does not match.")
+        return self._load(identity, reference)
 
     def _save(self, identity, result, *, guard_token=None, require_analysis_guard=False):
         """Persist using a validated result binding, with identical I/O."""

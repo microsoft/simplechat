@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.119** (tracked in `application/single_app/config.py`)
+**Version: 0.261.125** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -32,6 +32,12 @@ agent. That step uses a bounded function-calling loop limited to the selected ac
 its required companions.
 
 This is a V2 interface feature. The classic interface is unchanged.
+
+Version **0.261.125** adds the internal
+[Gather / Reason / Render result foundation](ORCHESTRATION_RENDERING_HARNESS.md)
+(Refs #1509). Its purpose labels, typed named outputs, and authorized retained
+readers are foundation APIs only. They do not change the v1 phases/executor
+described here, activate rendering, add settings, or publish files.
 
 ## Dependencies
 
