@@ -177,6 +177,8 @@ OrchestrationResultAccess(
     read_run,
     source_resolver=None,
     source_metadata_reader=None,
+    external_source_catalog=None,
+    external_source_authorizer=None,
 )
 OrchestrationResults(store, access, *, max_result_bytes=None)
 ```
@@ -189,6 +191,7 @@ The callbacks are server-owned:
 | `read_run(run_id)` | Return the current run record, including owner, conversation, attempt, current plan steps, cancellation and deletion state. |
 | `source_resolver(document_ids, **scope)` | Implement the existing `resolve_authorized_source_manifest` protocol; current access/scope/version/revision information must come from authorized source metadata, not the request. |
 | `source_metadata_reader(document_id, user_id, group_id=None, public_workspace_id=None)` | Enforce the actor's current source/workspace access and return current screening metadata using the existing screening reader protocol. |
+| `external_source_authorizer(reference, *, producer, user_id, conversation_id)` | Return a current `ExternalSourceRef` only after checking current capability, integration/resource access, and the original audience. Required for every external source type, including public web results. |
 
 Source-free results need no source callbacks. Grounded results fail closed if a
 required callback or source is unavailable. There is no application-settings or
@@ -209,7 +212,13 @@ service.persist_task_result(
     upstream=(),
     source_policy="current",
     allow_partial_inputs=False,
+    input_fingerprint=None,
+    external_sources=(),
 )  # -> TaskResult
+
+service.recover_task_result(
+    *, producer, input_fingerprint,
+)  # -> TaskResult | None
 
 service.open_result(
     reference, *, allow_partial=False, require_current_sources=False,
@@ -233,10 +242,12 @@ store.prepare_orchestration_result(
 )
 store.commit_orchestration_result(
     user_id, conversation_id, run_id, step_id, reference, *, guard_token,
+    producer=None, input_fingerprint=None,
 )
 store.load_committed_orchestration_result(
     user_id, conversation_id, run_id, step_id, manifest_sha256,
 )
+store.load_orchestration_result_receipt(producer, input_fingerprint)
 ```
 
 Private sections reuse the existing orchestration result namespace, including
@@ -244,6 +255,141 @@ its historical `orchestration_analysis_result_chunk` name. This is a transport
 name, not a claim that generic content satisfies Analyze's native schema.
 Only the final immutable commit makes a descriptor readable. A caller-provided
 digest for an uncommitted section cannot bypass that boundary.
+
+### Native resume and committed-result recovery
+
+Generic saving shares the native step's **existing active token and resume
+binding**. It does not call native preparation again with a default
+`resume_from=None`, replace the original request/source digests, or start another
+attempt. A missing guard is initialized normally; an existing guard must still
+be writable by the owning token. Cancelled, deleted, superseded, or differently
+tokened workers are rejected.
+
+An owning runtime may provide its server-computed, 64-hex `input_fingerprint` for
+a terminal `complete` or `partial` task result. The store writes one deterministic
+producer/input receipt and the digest commit in the **same lifecycle-CAS
+transaction**. The key includes the complete `ProducerIdentity`, including
+attempt and producer contract version, plus the input fingerprint.
+
+| Write/recovery condition | Result |
+| --- | --- |
+| Same exact identity and same committed digest | Idempotent success. |
+| Same identity but a different result digest | `OrchestrationResultConflictError`, code `orchestration_result_commit_collision`; no replacement or latest-result selection. |
+| No receipt for the exact producer/input identity | `recover_task_result()` returns `None`; other inputs/attempts are not scanned. |
+| A receipt exists but its binding, commit, manifest or data is corrupt/unavailable | Explicit failure, not `None`, a preview, or permission to replay a model. |
+| Cancellation/deletion wins the commit CAS | Neither receipt nor digest commit becomes visible. |
+| Commit succeeds and the runtime stops before saving its checkpoint | The same authenticated lookup recovers the original result without needing the lost manifest digest. |
+
+Recovery reauthorizes the original producer, document sources/screening,
+external sources and upstream lineage, then fully streams and verifies every
+readable output before returning. It preserves output order, partial coverage
+and nonreadable failure descriptors. Consumers still cannot bind a failed
+output as data. Recovery performs retained-storage/metadata I/O, not model work,
+source-content fetching, or reconstruction from previews.
+
+A completed result remains recoverable after a later sibling fails or the
+original attempt is stopped. It retains its **original** run/attempt identity.
+Cross-attempt use requires the normal explicit result alias; recovery does not
+relabel the old result as a new producer. Pending native jobs stay in their
+existing job/wait lifecycle and do not receive completed-result receipts.
+
+The optional private manifest version is
+`orchestration-result-manifest-v2`, with `input_fingerprint` and `output_order`.
+The fingerprint is nullable when only external lineage opts into this version.
+The receipt binding version is `orchestration-result-receipt-v1`. Public
+`TaskResult` and `ResultRef` wire schemas remain v1. With neither extension used,
+the original v1 manifest and descriptor bytes remain unchanged; no old result is
+silently assigned a new input identity.
+
+### External Gather provenance
+
+Web, URL, deep-research, agent, action, and Fact Memory results can carry explicit
+external provenance rather than fake document IDs or a source-free label:
+
+```python
+ExternalSourceRef(
+    source_type,
+    capability_id,
+    reference_id,
+    audience,
+    content_sha256=None,
+    source_revision=None,
+)
+```
+
+This frozen descriptor has strict `to_dict()` / `from_dict()` methods and wire
+version `orchestration-external-source-v1`. `source_type` is one of `web`, `url`,
+`deep_research`, `agent`, `action`, or `fact_memory`. Capability, reference, and
+audience are opaque ASCII identifiers of at most 256 characters, using letters,
+digits, `_`, `.`, `:`, and `-`; they must start with a letter or digit. They are
+not URLs, storage paths, credentials, callbacks or raw memory prompts. A bounded
+source revision or SHA-256 digest is required. A revision may retain an ETag,
+but cannot contain control characters or exceed 256 UTF-8 bytes.
+
+The owner supplies `external_source_catalog` as an explicitly authorized
+`dict[str, ExternalSourceRef]`. `external_sources` passed to persistence is a
+list/tuple of aliases from this catalog, not model-supplied descriptors. Catalogs
+and direct bindings are limited to 64 entries. Aliases and exact external
+resource identities cannot repeat in one result's bindings.
+
+The committed lineage uses `version="orchestration-lineage-v2"` and stores:
+
+```json
+{
+    "external_sources": [
+        {
+            "alias": "admitted_source",
+            "reference": {
+                "version": "orchestration-external-source-v1",
+                "source_type": "web",
+                "capability_id": "web_search",
+                "reference_id": "server-owned-search-result",
+                "audience": "personal:original-owner",
+                "content_sha256": null,
+                "source_revision": "retained-revision-1"
+            }
+        }
+    ]
+}
+```
+
+This is the external-binding portion of the lineage; its ordinary origin,
+policy, document sources, upstream references and partial-input policy remain
+required. A grounded lineage can contain documents, external bindings, upstream
+results, or a combination. Generated content must contain none of them.
+
+Every external descriptor is reauthorized by the injected callback on saving,
+reading, recovery and transitive reuse. Returning `True`, a dictionary or `None`
+does not grant access. The callback must return a current typed descriptor or
+raise. Its source type, capability, reference ID and audience must exactly match
+the original. A source revision/digest change fails under `current`; explicit
+`snapshot` access retains the original data and reports the change, without
+relaxing current permission, capability or audience checks.
+
+Current here means **current authorized server resource metadata**, not a hidden
+network refresh. Public display URLs may be retained in prepared content, but
+are neither fetch instructions nor permission to use a tool. The callback must
+enforce current integration/agent access or memory audience as applicable. This
+does not expand Fact Memory across conversations or introduce global memory.
+
+Aliases and original descriptors are durable server manifest data, not a
+Python-only cache. Reads after restart reauthorize those committed bindings
+without requiring the old admission catalog. `metadata()["external_sources"]`
+returns the **direct** persisted bindings so an authorized owner can rebuild its
+catalog with `ExternalSourceRef.from_dict()`. New writes still require catalog
+admission. Upstream references preserve their own producer-bound aliases; they
+are not flattened into a potentially ambiguous global catalog.
+
+Existing `source_count` retains its document-source meaning. Optional
+`external_source_count` includes distinct inherited external resources, and
+`source_snapshot_changed` covers either source class. Traversal permits at most
+256 retained external snapshots. Existing document-only v1 lineages are not
+reinterpreted.
+
+External content uses existing text/Markdown, records or structured-value kinds
+as appropriate. `evidence-set-v1` and `source-set-v1` remain document-scoped.
+Adding provenance does not advertise a new renderer or make an external
+integration call.
 
 ### Access, lineage, and attempt boundaries
 
@@ -258,8 +404,8 @@ running run with no cancellation request or successor attempt.
 optional `content_sha256`. Cached authorization decisions and storage locators
 are not accepted as source snapshots.
 
-`origin="generated"` requires no source/upstream lineage. `origin="grounded"`
-requires actual sources or upstream results. Upstream references are recursively
+`origin="generated"` requires no document/external/upstream lineage.
+`origin="grounded"` requires actual sources or upstream results. Upstream references are recursively
 reauthorized, cycle-checked, and bounded. Their source snapshots remain part of
 the child's authorization boundary.
 
@@ -357,6 +503,8 @@ count, distinct from UTF-8 byte size. Structured/comparison readers expose
 `read_value()` and streamed canonical JSON through `iter_value_bytes()`.
 `metadata()` returns the reference, distinct source count, origin, source policy,
 and source-change flag.
+For a v2 manifest it also includes the optional input fingerprint. External
+lineage metadata is described above; it does not expose executable fetch handles.
 
 **Consumers must exhaust a full iterator before accepting or publishing its
 result.** Final count/digest checks and the last access recheck run at exhaustion.
@@ -423,6 +571,7 @@ partial-data refusal, current versus historical source policy, and revocation.
 | Comparison value | At most 8 MiB, including semantic count validation during streamed reads. |
 | Preview | At most 20 items / 16 KiB. |
 | Upstream references / traversed lineage results | 64 / 256. |
+| External admission catalog / direct external bindings / retained external snapshots | 64 / 64 / 256. |
 | Aggregate retained bytes | `max_result_bytes`, defaulting to the injected store's `max_size_bytes`; sections and indexes share one budget. |
 
 Oversized records, manifests, or aggregate data fail rather than being shortened.
@@ -465,6 +614,7 @@ The new regression suites are:
 
 ```powershell
 python -m pytest .\functional_tests\test_orchestration_result_contracts.py .\functional_tests\test_orchestration_results.py .\functional_tests\test_orchestration_result_imports.py -q
+python -m pytest .\functional_tests\test_orchestration_result_recovery.py .\functional_tests\test_orchestration_external_results.py -q
 ```
 
 They exercise real production contracts/transport with external I/O doubles:
@@ -475,11 +625,22 @@ reuse by two readers after persistence/restart; a 30,000-row dataset exceeding
 source/producer/screening checks; explicit historical snapshots; stale tokens;
 cancel/delete races; no artifact publication; unchanged v1 checkpoint
 fingerprints; and the existing JSON export protocol.
+The follow-up cases also cover real native resumed work-unit guards, atomic
+receipt rollback/collision races, commit-before-checkpoint crashes, recovery
+after sibling failure, complete readable-data verification, exact published-v1
+byte fingerprints, all external source types, lost audience/capability/resource
+access, explicit historical external snapshots, and catalog restoration.
 
 Cold-import checks use fresh normal and optimized interpreters with network
 blocked. They cover both lower-level import orders, required storage operations
 and failure paths, and normal web and separate scheduler imports using real
 runtime modules rather than a fake `config`.
+The early normal/optimized probes execute native resumed preparation, receipt
+recovery and external-source reauthorization with explicit checks that cannot
+disappear under `-O`.
+
+Root causes and before/after behavior for these integration seams are recorded in
+[the foundation integration fix](../fixes/ORCHESTRATION_FOUNDATION_INTEGRATION_FIX.md).
 
 Focused existing regressions cover Analyze storage/source access, orchestration
 saved-result integration, checkpoint recovery/access, generated-file saved-record

@@ -47,6 +47,12 @@ from azure.cosmos import exceptions as cosmos_exceptions
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from azure.storage.blob import ContentSettings
 
+from functions_orchestration_result_contracts import (
+    RESULT_MANIFEST_VERSION,
+    RESULT_RECEIPT_VERSION,
+    canonical_digest,
+    result_receipt_binding,
+)
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_identity import workflow_execution_id, workflow_node_identity
 
@@ -67,6 +73,13 @@ _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 class WorkflowResultIntegrityError(ValueError):
     """Stored identity, metadata, or payload does not match the expected result."""
+
+
+class OrchestrationResultConflictError(WorkflowResultIntegrityError):
+    code = "orchestration_result_commit_collision"
+
+    def __init__(self):
+        super().__init__("A different result is already committed for this producer and input.")
 
 
 class WorkflowResultTooLargeError(ValueError):
@@ -458,12 +471,16 @@ class WorkflowResultStore:
 
     def prepare_orchestration_result(self, user_id, conversation_id, run_id, step_id, *, guard_token):
         """Register an authorized producer using the existing execution/deletion fence."""
-        return self.prepare_analysis_attempt(
-            _orchestration_identity(user_id, conversation_id, run_id, step_id), token=guard_token,
-        )
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        token = _identifier(guard_token)
+        guard = self._analysis_guard(identity, writable=True, token=token)
+        if guard is not None:
+            return {"binding": dict(identity)}
+        return self.prepare_analysis_attempt(identity, token=token)
 
     def commit_orchestration_result(
         self, user_id, conversation_id, run_id, step_id, reference, *, guard_token,
+        producer=None, input_fingerprint=None,
     ):
         """Commit a private digest-addressed manifest pointer, never a downloadable file."""
         identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
@@ -476,7 +493,59 @@ class WorkflowResultStore:
             "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
             "record_kind": "final", "key": key, "reference": reference,
         }
-        self._write_analysis_record(identity, row, token=guard_token, immutable=True)
+        if producer is None and input_fingerprint is None:
+            self._write_analysis_record(identity, row, token=guard_token, immutable=True)
+            return
+        binding = result_receipt_binding(producer, input_fingerprint)
+        _require_fields(producer.to_dict(), {
+            key: identity[key] for key in ("user_id", "conversation_id", "run_id", "step_id")
+        })
+        payload = self._load(identity, reference)
+        _require_fields(payload, {
+            "version": RESULT_MANIFEST_VERSION,
+            "producer": binding["producer"], "input_fingerprint": input_fingerprint,
+        })
+        if payload.get("status") not in {"complete", "partial"}:
+            raise WorkflowResultIntegrityError("Only terminal results can have an orchestration receipt.")
+        receipt_key = f"{RESULT_RECEIPT_VERSION}:{canonical_digest(binding)}"
+        receipt = {
+            **identity, "id": _analysis_control_id(identity, "final", receipt_key),
+            "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+            "record_kind": "final", "key": receipt_key, "binding": binding, "reference": reference,
+        }
+        self._write_analysis_record(
+            identity, receipt, token=guard_token, immutable=True, companions=(row,),
+        )
+
+    def load_orchestration_result_receipt(self, producer, input_fingerprint):
+        """Read one exact producer/input commit; only a missing receipt returns None."""
+        binding = result_receipt_binding(producer, input_fingerprint)
+        identity = _orchestration_identity(
+            producer.user_id, producer.conversation_id, producer.run_id, producer.step_id,
+        )
+        guard = self._analysis_guard(identity)
+        if guard is not None and guard.get("deleted"):
+            raise AnalysisWorkUnitConflictError("analysis_work_deleted")
+        key = f"{RESULT_RECEIPT_VERSION}:{canonical_digest(binding)}"
+        row = self._analysis_control(identity, "final", key)
+        if row is None:
+            guard = self._analysis_guard(identity)
+            if guard is not None and guard.get("deleted"):
+                raise AnalysisWorkUnitConflictError("analysis_work_deleted")
+            return None
+        self._analysis_guard(identity, required=True)
+        _require_fields(row, {"binding": binding})
+        _require_fields(row["binding"]["producer"], binding["producer"])
+        reference = _validate_reference(row.get("reference"))
+        commit_key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{reference['sha256']}"
+        committed = self.read_analysis_checkpoint(identity, "final", commit_key)
+        _require_fields(committed, {"reference": reference})
+        manifest = self._load(identity, reference)
+        _require_fields(manifest, {
+            "version": RESULT_MANIFEST_VERSION,
+            "producer": binding["producer"], "input_fingerprint": input_fingerprint,
+        })
+        return reference["sha256"], manifest
 
     def load_committed_orchestration_result(self, user_id, conversation_id, run_id, step_id, manifest_sha256):
         """Resolve storage only from a producer-bound immutable server commit."""
@@ -626,8 +695,17 @@ class WorkflowResultStore:
         })
         return row
 
-    def _write_analysis_record(self, identity, record, *, token, immutable=False, previous=None):
+    def _write_analysis_record(self, identity, record, *, token, immutable=False, previous=None, companions=()):
         """Fence a bounded control/payload write in the existing run-items partition."""
+        if companions:
+            if not immutable or previous is not None or type(companions) is not tuple or len(companions) != 1:
+                raise ValueError("A companion requires one immutable same-partition commit.")
+            _require_fields(companions[0], {
+                **identity, "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+                "record_kind": "final",
+            })
+            if companions[0]["id"] == record["id"]:
+                raise WorkflowResultIntegrityError("Result commit identities must be distinct.")
         for _ in range(8):
             guard = self._analysis_guard(identity, required=True, writable=True, token=token)
             replacement = {key: value for key, value in guard.items() if not key.startswith("_")}
@@ -643,6 +721,7 @@ class WorkflowResultStore:
                 if not previous.get("_etag"):
                     raise WorkflowResultIntegrityError("Analysis claim is missing its conditional-write version.")
                 operations.append(("replace", (record["id"], record), {"if_match_etag": previous["_etag"]}))
+            operations.extend(("create", (companion,)) for companion in companions)
             execution = _workflow_execution_guard(identity, self._workflow_execution)
             if execution is not None:
                 operations = execution.fence_batch(operations)
@@ -659,8 +738,19 @@ class WorkflowResultStore:
                     if latest.get("_etag") == previous.get("_etag"):
                         continue
                 if immutable and exc.status_code == 409:
-                    saved = self.container.read_item(item=record["id"], partition_key=identity["run_id"])
-                    _require_fields(saved, record)
+                    for expected in (record, *companions):
+                        try:
+                            saved = self.container.read_item(item=expected["id"], partition_key=identity["run_id"])
+                        except CosmosResourceNotFoundError:
+                            if not companions:
+                                raise
+                            raise WorkflowResultIntegrityError("The immutable result commit is incomplete.") from None
+                        if companions and expected is record:
+                            _require_fields(saved, {key: value for key, value in expected.items() if key != "reference"})
+                            _require_fields(saved["binding"]["producer"], record["binding"]["producer"])
+                            if _validate_reference(saved.get("reference")) != record["reference"]:
+                                raise OrchestrationResultConflictError()
+                        _require_fields(saved, expected)
                     self._analysis_guard(identity, required=True, writable=True, token=token)
                     _workflow_execution_guard(identity, self._workflow_execution)
                     return
