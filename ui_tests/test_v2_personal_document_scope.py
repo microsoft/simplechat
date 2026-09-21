@@ -2,8 +2,9 @@
 """
 Protect personal document behavior while the shared explorer gains group scope.
 
-Version: 0.261.128
+Version: 0.261.129
 Implemented in: 0.261.128
+Management baseline expanded in: 0.261.129
 
 The real SPA runs against closed synthetic personal APIs. A saved active group
 must not retarget personal reads, filtering, selection, or metadata writes.
@@ -11,6 +12,7 @@ must not retarget personal reads, filtering, selection, or metadata writes.
 
 import copy
 import re
+from collections import Counter
 
 import pytest
 from playwright.sync_api import expect
@@ -26,6 +28,8 @@ pytestmark = pytest.mark.ui
 class PersonalDocumentFixture(WorkspaceAuthoringFixture):
     def __init__(self, page):
         super().__init__(page)
+        self.downloads_enabled = False
+        self.confirm_delete = False
         self.documents = {
             "personal-alpha": {
                 "id": "personal-alpha", "document_id": "personal-alpha",
@@ -65,8 +69,9 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
         return payload
 
     def _dispatch(self, route, entry):
-        if entry.path == "/api/documents" and entry.method == "GET":
+        if entry.path.startswith("/api/documents"):
             assert "group_id" not in entry.query and "group_ids" not in entry.query
+        if entry.path == "/api/documents" and entry.method == "GET":
             rows = list(self.documents.values())
             term = entry.query.get("search", [""])[0].lower()
             if term:
@@ -77,8 +82,68 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
                 rows = [row for row in rows if all(tag in row["tags"] for tag in tags)]
             self._json(route, {
                 "documents": rows, "page": 1, "page_size": 25,
-                "total_count": len(rows), "file_downloads_enabled": False,
+                "total_count": len(rows), "file_downloads_enabled": self.downloads_enabled,
             })
+        elif entry.path == "/api/documents/facets":
+            self._json(route, {
+                "total": len(self.documents),
+                "untagged": sum(not row["tags"] for row in self.documents.values()),
+                "processing": 0, "errors": 0, "recent": 0, "shared_with_me": 0,
+                "by_tag": dict(Counter(tag for row in self.documents.values() for tag in row["tags"])),
+                "by_classification": {},
+            })
+        elif entry.path == "/api/documents/tags" and entry.method == "GET":
+            counts = Counter(tag for row in self.documents.values() for tag in row["tags"])
+            self._json(route, {"tags": [
+                {"name": name, "count": count, "color": "#0078d4"} for name, count in counts.items()
+            ]})
+        elif entry.path == "/api/documents/upload" and entry.method == "POST":
+            filenames = re.findall(r'filename="([^"]+)"', str(entry.body))
+            if not filenames:
+                self._json(route, {"error": "Fixture expected a multipart file."}, 400)
+                return
+            identifiers = []
+            for filename in filenames:
+                identifier = f"uploaded-{len(self.documents)}"
+                self.documents[identifier] = {
+                    **copy.deepcopy(self.documents["personal-alpha"]),
+                    "id": identifier, "document_id": identifier,
+                    "title": filename, "file_name": filename, "tags": [],
+                    "revision_family_id": identifier,
+                }
+                identifiers.append(identifier)
+            self._json(route, {"document_ids": identifiers, "processed_filenames": filenames, "errors": []})
+        elif entry.path == "/api/documents/bulk-tag" and entry.method == "POST":
+            assert entry.body["action"] == "add_tags"
+            success = []
+            for identifier in entry.body["document_ids"]:
+                target = self.documents[identifier]
+                target["tags"] = list(dict.fromkeys([*target["tags"], *entry.body["tags"]]))
+                success.append({"document_id": identifier, "tags": target["tags"]})
+            self._json(route, {"success": success, "errors": []})
+        elif entry.path == "/api/documents/bulk-delete" and entry.method == "POST":
+            if self.confirm_delete and entry.body.get("file_sync_delete_action") != "keep_source":
+                self._json(route, {
+                    "deleted": [], "deleted_count": 0, "error_count": 1,
+                    "errors": [{
+                        "document_id": entry.body["document_ids"][0],
+                        "needs_confirmation": True, "error": "file_sync_confirmation_required",
+                        "message": "This file is managed by a file source.",
+                    }],
+                }, 207)
+                return
+            deleted = []
+            for identifier in entry.body["document_ids"]:
+                self.documents.pop(identifier)
+                deleted.append({"document_id": identifier})
+            self._json(route, {
+                "deleted": deleted, "errors": [], "deleted_count": len(deleted), "error_count": 0,
+            })
+        elif entry.path == "/api/documents/personal-alpha/download" and entry.method == "GET":
+            route.fulfill(
+                body=b"personal source fixture", content_type="application/octet-stream",
+                headers={"Content-Disposition": 'attachment; filename="personal-alpha.txt"'},
+            )
         elif entry.path.startswith("/api/documents/") and entry.path.rsplit("/", 1)[-1] in self.documents:
             assert "group_id" not in entry.query and "group_ids" not in entry.query
             identifier = entry.path.rsplit("/", 1)[-1]
@@ -151,3 +216,73 @@ def test_personal_metadata_edit_keeps_its_endpoint_and_target(personal_documents
     assert writes[0].query == {}
     assert writes[0].body["title"] == "Updated personal title"
     assert ui.documents["personal-beta"]["title"] == "Personal Beta"
+
+
+def test_personal_upload_remains_personal_with_an_active_group(personal_documents):
+    ui = personal_documents
+    ui.open("/workspace/documents")
+    with ui.page.expect_file_chooser() as chooser:
+        ui.page.get_by_role("button", name="Upload", exact=True).click()
+    chooser.value.set_files({"name": "personal-upload.txt", "mimeType": "text/plain", "buffer": b"personal upload fixture"})
+    expect(ui.page.get_by_role("checkbox", name="Select personal-upload.txt", exact=True)).to_be_visible()
+    uploads = [entry for entry in ui.writes if entry.path.endswith("/upload")]
+    assert len(uploads) == 1
+    assert uploads[0].path == "/api/documents/upload"
+    assert uploads[0].query == {}
+
+
+def test_personal_tagging_does_not_use_group_operations(personal_documents):
+    ui = personal_documents
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Beta", exact=True).check()
+    ui.page.get_by_role("button", name="Tag", exact=True).first.click()
+    dialog = ui.page.get_by_role("dialog", name="Tag Personal Beta", exact=True)
+    dialog.get_by_role("checkbox", name=re.compile("^Finance")).check()
+    dialog.get_by_role("button", name="Apply", exact=True).click()
+    expect(dialog).to_have_count(0)
+    target = ui.page.get_by_role("row").filter(
+        has=ui.page.get_by_role("checkbox", name="Select Personal Beta", exact=True),
+    )
+    expect(target).to_contain_text("Finance")
+    writes = [entry for entry in ui.writes if entry.path.endswith("/bulk-tag")]
+    assert len(writes) == 1
+    assert writes[0].path == "/api/documents/bulk-tag"
+    assert writes[0].body == {"document_ids": ["personal-beta"], "action": "add_tags", "tags": ["Finance"]}
+
+
+def test_personal_delete_preserves_explicit_version_and_sync_confirmation(personal_documents):
+    ui = personal_documents
+    ui.confirm_delete = True
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True).check()
+    ui.page.get_by_role("button", name="Delete", exact=True).first.click()
+    dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
+    dialog.get_by_role("checkbox", name=re.compile("^Delete every version")).uncheck()
+    dialog.get_by_role("button", name="Delete", exact=True).click()
+    blocked = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
+    expect(blocked).to_be_visible()
+    assert "personal-alpha" in ui.documents
+    blocked.get_by_role("button", name="Delete anyway", exact=True).click()
+    expect(ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("checkbox", name="Select Personal Beta", exact=True)).to_be_visible()
+    writes = [entry for entry in ui.writes if entry.path.endswith("/bulk-delete")]
+    assert len(writes) == 2
+    assert all(entry.path == "/api/documents/bulk-delete" and entry.query == {} for entry in writes)
+    assert all(entry.body["delete_mode"] == "current_only" for entry in writes)
+    assert writes[0].body["file_sync_delete_action"] is None
+    assert writes[1].body["file_sync_delete_action"] == "keep_source"
+
+
+def test_personal_download_uses_the_personal_source_route(personal_documents):
+    ui = personal_documents
+    ui.downloads_enabled = True
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True).check()
+    with ui.page.expect_download() as download:
+        ui.page.get_by_role("button", name="Download", exact=True).first.click()
+    filename = download.value.suggested_filename
+    assert filename == "personal-alpha.txt"
+    requests = [entry for entry in ui.requests if entry.path.endswith("/download")]
+    assert len(requests) == 1
+    assert requests[0].path == "/api/documents/personal-alpha/download"
+    assert requests[0].query == {}

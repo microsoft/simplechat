@@ -202,6 +202,8 @@ inspection, and runtime assertions.
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action
 availability, or metadata updates.
+The **0.261.129** management baseline also covers personal uploads, tagging,
+version/sync deletion confirmation, and downloads.
 
 Route-policy tests include the new endpoint. Existing personal bootstrap,
 workspace, and browser journeys protect compatibility. These isolated tests do
