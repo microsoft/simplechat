@@ -222,6 +222,7 @@ export interface OrchestrationIntent {
  * admin enables a capability this build had not heard of.
  */
 export interface OrchestrationStep {
+    model_binding?: { label: string; reason: string; profile_id: string };
     step_id: string;
     capability_id: string;
     title: string;

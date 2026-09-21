@@ -66,9 +66,13 @@ governance; this is not a read-only mode.
 
 ### Chat Orchestration {#chat-orchestration-section}
 
-Adds an orchestration mode to the V2 chat composer. While it is on, the capability toggles
-and the model, agent and reasoning pickers collapse behind a disclosure, and the user
-simply asks.
+Adds an orchestration mode to the V2 chat composer. While it is on, capability
+toggles and advanced agent/reasoning controls collapse behind a disclosure.
+Since **0.261.126**, the orchestration model picker remains visible: choose a
+specific model to pin it, or **Auto - choose per step** to select connected
+models using catalog suitability, administrator priority, and favorites.
+This is separate from automatic plan approval. See
+[Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
 
 #### Settings
 

@@ -679,7 +679,7 @@ def register_route_frontend_admin_settings(bp):
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:

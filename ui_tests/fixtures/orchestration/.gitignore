@@ -4,4 +4,6 @@
 # and a checkout without node_modules skips the browser-driven checks.
 harness.bundle.js
 harness.bundle.js.map
+harness.bundle.css
+harness.bundle.css.map
 __pycache__/

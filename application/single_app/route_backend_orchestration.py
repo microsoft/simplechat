@@ -182,6 +182,8 @@ from functions_orchestration_schema import (
     safe_failure,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_model_catalog import ModelCatalogError
+from functions_orchestration_model_routing import answer_selection, step_model_context, validate_auto_bindings
 from functions_prompt_metadata import build_prompt_selection_metadata
 from model_endpoint_clients import extract_chat_completion_response_text
 from swagger_wrapper import get_auth_security, swagger_route
@@ -1147,7 +1149,13 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         build_elicitation_user_request(record.get('resolved_message') or record.get('user_message'), record.get('answered_questions')),
         settings=settings, seeds=seeds, expected_audience=record.get('memory_audience'),
     )
-    model = resolve_orchestration_model(settings, user_id=user_id, seeds=seeds, identity_context=identity)
+    validate_auto_bindings(
+        record['plan'], seeds, settings,
+        lambda selected, current: resolve_orchestration_model(current, user_id=user_id, seeds=selected, identity_context=identity),
+    )
+    model = resolve_orchestration_model(
+        settings, user_id=user_id, seeds=answer_selection(record['plan'], seeds), identity_context=identity,
+    )
     try:
         context = RunContext(
             run_id=record['id'], plan_id=record['plan'].get('plan_id'),
@@ -1187,6 +1195,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
 
 def _finalize_execution(record, result, error, context, lease, answer_model, research_model, run_token_usage):
     """Persist every terminal explanation on the worker, even after transport loss."""
+    answer_model = getattr(context, 'answer_model', answer_model)
     current = lease.read()
     result = result if isinstance(result, dict) else {}
     if not error and result:
@@ -1480,7 +1489,10 @@ def register_route_backend_orchestration(bp):
         if not settings.get('chat_orchestration_allow_user_approval_override', True):
             approval_mode = ''
 
-        seeds = resolve_seeds(data)
+        try:
+            seeds = resolve_seeds(data)
+        except ModelCatalogError as exc:
+            return jsonify({'error': exc.public_message, 'field': exc.field}), 400
         replan_hint = _text(data.get('replan_hint'), 600)
         answered_record = []
         submission = None
@@ -1942,6 +1954,9 @@ def register_route_backend_orchestration(bp):
                 )
             except (PlannerError, OrchestrationMemoryError) as exc:
                 yield build_error_event(exc.message, resolved_conversation_id)
+            except ModelCatalogError as exc:
+                log_event('[ORCHESTRATION] Model routing failed.', level=logging.WARNING, extra={'code': exc.code})
+                yield build_error_event(exc.public_message, resolved_conversation_id)
             except (CatalogResolutionError, CapabilityResolutionError) as exc:
                 log_event(
                     '[ORCHESTRATION] Capability context could not be loaded.',
@@ -2253,8 +2268,12 @@ def register_route_backend_orchestration(bp):
                     answer_model.close()
 
         try:
+            validate_auto_bindings(
+                plan, seeds, settings,
+                lambda selected, current: resolve_orchestration_model(current, user_id=user_id, seeds=selected, identity_context=identity),
+            )
             answer_model = resolve_orchestration_model(
-                settings, user_id=user_id, seeds=seeds, identity_context=identity,
+                settings, user_id=user_id, seeds=answer_selection(plan, seeds), identity_context=identity,
             )
             research_model = (
                 resolve_orchestration_model(
@@ -2354,6 +2373,7 @@ def register_route_backend_orchestration(bp):
                     event.get('step_index'), event.get('capability_id'),
                     **{key: event[key] for key in (
                         'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
+                        'model_binding',
                     ) if key in event},
                 ))
                 if event.get('capability_id') == 'respond':
@@ -2433,6 +2453,32 @@ def register_route_backend_orchestration(bp):
             )
 
             context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
+            if plan.get('model_routing') == 'auto':
+                def resolve_step_model(step_seeds, current_settings):
+                    return resolve_orchestration_model(
+                        current_settings, user_id=user_id, seeds=step_seeds, identity_context=identity,
+                    )
+
+                def build_step_prompt(model):
+                    bound = _build_invoke_prompt(settings, token_usage=run_token_usage, model=model)
+
+                    def invoke(prompt_text, stage='window_analysis', metadata=None):
+                        reply = bound(prompt_text, stage=stage, metadata=metadata)
+                        validate_memory_context(
+                            _authorize_context_conversation(conversation_id, user_id), user_id,
+                            memory_context['audience'], memory_context['scope'],
+                        )
+                        return reply
+
+                    invoke.model_metadata = bound.model_metadata
+                    invoke.provider = bound.provider
+                    invoke.output_tokens = bound.output_tokens
+                    return invoke
+
+                context.step_model_scope = lambda step: step_model_context(
+                    step, context, settings=get_settings(), seeds=seeds,
+                    resolve_model=resolve_step_model, invoke_factory=build_step_prompt,
+                )
             context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
             context.prompt_token_usage = run_token_usage
             cancel_requested = lease.cancel_requested

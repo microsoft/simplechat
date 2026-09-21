@@ -878,6 +878,14 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    "model-catalog-section": [
+        {
+            "type": "component",
+            "component": "model-catalog-manager",
+            "label": "Model Catalog",
+            "help": "Reusable capability profiles, custom models, and organization-wide routing preferences. Profiles do not contain endpoint credentials.",
+        },
+    ],
     "multi-endpoint-configuration": [
         {
             "key": "enable_multi_model_endpoints",

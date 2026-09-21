@@ -454,6 +454,7 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
     from functions_group import get_group_model_endpoints
     from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
     from functions_settings import get_user_settings, normalize_model_endpoints
+    from functions_model_catalog import apply_model_profile
     # Orchestration resolves models off the request thread using a captured identity.
     if authorize:
         from functions_governance import filter_governed_model_endpoints
@@ -534,6 +535,11 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
                 break
         if not matched_model:
             continue
+        effective_model = apply_model_profile(matched_model, endpoint_cfg, settings)
+        endpoint_cfg['models'] = [
+            effective_model if item is matched_model else item for item in models
+        ]
+        matched_model = effective_model
         require_model_capability(matched_model, provider=endpoint_cfg.get('provider') or 'aoai')
 
         endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')

@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_planner.py
 """
 Functional tests for the plan editor's strict planner contract.
-Version: 0.261.104
+Version: 0.261.126
 Implemented in: 0.261.102
 Authorized model routing through editor replanning: 0.261.103
 
@@ -81,6 +81,27 @@ class PlanRevisionPlannerTests(unittest.TestCase):
         self.assertEqual(plan['status'], 'awaiting_approval')
         self.assertEqual(plan['token_usage']['total_tokens'], 10)
         self.assertNotIn('planner_fallback_reason', plan)
+
+    def test_auto_revision_discards_forged_binding_and_assigns_authorized_model(self):
+        candidate = {
+            "key": "authorized", "label": "Authorized model",
+            "selection": {"model_deployment": "authorized"},
+            "capabilities": {"processesText": True, "generatesText": True},
+            "profile": {"id": "gpt-5-nano", "revision": "reviewed", "archived": False,
+                        "tasks": {"summarization": "strong"},
+                        "preferences": {"priority": "standard", "favorite": False}},
+        }
+        proposed = self.plan()
+        proposed["steps"][-1].update(
+            model_task="summarization",
+            model_binding={"selection": {"model_deployment": "forged"}},
+        )
+        with patch.object(self.planner, "authorized_routing_candidates", return_value=[candidate]):
+            kind, plan = self.call(proposed, seeds={"model_routing": "auto"})
+        self.assertEqual(kind, "plan")
+        self.assertEqual(plan["model_routing"], "auto")
+        self.assertEqual(plan["steps"][-1]["model_binding"]["selection"]["model_deployment"], "authorized")
+        self.assertNotIn("model_binding", plan["steps"][0])
 
     def test_unrenderable_question_replanning_keeps_the_bound_model_and_edit_context(self):
         client = object()

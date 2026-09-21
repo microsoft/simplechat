@@ -326,6 +326,7 @@ def build_step_event(step_id, status, summary='', step_index=None, capability_id
     payload.update({
         key: execution[key] for key in (
             'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
+            'model_binding',
         ) if key in execution
     })
     return serialize_sse(payload)

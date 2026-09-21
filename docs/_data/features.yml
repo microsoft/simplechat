@@ -2,7 +2,7 @@ model-routing:
   name: "Model routing and endpoints"
   area: "Platform and operations"
   audience: "Admins"
-  summary: "Shares approved AI connections across independent chat, image, and embedding defaults, including compatible custom embedding endpoints."
+  summary: "Shares approved AI connections across chat, image, and embedding defaults, with reusable model profiles and explicit per-step Auto selection in V2 orchestration."
   why: "Use this when a deployment needs API Management in front of model services or multiple endpoint choices for different teams. Keep it simple when one approved endpoint is enough, because endpoint sprawl makes governance and troubleshooting harder."
   default_state: "Mixed"
   admin_tab: ai-models
@@ -11,9 +11,13 @@ model-routing:
     - enable_embedding_apim
     - enable_multi_model_endpoints
   guides:
+    - title: "Choose models for orchestration"
+      url: /guides/model-catalog-routing/
     - title: "Configure AI connections"
       url: /guides/configure-ai-connections/
   reference:
+    - title: "Model Catalog"
+      url: /admin/model-catalog/
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
 chat-file-uploads:

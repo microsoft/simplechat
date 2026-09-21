@@ -1,4 +1,5 @@
 // workspace_model_endpoints.js
+import { mountProfilePicker } from "../admin/model_catalog_ui.js";
 
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
@@ -871,6 +872,12 @@ function renderModalModels(models) {
         wrapper.appendChild(checkWrapper);
         wrapper.appendChild(fieldsRow);
         wrapper.appendChild(descriptionWrapper);
+        const profileWrapper = createElement("div", "mt-2");
+        mountProfilePicker(profileWrapper, model, (value) => {
+            model.catalogProfileId = value;
+            delete model.capability_status;
+        });
+        wrapper.appendChild(profileWrapper);
         wrapper.appendChild(iconWrapper);
         wrapper.appendChild(createModelBudgetEditor(model, {
             idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`)

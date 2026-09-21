@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from functions_model_capabilities import resolve_model_reasoning_effort
+from functions_model_catalog import apply_model_profile
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -170,7 +171,8 @@ def _resolve_legacy_binding(settings, *, deployment='', reasoning_effort='', sou
         response_length = None
     return OrchestrationModel(
         client, deployment, behavior_name=_text(model.get('modelName')),
-        response_length=response_length, model_metadata=model,
+        response_length=response_length,
+        model_metadata=apply_model_profile(model or {"deploymentName": deployment}, {}, settings),
         reasoning_effort=reasoning_effort,
         source=source, _answer_selection=answer_selection,
     )

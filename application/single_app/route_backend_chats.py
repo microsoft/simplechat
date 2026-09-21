@@ -51,6 +51,7 @@ from model_endpoint_clients import (
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_catalog import apply_model_profile
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
@@ -14543,6 +14544,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    model_cfg = apply_model_profile(model_cfg, resolved_endpoint_cfg, settings)
     if not model_cfg.get('enabled', True):
         if selection_source == 'request' or resolved_endpoint_cfg.get('provider') == 'custom':
             raise ValueError('Selected model is disabled.')
