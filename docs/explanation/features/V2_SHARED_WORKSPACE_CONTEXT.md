@@ -208,6 +208,8 @@ active group does not retarget personal reads, search/tag filters, action
 availability, or metadata updates.
 The **0.261.129** management baseline also covers personal uploads, tagging,
 version/sync deletion confirmation, and downloads.
+The **0.261.130** collaboration baseline additionally protects personal
+share/unshare targeting and failed-share state when a different group is active.
 
 Route-policy tests include the new endpoint. Existing personal bootstrap,
 workspace, and browser journeys protect compatibility. These isolated tests do

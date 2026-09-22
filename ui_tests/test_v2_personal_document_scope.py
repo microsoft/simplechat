@@ -2,9 +2,10 @@
 """
 Protect personal document behavior while the shared explorer gains group scope.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.128
 Management baseline expanded in: 0.261.129
+Personal sharing baseline expanded in: 0.261.130
 
 The real SPA runs against closed synthetic personal APIs. A saved active group
 must not retarget personal reads, filtering, selection, or metadata writes.
@@ -31,6 +32,11 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
         self.downloads_enabled = False
         self.confirm_delete = False
         self.failed_deletes = set()
+        self.shared_users = {}
+        self.share_recipient = {
+            "id": "recipient-user", "displayName": "Recipient Person",
+            "email": "recipient@example.test", "approval_status": "not_approved",
+        }
         self.documents = {
             "personal-alpha": {
                 "id": "personal-alpha", "document_id": "personal-alpha",
@@ -67,6 +73,7 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
         payload = super()._bootstrap()
         payload["scope"]["active_group_id"] = "unrelated-active-group"
         payload["scope"]["groups"] = [{"id": "unrelated-active-group", "name": "Unrelated group"}]
+        payload["features"]["enable_file_sharing"] = True
         return payload
 
     def _dispatch(self, route, entry):
@@ -153,6 +160,18 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
                 body=b"personal source fixture", content_type="application/octet-stream",
                 headers={"Content-Disposition": 'attachment; filename="personal-alpha.txt"'},
             )
+        elif entry.path == "/api/userSearch" and entry.method == "GET":
+            self._json(route, [self.share_recipient])
+        elif entry.path == "/api/documents/personal-alpha/shared-users" and entry.method == "GET":
+            self._json(route, {"shared_users": list(self.shared_users.values())})
+        elif entry.path == "/api/documents/personal-alpha/share" and entry.method == "POST":
+            assert entry.body == {"user_id": self.share_recipient["id"]}
+            self.shared_users[self.share_recipient["id"]] = copy.deepcopy(self.share_recipient)
+            self._json(route, {"message": "Personal share created."})
+        elif entry.path == "/api/documents/personal-alpha/unshare" and entry.method == "DELETE":
+            assert entry.body == {"user_id": self.share_recipient["id"]}
+            self.shared_users.pop(self.share_recipient["id"])
+            self._json(route, {"message": "Personal share removed."})
         elif entry.path.startswith("/api/documents/") and entry.path.rsplit("/", 1)[-1] in self.documents:
             assert "group_id" not in entry.query and "group_ids" not in entry.query
             identifier = entry.path.rsplit("/", 1)[-1]
@@ -331,3 +350,45 @@ def test_personal_partial_delete_retains_the_failed_document(personal_documents)
     assert writes[0].path == "/api/documents/bulk-delete"
     assert set(writes[0].body["document_ids"]) == {"personal-alpha", "personal-beta"}
     assert writes[0].query == {}
+
+
+def open_personal_sharing(ui):
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True).check()
+    ui.page.get_by_role("button", name="Share", exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name="Share document", exact=True)
+    expect(dialog).to_be_visible()
+    dialog.get_by_placeholder("Search by name or email", exact=True).fill("Recipient")
+    dialog.get_by_role("button", name="Search", exact=True).click()
+    expect(dialog.get_by_role("button", name="Add", exact=True)).to_be_visible()
+    return dialog
+
+
+def test_personal_share_and_unshare_keep_the_personal_target(personal_documents):
+    ui = personal_documents
+    dialog = open_personal_sharing(ui)
+    dialog.get_by_role("button", name="Add", exact=True).click()
+    expect(dialog.get_by_text("Pending", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Remove", exact=True).click()
+    expect(dialog.get_by_text("Not shared with anyone yet.", exact=True)).to_be_visible()
+    writes = [entry for entry in ui.writes if entry.path.endswith(("/share", "/unshare"))]
+    assert [(entry.method, entry.path) for entry in writes] == [
+        ("POST", "/api/documents/personal-alpha/share"),
+        ("DELETE", "/api/documents/personal-alpha/unshare"),
+    ]
+    assert all(entry.query == {} and entry.body == {"user_id": "recipient-user"} for entry in writes)
+    assert not ui.shared_users
+    assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/")]
+
+
+def test_personal_failed_share_retains_the_target_and_search(personal_documents):
+    ui = personal_documents
+    dialog = open_personal_sharing(ui)
+    ui.reject_next("POST", "/api/documents/personal-alpha/share", error="Fixture sharing conflict.", status=409)
+    dialog.get_by_role("button", name="Add", exact=True).click()
+    expect(dialog.get_by_text("Could not share the document with that person.", exact=True)).to_be_visible()
+    expect(dialog.get_by_placeholder("Search by name or email", exact=True)).to_have_value("Recipient")
+    expect(dialog.get_by_role("button", name="Add", exact=True)).to_be_visible()
+    assert not ui.shared_users
+    assert "personal-alpha" in ui.documents
+    assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/")]
