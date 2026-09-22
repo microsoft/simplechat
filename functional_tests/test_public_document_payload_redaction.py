@@ -189,6 +189,43 @@ def test_recomputed_action_hints_are_never_served_from_storage():
     assert "document_collaboration_actions" not in payload
 
 
+DOCUMENT_ROUTE_FILES = [
+    "route_backend_documents.py",
+    "route_backend_group_documents.py",
+    "route_backend_public_documents.py",
+    "route_external_public_documents.py",
+]
+
+
+@pytest.mark.parametrize("route_file", DOCUMENT_ROUTE_FILES)
+def test_every_document_blueprint_registers_the_response_guard(route_file):
+    """Document list responses are serialized by an after_request hook.
+
+    The routes themselves return raw query results under a ``documents`` key.
+    That is safe *only* because ``register_document_api_guards`` installs
+    ``enforce_document_response``, which re-reads and serializes every entry
+    under ``documents`` and ``versions`` before the response leaves.
+
+    A new document-serving blueprint that forgets this call would ship raw
+    Cosmos records, so pin the call rather than the shape of each handler.
+    """
+    source = (APP_DIR / route_file).read_text(encoding="utf-8")
+
+    assert "register_document_api_guards(" in source, (
+        f"{route_file} serves documents but never calls register_document_api_guards, "
+        "so its responses are not serialized through the redaction boundary"
+    )
+
+
+def test_the_guard_serializes_both_documents_and_versions_lists():
+    """Pin the response keys the guard projects."""
+    source = (APP_DIR / "content_screening" / "access.py").read_text(encoding="utf-8")
+
+    assert 'for key in ("documents", "versions"):' in source, (
+        "enforce_document_response must keep projecting the list response keys"
+    )
+
+
 def test_non_mapping_input_still_returns_an_empty_payload():
     assert public_document_payload(None) == {}
     assert public_document_payload("doc-1") == {}
