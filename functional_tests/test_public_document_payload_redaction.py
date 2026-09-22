@@ -193,6 +193,7 @@ DOCUMENT_ROUTE_FILES = [
     "route_backend_documents.py",
     "route_backend_group_documents.py",
     "route_backend_public_documents.py",
+    "route_backend_public_document_reads.py",
     "route_external_public_documents.py",
 ]
 
