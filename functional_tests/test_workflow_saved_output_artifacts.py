@@ -1,7 +1,7 @@
 # test_workflow_saved_output_artifacts.py
 """
 Functional tests for immutable, source-authorized workflow saved-output files.
-Version: 0.261.119
+Version: 0.261.127
 Implemented in: 0.261.119
 
 Use real Collect, journal, result stores, shared renderer/uploader, and authorized
@@ -201,6 +201,7 @@ def artifact_services(publication, monkeypatch):
         "assert_generated_chat_artifact_is_published_for_user": operations["assert_generated_chat_artifact_is_published_for_user"],
         "assert_evidence_available": lambda *args: None,
         "has_generated_artifact_source": artifact_sources.has_generated_artifact_source,
+        "is_orchestration_artifact_source": artifact_sources.is_orchestration_artifact_source,
         "download_blob_content": lambda *args: pytest.fail("Generic files must not use a whole-byte download."),
     }
     routes = load_functions("route_enhanced_citations.py", {

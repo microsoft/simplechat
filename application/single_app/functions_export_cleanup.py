@@ -13,6 +13,9 @@ def close_export_resource(resource, *, primary_error: Optional[BaseException] = 
     GeneratorExit represents normal generator closing, not a failed operation.
     Its cleanup failures must reach the enclosing owner, which can then preserve
     the actual render error if there is one.
+
+    primary_error must belong to this operation. Prefer ClosingExportResource:
+    ambient sys.exc_info() can describe an unrelated, already-handled caller error.
     """
     try:
         close = getattr(resource, 'close', None)

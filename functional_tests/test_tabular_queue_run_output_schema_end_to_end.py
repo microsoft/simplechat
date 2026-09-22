@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for queue_tabular_generated_output_run() itself.
-Version: 0.250.201
+Version: 0.261.127
 Implemented in: 0.250.189; output-aware Markdown batching updated in 0.250.201
 
 Unlike the other tabular fix tests, this one calls the *actual*
@@ -56,6 +56,10 @@ STUB_NAMES = {
     # but statically references the entire background processing pipeline; stub it with
     # its real no-executor behavior instead of pulling that unreachable code in.
     "submit_tabular_generated_output_run",
+    # This legacy schema fixture never submits data-only jobs. Their real
+    # authorization/runner boundary is exercised by test_native_tabular_compute_service.
+    "_authorize_tabular_export_run_execution",
+    "resolve_model_endpoint_from_context",
 }
 
 # Real, pure, already-proven-import-safe modules to resolve cross-module names from.
@@ -64,6 +68,11 @@ SAFE_MODULES = [
     "functions_tabular_transformations",
     "functions_generated_file_exports",
     "functions_assistant_table_exports",
+    "functions_native_tabular_compute",
+    "content_screening.access",
+    "functions_model_capabilities",
+    "functions_model_endpoint_types",
+    "model_endpoint_clients",
 ]
 
 
@@ -185,6 +194,7 @@ class _FakeCosmosContainer:
 
 
 def _build_namespace():
+    from copy import deepcopy
     import html
     import logging
     import math
@@ -197,7 +207,7 @@ def _build_namespace():
     from flask import current_app, has_app_context
     from azure.core import MatchConditions
     from azure.core.exceptions import ResourceExistsError
-    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 
     source = EXPORT_MODULE.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(EXPORT_MODULE))
@@ -222,6 +232,8 @@ def _build_namespace():
         "MatchConditions": MatchConditions,
         "ResourceExistsError": ResourceExistsError,
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
+        "CosmosResourceExistsError": CosmosResourceExistsError,
+        "deepcopy": deepcopy,
         "cosmos_tabular_export_runs_container": fake_container,
         "cosmos_conversations_container": object(),
         "storage_account_personal_chat_container_name": "personal-chat-container",
@@ -236,6 +248,10 @@ def _build_namespace():
         "_get_blob_service_client": lambda: None,
         # Faithful to the real function's own behavior outside a Flask app context.
         "submit_tabular_generated_output_run": lambda run_id, user_id: False,
+        "_authorize_tabular_export_run_execution": lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("The legacy queue schema fixture must not execute native owner authorization.")
+        ),
+        "resolve_model_endpoint_from_context": lambda *args, **kwargs: None,
     }
 
     still_needed = {name for name in unresolved if name not in namespace}

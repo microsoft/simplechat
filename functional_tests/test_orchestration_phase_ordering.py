@@ -1,10 +1,10 @@
 # test_orchestration_phase_ordering.py
 """
 Functional test for chat orchestration phase ordering.
-Version: 0.261.104
+Version: 0.261.127
 Implemented in: 0.261.087
 
-A plan runs in three phases: collect knowledge, reason on it and answer, then create
+Legacy v1 plans run in three phases: collect knowledge, reason on it and answer, then create
 things. Before this the registry carried a `kind` that was passed all the way to the
 browser and read by nothing, so the order was a convention the planner could ignore
 without anything noticing.
@@ -13,9 +13,15 @@ It matters because a step that gathers after the answer has been written would s
 still cost money, and contribute nothing -- the answer it was meant to inform was composed
 before it started. The validator already guarantees a plan ends by answering; this is the
 same class of structural rule, and this test is what holds it.
+
+The client check executes the real TypeScript normalizer and shared grouping helper.
+Version 0.261.127 adds runtime coverage that distinguishes legacy phases from v2's
+consecutive Gather / Reason / Render groups without tying the guard to component source.
 """
 
 import os
+import shutil
+import subprocess
 import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -197,52 +203,23 @@ def test_the_client_carries_the_phase_the_server_decided():
     """The browser groups by the phase the validator stamped, not by re-deriving it."""
     print("Testing the client's phase contract...")
     try:
-        v2_root = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'application', 'v2_ui', 'src',
+        node = shutil.which("node")
+        if not node:
+            raise RuntimeError("Node is required for the existing v2 TypeScript runtime tests.")
+        test_directory = os.path.dirname(os.path.abspath(__file__))
+        result = subprocess.run(
+            [node, os.path.join(test_directory, "test_v2_orchestration_phase_groups.mjs")],
+            cwd=os.path.dirname(test_directory),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
         )
+        if result.returncode != 0:
+            raise AssertionError(result.stdout + result.stderr)
 
-        def read(*parts):
-            with open(os.path.join(v2_root, *parts), encoding='utf-8') as handle:
-                return handle.read()
-
-        # The plan normalizer must copy `phase` through. Without this the value the server
-        # ordered the plan by is discarded on arrival and the view has to guess it back from
-        # the capability menu -- which disagrees the moment a capability is turned off after
-        # a plan was made.
-        normalizer = read('lib', 'orchestrationPlan.ts')
-        assert 'phase' in normalizer, (
-            'normalizeStep drops the step phase; the server sends it and the client would '
-            'have to re-derive a value it was already given'
-        )
-
-        # The phases must be declared in run order on the client too, so a grouped view can
-        # iterate them rather than hard-coding an order that can drift from the server's.
-        contracts = read('lib', 'orchestration.ts')
-        assert 'ORCHESTRATION_PHASES' in contracts, (
-            'the client must declare the phases in order'
-        )
-        order_start = contracts.index('ORCHESTRATION_PHASES')
-        declared = contracts[order_start:order_start + 200]
-        for earlier, later in (('knowledge', 'reasoning'), ('reasoning', 'output')):
-            assert declared.index(earlier) < declared.index(later), (
-                f"the client lists {later} before {earlier}; a grouped plan would read "
-                f"out of order"
-            )
-
-        # `kind` is gone rather than kept alongside. Two taxonomies where one is decorative
-        # is how a field comes to mean nothing.
-        assert 'OrchestrationPhase' in contracts, 'the phase type must exist'
-
-        # And a step whose phase cannot be resolved must still be shown. A plan the user is
-        # asked to approve cannot quietly omit a step from the list.
-        view = read('components', 'chat', 'OrchestrationRunView.tsx')
-        assert 'ORCHESTRATION_PHASES' in view, 'the run view must group by phase'
-        assert 'step.phase' in view, (
-            "the run view must prefer the step's own phase over a lookup"
-        )
-
-        print("  ok  the client groups by the phase the server decided")
+        print("  ok  runtime phase preservation, grouping, fallback and v2 separation")
         return True
     except Exception as e:
         print(f"Test failed: {e}")

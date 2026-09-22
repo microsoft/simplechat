@@ -4,14 +4,14 @@
 import io
 import math
 import re
-import sys
+from contextlib import ExitStack
 from dataclasses import fields, replace
 from typing import Any, Callable, Optional
 
 from jsonschema import Draft202012Validator, ValidationError
 
 import functions_office_file_renderers as office
-from functions_export_cleanup import ClosingExportResource, close_export_resource
+from functions_export_cleanup import ClosingExportResource
 from functions_generated_export_contracts import (
     GeneratedFileExportError,
     GeneratedFileExportLimits,
@@ -270,12 +270,12 @@ def _render_generated_office_source(
     renderer_checks = office.OfficeRenderChecks(source_check=lambda: boundary.call(checks.run))
     arguments = {'limits': renderer_limits, 'checks': renderer_checks}
     rows = None
-    rendered = None
-    transferred = False
-    try:
+    with ExitStack() as resources:
         if entry.format_id == 'xlsx':
             columns = _validate_column_names(request.columns, limits, checks, label='XLSX')
-            rows = boundary.rows(_workbook_records(source, request, columns, limits, checks))
+            rows = resources.enter_context(ClosingExportResource(
+                boundary.rows(_workbook_records(source, request, columns, limits, checks)),
+            ))
             prepared = office.PreparedWorkbook((
                 office.PreparedSheet(request.sheet_name, columns, rows, checks.expected_count),
             ))
@@ -298,7 +298,9 @@ def _render_generated_office_source(
         if entry.rich_media:
             arguments['image_resolver'] = _image_resolver(image_resolver, checks, boundary)
         checks.run()
-        rendered = boundary.invoke(renderer, prepared, **arguments)
+        rendered = resources.enter_context(ClosingExportResource(
+            boundary.invoke(renderer, prepared, **arguments),
+        ))
         if rows is not None:
             rows.close()
         checks.run()
@@ -315,12 +317,5 @@ def _render_generated_office_source(
             character_count=expected_count if source.kind in ('text', 'markdown') else None,
             metadata={**rendered.metadata, 'renderer_profile': rendered.profile},
         )
-        transferred = True
+        resources.pop_all()
         return result
-    finally:
-        try:
-            if rows is not None:
-                close_export_resource(rows, primary_error=sys.exc_info()[1])
-        finally:
-            if rendered is not None and not transferred:
-                close_export_resource(rendered, primary_error=sys.exc_info()[1])

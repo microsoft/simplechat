@@ -1,39 +1,44 @@
-# Gather / Reason / Render result foundation
+# Gather / Reason / Render orchestration harness
 
-**Version: 0.261.126**
+**Version: 0.261.127**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
-implemented in version: **0.261.126**, recorded in
+implemented in version: **0.261.126**; harness integration implemented in
+version: **0.261.127**, recorded in
 `application/single_app/config.py`.
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
-This documents the **M0 contract baseline, M1 retained-result facade, and shared
-export source bindings**, not the complete orchestration/rendering epic.
+This documents the retained-result contracts, shared ten-format exports,
+dependency execution, durable recovery, and opt-in orchestration preview.
 
 ## Purpose and availability
 
-The foundation gives future orchestration adapters a common way to retain exact
+The foundation gives orchestration adapters a common way to retain exact
 results and bind a later consumer to a named output. A narrative finding, a
 comparison, a table, and prepared source-free content do not have to masquerade
 as a native Analyze result or be reconstructed from a preview.
 
 Gather, Reason, and Render are purpose labels, not a required stage order.
 Knowledge collection belongs to Gather. Analyze, Compare, tabular analysis,
-synthesis, and drafting belong to Reason. Render will turn prepared results into
+synthesis, and drafting belong to Reason. Render turns prepared results into
 messages or files without undisclosed source retrieval or model work. The new
 task contract rejects a Gather/Render label for the existing
 `document_analyze`, `document_compare`, and `tabular_analyze` capabilities.
 
-There is **no user-facing enablement or new setting** in this layer. Existing
-v1 plans, capability phases, executor behavior, `RunContext`, checkpoint fields,
-standalone tools, workflows, and download routes are unchanged. The following
-APIs are internal foundation interfaces; production adapters and the scheduler
-do not automatically call them.
+The result foundation alone does not enable a new planning contract. In
+**0.261.127**, the integrated server admits new contract-v2 plans only when both
+**Enable Chat Orchestration** and **Gather / Reason / Render harness (preview)**
+are enabled. Both settings remain off by default; this change does not enable
+an existing deployment. Current capability, model, source, and budget checks
+still apply. Disabling the preview stops new v2 plans without changing saved
+plans, results, files, or their authorized recovery. Existing v1 plans retain
+their recorded interpretation; standalone tools and workflows keep their
+established behavior.
 
 New result writes are private retained data. They do not create chat artifacts,
-download links, workspace documents, or published files. Existing native tool
-artifact behavior remains compatible; that is not an implementation of the
-future orchestration file-publication policy.
+download links, workspace documents, or published files. Only explicit v2 Render
+tasks create downloadable files; the harness publishes their committed outcomes.
+Existing native tool artifact behavior remains compatible outside this contract.
 
 ## Dependencies and ownership
 
@@ -41,16 +46,259 @@ future orchestration file-publication policy.
 | --- | --- |
 | `functions_orchestration_result_contracts.py` | Standard-library-only frozen descriptors, completeness, ordered schemas, named bindings, and dependency validation. |
 | `functions_orchestration_results.py` | Injected producer/source authorization, private result persistence, complete readers, bounded previews, and explicit saved-Analyze projection. |
-| `functions_workflow_result_store.py` | Existing immutable Cosmos/Blob transport and cancellation/deletion fences, plus three generic orchestration commit methods. |
+| `functions_workflow_result_store.py` | Existing immutable Cosmos/Blob transport and cancellation/deletion fences, plus additive orchestration commit and receipt methods. |
 | `functions_workflow_collections.py` | Bounded record-tree leaves/indexes and one aggregate write budget. |
 | `functions_workflow_results.py` | Existing bounded section readers, including collection previews. |
 | `functions_saved_analysis.py` | Existing native Analyze owner and authorized `SavedAnalysisInput`; no weakened `analyze-final-v1` validation. |
 | `functions_analysis_access.py` and `content_screening.access` | Current source authorization, revision checks, and screening holds. |
 
-Runtime owners supply initialized storage and access readers. The new modules do
+Runtime owners supply initialized storage and access readers. The result facade
+and contract modules do
 not import `config`, routes, settings owners, saved-analysis owners, renderers,
 artifact publishers, or model clients. They do not create another Cosmos/Blob
 client, fabricate a workflow, or introduce global memory.
+
+## Application integration boundaries
+
+`functions_orchestration_bootstrap.py` is the application composition root. It
+supplies initialized private storage, the current conversation/run readers,
+source authorization, and generated-artifact transport to
+`functions_orchestration_services.py`. Lower-level result and renderer services
+do not discover configuration or clients themselves.
+
+Document-source resolution and screening metadata use the strict callbacks in
+`functions_orchestration_source_access.py`. A temporary authority outage and a
+malformed/unverified authority response remain distinct from a real denial or
+screening hold; neither becomes an omitted result or a successful empty source
+set. The metadata reader checks current ownership and screening rather than
+accepting cached permission fields. These callbacks do not change the legacy
+resolver defaults. Headless owners that catch an error must keep the strict
+source-authority scope around the complete source/model decision so a fallback
+cannot consume unverified data.
+
+The same root supplies the server-only `native_bridge_for_step` callable to
+runtime binding and capability discovery. The default factory validates the
+explicit native arguments and binds the real compute-only request builder with
+current-source policy; it does not submit work while planning or binding.
+Missing hooks keep native v2 work unavailable, non-callable readiness flags are
+rejected, and rebinding a context clears any previous service's hook. The
+callable is not a plan field, persisted checkpoint value, or browser selector.
+Direct native adapters, dependency execution and saved native waits use the same
+native infrastructure classifier before converting errors into step outcomes.
+Transport, storage and current-authority uncertainty remain operational errors;
+they do not discard an existing job handle or pretend that retained work failed
+permanently. Genuine denial, invalid native arguments and cancellation retain
+their distinct outcomes.
+
+Render discovery uses the actual actor-bound `OrchestrationRenderingService`
+instance in the private `rendering_service` request/context field. A boolean,
+browser descriptor or arbitrary factory is not readiness evidence. The executor
+owns its service-factory adapter and checks that the renderer shares the runtime
+result service, actor and conversation. The root also binds output authorization
+to that same initialized service and refuses a foreign scope before storage
+access. Saved-v2 editing and revision validation receive the same actual service
+privately; legacy plans do not construct it, and no plan or checkpoint persists
+the instance. Discovery performs no rendering or publication. Saved waiting and
+completed Render tasks call the shared `resume_render_file` implementation with
+the same input resolver and actor-bound service factory. This read verifies the
+original producer, source, approved specification and deadline without claiming,
+rendering, uploading, admitting a retry or expiring a sibling output. Operational
+read failures remain exceptions rather than fabricated terminal file outcomes.
+
+Internal callers can narrow the shared format/profile catalog without defining
+new serializers. `None` keeps the canonical catalog; an explicit empty list
+admits no file pairs. A subset must retain the shared descriptors unchanged
+apart from filtering formats or profiles. Current server metadata is supplied
+to planning, editing, execution validation, the claim boundary and runtime
+binding. A removed requested pair rejects the work before generation instead
+of dropping the file or choosing another format. These permissions are not
+checkpointed or included in execution fingerprints, and a stale saved or
+previously bound catalog cannot replace the current service catalog.
+Malformed server catalog metadata remains an operational configuration error:
+HTTP callers return a safe 503 rather than reporting changed sources or
+claiming the plan. Valid but unadmitted pairs remain explicit plan refusals.
+
+For retained external sources, the root also provides a lazy current-directory
+identity reader using the configured application and Graph cloud. It reads
+current account/app-role authority and uncached, read-only user restrictions;
+it never substitutes saved session roles. Credential, directory, and metadata
+I/O have explicit bounds, and temporary service failures remain distinct from
+denied access. Document/source-free service construction does not acquire a
+Graph token. This optional path requires operator-consented application
+permissions as described in
+[external source access](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md); it does not
+grant permissions or alter interactive sign-in scopes.
+
+Initialized services compose the independent current-metadata reader,
+configuration attestor and external-source provider. Before capture, the provider
+rechecks current authority and verifies that both current and actual acquisition
+configuration use a supported mode. Agent/action preparation without an actual
+source performs this check but does not fabricate an attestation. Admission uses
+the original captured selector; the runtime validates returned aliases and
+installs them in the result facade's copied catalog before retaining data.
+Restarted readers reconstruct current authority and configuration without the
+old capture map or another acquisition. Unsupported local, resource-dependent,
+custom and implicit modes remain unavailable rather than receiving guessed
+configuration proof.
+
+Current conversation, run and settings lookups preserve the shared metadata
+reader's operational error classification across invocation capture. Timeouts,
+service outages and malformed current metadata are not converted into permission
+denial, missing sources or successful cached authorization. Confirmed ownership
+changes, deletion, missing conversations and lost roles still deny access.
+
+The initialized service supplies entry authorization (`external_source_preflight`),
+external admission, current authorization, and acquisition-configuration capture
+only as a complete group of four callables. The entry callback is the real
+`preflight_gather_invocation` operation: it checks the original producer and
+selector before engine setup or invocation-budget effects, returns synchronously
+with `None`, and does not create acquisition proof. Capture independently checks
+fresh authority and supported current/actual configuration before recording proof.
+Read-only or incomplete services do not advertise acquisition; discovery never
+invokes these callbacks or stores them in a plan.
+Saved-v2 editing and revision validation receive the same complete group from
+the initialized service. Legacy plans do not construct these services or receive
+the external bindings.
+Read-only whole-run retry reconstruction retains the same initialized callbacks
+and current catalog without invoking acquisition, writing a plan or making a
+model request.
+
+The root's configuration-digest helper uses a purpose-separated SHA-256 HMAC
+with the existing configured `SECRET_KEY`. It refuses the public development
+default, invalid values, and keys shorter than 32 bytes; it never substitutes
+an unkeyed hash or an automatically generated key. The digest takes canonical
+bytes and performs no directory or source I/O. This helper and the callback
+contract are used by the default bound attestor; non-URL configuration revisions
+cannot fall back to a public digest. Source-free and document-only construction
+still performs no directory or configuration-metadata I/O. Execution-claim
+fencing, dependency continuation and overall rollout remain separate runtime
+gates.
+
+Recorded v2 HTTP execution uses the shared headless
+`functions_orchestration_execution.py` runner before entering any legacy model
+setup. The runner owns the actual claimed lease, model resources, and stable
+assistant-message identity. Losing the browser stream detaches the event sink;
+it does not cancel the approved durable work. Confirmed preparation failures
+return their saved outcome. If terminal persistence cannot be confirmed, the
+HTTP route returns an explicit temporary failure rather than claiming that a
+run completed.
+
+The authenticated export catalog is scoped to an owned conversation and the
+currently available `render_file` capability. A disabled capability or missing
+runtime resumer returns `rendering_unavailable`, not an executable-looking list
+of formats. Planner and plan/editor event catalogs use the same filter; private
+server-side validation still uses the canonical shared format contracts. A saved
+v2 plan does not lose catalog access merely because new-plan admission is off,
+provided its current capability and runtime remain available.
+
+File retry accepts one exact output and a canonical UUID submission ID; retrying an
+uncertain response uses the same ID. It admits durable work without executing a
+producer, replaying the plan, or rendering in the request. Detailed run reads and
+retry responses rebuild per-file status from current output records instead of
+trusting stored artifact links. They also return the currently authorized
+committed artifact descriptors, so polling can attach a download card for a file
+that finished after the stream closed. A current status/card lookup outage is an
+explicit temporary error, not an empty successful response or cached file link.
+Lean v2 run listings also include current output states: shared map/resume
+hydration can discover pending file work even when the aggregate run status is
+already terminal. They do not load full plans or artifact cards. Legacy listings
+keep their existing fields and do not construct harness services.
+
+Conversation message history refreshes both nested output states and committed
+cards through the same actor-bound service. The outer screening/history
+pipeline preserves those services' operational errors: a temporary authority or
+storage failure returns HTTP 503, not a false document-review placeholder or
+"conversation not found" response. Genuine source restrictions still withhold
+only affected files, preserving accessible siblings and ordinary message text.
+History reads do not acquire a rendering lease or modify saved messages. See
+[the history outage fix](../fixes/ORCHESTRATION_HISTORY_OUTAGE_FIX.md).
+
+Private retained-output downloads use the media type in the freshly authorized
+committed descriptor, including YAML and filename aliases. The host operating
+system's MIME registry is not authoritative. Active workspace representations
+and legacy/native download behavior remain separate.
+
+The root exposes a separate `build_orchestration_cleanup_service` for
+deletion-only work. Its raw conversation reader preserves real tombstones,
+Cosmos not-found responses, and storage failures. Its `read_run_tombstone`
+callback reads the actual `checkpoint:lifecycle` record from the initialized
+run-steps container. A missing conversation alone is not deletion authority:
+physical deletion also requires the matching irreversible checkpoint tombstone
+and retained parent deletion state. Cleanup requires the original-owner run,
+output admission and immutable intents; it does not reconstruct a readable
+conversation or invoke normal result, directory or model services.
+
+Both single and bulk conversation deletion supply a lazy, run-scoped enrollment
+callback to `cleanup_conversation_checkpoints`, together with the actual archive
+retention policy. Recovery creates the irreversible checkpoint guard before the
+parent deletion CAS, freezes the admitted output IDs and policy in that CAS, and
+confirms every run's enrollment before source or message payload cleanup. A lost
+acknowledgment leaves durable intent for the scheduler; a missing output, failed
+fence or unconfirmed enrollment stops physical deletion rather than skipping it.
+
+Ordinary message and Blob purges exclude retained orchestration files only after
+this enrollment boundary succeeds. Their conditional cleanup remains owned by
+the output lifecycle, including outputs whose Blob exists before a file message
+does. Archiving preserves committed files while cancelling unfinished staging.
+Without archival retention, enrollment explicitly withdraws committed outputs.
+Tombstoned files and late staging wait for the existing lease grace period before
+physical cleanup. Legacy conversations construct no output cleanup service.
+Storage uncertainty never substitutes for deletion proof, and the ordinary
+history/download factory remains strict.
+
+See [the output lifecycle contract](ORCHESTRATION_OUTPUT_LIFECYCLE.md) and
+[orchestration administration](../../admin/orchestration.md). These service and
+HTTP boundaries are covered by `test_orchestration_services.py`,
+`test_orchestration_harness_routes.py`, and
+`test_orchestration_output_downloads.py`. The initialized external-source root,
+current Graph authority, full retained URL results after restart and operational
+storage errors are covered by `test_orchestration_external_bootstrap.py`; the
+deletion-only root is covered by `test_orchestration_cleanup_bootstrap.py`.
+`test_orchestration_external_root_runtime.py` exercises authenticated URL Gather
+through the actual default root, retained complete content, JSON rendering,
+restarted history/download reads and current revocation, without reacquisition
+or rendering during observation.
+`test_orchestration_output_resume_runtime.py` verifies actual shared-resumer
+dispatch, unchanged saved state and zero writes for target/sibling deadlines and
+nonretryable metadata failures.
+`test_orchestration_deletion_enrollment.py` and
+`test_orchestration_output_deletion_pipeline.py` cover the real guard/CAS,
+single/bulk callers, archive retention, interrupted enrollment, conditional
+cleanup after grace, and legacy factory-free behavior.
+
+The HTTP suite runs a claimed headless plan that creates Markdown and PDF from
+one retained Unicode draft with one content-generation call. Current detail,
+history, and downloaded-byte checks forbid model, native, rendering, and
+publication replay. A transient second-file upload failure leaves the first
+file committed and downloadable while the other output truthfully waits for
+its next admitted attempt. An authenticated Stop request also preserves that
+committed sibling's bytes. A pending output's `available` value describes
+current authorization, not a committed download; only committed artifact
+descriptors supply file cards. Changed approved filenames withhold the affected
+file without hiding its unchanged sibling.
+
+The actual planning endpoint is also covered with the shipped server readiness
+and both administrator opt-ins, without injecting a saved run. It resolves the
+conversation request, persists a v2 plan despite a browser-supplied legacy
+contract version, and exposes the ten-format catalog. Planning creates no
+files; approval executes one prepared draft into Markdown and PDF. Fresh
+detail and download reads do not repeat planning, composition, or publication.
+
+`test_orchestration_reason_render_pipeline.py` also executes the real initialized
+Analyze and Compare adapters through dependency execution, retained readers,
+multiple explicit files, private commit, and the actual download handler.
+Analyze's native sections use the existing saved-analysis injection API with
+the same lease-bound result store as its checkpoints; constructing a new
+token-only store would correctly fail the execution fence. CSV preserves the
+native retained record order, not an invented source-order projection.
+The native pipeline resumes one computation job and renders all 37 transformed
+rows to CSV and JSON with no content-generation call.
+
+The joined continuation, scheduler, headless, deletion, and metadata-recovery
+suites cover restart, exactly three automatic file attempts, separate manual
+retry, committed siblings, lost acknowledgments, and immutable claim fencing.
+These are isolated production-boundary checks, not live tenant/model validation
+or a throughput guarantee.
 
 ## Versioned contracts
 
@@ -163,8 +411,10 @@ once as completed or failed. `expected_count` counts requested right-hand
 targets; `actual_count` counts completed comparisons. Failure prose is not a
 completed comparison. A complete result cannot contain failed targets.
 
-Prepared report/slide document schemas are **not** supported result kinds yet.
-Storing arbitrary JSON does not advertise a validated Office/PDF layout contract.
+Prepared reports use the text/Markdown kinds; prepared slide decks use
+`structured-v1` with the shared `prepared_slide_deck_v1` profile. These are not
+additional generic result kinds. The composition/export boundary validates the
+prepared deck; storing arbitrary JSON does not prove that it is a valid deck.
 
 ## Injected access and storage interfaces
 
@@ -367,7 +617,7 @@ the original. A source revision/digest change fails under `current`; explicit
 relaxing current permission, capability or audience checks.
 
 Current here means **current authorized server resource metadata**, not a hidden
-network refresh. Public display URLs may be retained in prepared content, but
+re-fetch or rerun of the gathered content. Public display URLs may be retained in prepared content, but
 are neither fetch instructions nor permission to use a tool. The callback must
 enforce current integration/agent access or memory audience as applicable. This
 does not expand Fact Memory across conversations or introduce global memory.
@@ -485,8 +735,8 @@ reader = service.open_result(restored.output("prepared"))
 prepared_value = reader.read_value()
 ```
 
-This example does not add a field to existing production checkpoints. Wiring
-descriptor retention into new runtime adapters is later work. Reconstructing an
+This example uses the facade directly; it does not activate the versioned
+runtime or alter legacy checkpoints. Reconstructing an
 `OrchestrationResults` instance with initialized handles and the same persisted
 descriptor reads the original retained data, rather than rerunning its producer.
 
@@ -608,7 +858,7 @@ See [Saved Analyze results](ANALYZE_RESULTS.md),
 [Chat orchestration](CHAT_ORCHESTRATION.md), and
 [Checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md).
 
-## Verification and remaining scope
+## Verification and limitations
 
 The new regression suites are:
 
@@ -648,10 +898,18 @@ exports, and the standalone v1 plan-schema runner. Legacy boolean-return scripts
 must use their script runner; a pytest invocation alone is not evidence that
 their returned result was successful.
 
-There is no M2+ adapter rollout, new graph scheduler, semantic compilation,
-message/file rendering, render-task UI, automatic file retry policy, or
-per-file publication in this foundation. CSV/XLSX/DOCX/PPTX/PDF/JSON/XML/YAML/
-Markdown/TXT orchestration output activation, prepared report/slide schemas,
-independent file-task outcomes, and initial-plus-two automatic render attempts
-follow in later reviewable layers. Workflows, media generation, cross-conversation
-memory, and external delivery are outside this harness scope.
+Integration coverage adds the real producer pipelines, HTTP planning/execution
+boundaries, shared Render resumer, scheduler, deletion enrollment, and V2
+authoring/output/retry UI. All ten formats reopen through independent readers;
+two complete 30,000-row exports exceed 8 MiB after restart.
+
+The existing scheduler-first mixed-bootstrap probes retain their documented
+`enabled_required` startup xfails. The unrelated legacy tabular scale runner has
+unchanged AST-fixture dependency omissions and an unbounded fixture wait; it is
+not reported as passing. No live tenant, paid model, or cloud throughput test was
+performed. Deployment-specific permissions and provider configurations still
+need an administrator's validation before rollout.
+
+Workflow integration, new media generation, cross-conversation memory, and
+external delivery remain outside this harness scope. The result store is not
+a global memory library, and rendering does not grant access to a source.

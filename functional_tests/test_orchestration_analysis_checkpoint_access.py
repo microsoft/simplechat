@@ -1,7 +1,7 @@
 # test_orchestration_analysis_checkpoint_access.py
 """Functional regressions for saved Analyze access during checkpoint recovery.
 
-Version: 0.261.109
+Version: 0.261.127
 Implemented in: 0.261.109
 
 Exercise the real saved-result manifest authorizer and recovery logic. The
@@ -31,12 +31,13 @@ def recovery_functions(fixture):
     namespace = {
         'deepcopy': deepcopy,
         **{key: getattr(checkpoints, key) for key in (
-            'CheckpointError', 'STATE_FIELDS', 'OPTIONAL_STATE_FIELDS', 'context_binding',
-            'effective_plan', 'step_input_fingerprint', 'restore_context',
+            'CheckpointError', 'STATE_FIELDS', 'OPTIONAL_STATE_FIELDS', 'DEPENDENCY_STATE_FIELDS',
+            'context_binding', 'effective_plan', 'step_input_fingerprint', 'restore_context',
+            'plan_contract_version',
         )},
     }
     load_functions('functions_orchestration_recovery.py', {
-        '_validate_payload_sources', '_execution_steps', 'validate_resume',
+        '_validate_payload_sources', '_execution_steps', '_retained_statuses', 'validate_resume',
     }, namespace)
     return SimpleNamespace(**namespace)
 
@@ -99,26 +100,36 @@ def test_resume_probes_restore_optional_reference_state_on_success_and_failure(
         'state': {**deepcopy(initial_state), 'saved_analyses': [descriptor]},
     }
     fetched = []
+    reconciliation_services = []
+    checkpoint_services = []
 
-    def completed(source, step_id, authorize):
+    def reconcile(source, authorize, *, result_service=None):
+        reconciliation_services.append(result_service)
+        return source
+
+    def completed(source, step_id, authorize, *, result_service=None):
         fetched.append(step_id)
+        checkpoint_services.append(result_service)
         return deepcopy(payload) if step_id == 'analyze-1' else {'binding': 'changed'}
 
     namespace = recovery.validate_resume.__globals__
     monkeypatch.setitem(namespace, '_owned', lambda *args: deepcopy(record))
-    monkeypatch.setitem(namespace, 'reconcile_checkpoints', lambda source, authorize: source)
+    monkeypatch.setitem(namespace, 'reconcile_checkpoints', reconcile)
     monkeypatch.setitem(namespace, '_completed_checkpoint', completed)
     for _ in range(2):
         if fail_after_restore:
             with pytest.raises(recovery.CheckpointError):
                 recovery.validate_resume(record, context, {}, lambda: True)
         else:
-            assert set(recovery.validate_resume(record, context, {}, lambda: True)) == {'analyze-1'}
+            resumed = recovery.validate_resume(record, context, {}, lambda: True)
+            assert set(resumed) == {'analyze-1'}
         assert checkpoints.context_state(context) == initial_state
         assert hasattr(context, 'saved_analyses') is not absent
         if not absent:
             assert context.saved_analyses == []
     assert fetched == (['analyze-1', 'later-step'] if fail_after_restore else ['analyze-1']) * 2
+    assert reconciliation_services == [None, None]
+    assert checkpoint_services == [None] * len(fetched)
 
 
 @pytest.mark.parametrize('kind', ['chat', 'workflow'])

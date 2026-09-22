@@ -26,6 +26,11 @@ import { readSsePost } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
+import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
+import type { OrchestrationExportFormat } from './orchestrationExports';
+import {
+    hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
+} from './orchestrationOutputs';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -43,12 +48,14 @@ export type PlanComplexity = 'trivial' | 'simple' | 'complex';
 export type StepStatus =
     | 'pending'
     | 'running'
+    | 'waiting'
+    | 'partial'
     | 'completed'
     | 'failed'
     | 'skipped'
     | 'cancelled';
 
-export type OrchestrationOutcome = 'completed' | 'partial' | 'failed' | 'cancelled';
+export type OrchestrationOutcome = 'completed' | 'partial' | 'failed' | 'cancelled' | 'waiting';
 export type OrchestrationFinalizationStatus = 'pending' | 'saved' | 'failed' | 'interrupted';
 
 export interface OrchestrationFailure {
@@ -83,6 +90,9 @@ export interface OrchestrationAttempt {
     latest_attempt_run_id?: string;
     finalization_status?: OrchestrationFinalizationStatus;
     message_saved?: boolean;
+    outputs?: OrchestrationOutput[];
+    generated_artifacts?: GeneratedArtifact[];
+    export_catalog?: OrchestrationExportFormat[];
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -122,13 +132,16 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
 
 export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAttempt {
     const outer = recordOf(value);
-    const data = { ...recordOf(recordOf(outer.metadata).orchestration), ...outer };
+    const metadata = recordOf(outer.metadata);
+    const data = { ...recordOf(metadata.orchestration), ...outer };
     const outcome = data.outcome;
     const finalization = data.finalization_status;
+    const outputs = normalizeOrchestrationOutputs(data.outputs);
     return {
         run_id: typeof data.run_id === 'string' ? data.run_id : undefined,
         turn_id: typeof data.turn_id === 'string' ? data.turn_id : undefined,
-        outcome: outcome === 'completed' || outcome === 'partial' || outcome === 'failed' || outcome === 'cancelled'
+        outcome: outcome === 'completed' || outcome === 'partial' || outcome === 'failed'
+            || outcome === 'cancelled' || outcome === 'waiting'
             ? outcome : undefined,
         failure: normalizeOrchestrationFailure(data.failure),
         failures: Array.isArray(data.failures)
@@ -140,17 +153,27 @@ export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAtte
         finalization_status: finalization === 'pending' || finalization === 'saved'
             || finalization === 'failed' || finalization === 'interrupted' ? finalization : undefined,
         message_saved: typeof data.message_saved === 'boolean' ? data.message_saved : undefined,
+        ...(outputs !== undefined ? { outputs } : {}),
+        ...(Array.isArray(data.generated_artifacts) || Array.isArray(metadata.generated_artifacts)
+            ? { generated_artifacts: readGeneratedArtifacts({ ...metadata, ...data }) } : {}),
+        ...(Array.isArray(data.export_catalog) ? { export_catalog: data.export_catalog } : {}),
     };
 }
 
 /** A terminal execution status can precede durable final-message publication. */
 export function isOrchestrationRunPending(run: OrchestrationAttempt & { status?: string | null }): boolean {
-    return run.status === 'running' || run.finalization_status === 'pending'
+    return run.status === 'running' || isOrchestrationRunWaiting(run) || run.finalization_status === 'pending'
         || run.recovery?.reason_code === 'execution_live';
 }
 
-export function orchestrationTerminalStatus(event: RunStreamEvent): 'completed' | 'failed' | 'cancelled' {
+export function isOrchestrationRunWaiting(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return run.status === 'waiting' || run.outcome === 'waiting';
+}
+
+/** A closed stream can acknowledge a durable wait without completing the producing attempt. */
+export function orchestrationTerminalStatus(event: RunStreamEvent): 'completed' | 'failed' | 'cancelled' | 'waiting' {
     const outcome = normalizeOrchestrationAttempt(event).outcome;
+    if (isOrchestrationRunWaiting({ ...event, outcome })) return 'waiting';
     if (event.status === 'failed' || outcome === 'failed' || outcome === 'partial' || event.error) return 'failed';
     if (event.status === 'cancelled' || outcome === 'cancelled') return 'cancelled';
     if (event.status === 'completed' || outcome === 'completed') return 'completed';
@@ -170,6 +193,7 @@ export type PlanStatus =
     | 'awaiting_approval'
     | 'approved'
     | 'running'
+    | 'waiting'
     | 'completed'
     | 'failed'
     | 'cancelled'
@@ -179,19 +203,36 @@ export type PlanStatus =
 export type CostClass = 'low' | 'medium' | 'high';
 
 /**
- * The phases a plan moves through, mirroring the server registry's `CAPABILITY_PHASES`.
- *
- * The order is meaningful: a plan gathers in `knowledge`, then answers in `reasoning`, then
- * produces any deliverable in `output`, and never gathers again once it has answered. The
- * run view groups steps under these in this order. A closed union rather than a loose string
- * because -- unlike `capability_id`, where a build must tolerate a capability it had not heard
- * of -- the phase vocabulary is fixed by the framework, so an unrecognised phase is a bug to
- * surface, not a value to pass through.
+ * Legacy (contract v1) phases. They must not reclassify saved work as v2 roles.
  */
 export type OrchestrationPhase = 'knowledge' | 'reasoning' | 'output';
 
 /** The phases in the order a plan runs them, so a grouped view can iterate them directly. */
 export const ORCHESTRATION_PHASES: OrchestrationPhase[] = ['knowledge', 'reasoning', 'output'];
+
+/** Contract v2 roles describe purpose, not a global scheduling order. */
+export type OrchestrationRole = 'gather' | 'reason' | 'render';
+
+/** Exact public InputBinding wire shape from functions_orchestration_result_contracts.py. */
+export interface OrchestrationInputBinding {
+    version: string;
+    step_id: string | null;
+    output_name: string | null;
+    existing_result: string | null;
+}
+
+export interface OrchestrationNamedInput {
+    binding: OrchestrationInputBinding | null;
+    allow_partial?: boolean;
+}
+
+export interface OrchestrationNamedOutput {
+    name: string;
+    kind: string;
+    columns?: Array<{ name: string; value_type: string; nullable: boolean }>;
+    schema?: Json;
+    profile?: string;
+}
 
 /** MCP elicitation response actions, named exactly as MCP names them (`ELICITATION_ACTIONS`). */
 export type ElicitationAction = 'accept' | 'decline' | 'cancel';
@@ -240,6 +281,11 @@ export interface OrchestrationStep {
      * menu rather than dropping the step, so grouping degrades gracefully instead of failing.
      */
     phase?: string;
+    /** Server-owned v2 purpose; never inferred from a legacy capability's name. */
+    role?: string;
+    /** Named result bindings are distinct from capability arguments and plan-level sources. */
+    inputs?: Record<string, OrchestrationNamedInput>;
+    outputs?: OrchestrationNamedOutput[];
 }
 
 /** The approval block, from `normalize_plan`'s `approval`. */
@@ -338,6 +384,8 @@ export interface OrchestrationPlan {
     inputs?: OrchestrationPlanInputs;
     steps: OrchestrationStep[];
     outputs?: Json[];
+    /** V2's prepared answer selection, not the executor's private result reference. */
+    final_response?: OrchestrationInputBinding | null;
     approval: OrchestrationApproval;
     validation: OrchestrationValidation;
     status: PlanStatus;
@@ -457,6 +505,7 @@ export interface PlanEditorState {
     next_before_revision: number | null;
     pending: Elicitation | null;
     busy: boolean;
+    export_catalog?: OrchestrationExportFormat[];
 }
 
 export type PlanRevisionAction =
@@ -557,6 +606,7 @@ export interface PlanStreamEvent {
     plan?: OrchestrationPlan;
     elicitation?: Elicitation;
     editor?: PlanEditorState;
+    export_catalog?: OrchestrationExportFormat[];
     done?: boolean;
     error?: string;
     details?: unknown;
@@ -597,7 +647,7 @@ export interface PlanStreamHandlers {
      */
     onConversationMetadata?: (event: ChatStreamEvent) => void;
     /** The planner produced a plan; the stream is over. */
-    onPlan?: (plan: OrchestrationPlan) => void;
+    onPlan?: (plan: OrchestrationPlan, exportCatalog?: OrchestrationExportFormat[]) => void;
     /** The planner asked a question instead of planning; the stream is over. */
     onElicitation?: (elicitation: Elicitation) => void;
     /** Editor results never need to enter the main conversation's message dispatch. */
@@ -631,6 +681,8 @@ export interface RunStreamHandlers {
     onContent?: (delta: string, accumulated: string) => void;
     /** Terminal frame carrying the final assistant message and its metadata. */
     onDone?: (event: RunStreamEvent, accumulated: string) => void;
+    /** The same attempt is waiting for retained computation; this is not a retry or completion. */
+    onWaiting?: (event: RunStreamEvent) => void;
     /** The run was cancelled, either by the user or server-side. */
     onCancelled?: (event: RunStreamEvent, accumulated: string) => void;
     /**
@@ -654,6 +706,7 @@ export interface RunStreamResult {
     errored: boolean;
     /** The plan was already run elsewhere. Distinct from `errored`; see `onAlreadyRun`. */
     alreadyRun: boolean;
+    waiting?: boolean;
     conflict?: OrchestrationRequestError;
     rejection?: OrchestrationRequestError;
     /** No terminal acknowledgement: the server may still be executing. */
@@ -785,6 +838,31 @@ export async function fetchRunSteps(
         options.signal,
     );
     return Array.isArray(payload?.steps) ? payload.steps : [];
+}
+
+export async function fetchOrchestrationExportCatalog(
+    conversationId: string,
+    runId: string,
+    signal?: AbortSignal,
+): Promise<OrchestrationExportFormat[]> {
+    const params = new URLSearchParams({ conversation_id: conversationId, run_id: runId });
+    const payload = await api.get<{ formats?: OrchestrationExportFormat[] }>(
+        `/api/v2/orchestration/export-catalog?${params.toString()}`, signal,
+    );
+    if (!Array.isArray(payload?.formats)) throw new Error('File format reference unavailable');
+    return payload.formats;
+}
+
+export async function retryOrchestrationFile(
+    runId: string,
+    outputId: string,
+    body: { conversation_id: string; submission_id: string },
+    signal?: AbortSignal,
+): Promise<{ output: OrchestrationOutput; run: PersistedRun }> {
+    return api.post(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(outputId)}/retry`,
+        body, signal,
+    );
 }
 
 export async function prepareOrchestrationRetry(
@@ -1006,8 +1084,12 @@ async function readPlanStream(
             return false;
         }
 
+        const editor = event.editor ? {
+            ...event.editor,
+            ...(Array.isArray(event.export_catalog) ? { export_catalog: event.export_catalog } : {}),
+        } : null;
         if (event.type === 'orchestration_plan') {
-            result.editor = event.editor ?? null;
+            result.editor = editor;
             if (result.editor) {
                 handlers.onEditor?.(result.editor);
             }
@@ -1023,13 +1105,13 @@ async function readPlanStream(
             }
             result.completed = true;
             if (result.plan) {
-                handlers.onPlan?.(result.plan);
+                handlers.onPlan?.(result.plan, event.export_catalog);
             }
             return true;
         }
 
         if (event.type === 'orchestration_elicitation') {
-            result.editor = event.editor ?? null;
+            result.editor = editor;
             if (result.editor) {
                 handlers.onEditor?.(result.editor);
             }
@@ -1091,6 +1173,7 @@ export async function runOrchestration(
         errored: false,
         alreadyRun: false,
     };
+    let requiresExecutionOutcome = false;
 
     const response = await openOrchestrationStream(
         ORCHESTRATION_RUN_PATH,
@@ -1131,6 +1214,9 @@ export async function runOrchestration(
     }
 
     const onEvent = (event: RunStreamEvent): boolean => {
+        if (hasPendingOrchestrationOutputs(normalizeOrchestrationAttempt(event).outputs)) {
+            requiresExecutionOutcome = true;
+        }
         if (typeof event.error === 'string' && event.error && !event.done) {
             result.errored = true;
             handlers.onError?.(event.error, event);
@@ -1148,6 +1234,7 @@ export async function runOrchestration(
         }
 
         if (event.type === 'orchestration_step') {
+            if (event.status === 'waiting' || event.status === 'partial') requiresExecutionOutcome = true;
             handlers.onStep?.(event);
             // A step frame carries neither content nor a terminal marker, but fall through
             // rather than return so a frame that ever carried both is still fully handled.
@@ -1162,14 +1249,26 @@ export async function runOrchestration(
             if (typeof event.full_content === 'string') {
                 result.accumulated = event.full_content;
             }
-            const wasCancelled = orchestrationTerminalStatus(event) === 'cancelled';
+            // A legacy done-only acknowledgement cannot prove a v2 wait or partial result
+            // completed. Reconcile the existing attempt rather than manufacture success.
+            if (requiresExecutionOutcome && !normalizeOrchestrationAttempt(event).outcome
+                && !['waiting', 'completed', 'failed', 'cancelled'].includes(event.status ?? '')
+                && !event.cancelled && !event.canceled
+                && event.type !== 'cancelled' && event.type !== 'canceled') {
+                result.transportUnknown = true;
+                return true;
+            }
+            const status = orchestrationTerminalStatus(event);
 
-            if (wasCancelled) {
+            if (status === 'waiting') {
+                result.waiting = true;
+                handlers.onWaiting?.(event);
+            } else if (status === 'cancelled') {
                 result.cancelled = true;
                 handlers.onCancelled?.(event, result.accumulated);
             } else {
-                result.completed = orchestrationTerminalStatus(event) === 'completed';
-                result.errored = orchestrationTerminalStatus(event) === 'failed';
+                result.completed = status === 'completed';
+                result.errored = status === 'failed';
                 handlers.onDone?.(event, result.accumulated);
             }
             return true;
@@ -1187,6 +1286,7 @@ export async function runOrchestration(
     } else if (
         outcome.endedWithoutTerminal &&
         !result.completed &&
+        !result.waiting &&
         !result.cancelled &&
         !result.errored
     ) {

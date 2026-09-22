@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.122"
+version: "0.261.127"
 ---
 
 ## How to use this reference
@@ -359,6 +359,18 @@ plan rather than editing the main chat message. See
 | Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
+| Run task switch (contract-v2 plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A server-supplied contract-v2 plan that has not started |
+| Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A contract-v2 task with an output schema |
+| Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A contract-v2 view with a server-provided catalog; absent otherwise |
+| Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A contract-v2 plan view without a loaded catalog |
+
+Version-aware inspection was implemented in **0.261.127** (Refs:
+microsoft/simplechat#1509; `application/single_app/config.py`). Gather / Reason /
+Render are roles, not global phase buckets: consecutive groups preserve the
+server's actual dependency order, including repeated roles. Older saved plans
+keep their legacy interpretation. Named input descriptions identify the producer,
+output, and whether partial data is allowed. The server remains authoritative
+for binding compatibility, capability admission, source access, and limits.
 
 ## Orchestration failure recovery (V2 interface)
 
@@ -368,20 +380,56 @@ saved effective plan, not the current composer selections or a new planner call.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints |
+| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints; not a substitute for individual file recovery |
 | Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
 | Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
 | Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
 | View current attempt / View previous attempt | Opens a linked execution attempt rather than starting another one. | Follow recovery history and avoid retrying an older attempt that already has a successor. | Linked recovery attempts |
-| Check saved status | Reconciles the displayed state with the existing server execution. | Find out whether work finished when the browser connection was lost or recovery details could not load. | An execution-status or recovery-detail error |
-| Stop execution | Requests server cancellation of the potentially active attempt. | Stop work even when its streaming connection was interrupted. | An interrupted connection with a tracked in-flight attempt |
+| Check saved status | Reconciles the displayed state with the existing server execution, without running or retrying work. | Check a waiting computation, or find out whether work finished after connection loss. | A waiting attempt, execution-status error, or recovery-detail error |
+| Stop execution | Requests server cancellation of the potentially active attempt. | Stop work even when it is waiting for retained computation or its stream was interrupted. | A waiting or interrupted connection with a tracked in-flight attempt |
 
 Steps restored from checkpoints show **Reused saved result**. Retry is always
 manual, including when normal approval is Auto or timed. An older attempt cannot
 create a competing retry after a newer attempt has been prepared.
+
+Since **0.261.127**, **Waiting for required results** keeps the same producing
+attempt active. Reload and status checks do not execute it again, and waiting
+does not expose a run-retry button or a completed-file link. File-specific
+publication and retry controls require the server's separate output lifecycle.
 
 Stop requests cancellation on the server. A connection loss instead requires
 checking the existing execution; it must not automatically start another one.
 When a checkpoint or source is unavailable, the interface explains why recovery
 is blocked rather than turning Retry into a full-plan replay. See
 [Review, edit, and recover plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
+## Orchestration file outputs (V2 interface)
+
+Implemented in **0.261.127** (Refs: microsoft/simplechat#1509;
+`application/single_app/config.py`). These response and Run-view controls require
+server-provided output lifecycle records; a planned filename or native waiting
+state does not enable them.
+
+| Control or state | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Check saved file status | Reads the same run's individual file states without starting work. | Recover current progress after navigation, reload, or a lost response, including when the run already reports partial completion or failure. | The server has advertised individual outputs |
+| Retry file | Requests only the selected file from its retained source; producer tasks and sibling files are not replayed. | Recover an eligible file independently of files that already succeeded. | The server marks that failed file retryable under current access |
+| Retry same request | Reuses the uncertain retry action's saved identifier instead of creating another action. | Confirm a file retry after a network or server error without duplicating it. | An unconfirmed action remains and the server still permits that file retry |
+| Automatic retry scheduled | Shows the server's next retry time and automatic-attempt count/limit. | Distinguish backoff from a stalled browser; refreshing does not submit another attempt. | The file is awaiting a server-scheduled retry |
+| Download | Uses the existing generated-artifact card and authorized chat download path. | Retrieve a committed file while other files are still pending or failed. | Matching committed artifact metadata is present and the file is available |
+| Unavailable | Withholds that file's download and retry controls while retaining its recorded outcome and safe reason. | Understand a source-access, screening, or deletion restriction without losing unrelated ready files. | The server marks the output unavailable, or the run is no longer accessible |
+
+Waiting, Rendering, Completed, Failed, and Cancelled remain distinct file states.
+Automatic-attempt exhaustion alone never enables manual retry. Retry identities
+survive reload in the same browser tab, but reloading never posts a retry or
+reruns the original plan. An expired sign-in or a conflict requires checking
+saved state before another request.
+
+Generated-file history entries are informational, not uploaded-file previews or
+download receipts. Unavailable history entries show a safe explanation and close
+any cached preview. Empty TXT and MD files can still be downloaded; zero counts
+do not make a completed file unavailable.
+
+Restored access can return the original committed download on the next saved-status
+check without rendering again. A network or server failure during a status check
+keeps the last known progress and shows a refresh error, not a source-denial state.

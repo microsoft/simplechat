@@ -1,7 +1,7 @@
 # test_generated_file_structured_renderers.py
 """
 Functional tests for explicit complete-source generated-file serializers.
-Version: 0.261.126
+Version: 0.261.127
 Implemented in: 0.261.126
 
 Exercise production dispatch, independent readback, bounds, authorization,
@@ -761,6 +761,39 @@ def test_cleanup_only_failure_is_not_silently_suppressed(output_format, profile,
     assert failure.value is iterator.cleanup_error
     assert iterator.close_calls == 1 and opened_streams
     assert all(stream.closed for stream in opened_streams)
+
+
+@pytest.mark.parametrize('output_format,profile', RECORD_FORMATS + (
+    ('md', 'prepared_text_v1'), ('txt', 'prepared_text_v1'),
+))
+def test_outer_handled_exception_does_not_hide_cleanup_failure(output_format, profile, opened_streams):
+    outer = ValueError('already handled by the caller')
+    items = ['x'] if output_format in ('md', 'txt') else [{'value': 'x'}]
+    iterator = CleanupFailingIterator(items)
+    source = cleanup_source(output_format, iterator, 1)
+    options = {'columns': ('value',)} if output_format == 'csv' else {}
+    try:
+        raise outer
+    except ValueError:
+        with pytest.raises(OSError) as failure:
+            render(source, output_format, profile, **options)
+    assert failure.value is iterator.cleanup_error
+    assert iterator.close_calls == 1
+    assert not getattr(outer, '__notes__', [])
+    assert opened_streams and all(stream.closed for stream in opened_streams)
+
+
+def test_cleanup_guard_uses_the_with_body_error_not_the_callers_handler():
+    outer = ValueError('already handled by the caller')
+    iterator = CleanupFailingIterator([])
+    try:
+        raise outer
+    except ValueError:
+        with pytest.raises(OSError) as failure:
+            with ClosingExportResource(iterator):
+                pass
+    assert failure.value is iterator.cleanup_error and iterator.close_calls == 1
+    assert not getattr(outer, '__notes__', [])
 
 
 @pytest.mark.parametrize('exception_type', [PermissionError, InterruptedError, KeyboardInterrupt])

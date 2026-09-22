@@ -3652,6 +3652,22 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
             "role": "capability",
         },
+        {
+            "key": "enable_chat_orchestration_harness",
+            "type": "switch",
+            "label": "Gather / Reason / Render harness (preview)",
+            "help": (
+                "Off by default. Requires Chat Orchestration and server rollout readiness. "
+                "Opts new plans into retained results and explicit file-rendering tasks "
+                "instead of legacy orchestration. Existing capability permissions, model "
+                "access and token, time and step budgets still apply. Turning this off "
+                "stops only new harness plans; saved plans, results and files keep their "
+                "recorded version and authorized read/recovery access."
+            ),
+            "default": False,
+            "role": "capability",
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+        },
     ],
     "chat-orchestration-approval-section": [
         {
@@ -3747,8 +3763,9 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Which kinds of work a plan may contain. An empty selection allows every "
                 "otherwise-enabled capability; a non-empty selection narrows plans to "
-                "those capabilities. Answering is always available. Use an action also "
-                "requires Enable Action Access, which is off by default."
+                "those capabilities. Legacy answering is always available. Prepare content "
+                "and Create a file apply to admitted harness plans and remain subject to "
+                "rollout readiness. Use an action also requires Enable Action Access."
             ),
             "default": [],
             "options": [
@@ -3761,6 +3778,8 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "deep_research", "label": "Research in depth"},
                 {"value": "agent_invoke", "label": "Ask an agent"},
                 {"value": "action_invoke", "label": "Use an action"},
+                {"value": "compose", "label": "Prepare content"},
+                {"value": "render_file", "label": "Create a file"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

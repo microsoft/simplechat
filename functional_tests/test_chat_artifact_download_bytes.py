@@ -1,7 +1,7 @@
 # test_chat_artifact_download_bytes.py
 """
 Functional regressions for authorized generated artifact download bytes.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.115
 
 Production route, message/lifecycle authorization, internal blob reader, saved
@@ -24,6 +24,7 @@ from urllib.parse import quote
 import pytest
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from flask import Flask, Response, jsonify, request
+from werkzeug.test import Client
 from werkzeug.utils import secure_filename
 
 from test_generated_artifact_lifecycle_authorization import (
@@ -36,6 +37,7 @@ from test_content_screening_access import ScreeningAccessFixture, access as scre
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_generated_artifact_sources import has_generated_artifact_source
+from functions_orchestration_artifacts import is_orchestration_artifact_source
 
 
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -120,6 +122,7 @@ def artifact_download(saved_chat):
 
     namespace = {
         "ExitStack": ExitStack, "has_generated_artifact_source": has_generated_artifact_source,
+        "is_orchestration_artifact_source": is_orchestration_artifact_source,
         "is_conversation_memory_blob_path": is_conversation_memory_blob_path,
         "hashlib": hashlib, "logging": logging, "mimetypes": mimetypes, "os": os,
         "quote": quote, "secure_filename": secure_filename,
@@ -152,7 +155,7 @@ def artifact_download(saved_chat):
     app.add_url_rule("/api/chat_artifacts/download", view_func=namespace["download_chat_artifact"])
     app.after_request(namespace["enforce_screened_citation_response"])
     return SimpleNamespace(
-        client=app.test_client(), artifact=artifact, identity=identity, messages=messages,
+        client=Client(app, Response), artifact=artifact, identity=identity, messages=messages,
         conversations=conversations, reads=reads, state=state, saved=saved_chat,
         namespace=namespace, logs=logs,
     )

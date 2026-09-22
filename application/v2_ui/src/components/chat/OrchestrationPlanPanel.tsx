@@ -22,9 +22,9 @@ import {
     type StepRuntimeMap,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
-import { fetchOrchestrationRun, fetchRunSteps, normalizeOrchestrationAttempt, type OrchestrationPlan } from '../../lib/orchestration';
+import { fetchOrchestrationRun, fetchRunSteps, type OrchestrationPlan } from '../../lib/orchestration';
 import { normalizePlan } from '../../lib/orchestrationPlan';
-import { openOrchestrationPlanEditor } from '../../lib/orchestrationController';
+import { loadOrchestrationRecovery, openOrchestrationPlanEditor } from '../../lib/orchestrationController';
 import { GlassButton } from '../ui/primitives';
 import { OrchestrationRunView } from './OrchestrationRunView';
 import { OrchestrationMapView } from './OrchestrationMapView';
@@ -159,7 +159,7 @@ export function OrchestrationPlanPanel() {
         setLoadingRunId(runId);
         setLoadError(null);
         Promise.all([
-            fetchOrchestrationRun(runId, { conversationId: activeConversationId }),
+            loadOrchestrationRecovery(activeConversationId, runId),
             fetchRunSteps(runId, { conversationId: activeConversationId }),
         ])
             .then(([run, steps]) => {
@@ -172,9 +172,6 @@ export function OrchestrationPlanPanel() {
                     return;
                 }
                 const store = useOrchestrationStore.getState();
-                store.updateRunRecovery(runId, {
-                    ...normalizeOrchestrationAttempt(run), plan, status: run?.status, detailLoaded: true,
-                });
                 const current = selectPlan(store, activeConversationId, turnId);
                 if (current && (current.run_id !== runId
                     || selectCanEditPlan(store, activeConversationId, turnId))) {

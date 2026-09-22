@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.261.126**
+Updated through version: **0.261.127**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
@@ -337,6 +337,12 @@ A cleanup-only failure still raises; it never turns into successful output.
 Normal generator closing is distinguished from an actual failed operation so
 early-close failures cannot disappear behind `GeneratorExit`.
 
+Use `ClosingExportResource` to identify the actual operation's exception.
+Ambient `sys.exc_info()` can refer to an unrelated exception already handled
+by a caller and must not turn a cleanup-only failure into success. Temporary
+output ownership uses this guard with `ExitStack`; successful streams are
+explicitly detached only after all rendering and final checks complete.
+
 Office output uses the headless helper's bounded, seekable in-memory streams.
 The bridge transfers that stream without a second whole-file copy and closes
 it if final authorization, count checks or metadata construction fail. A
@@ -377,7 +383,7 @@ and has `retryable=False`. Codes distinguish unsupported format/profile/source,
 invalid options/limits/source/data, incomplete source, count mismatch, and
 byte/record/value limits. Arbitrary reader, authorization and cancellation
 exceptions are not turned into successful exports or automatic retry
-decisions. The future execution/publication owner must classify those failures
+decisions. The execution/publication owner classifies those failures
 and keep raw exception details out of browser payloads.
 
 Native `OfficeRenderError` instances retain their original code and
@@ -390,19 +396,21 @@ does not skip checks or mislabel cancellation as an automatic retry condition.
 
 ### Runtime Integration Boundary
 
-The intended future orchestration boundary remains:
+The orchestration harness integrated in **0.261.127** uses:
 **authorized source adapter -> explicit shared renderer -> existing private
-artifact transport -> optional existing workspace publication**. Gather and
-Reason supply retained data or prepared content; explicit Render tasks would
-create files. The core does not upload or publish files, resolve source
-bindings, implement retries, or enable the full M5/M6 orchestration path.
+artifact transport -> per-file committed visibility**. Gather and Reason supply
+retained data or prepared content; explicit Render tasks create files. The
+shared renderer itself does not upload, authorize bindings, schedule retries,
+or publish workspace documents. Those operations remain separate from byte
+generation.
 
-The ten-format callable catalog is not completion of M5 or M8. Authorized
-retained-result integration, public capability admission, output
-lifecycle/recovery and UI integration remain separate work. Existing Office
-response/message callers are unchanged; these explicit profiles call the
-headless helpers instead. See
-[Chat Orchestration](CHAT_ORCHESTRATION.md#outputs).
+The ten-format catalog is consumed by the initialized runtime and V2 authoring
+UI. The output lifecycle owns authorized retained inputs, independent file
+commit, three automatic attempts, and separately requested manual retry.
+Existing Office response/message callers are unchanged; explicit profiles call
+the headless helpers instead. See
+[the orchestration harness](ORCHESTRATION_RENDERING_HARNESS.md) and
+[its output lifecycle](ORCHESTRATION_OUTPUT_LIFECYCLE.md).
 
 ### Response Paths
 

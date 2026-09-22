@@ -890,6 +890,37 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
+def run_orchestration_scheduler_loop(app=None):
+    """Continue approved harness work independently of browser connections."""
+    # These application owners require the initialized web/scheduler resources.
+    from functions_orchestration_bootstrap import initialize_orchestration_artifact_access
+    from functions_orchestration_scheduler import check_due_orchestration_runs_once
+
+    initialize_orchestration_artifact_access()
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock(
+                'orchestration_harness_scheduler_scan', lease_seconds=120,
+            )
+            if lock_document:
+                with app.app_context() if app is not None else nullcontext():
+                    check_due_orchestration_runs_once(max_runs=4, max_outputs=8)
+                log_event(
+                    '[ORCHESTRATION_RUNS] Scheduler slice completed.',
+                    debug_only=True,
+                )
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Scheduler slice could not complete.',
+                level=logging.ERROR, extra={'error_type': type(exc).__name__},
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+        time.sleep(30)
+
+
 def run_data_management_scheduler_loop(app=None):
     """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
@@ -1013,6 +1044,7 @@ def start_background_task_threads(app=None):
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
+        ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),

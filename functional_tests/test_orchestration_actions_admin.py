@@ -1,7 +1,7 @@
 # test_orchestration_actions_admin.py
 """
 Functional coverage for the orchestration action admin opt-in.
-Version: 0.261.098
+Version: 0.261.127
 Implemented in: 0.261.098
 
 Validate the declarative schema, template-form normalizer and generic V2 partial
@@ -43,6 +43,7 @@ def _form_normalizer():
         "safe_int_with_source": INT_UTILS.safe_int_with_source,
         "all_capability_ids": REGISTRY.all_capability_ids,
         "TERMINAL_CAPABILITY_ID": REGISTRY.TERMINAL_CAPABILITY_ID,
+        "get_field_definition": FIELDS.get_field_definition,
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
     return namespace[function.name]
@@ -140,7 +141,8 @@ class OrchestrationActionsAdminTests(unittest.TestCase):
         self.assertEqual(disabled[CAPABILITIES_KEY], ["action_invoke", "respond"])
 
     def test_template_empty_and_full_capability_lists_still_require_opt_in(self):
-        for selection in ([], REGISTRY.all_capability_ids()):
+        options = FIELDS.get_field_definition(CAPABILITIES_KEY)["options"]
+        for selection in ([], [option["value"] for option in options]):
             with self.subTest(selection=selection):
                 form = MultiDict((CAPABILITIES_KEY, value) for value in selection)
                 normalized = NORMALIZE_FORM(form)
@@ -148,6 +150,12 @@ class OrchestrationActionsAdminTests(unittest.TestCase):
                 self.assertIs(normalized[ACTION_FLAG], False)
                 form[ACTION_FLAG] = "on"
                 self.assertIs(NORMALIZE_FORM(form)[ACTION_FLAG], True)
+
+    def test_full_legacy_selection_does_not_implicitly_grant_harness_capabilities(self):
+        selection = REGISTRY.all_capability_ids()
+        form = MultiDict((CAPABILITIES_KEY, value) for value in selection)
+        normalized = NORMALIZE_FORM(form)
+        self.assertEqual(normalized[CAPABILITIES_KEY], selection)
 
 
 if __name__ == "__main__":

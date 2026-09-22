@@ -1,7 +1,14 @@
 # functions_orchestration_models.py
 """Authorized model bindings for orchestration planning and execution.
 
-Version: 0.261.104
+Version: 0.261.127
+
+Planner construction evidence is private runtime metadata, captured from the
+client's actual construction inputs. It is not public model metadata, credentials,
+or a reconstruction from settings read after the client was created.
+get_planner_acquisition_configuration returns only the eight-field descriptor for
+the exact owned planner adapter. Parameters describe its construction-bound
+controls, not arbitrary overrides supplied to a later completion call.
 """
 
 from copy import deepcopy
@@ -43,9 +50,87 @@ def _text(value):
 class _PlannerCompletions:
     def __init__(self, model):
         self.model = model
+        self._constructed_model = model
+        self._construction = model._construction
+        self._planner_client = None
+        self._chat = None
 
     def create(self, **kwargs):
         return self.model.create_completion(**kwargs)
+
+
+@dataclass(frozen=True)
+class _ModelConstruction:
+    client: Any = field(repr=False)
+    binding: tuple = field(repr=False)
+    endpoint: str | None = field(repr=False)
+    api_version: str | None = field(repr=False)
+    protocol: str = field(repr=False)
+
+
+def _binding_signature(model):
+    return (
+        model.provider, model.deployment, model.endpoint_id, model.model_id,
+        model.behavior_name, model.response_length, model.reasoning_effort,
+    )
+
+
+def _record_construction(model, *, endpoint, api_version, protocol):
+    model._construction = _ModelConstruction(
+        model.client, _binding_signature(model), endpoint, api_version, protocol,
+    )
+    return model
+
+
+def get_planner_acquisition_configuration(planner_client):
+    """Return a detached private descriptor for this unchanged constructed client."""
+    if type(planner_client) is not SimpleNamespace:
+        raise OrchestrationModelError()
+    chat = getattr(planner_client, 'chat', None)
+    completions = getattr(chat, 'completions', None) if type(chat) is SimpleNamespace else None
+    if (
+        type(completions) is not _PlannerCompletions
+        or completions._planner_client is not planner_client or completions._chat is not chat
+    ):
+        raise OrchestrationModelError()
+    model, construction = completions.model, completions._construction
+    if (
+        type(model) is not OrchestrationModel or model is not completions._constructed_model or model._closed
+        or type(construction) is not _ModelConstruction or model._construction is not construction
+        or model.client is not construction.client or _binding_signature(model) != construction.binding
+        or any(type(value) is not str or not value.strip() for value in (
+            construction.endpoint, construction.protocol, model.provider, model.deployment,
+        ))
+        or construction.api_version is not None and type(construction.api_version) is not str
+        or construction.protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+        and not construction.api_version
+    ):
+        raise OrchestrationModelError()
+    (
+        provider, deployment, endpoint_id, model_id, _behavior_name, response_length, reasoning_effort,
+    ) = construction.binding
+    parameters = {}
+    if response_length is not None:
+        parameters['response_length'] = response_length
+    if reasoning_effort:
+        parameters['reasoning_effort'] = reasoning_effort
+    return {
+        'provider': provider, 'protocol': construction.protocol,
+        'endpoint': construction.endpoint, 'api_version': construction.api_version,
+        'deployment': deployment, 'endpoint_id': endpoint_id, 'model_id': model_id,
+        'parameters': parameters,
+    }
+
+
+def planner_client_construction_source(planner_client, planner_model):
+    """Wrap the same private descriptor for callers using the acquisition envelope."""
+    configuration = get_planner_acquisition_configuration(planner_client)
+    if type(planner_model) is not str or planner_model != configuration['deployment']:
+        raise OrchestrationModelError()
+    return {
+        'version': 'orchestration-external-acquisition-v1', 'kind': 'planner', 'phase': 'resolved',
+        'model': configuration,
+    }
 
 
 @dataclass
@@ -64,6 +149,7 @@ class OrchestrationModel:
     _closed: bool = field(default=False, init=False, repr=False)
     reasoning_resolution: dict[str, Any] = field(default_factory=dict, init=False)
     _reasoning_rejected_efforts: set[str] = field(default_factory=set, init=False, repr=False)
+    _construction: _ModelConstruction | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.model_metadata = deepcopy(self.model_metadata)
@@ -99,7 +185,10 @@ class OrchestrationModel:
 
     def as_planner_client(self):
         """Keep the chat-completions interface used by planning and source review."""
-        return SimpleNamespace(chat=SimpleNamespace(completions=_PlannerCompletions(self)))
+        completions = _PlannerCompletions(self)
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        completions._planner_client, completions._chat = client, client.chat
+        return client
 
     def _record_reasoning_resolution(self, resolution):
         self.reasoning_resolution = dict(resolution)
@@ -156,6 +245,10 @@ def _resolve_legacy_binding(settings, *, deployment='', reasoning_effort='', sou
     # Keep the legacy client seam lazy to avoid an import cycle with the planner.
     from functions_orchestration_planner import resolve_planner_client
 
+    settings = deepcopy(settings)
+    apim = bool(settings.get('enable_gpt_apim', False))
+    endpoint = settings.get('azure_apim_gpt_endpoint' if apim else 'azure_openai_gpt_endpoint')
+    api_version = settings.get('azure_apim_gpt_api_version' if apim else 'azure_openai_gpt_api_version')
     client, resolved_deployment = resolve_planner_client(settings)
     deployment = deployment or resolved_deployment
     model = {}
@@ -168,12 +261,12 @@ def _resolve_legacy_binding(settings, *, deployment='', reasoning_effort='', sou
     response_length = model.get('responseLength')
     if type(response_length) is not int or response_length <= 0:
         response_length = None
-    return OrchestrationModel(
+    return _record_construction(OrchestrationModel(
         client, deployment, behavior_name=_text(model.get('modelName')),
         response_length=response_length, model_metadata=model,
         reasoning_effort=reasoning_effort,
         source=source, _answer_selection=answer_selection,
-    )
+    ), endpoint=endpoint, api_version=api_version, protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI)
 
 
 def has_planner_model_override(settings):
@@ -289,7 +382,7 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
                 settings, user_id=user_id, seeds=seeds, identity_context=identity_context,
                 answer_selection=answer_selection,
             )
-        client, _ = build_model_endpoint_sync_chat_client(
+        client, constructed_protocol = build_model_endpoint_sync_chat_client(
             endpoint.get('auth') or {}, provider, address, api_version, deployment,
             settings=settings, endpoint_config=endpoint,
             identity_context={**(identity_context or {}), 'user_id': user_id},
@@ -297,12 +390,12 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         response_length = model.get('responseLength')
         if not isinstance(response_length, int) or isinstance(response_length, bool) or response_length <= 0:
             response_length = None
-        return OrchestrationModel(
+        return _record_construction(OrchestrationModel(
             client, deployment, provider=provider, endpoint_id=selection['model_endpoint_id'],
             model_id=_text(model.get('id')), behavior_name=_text(model.get('modelName')) or deployment,
             response_length=response_length, reasoning_effort=reasoning_effort, source=source,
             model_metadata=model,
-        )
+        ), endpoint=address, api_version=api_version, protocol=constructed_protocol)
 
     if selection['model_provider'] and selection['model_provider'].lower() != 'aoai':
         raise OrchestrationModelError()

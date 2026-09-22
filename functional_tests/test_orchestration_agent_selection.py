@@ -1,7 +1,7 @@
 # test_orchestration_agent_selection.py
 """
 Functional test for orchestration agent selection.
-Version: 0.261.104
+Version: 0.261.127
 Implemented in: 0.261.087
 
 An agent's configuration is not all equally safe to show a planner. Its naming fields are
@@ -246,7 +246,7 @@ def test_catalog_resolution_failure_is_explicit():
 
 
 def test_route_resolves_the_catalog_once_per_plan():
-    """Resolution happens per plan and per run -- never inside a loop over steps."""
+    """Planning, execution, and retry each reauthorize once, never per step."""
     print("Testing catalog resolution placement...")
     try:
         tree = _tree(ROUTE)
@@ -257,12 +257,22 @@ def test_route_resolves_the_catalog_once_per_plan():
             and isinstance(node.func, ast.Name)
             and node.func.id == 'resolve_agent_catalog'
         ]
-        assert len(calls) == 2, (
-            f"expected exactly two resolutions (one when planning, one when running), "
-            f"found {len(calls)}. Planning and running are separate requests and access "
-            f"can be revoked between them, so the run must not reuse the plan's snapshot -- "
-            f"but neither may resolve more than once."
-        )
+        parents = {
+            child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+        }
+        resolutions = {}
+        for call in calls:
+            owner = parents[call]
+            while not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = parents[owner]
+            resolutions[owner.name] = resolutions.get(owner.name, 0) + 1
+        expected = {'generate': 1, 'orchestration_run': 1, '_validate_retry_context': 1}
+        if resolutions != expected:
+            raise AssertionError(
+                f"expected one catalog resolution at each planning, execution and retry "
+                f"boundary, found {resolutions}. Each request must reauthorize current "
+                f"agent access rather than reuse an earlier snapshot."
+            )
 
         # And none of them inside a loop, which would make it per-step.
         for node in ast.walk(tree):
@@ -278,7 +288,7 @@ def test_route_resolves_the_catalog_once_per_plan():
                             'multi-query Cosmos operation with no cache'
                         )
 
-        print("  ok  resolved once when planning and once when running")
+        print("  ok  resolved once when planning, running, and retrying")
         return True
     except Exception as e:
         print(f"Test failed: {e}")

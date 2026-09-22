@@ -1,7 +1,7 @@
 # test_orchestration_run_hydration_routes.py
 """
 Functional test for the orchestration run hydration endpoints and their projections.
-Version: 0.261.105
+Version: 0.261.127
 Implemented in: 0.261.099
 
 Orchestration runs have always been persisted, but nothing in the browser read them back, so a
@@ -80,8 +80,8 @@ def _load_projections():
     """Import the two projection helpers without importing the whole Flask app.
 
     ``route_backend_orchestration`` pulls in Cosmos clients and Azure settings at import time,
-    which a functional test has no business requiring. The helpers are pure functions of a dict,
-    so they are compiled out of the module source with only the small dependency they use.
+    which these legacy projection tests do not require. Legacy projections remain pure;
+    real v2 service/HTTP projections are covered by test_orchestration_harness_routes.py.
     """
     source = ROUTE_FILE.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -101,13 +101,19 @@ def _load_projections():
         cosmos_orchestration_run_steps_container=AtomicMemoryContainer('run_id'),
     ):
         from functions_orchestration_recovery import public_execution_fields
-        from functions_orchestration_schema import safe_failure
+        from functions_orchestration_schema import plan_contract_version, safe_failure
+
+    def forbidden_harness_service(*args, **kwargs):
+        raise AssertionError("Legacy projections must not construct harness services.")
+
     namespace = {
         "deepcopy": deepcopy,
         "required_capability_ids": registry["required_capability_ids"],
         "merge_reasoning_adjustments": events["merge_reasoning_adjustments"],
         "public_execution_fields": public_execution_fields,
+        "plan_contract_version": plan_contract_version,
         "safe_failure": safe_failure,
+        "_harness_services": forbidden_harness_service,
     }
     exec(compile(ast.Module(body=picked, type_ignores=[]), str(ROUTE_FILE), "exec"), namespace)
     return namespace
@@ -213,7 +219,8 @@ def test_detail_projection_adds_only_the_plan():
         projected = helpers["_run_detail_row"](automatic)
         assert projected["plan"]["inputs"]["required_capabilities"] == []
         automatic["seeds"]["web_search"] = True
-        assert helpers["_run_detail_row"](automatic)["plan"]["inputs"]["required_capabilities"] == ["web_search"]
+        projected = helpers["_run_detail_row"](automatic)
+        assert projected["plan"]["inputs"]["required_capabilities"] == ["web_search"]
         for forbidden in (
             "conversation_context", "request_resolution", "user_message_fingerprint",
         ):
@@ -247,8 +254,9 @@ def test_projections_tolerate_a_sparse_record():
 
         # And a record that is not a dict at all is projected to empty rather than exploding.
         empty = helpers["_run_summary_row"](None)
+        empty_detail = helpers["_run_detail_row"](None)
         assert empty["run_id"] is None
-        assert helpers["_run_detail_row"](None)["plan"] == {}
+        assert empty_detail["plan"] == {}
         print("  ok  a sparse or absent record projects cleanly")
         return True
     except Exception as exc:  # noqa: BLE001

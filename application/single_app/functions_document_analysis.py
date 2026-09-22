@@ -27,6 +27,7 @@ from functions_document_analysis_results import (
     normalize_analysis_options,
 )
 from functions_generated_file_exports import get_requested_structured_artifact_format
+from functions_orchestration_execution_policy import generated_file_publication_allowed
 from functions_search import normalize_search_id_list, normalize_search_scope
 from functions_workflow_result_store import AnalysisWorkUnitConflictError
 
@@ -660,8 +661,12 @@ def _build_analysis_intent(analysis_prompt):
         'json_array_output_requested': json_array_output_requested,
         'json_code_block_requested': json_code_block_requested,
         'table_output_requested': table_output_requested,
-        'csv_artifact_recommended': table_output_requested or (exhaustive_output_requested and not json_output_requested and not xml_output_requested),
-        'markdown_analysis_artifact_recommended': exhaustive_output_requested and not json_output_requested and not xml_output_requested,
+        'csv_artifact_recommended': generated_file_publication_allowed() and (
+            table_output_requested or (exhaustive_output_requested and not json_output_requested and not xml_output_requested)
+        ),
+        'markdown_analysis_artifact_recommended': generated_file_publication_allowed() and (
+            exhaustive_output_requested and not json_output_requested and not xml_output_requested
+        ),
     }
 
 
@@ -1413,7 +1418,7 @@ def run_document_analysis(
         'json_array_output_requested': False,
         'table_output_requested': False,
         'csv_artifact_recommended': False,
-        'markdown_analysis_artifact_recommended': True,
+        'markdown_analysis_artifact_recommended': generated_file_publication_allowed(),
     } if use_final_records else _build_analysis_intent(normalized_analysis_prompt)
     preserve_source_outputs = analysis_intent.get('per_source_output_requested')
     json_array_output_requested = analysis_intent.get('json_array_output_requested')

@@ -28,15 +28,21 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import logging
+from copy import deepcopy
 
 from functions_appinsights import log_event
+from functions_orchestration_result_contracts import RESULT_KINDS, ResultContractError, canonical_bytes
 
 # Bumped when the descriptor shape changes in a way a stored plan could not survive.
 CAPABILITY_REGISTRY_CONTRACT_VERSION = 1
+DEPENDENCY_PLAN_CONTRACT_VERSION = 2
+ROLE_GATHER = 'gather'
+ROLE_REASON = 'reason'
+ROLE_RENDER = 'render'
 
 # Document action vocabulary, duplicated as literals rather than imported.
 #
@@ -105,6 +111,7 @@ CAPABILITY_DEEP_RESEARCH = 'deep_research'
 CAPABILITY_AGENT_INVOKE = 'agent_invoke'
 CAPABILITY_ACTION_INVOKE = 'action_invoke'
 CAPABILITY_RESPOND = 'respond'
+CAPABILITY_COMPOSE = 'compose'
 
 # Workspace scopes a capability may need at least one of.
 SCOPE_PERSONAL = 'personal'
@@ -660,17 +667,301 @@ CAPABILITY_REGISTRY = (
 
 CAPABILITY_BY_ID = {capability['id']: capability for capability in CAPABILITY_REGISTRY}
 
+_DEPENDENCY_OUTPUTS = {
+    CAPABILITY_DOCUMENT_SEARCH: {
+        'evidence': 'evidence-set-v1', 'sources': 'source-set-v1', 'prepared': 'structured-v1',
+    },
+    CAPABILITY_DOCUMENT_ANALYZE: {'findings': 'records-v1', 'coverage': 'structured-v1'},
+    CAPABILITY_DOCUMENT_COMPARE: {'comparison': 'comparison-v1', 'coverage': 'structured-v1'},
+    CAPABILITY_TABULAR_ANALYZE: {'records': 'records-v1'},
+    CAPABILITY_WEB_SEARCH: {'prepared': 'structured-v1'},
+    CAPABILITY_URL_FETCH: {'prepared': 'structured-v1'},
+    CAPABILITY_DEEP_RESEARCH: {'prepared': 'structured-v1'},
+    CAPABILITY_AGENT_INVOKE: {'prepared': 'structured-v1'},
+    CAPABILITY_ACTION_INVOKE: {'prepared': 'structured-v1'},
+}
+_DEPENDENCY_RESULT_CONTRACTS = {
+    CAPABILITY_DOCUMENT_SEARCH: 'orchestration-gathered-content-v1',
+    CAPABILITY_DOCUMENT_ANALYZE: 'analyze-final-v1',
+    CAPABILITY_DOCUMENT_COMPARE: 'comparison-v1',
+    CAPABILITY_TABULAR_ANALYZE: 'native-tabular-result-v1',
+    CAPABILITY_WEB_SEARCH: 'orchestration-gathered-content-v1',
+    CAPABILITY_URL_FETCH: 'orchestration-gathered-content-v1',
+    CAPABILITY_DEEP_RESEARCH: 'orchestration-gathered-content-v1',
+    CAPABILITY_AGENT_INVOKE: 'orchestration-gathered-content-v1',
+    CAPABILITY_ACTION_INVOKE: 'orchestration-gathered-content-v1',
+    CAPABILITY_COMPOSE: 'compose-v1',
+}
+_REASON_CAPABILITIES = {
+    CAPABILITY_DOCUMENT_ANALYZE, CAPABILITY_DOCUMENT_COMPARE, CAPABILITY_TABULAR_ANALYZE,
+}
+_EXTERNAL_GATHER_CAPABILITIES = {
+    CAPABILITY_WEB_SEARCH, CAPABILITY_URL_FETCH, CAPABILITY_DEEP_RESEARCH,
+    CAPABILITY_AGENT_INVOKE, CAPABILITY_ACTION_INVOKE,
+}
+
+
+def resolve_admitted_export_catalog(export_catalog=None):
+    """Narrow real shared format/profile declarations without redefining a renderer."""
+    # Export metadata belongs to explicit v2 admission, not legacy registry bootstrap.
+    from functions_generated_export_registry import get_generated_file_export_catalog
+
+    current = get_generated_file_export_catalog()
+    if export_catalog is None:
+        return current
+    known = {entry['format_id']: entry for entry in current}
+    selected = {}
+    try:
+        if type(export_catalog) is not list:
+            raise ValueError('Invalid catalog.')
+        for entry in export_catalog:
+            if type(entry) is not dict or type(entry.get('format_id')) is not str:
+                raise ValueError('Invalid format.')
+            format_id = entry['format_id']
+            if format_id not in known or format_id in selected or type(entry.get('profiles')) is not list:
+                raise ValueError('Unknown or duplicate format.')
+            supplied_fields = {key: value for key, value in entry.items() if key != 'profiles'}
+            shared_fields = {key: value for key, value in known[format_id].items() if key != 'profiles'}
+            if canonical_bytes(supplied_fields) != canonical_bytes(shared_fields):
+                raise ValueError('Changed format definition.')
+            profiles = {profile['profile']: profile for profile in known[format_id]['profiles']}
+            selected[format_id] = set()
+            for profile in entry['profiles']:
+                if type(profile) is not dict or type(profile.get('profile')) is not str:
+                    raise ValueError('Invalid profile.')
+                profile_id = profile['profile']
+                if (
+                    profile_id not in profiles or profile_id in selected[format_id]
+                    or canonical_bytes(profile) != canonical_bytes(profiles[profile_id])
+                ):
+                    raise ValueError('Unknown, duplicate or changed profile.')
+                selected[format_id].add(profile_id)
+    except (ValueError, ResultContractError) as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Invalid admitted export catalog.',
+            level=logging.WARNING, extra={'error_type': type(exc).__name__},
+        )
+        raise CapabilityResolutionError('The admitted export catalog is invalid.') from exc
+    return [
+        {
+            **entry,
+            'profiles': [
+                profile for profile in entry['profiles'] if profile['profile'] in selected[entry['format_id']]
+            ],
+        }
+        for entry in current if selected.get(entry['format_id'])
+    ]
+
+
+def admitted_export_pairs(export_catalog=None):
+    """Return exact admitted identities after checking the shared exporter definitions."""
+    return frozenset(
+        (entry['format_id'], profile['profile'])
+        for entry in resolve_admitted_export_catalog(export_catalog) for profile in entry['profiles']
+    )
+
+
+def render_file_arguments_schema(catalog):
+    """Project the real format/profile option contracts without inventing a format."""
+    return {
+        'type': 'object',
+        'properties': {
+            'file_name': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+            'output_format': {'type': 'string', 'enum': [entry['format_id'] for entry in catalog]},
+            'profile': {'type': 'string', 'minLength': 1},
+            'options': {'type': 'object'},
+        },
+        'required': ['file_name', 'output_format', 'profile'],
+        'additionalProperties': False,
+        'oneOf': [
+            {
+                'properties': {
+                    'output_format': {'const': entry['format_id']},
+                    'profile': {'const': profile['profile']},
+                    'options': deepcopy(profile['options_schema']),
+                },
+                'required': ['options'] if profile['required_options'] else [],
+            }
+            for entry in catalog for profile in entry['profiles']
+        ],
+    }
+
+
+def _dependency_capabilities():
+    """Opt-in descriptors; legacy phases and the default catalog remain unchanged."""
+    # Service metadata is needed only for explicit v2 discovery, not legacy bootstrap.
+    from functions_orchestration_native_results import (
+        native_orchestration_arguments_schema, native_orchestration_output_specs,
+    )
+    from functions_generated_export_registry import get_generated_file_export_catalog
+    from functions_orchestration_output_store import OUTPUT_CONTRACT_VERSION
+    import functions_orchestration_rendering as rendering
+
+    capabilities = []
+    for legacy in CAPABILITY_REGISTRY:
+        if legacy['id'] == CAPABILITY_RESPOND:
+            continue
+        capability = deepcopy(legacy)
+        capability.pop('phase')
+        capability.update({
+            'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+            'result_contract_version': _DEPENDENCY_RESULT_CONTRACTS[capability['id']],
+            'role': ROLE_REASON if capability['id'] in _REASON_CAPABILITIES else ROLE_GATHER,
+            'result_outputs': dict(_DEPENDENCY_OUTPUTS[capability['id']]),
+            'result_input_kinds': {},
+            'partial_inputs_supported': False,
+            'produces': ('retained_results',),
+        })
+        if capability['id'] in _EXTERNAL_GATHER_CAPABILITIES:
+            capability.update({
+                'runtime_bindings': (
+                    'external_source_admission', 'external_source_preflight', 'capture_external_source_configuration',
+                    'external_source_authorizer',
+                ),
+                'runtime_binding_unavailable_reason': 'external_result_lineage_unavailable',
+            })
+        capability['inputs']['properties'].pop('documents_from_step', None)
+        if capability['id'] == CAPABILITY_DOCUMENT_ANALYZE:
+            capability['when_to_use'] += ' This contract currently accepts narrative documents; native tabular handoff is not admitted.'
+            capability['result_input_kinds'] = {'sources': ('source-set-v1',)}
+            capability['optional_result_outputs'] = {'records': 'records-v1', 'report': 'markdown-v1'}
+        elif capability['id'] == CAPABILITY_DOCUMENT_COMPARE:
+            capability['when_to_use'] += ' This contract currently accepts narrative documents; native tabular handoff is not admitted.'
+            capability['optional_result_outputs'] = {'report': 'markdown-v1'}
+        elif capability['id'] == CAPABILITY_TABULAR_ANALYZE:
+            capability.update({
+                'runtime_binding': 'native_bridge_for_step',
+                'runtime_binding_unavailable_reason': 'native_typed_result_bridge_unavailable',
+                'inputs': native_orchestration_arguments_schema(),
+                'result_outputs': {'coverage': 'structured-v1'},
+                'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
+                'result_output_variants': [
+                    {
+                        'native_operation': operation, 'task_type': task_type,
+                        'outputs': [
+                            {'name': spec.name, 'kind': spec.kind}
+                            for spec in native_orchestration_output_specs(operation, task_type=task_type)
+                        ],
+                    }
+                    for operation, task_type in (
+                        ('query', 'structured_export'), ('transform', 'structured_export'),
+                        ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
+                    )
+                ],
+                'when_to_use': (
+                    'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
+                    'Query requires a row-local query_expression and explicit columns; transformations require '
+                    'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
+                    'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
+                    'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
+                ),
+            })
+        capabilities.append(capability)
+    capabilities.append({
+        'id': CAPABILITY_COMPOSE,
+        'label': 'Prepare content',
+        'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'result_contract_version': _DEPENDENCY_RESULT_CONTRACTS[CAPABILITY_COMPOSE],
+        'role': ROLE_REASON,
+        'summary': 'Compose reusable text, Markdown, records, or structured content.',
+        'when_to_use': (
+            'Explicitly draft an answer or report, or prepare structured data. Bind every '
+            'retained input by name. Source-free content is supported. This does not create '
+            'files, infer a file format, retrieve sources, or call tools. Declare each output '
+            'and select final_response when its text should become the chat answer.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {'instruction': {'type': 'string', 'minLength': 1}},
+            'required': ['instruction'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {'*': tuple(sorted(RESULT_KINDS))},
+        'partial_inputs_supported': True,
+        'result_outputs': {},
+        'result_output_kinds': ('text-v1', 'markdown-v1', 'records-v1', 'structured-v1'),
+        'produces': ('retained_results',),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': None,
+        'adapter': CAPABILITY_COMPOSE,
+        'terminal': False,
+    })
+    catalog = get_generated_file_export_catalog()
+    source_kinds = {
+        'records-v1': 'records', 'text-v1': 'text', 'markdown-v1': 'markdown',
+        'structured-v1': 'structured_value', 'comparison-v1': 'structured_value',
+    }
+    render_capability = {
+        'id': 'render_file',
+        'label': 'Render prepared file',
+        'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'result_contract_version': OUTPUT_CONTRACT_VERSION,
+        'role': ROLE_RENDER,
+        'summary': 'Create one downloadable file from an explicitly prepared retained result.',
+        'when_to_use': (
+            'Bind exactly one complete retained source. Select an explicit file name, format, '
+            'profile, and supported options. Draft content with Reason first when necessary; '
+            'Render does not compose, retrieve, select a model, or infer a representation. '
+            'Its outputs are durable file deliveries, not named data results.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'runtime_service': 'rendering_service',
+        'inputs': render_file_arguments_schema(catalog),
+        'result_input_kinds': {'source': tuple(source_kinds)},
+        'required_result_inputs': ('source',),
+        'render_source_kinds': source_kinds,
+        'partial_inputs_supported': False,
+        'result_outputs': {},
+        'produces': ('artifacts',),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': None,
+        'adapter': 'render_file',
+        'terminal': False,
+    }
+    if not callable(getattr(rendering, 'resume_render_file', None)):
+        render_capability['runtime_unavailable_reason'] = 'rendering_service_unavailable'
+    capabilities.append(render_capability)
+    return capabilities
+
+
+def capabilities_for_contract(contract_version=1):
+    if type(contract_version) is not int or contract_version not in (1, DEPENDENCY_PLAN_CONTRACT_VERSION):
+        raise ValueError('Unsupported orchestration plan contract.')
+    return CAPABILITY_REGISTRY if contract_version == 1 else _dependency_capabilities()
+
+
+def get_capability_result_outputs(capability, arguments):
+    """Resolve server-owned output requirements for an approved operation."""
+    if capability.get('plan_contract_version') == 2 and capability['id'] == CAPABILITY_TABULAR_ANALYZE:
+        from functions_orchestration_native_results import native_orchestration_output_specs
+
+        outputs = native_orchestration_output_specs(
+            arguments.get('native_operation'), task_type=arguments.get('task_type'),
+        )
+        return {output.name: output.kind for output in outputs}, {}
+    return capability['result_outputs'], capability.get('optional_result_outputs', {})
+
+
 # Every plan ends with this, so the planner never has to be told to include it and a plan
 # that omits it is repaired rather than rejected.
 TERMINAL_CAPABILITY_ID = CAPABILITY_RESPOND
 
 
-def all_capability_ids():
+def all_capability_ids(*, contract_version=1):
     """Every capability identifier, regardless of whether it is currently enabled."""
-    return [capability['id'] for capability in CAPABILITY_REGISTRY]
+    return [capability['id'] for capability in capabilities_for_contract(contract_version)]
 
 
-def get_capability(capability_id):
+def get_capability(capability_id, *, contract_version=1):
     """Look up one descriptor, or None when the id is not registered.
 
     Returning None rather than raising is deliberate: the caller is usually the validator
@@ -679,6 +970,11 @@ def get_capability(capability_id):
     """
     if not isinstance(capability_id, str):
         return None
+    if contract_version != 1 or type(contract_version) is not int:
+        return next((
+            capability for capability in capabilities_for_contract(contract_version)
+            if capability['id'] == capability_id.strip()
+        ), None)
     return CAPABILITY_BY_ID.get(capability_id.strip())
 
 
@@ -742,8 +1038,32 @@ def _request_gate_passes(capability, settings, request_context):
         raise CapabilityResolutionError('Capability access could not be checked.') from exc
 
 
+def _dependency_allowed_ids(settings, allowed_ids):
+    narrowed = None
+    for source, values in (
+        ('settings', settings.get('chat_orchestration_enabled_capabilities')),
+        ('allowed_ids', allowed_ids),
+    ):
+        if values is None:
+            continue
+        if type(values) not in (list, tuple, set, frozenset) or any(
+            type(value) is not str or not value.strip() for value in values
+        ):
+            log_event(
+                '[ORCHESTRATION_REGISTRY] Invalid harness capability allowlist.',
+                level=logging.WARNING, extra={'source': source, 'plan_contract_version': 2},
+            )
+            raise CapabilityResolutionError('The orchestration capability configuration is invalid.')
+        if not values:
+            continue
+        identifiers = {value.strip() for value in values}
+        narrowed = identifiers if narrowed is None else narrowed & identifiers
+    return narrowed
+
+
 def resolve_available_capabilities(
     settings, allowed_ids=None, request_context=None, candidate_ids=None, unavailable=None,
+    *, contract_version=1, export_catalog=None,
 ):
     """The capabilities this deployment currently permits, in registry order.
 
@@ -756,32 +1076,76 @@ def resolve_available_capabilities(
     -- app roles, whether they have any agents, whether their message contains a link.
     Omitted, the answer describes the deployment, which is what the admin surface needs.
 
-    The terminal capability is never removed by the narrowing. A plan cannot end without
-    it, so allowing it to be configured away would only produce plans that fail validation.
+    For v1, the terminal capability is never removed by the narrowing. For v2, the
+    saved settings and caller narrowing are intersected, with no mandatory capability
+    or aliases for legacy IDs. A nonempty legacy list does not opt into composition
+    or file rendering. Malformed v2 allowlists fail closed.
 
     ``candidate_ids`` limits an internal lookup to specific descriptors, avoiding unrelated
     gates and their storage/import work when an executor checks one capability.
 
     ``unavailable`` optionally receives stable reasons from the same checks. It never
     infers permissions from a manual control or from model-authored text.
+
+    An explicit v2 ``export_catalog`` narrows supported format/profile pairs. Empty
+    means no Render work, not the shared default. None preserves shared definitions.
     """
     settings = settings if isinstance(settings, dict) else {}
 
-    narrowed = None
-    if isinstance(allowed_ids, (list, tuple, set)):
-        narrowed = {str(value).strip() for value in allowed_ids if str(value).strip()}
-        if not narrowed:
-            narrowed = None
+    if type(contract_version) is int and contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
+        narrowed = _dependency_allowed_ids(settings, allowed_ids)
+        admitted_catalog = resolve_admitted_export_catalog(export_catalog) if export_catalog is not None else None
+    else:
+        narrowed = None
+        admitted_catalog = None
+        if isinstance(allowed_ids, (list, tuple, set)):
+            narrowed = {str(value).strip() for value in allowed_ids if str(value).strip()}
+            if not narrowed:
+                narrowed = None
 
     available = []
-    for capability in CAPABILITY_REGISTRY:
+    for capability in capabilities_for_contract(contract_version):
         if candidate_ids is not None and capability['id'] not in candidate_ids:
             continue
         if narrowed is not None and capability['id'] not in narrowed:
-            if capability['id'] != TERMINAL_CAPABILITY_ID:
+            if contract_version != 1 or capability['id'] != TERMINAL_CAPABILITY_ID:
                 if unavailable is not None:
                     unavailable[capability['id']] = 'not_enabled_for_orchestration'
                 continue
+        if capability['id'] == 'render_file' and admitted_catalog is not None:
+            if not admitted_catalog:
+                if unavailable is not None:
+                    unavailable[capability['id']] = 'export_catalog_unavailable'
+                continue
+            capability = deepcopy(capability)
+            capability['inputs'] = render_file_arguments_schema(admitted_catalog)
+            source_kinds = {
+                kind for entry in admitted_catalog for profile in entry['profiles']
+                for kind in profile['source_kinds']
+            }
+            capability['result_input_kinds']['source'] = tuple(
+                kind for kind, exported_kind in capability['render_source_kinds'].items()
+                if exported_kind in source_kinds
+            )
+        if capability.get('runtime_unavailable_reason'):
+            if unavailable is not None:
+                unavailable[capability['id']] = capability['runtime_unavailable_reason']
+            continue
+        if capability.get('runtime_service') == 'rendering_service':
+            # The legacy catalog must not import or initialize concrete output services.
+            from functions_orchestration_rendering import OrchestrationRenderingService
+
+            if not isinstance((request_context or {}).get('rendering_service'), OrchestrationRenderingService):
+                if unavailable is not None:
+                    unavailable[capability['id']] = 'rendering_service_unavailable'
+                continue
+        bindings = capability.get('runtime_bindings') or (
+            (capability['runtime_binding'],) if capability.get('runtime_binding') else ()
+        )
+        if any(not callable((request_context or {}).get(name)) for name in bindings):
+            if unavailable is not None:
+                unavailable[capability['id']] = capability['runtime_binding_unavailable_reason']
+            continue
         if not _gates_pass(capability, settings):
             if unavailable is not None:
                 unavailable[capability['id']] = 'feature_disabled'
@@ -805,13 +1169,17 @@ def resolve_available_capabilities(
     return available
 
 
-def resolve_available_capability_ids(settings, allowed_ids=None, request_context=None, candidate_ids=None):
+def resolve_available_capability_ids(
+    settings, allowed_ids=None, request_context=None, candidate_ids=None, *, contract_version=1,
+    export_catalog=None,
+):
     """Identifiers only, for the validator and for the bootstrap payload."""
     return [
         capability['id']
         for capability in resolve_available_capabilities(
             settings, allowed_ids=allowed_ids, request_context=request_context,
             candidate_ids=candidate_ids,
+            contract_version=contract_version, export_catalog=export_catalog,
         )
     ]
 
@@ -827,13 +1195,28 @@ def build_planner_capability_projection(capabilities):
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            'phase': capability['phase'],
+            **({'role': capability['role']} if 'role' in capability else {'phase': capability['phase']}),
             'summary': capability['summary'],
             'when_to_use': capability['when_to_use'],
             'inputs': capability['inputs'],
             'cost': capability['cost_class'],
             'produces': list(capability.get('produces') or ()),
             'max_per_plan': capability.get('max_per_plan'),
+            **({
+                'plan_contract_version': capability['plan_contract_version'],
+                'result_contract_version': capability['result_contract_version'],
+                'result_input_kinds': {
+                    name: list(kinds) for name, kinds in capability['result_input_kinds'].items()
+                },
+                'partial_inputs_supported': capability['partial_inputs_supported'],
+                **({'required_result_inputs': list(capability['required_result_inputs'])}
+                   if capability.get('required_result_inputs') else {}),
+                'result_outputs': capability['result_outputs'],
+                'optional_result_outputs': capability.get('optional_result_outputs', {}),
+                'result_output_kinds': list(capability.get('result_output_kinds') or ()),
+                **({'result_output_variants': capability['result_output_variants']}
+                   if 'result_output_variants' in capability else {}),
+            } if 'role' in capability else {}),
         })
     return projection
 
@@ -849,10 +1232,11 @@ def build_capability_client_projection(capabilities):
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            'phase': capability['phase'],
+            **({'role': capability['role']} if 'role' in capability else {'phase': capability['phase']}),
             'summary': capability['summary'],
             'cost': capability['cost_class'],
             'terminal': bool(capability.get('terminal')),
+            **({'plan_contract_version': capability['plan_contract_version']} if 'role' in capability else {}),
         })
     return projection
 
@@ -907,6 +1291,8 @@ def get_capability_document_limit(capability, settings=None):
             settings=settings,
         ))
     except Exception as exc:
+        if capability.get('plan_contract_version') == DEPENDENCY_PLAN_CONTRACT_VERSION:
+            raise CapabilityResolutionError('Document limits could not be checked.') from exc
         log_event(
             f"[ORCHESTRATION_REGISTRY] Could not resolve the document limit for "
             f"{action_type}: {exc}",
@@ -915,11 +1301,19 @@ def get_capability_document_limit(capability, settings=None):
         return None
 
 
-def describe_registry():
+def describe_registry(*, contract_version=1):
     """A stable summary for tests and for the documentation inventory."""
+    capability_ids = all_capability_ids(contract_version=contract_version)
+    if contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
+        return {
+            'contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+            'capability_ids': capability_ids,
+            'terminal_capability_id': None,
+            'roles': [ROLE_GATHER, ROLE_REASON, ROLE_RENDER],
+        }
     return {
         'contract_version': CAPABILITY_REGISTRY_CONTRACT_VERSION,
-        'capability_ids': all_capability_ids(),
+        'capability_ids': capability_ids,
         'terminal_capability_id': TERMINAL_CAPABILITY_ID,
         'phases': list(CAPABILITY_PHASES),
     }

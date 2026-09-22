@@ -5,12 +5,22 @@ from copy import deepcopy
 import hashlib
 import io
 import json
+import re
+
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources
 from functions_document_analysis_results import (
     apply_document_analysis_options,
     build_document_analysis_report,
     normalize_analysis_options,
+)
+from functions_native_tabular_compute import (
+    NATIVE_TABULAR_DATA_ONLY,
+    NATIVE_TABULAR_RESULT_VERSION,
+    native_compute_bytes,
+    native_compute_handle,
+    validate_native_compute_handle,
 )
 
 
@@ -20,6 +30,205 @@ NATIVE_PENDING_STATES = {
 }
 
 
+class NativeTabularResultReader:
+    """Complete native checkpoints with fresh owner/source checks per batch."""
+
+    def __init__(self, engine, run, output_name, *, require_current_sources=False):
+        self._engine = engine
+        self._handle = native_compute_handle(run)
+        self._producer = deepcopy(run["compute_context"]["producer"])
+        self._manifest = deepcopy(run["native_result_manifest"])
+        self._output_name = output_name
+        self._require_current_sources = require_current_sources
+        descriptor = self._manifest["outputs"][output_name]
+        self.kind = descriptor["kind"]
+        self.columns = tuple(deepcopy(descriptor.get("columns") or []))
+        self.schema = tuple(column["name"] for column in self.columns)
+        self.item_count = descriptor["item_count"]
+        self.sources = deepcopy(run["compute_context"]["sources"])
+        self.coverage = deepcopy(self._manifest["coverage"])
+        self.completeness = {
+            "status": "complete", "expected_count": self.item_count, "actual_count": self.item_count,
+            "coverage": deepcopy(self.coverage), "validation": "valid",
+            "checks": list(self._manifest["checks"]), "preview": False,
+            "limitations": list(self._manifest.get("limitations") or []),
+        }
+
+    def _load(self):
+        run = _load_native_compute_run(
+            self._engine, user_id=self._producer["user_id"],
+            conversation_id=self._producer["conversation_id"], handle=self._handle,
+            producer=self._producer, require_current_sources=self._require_current_sources,
+        )
+        if (
+            run.get("status") != "completed" or run.get("computation_state") != "complete"
+            or run.get("native_result_manifest") != self._manifest
+        ):
+            raise AnalysisResultUnavailable("native_compute_result_changed")
+        return run
+
+    def iter_records(self):
+        if self.kind != "records-v1":
+            raise ValueError("The native result does not contain records.")
+        run = self._load()
+        expected = self._manifest["outputs"][self._output_name]
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        size_bytes, count = 2, 0
+        for row in self._engine.iter_tabular_output_records(run, check_callback=self._load):
+            encoded = native_compute_bytes(row)
+            if count:
+                digest.update(b",")
+                size_bytes += 1
+            digest.update(encoded)
+            size_bytes += len(encoded)
+            count += 1
+            yield row
+        digest.update(b"]")
+        self._load()
+        if (
+            count != expected["item_count"] or size_bytes != expected["size_bytes"]
+            or digest.hexdigest() != expected["content_sha256"]
+        ):
+            raise ValueError("The complete native result failed its integrity check.")
+
+    def read_value(self, *, max_bytes=8 * 1024 * 1024):
+        if self.kind != "structured-v1":
+            raise ValueError("The native result does not contain a structured value.")
+        run = self._load()
+        expected = self._manifest["outputs"][self._output_name]
+        if type(max_bytes) is not int or max_bytes < 0 or expected["size_bytes"] > max_bytes:
+            raise ValueError("The native result exceeds the requested read limit.")
+        value = self._engine._download_json_blob(self._engine._analysis_final_blob_path(
+            run["user_id"], run["conversation_id"], run["id"],
+        ))
+        encoded = native_compute_bytes(value)
+        self._load()
+        if (
+            len(encoded) != expected["size_bytes"]
+            or hashlib.sha256(encoded).hexdigest() != expected["content_sha256"]
+        ):
+            raise ValueError("The complete native result failed its integrity check.")
+        return value
+
+    def iter_value_bytes(self):
+        yield native_compute_bytes(self.read_value())
+
+
+def _load_native_compute_run(
+    engine, *, user_id, conversation_id, handle, producer, require_current_sources,
+):
+    validate_native_compute_handle(handle, producer)
+    if producer["user_id"] != user_id or producer["conversation_id"] != conversation_id:
+        raise AnalysisResultUnavailable("native_compute_owner_unavailable")
+    try:
+        run = engine._read_run(user_id, handle["job_id"])
+    except CosmosResourceNotFoundError as exc:
+        raise AnalysisResultUnavailable("native_compute_result_unavailable") from exc
+    if (
+        not isinstance(run, dict) or run.get("user_id") != user_id
+        or run.get("conversation_id") != conversation_id
+        or run.get("execution_policy") != NATIVE_TABULAR_DATA_ONLY
+        or (run.get("compute_context") or {}).get("producer") != producer
+        or native_compute_handle(run) != handle
+    ):
+        raise AnalysisResultUnavailable("native_compute_identity_invalid")
+    engine._authorize_tabular_export_run_execution(
+        run, require_current_sources=require_current_sources, require_active_producer=False,
+    )
+    if require_current_sources:
+        engine._get_versioned_source_blob_client(run["source_descriptor"])
+    return run
+
+
+def _validate_native_result_manifest(engine, run):
+    manifest = run.get("native_result_manifest")
+    expected_outputs = {
+        "structured_export": {"records"},
+        "hierarchical_analysis": {"analysis"},
+        "combined": {"records", "analysis"},
+    }.get(run.get("task_type"))
+    if (
+        run.get("computation_state") != "complete" or not isinstance(manifest, dict)
+        or set(manifest) != {"version", "outputs", "coverage", "checks", "limitations"}
+        or manifest["version"] != NATIVE_TABULAR_RESULT_VERSION
+        or not isinstance(manifest["outputs"], dict) or set(manifest["outputs"]) != expected_outputs
+        or not isinstance(manifest["checks"], list) or not manifest["checks"]
+        or any(not isinstance(check, str) or not check for check in manifest["checks"])
+        or not isinstance(manifest["limitations"], list)
+        or any(not isinstance(item, str) for item in manifest["limitations"])
+        or any(type(run.get(field)) is not int or run[field] < 0 for field in ("row_count", "batch_count"))
+        or manifest["coverage"] != {
+            "expected": run.get("batch_count"), "completed": run.get("batch_count"), "unit": "work_units",
+        }
+        or run.get("completed_batches") != run.get("batch_count")
+        or run.get("processed_rows") != run.get("row_count")
+    ):
+        raise ValueError("The native computation has no validated complete result.")
+    for name, output in manifest["outputs"].items():
+        fields = {"kind", "item_count", "size_bytes", "content_sha256"}
+        if name == "records":
+            fields.add("columns")
+        if (
+            not isinstance(output, dict) or set(output) != fields
+            or output["kind"] != ("records-v1" if name == "records" else "structured-v1")
+            or type(output["item_count"]) is not int
+            or output["item_count"] != (run["row_count"] if name == "records" else 1)
+            or type(output["size_bytes"]) is not int or output["size_bytes"] < 2
+            or not isinstance(output["content_sha256"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", output["content_sha256"]) is None
+        ):
+            raise ValueError("The native output descriptor is invalid.")
+        if name == "records":
+            columns = output["columns"]
+            if not isinstance(columns, list) or not columns:
+                raise ValueError("The native output schema is invalid.")
+            for column in columns:
+                if (
+                    not isinstance(column, dict) or set(column) != {"name", "value_type", "nullable"}
+                    or not isinstance(column["name"], str) or not column["name"]
+                    or column["value_type"] not in {"string", "integer", "number", "boolean", "object", "array", "json"}
+                    or type(column["nullable"]) is not bool
+                ):
+                    raise ValueError("The native output schema is invalid.")
+            names = [column["name"] for column in columns]
+            if len(set(names)) != len(names) or names != engine._get_tabular_run_serialized_public_schema(run):
+                raise ValueError("The native output schema is invalid.")
+    return manifest
+
+
+def open_native_tabular_result(
+    *, user_id, conversation_id, handle, producer, require_current_sources=False,
+):
+    """Open a native computation, never an artifact card or publication preview."""
+    # The native engine requires bootstrap-owned clients; readers load it only
+    # at the runtime boundary and never import a Flask route or construct an app.
+    import functions_tabular_generated_exports as engine
+
+    run = _load_native_compute_run(
+        engine, user_id=user_id, conversation_id=conversation_id, handle=handle,
+        producer=producer, require_current_sources=require_current_sources,
+    )
+    status = str(run.get("status") or "").lower()
+    if status != "completed":
+        if status in NATIVE_PENDING_STATES:
+            status = "pending"
+        elif status in {"canceled", "cancelled"}:
+            status = "cancelled"
+        elif status != "failed":
+            raise ValueError("The native computation state is invalid.")
+        return {"status": status, "handle": deepcopy(handle), "reader": None, "readers": {}}
+    manifest = _validate_native_result_manifest(engine, run)
+    readers = {
+        name: NativeTabularResultReader(engine, run, name, require_current_sources=require_current_sources)
+        for name in manifest["outputs"]
+    }
+    return {
+        "status": "completed", "handle": deepcopy(handle),
+        "reader": readers.get("records") or readers.get("analysis"), "readers": readers,
+    }
+
+
 def _identity(value):
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":"))
     return "native-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -27,7 +236,7 @@ def _identity(value):
 
 def read_native_analysis_output(user_id, conversation_id, run_id, source):
     """Reuse the native run and validated output readers without resuming any work."""
-    # The native engine imports the chat route; loading it here avoids that cycle.
+    # The native engine needs bootstrap-owned storage and model clients.
     from functions_tabular_generated_exports import (
         _analysis_final_blob_path,
         _authorize_tabular_export_run_execution,

@@ -104,14 +104,16 @@ def _save_cache(cache):
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
-def _build_msal_app(cache=None, authority_override=None):
+def _build_msal_app(cache=None, authority_override=None, *, timeout=None):
     """Builds the MSAL ConfidentialClientApplication, optionally initializing with a cache."""
     authority = authority_override or AUTHORITY
+    options = {} if timeout is None else {'timeout': timeout}
     return ConfidentialClientApplication(
         CLIENT_ID,
         authority=authority,
         client_credential=CLIENT_SECRET,
-        token_cache=cache  # Pass the cache instance here
+        token_cache=cache,
+        **options,
     )
 
 

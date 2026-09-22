@@ -1340,6 +1340,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # This is the plan/approve/execute layer over chat, and an administrator reading
         # the settings document should not have to guess which is which.
         'enable_chat_orchestration': False,
+        'enable_chat_orchestration_harness': False,
         'enable_chat_orchestration_actions': False,
         'chat_orchestration_default_approval_mode': 'manual',
         'chat_orchestration_timed_approval_seconds': 10,
@@ -3646,6 +3647,9 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS:
             continue
         if any(term in k.lower() for term in sensitive_terms):
+            continue
+        if k == 'enable_chat_orchestration_harness':
+            sanitized[k] = v is True
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
             sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)

@@ -11,8 +11,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 
-from content_screening.access import assert_evidence_available
-from functions_analysis_access import analysis_source_snapshot, authorize_analysis_sources
+from functions_analysis_access import analysis_source_snapshot
 from functions_orchestration_result_contracts import (
     EXTERNAL_LINEAGE_VERSION,
     MAX_EXTERNAL_SOURCES,
@@ -41,6 +40,7 @@ from functions_orchestration_result_contracts import (
     validate_record,
     validate_result_role,
 )
+from functions_orchestration_source_access import authorize_orchestration_sources
 from functions_workflow_collections import (
     CollectionWriteBudget,
     RecordTreeWriter,
@@ -184,11 +184,9 @@ class OrchestrationResultAccess:
                             raise ResultUnavailableError("result_source_snapshot_changed")
             return fresh
 
-        checked = authorize_analysis_sources(
+        checked = authorize_orchestration_sources(
             self.user_id, sources, require_snapshot=require_snapshot, resolver=resolve,
-        )
-        assert_evidence_available(
-            sources, user_id=self.user_id, metadata_reader=self.source_metadata_reader,
+            metadata_reader=self.source_metadata_reader,
         )
         return {**checked, "source_snapshot_changed": checked["source_snapshot_changed"] or digest_changed}
 

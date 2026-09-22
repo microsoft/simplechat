@@ -6,9 +6,9 @@
 // metadata the file still exists and is still downloadable, but nothing in the interface says
 // so — which is indistinguishable from the export having failed.
 //
-// Two keys carry the same records. `generated_analysis_artifacts` is the general list and
-// `generated_tabular_outputs` is the tabular subset of it, and the server writes a tabular
-// artifact to both. They are merged and de-duplicated here on the same keys the server uses
+// `generated_analysis_artifacts` and `generated_tabular_outputs` carry legacy records.
+// Committed orchestration files additionally arrive in `generated_artifacts`.
+// They are merged and de-duplicated here on the same keys the server uses
 // in `_build_generated_analysis_metadata`, so a tabular export appears once rather than twice.
 //
 // Everything in this module is pure. The rendering lives in `GeneratedArtifactCard`, and the
@@ -25,7 +25,7 @@
 export interface GeneratedArtifact {
     [key: string]: unknown;
 
-    /** `tabular`, `analysis`, `analyze`, `comparison` or `file_export`. */
+    /** Includes legacy exports and committed orchestration `render_file` outputs. */
     capability: string;
     /** Set when the file lives on its own message in this conversation. */
     artifact_message_id: string;
@@ -130,7 +130,7 @@ function dedupeKey(artifact: GeneratedArtifact): string {
 }
 
 /**
- * Read every generated artifact off an assistant message's metadata.
+ * Read the established metadata aliases and explicit orchestration file receipts.
  *
  * The general list is read first so that a tabular export arriving in both collections keeps
  * whichever capability the server assigned it, rather than being relabelled by the key it
@@ -165,6 +165,17 @@ export function readGeneratedArtifacts(metadata: unknown): GeneratedArtifact[] {
     const tabular = metadata.generated_tabular_outputs;
     if (Array.isArray(tabular)) {
         tabular.forEach((entry) => append(entry, 'tabular'));
+    }
+
+    // Raw legacy lists can retain obsolete background placeholders after their metadata
+    // aliases have been hydrated. Only the new, explicitly identified receipts use this key.
+    const committed = metadata.generated_artifacts;
+    if (Array.isArray(committed)) {
+        committed.forEach((entry) => {
+            if (isRecord(entry) && typeof entry.capability === 'string' && lower(entry.capability) === 'render_file') {
+                append(entry, 'render_file');
+            }
+        });
     }
 
     return artifacts;

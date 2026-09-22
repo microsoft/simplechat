@@ -22,6 +22,7 @@ import {
     fetchOrchestrationRun,
     fetchRunSteps,
     isOrchestrationRunPending,
+    isOrchestrationRunWaiting,
     normalizeOrchestrationAttempt,
     normalizeOrchestrationRecovery,
     orchestrationTerminalStatus,
@@ -50,6 +51,7 @@ import {
 import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan } from './orchestrationPlan';
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
+import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -373,7 +375,7 @@ async function dispatchPlan(
                     event.conversation_title ?? event.title,
                 );
             },
-            onPlan: (plan) => {
+            onPlan: (plan, exportCatalog) => {
                 if (!isCurrentRequest()) {
                     return;
                 }
@@ -396,6 +398,11 @@ async function dispatchPlan(
                         ...reasoningAdjustments, ...(normalized.reasoning_adjustments ?? []),
                     ]),
                 });
+                if (normalized.planner_contract_version === 2 && Array.isArray(exportCatalog)) {
+                    useOrchestrationStore.getState().updateRunRecovery(normalized.run_id, {
+                        export_catalog: exportCatalog,
+                    });
+                }
                 produced = true;
                 maybeAutoOpenDrawer(currentConversationId, normalized);
             },
@@ -724,12 +731,28 @@ async function executeSavedPlan(
 
     let settled = false;
     let conflictMessage = '';
+    const acknowledgeWaiting = (event: RunStreamEvent) => {
+        settled = true;
+        const current = useOrchestrationStore.getState();
+        const waitingPlan: OrchestrationPlan = { ...plan, status: 'waiting' };
+        current.updateRunRecovery(runId, {
+            ...normalizeOrchestrationAttempt({ ...event, run_id: runId, turn_id: turnId }),
+            status: 'waiting', plan: waitingPlan, transportUnknown: false, checking: false, error: null,
+        });
+        if (selectPlan(current, conversationId, turnId)?.run_id === runId) {
+            current.setPlan(conversationId, turnId, waitingPlan);
+        }
+        // Release only the browser's streaming surface. Keep the attempt in flight, without
+        // manufacturing an assistant answer or a new execution for the durable computation.
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+    };
     const result = await runOrchestration(
         runBody,
         {
             onStep: (event) => {
                 const current = useOrchestrationStore.getState();
                 current.applyStepEvent(conversationId, turnId, event);
+                applyOrchestrationOutputEvent(runId, event);
                 current.mergeReasoningAdjustments(conversationId, turnId, event.reasoning_adjustments);
             },
             // A run reports each step starting and finishing as a `thought`, the same event
@@ -745,9 +768,14 @@ async function executeSavedPlan(
             },
             onContent: (_delta, accumulated) =>
                 useChatStore.getState().pushOrchestrationContent(conversationId, accumulated),
+            onWaiting: acknowledgeWaiting,
             onDone: (event, accumulated) => {
                 settled = true;
                 const status = orchestrationTerminalStatus(event);
+                if (status === 'waiting') {
+                    acknowledgeWaiting(event);
+                    return;
+                }
                 const terminal = { ...event, run_id: runId, turn_id: turnId };
                 useOrchestrationStore.getState().updateRunRecovery(runId, {
                     ...normalizeOrchestrationAttempt(terminal), status, plan,
@@ -826,6 +854,10 @@ async function executeSavedPlan(
         useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
         return;
     }
+    if (result.waiting) {
+        await reconcileOrchestrationRun(conversationId, runId);
+        return;
+    }
 
     if (!settled) {
         useOrchestrationStore.getState().updateRunRecovery(runId, {
@@ -847,13 +879,22 @@ const recoverySubmissions = new Map<string, { id: string; version: string; confi
 const recoveryLocks = new Set<string>();
 
 export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
+    const outputRevision = useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0;
     const record = await fetchOrchestrationRun(runId, { conversationId });
     if (!record || record.run_id !== runId || record.conversation_id !== conversationId) {
         throw new Error('Recovery record unavailable');
     }
-    const plan = normalizePlan(record.plan);
+    const plan = normalizePlan({
+        ...record.plan,
+        ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
+    });
+    const snapshot = normalizeOrchestrationAttempt(record);
+    if ((useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0) !== outputRevision) {
+        delete snapshot.outputs;
+        delete snapshot.generated_artifacts;
+    }
     useOrchestrationStore.getState().updateRunRecovery(runId, {
-        ...normalizeOrchestrationAttempt(record),
+        ...snapshot,
         status: record.status,
         ...(plan ? { plan } : {}),
         detailLoaded: true,
@@ -868,14 +909,19 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
     reconciliationTimers.delete(runId);
     const store = useOrchestrationStore.getState();
     if (store.runRecovery[runId]?.checking) return;
-    store.updateRunRecovery(runId, { checking: true, transportUnknown: true });
+    store.updateRunRecovery(runId, {
+        checking: true, transportUnknown: !isOrchestrationRunWaiting(store.runRecovery[runId] ?? {}),
+    });
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
         if (!record) return;
         const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
         const current = useOrchestrationStore.getState();
         if (record.turn_id && selectPlan(current, conversationId, record.turn_id)?.run_id === runId) {
-            current.adoptPersistedPlan(conversationId, record.turn_id, record.plan, steps);
+            current.adoptPersistedPlan(conversationId, record.turn_id, {
+                ...record.plan,
+                ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
+            }, steps);
         }
         const terminal = record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled';
         if (terminal && !isOrchestrationRunPending(record)) {
@@ -886,6 +932,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             };
             const status = orchestrationTerminalStatus(event);
             current.updateRunRecovery(runId, { transportUnknown: false, checking: false, error: null });
+            if (status === 'waiting') return;
             current.endRun(runId, status);
             const chat = useChatStore.getState();
             const otherRun = Object.values(current.inFlight)
@@ -909,15 +956,16 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             }
             return;
         }
+        const waiting = isOrchestrationRunWaiting(record);
         current.updateRunRecovery(runId, {
-            checking: false,
-            error: terminal
+            checking: false, transportUnknown: !waiting,
+            error: waiting ? null : terminal
                 ? 'The server is saving the final response. Checking saved status; no retry will start.'
                 : 'The server has not confirmed a final result. Execution may still be running. Checking saved status; no retry will start.',
         });
     } catch {
         useOrchestrationStore.getState().updateRunRecovery(runId, {
-            checking: false,
+            checking: false, transportUnknown: true,
             error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
         });
     }
@@ -960,6 +1008,14 @@ export async function retryOrchestrationRun(
     const initialTurn = store.activeTurns[conversationId];
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
+        if (record?.outputs?.length) {
+            fail('Use the individual file retry controls. This action will not repeat file producers or the plan.');
+            return {};
+        }
+        if (record && isOrchestrationRunPending(record)) {
+            fail('This attempt is still active. Check saved status; waiting does not start another execution.');
+            return {};
+        }
         const recovery = normalizeOrchestrationRecovery(record?.recovery);
         const previous = recoverySubmissions.get(key);
         if (!record || !recovery || (!previous?.unresolved && (!recovery.eligible || !recovery.expected_version
@@ -1047,7 +1103,8 @@ export async function runPreparedOrchestrationRetry(conversationId: string, runI
     try {
         const record = await loadOrchestrationRecovery(conversationId, runId);
         const plan = normalizePlan(record?.plan);
-        if (!plan || !record?.retry_of_run_id || (record.status !== 'awaiting_approval' && record.status !== 'approved')
+        if (!plan || !record?.retry_of_run_id || isOrchestrationRunWaiting(record)
+            || (record.status !== 'awaiting_approval' && record.status !== 'approved')
             || plan.run_id !== runId || plan.conversation_id !== conversationId || plan.turn_id !== record.turn_id
             || useChatStore.getState().activeConversationId !== conversationId || useChatStore.getState().streaming
             || Object.values(useOrchestrationStore.getState().inFlight).some((run) => run.conversationId === conversationId)) {

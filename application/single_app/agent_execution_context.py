@@ -1,13 +1,22 @@
 # agent_execution_context.py
 """Task-local identity and per-turn limits for agent execution."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Lock
 from typing import Callable, Optional
 import uuid
+
+from functions_orchestration_execution_policy import (
+    current_orchestration_file_policy,
+    orchestration_file_policy,
+)
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationCapture,
+    require_invocation_capture,
+)
 
 
 class AgentDelegationError(RuntimeError):
@@ -108,6 +117,11 @@ class AgentExecutionFrame:
     action_id: Optional[str] = None
     deadline: Optional[float] = None
     cancel_requested: Optional[Callable] = field(default=None, repr=False, compare=False)
+    orchestration_allow_generated_files: Optional[bool] = field(
+        default_factory=current_orchestration_file_policy,
+    )
+    invocation_capture: Optional[OrchestrationInvocationCapture] = field(default=None, repr=False, compare=False)
+    invocation_settings: Optional[dict] = field(default=None, repr=False, compare=False)
 
 
 _execution_frame = ContextVar("agent_execution_frame", default=None)
@@ -124,11 +138,36 @@ def execution_user_id():
 
 @contextmanager
 def agent_execution(frame):
-    token = _execution_frame.set(frame)
-    try:
-        yield frame
-    finally:
-        _execution_frame.reset(token)
+    if isinstance(frame, AgentExecutionFrame):
+        active = current_agent_execution()
+        inherited_capture = getattr(active, 'invocation_capture', None)
+        capture = require_invocation_capture(frame.invocation_capture)
+        if inherited_capture is not None:
+            if (
+                (capture is not None and capture is not inherited_capture)
+                or frame.identity.user_id != active.identity.user_id
+                or frame.identity.conversation_id != active.identity.conversation_id
+            ):
+                inherited_capture.refuse()
+            inherited_settings = getattr(active, 'invocation_settings', None)
+            if capture is not inherited_capture or frame.invocation_settings is not inherited_settings:
+                frame = replace(
+                    frame, invocation_capture=inherited_capture, invocation_settings=inherited_settings,
+                )
+    captured_policy = getattr(frame, 'orchestration_allow_generated_files', None)
+    policy = (
+        orchestration_file_policy(allow_generated_files=captured_policy)
+        if captured_policy is not None else nullcontext()
+    )
+    with policy:
+        effective_policy = current_orchestration_file_policy()
+        if isinstance(frame, AgentExecutionFrame) and captured_policy is not effective_policy:
+            frame = replace(frame, orchestration_allow_generated_files=effective_policy)
+        token = _execution_frame.set(frame)
+        try:
+            yield frame
+        finally:
+            _execution_frame.reset(token)
 
 
 def capture_execution_identity(user_id, conversation_id=None):

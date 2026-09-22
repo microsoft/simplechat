@@ -1,7 +1,7 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.109
 
 Exercise real publication, normalization, and route bodies with Cosmos/queue
@@ -37,9 +37,12 @@ APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 saved_analysis = import_app_module("functions_saved_analysis")
 definitions = import_app_module("functions_workflow_definitions")
 artifact_sources = import_app_module("functions_generated_artifact_sources")
+file_policy = import_app_module("functions_orchestration_execution_policy")
 
 
 def load_functions(filename, names, namespace):
+    if filename == "functions_simplechat_operations.py":
+        namespace["require_generated_file_publication_allowed"] = file_policy.require_generated_file_publication_allowed
     tree = ast.parse((APP / filename).read_text(encoding="utf-8"))
     selected = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(selected) == len(names)
@@ -114,6 +117,8 @@ class MemoryContainer:
 
 @pytest.fixture
 def publication(monkeypatch):
+    if not hasattr(werkzeug, "__version__"):
+        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
     content = b"# Accepted findings\n\nExact existing bytes: 12.3400\n"
     artifact = {
         "id": "artifact-1", "conversation_id": "conversation-1", "role": "file",
@@ -585,8 +590,6 @@ def test_publication_configuration_never_infers_missing_intent_or_destination(co
 
 
 def test_manual_route_uses_same_receipt_service_and_safe_errors(publication, monkeypatch):
-    if not hasattr(werkzeug, "__version__"):
-        monkeypatch.setattr(werkzeug, "__version__", version("werkzeug"), raising=False)
     namespace = {
         "request": request, "jsonify": jsonify, "get_current_user_id": lambda: "actor",
         "get_current_user_info": lambda: {"displayName": "Actor"},

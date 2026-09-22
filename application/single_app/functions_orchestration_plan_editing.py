@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import json
@@ -31,7 +31,13 @@ from functions_orchestration_context import (
 from functions_orchestration_models import OrchestrationModelError, resolve_orchestration_model
 from functions_orchestration_memory import load_orchestration_memory, validate_memory_audience
 from functions_orchestration_events import merge_reasoning_adjustments
-from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
+from functions_orchestration_plan_revisions import (
+    PlanRevisionError,
+    plan_revision_contract_version,
+    read_revision_run,
+    resolve_revision_export_catalog,
+    resolve_revision_result_aliases,
+)
 from functions_orchestration_planner import plan_request
 from functions_orchestration_registry import resolve_available_capabilities
 from functions_orchestration_schema import (
@@ -48,11 +54,14 @@ TURN_CONTEXT_FIELDS = (
     'conversation_context', 'request_resolution', 'resolved_message',
     'planning_token_usage', 'prompt_selection', 'edit_user_urls',
     'reasoning_adjustments', 'memory_audience', 'memory_scope',
+    'planner_contract_version', 'result_aliases',
 )
 
 
 def _turn_context(record):
-    return {key: deepcopy(record[key]) for key in TURN_CONTEXT_FIELDS if key in record}
+    context = {key: deepcopy(record[key]) for key in TURN_CONTEXT_FIELDS if key in record}
+    context['planner_contract_version'] = plan_revision_contract_version(record['plan'], record)
+    return context
 
 
 def _chat_turn(role, content):
@@ -141,7 +150,12 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
     ]
 
 
-def _revision_catalogs(context, user_id, settings, identity):
+def _revision_catalogs(
+    context, user_id, settings, identity, *, contract_version=1, native_bridge_for_step=None,
+    rendering_service=None, external_source_preflight=None,
+    external_source_admission=None, external_source_authorizer=None,
+    capture_external_source_configuration=None,
+):
     seeds = context.get('seeds') or {}
     identity = dict(identity or {})
     if (seeds.get('agent') or {}).get('name'):
@@ -154,15 +168,54 @@ def _revision_catalogs(context, user_id, settings, identity):
         user_id, seeds=seeds, settings=settings,
         user_groups=seeds.get('active_group_ids') or None,
     )
+    runtime_options = {}
+    if contract_version == 2:
+        if callable(native_bridge_for_step):
+            runtime_options['native_bridge_for_step'] = native_bridge_for_step
+        if rendering_service is not None:
+            runtime_options['rendering_service'] = rendering_service
+        external_bindings = {
+            'external_source_preflight': external_source_preflight,
+            'external_source_admission': external_source_admission,
+            'external_source_authorizer': external_source_authorizer,
+            'capture_external_source_configuration': capture_external_source_configuration,
+        }
+        if any(callback is not None for callback in external_bindings.values()):
+            runtime_options.update(external_bindings)
     caller = build_capability_request_context(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
+        **runtime_options,
     )
     return agents, actions, caller
 
 
-def validate_edited_plan(plan, context, user_id, settings, identity):
-    """Recheck a restored/generated plan before committing it, including current access."""
+def validate_edited_plan(
+    plan, context, user_id, settings, identity, *,
+    result_alias_resolver=None, export_catalog=None, composition_profiles=None,
+    native_bridge_for_step=None, rendering_service=None,
+    external_source_preflight=None,
+    external_source_admission=None, external_source_authorizer=None,
+    capture_external_source_configuration=None,
+):
+    """Recheck a restored/generated plan using its saved contract and current access.
+
+    Optional catalogs and the alias resolver are supplied by the server, never
+    extracted from browser edits or model output. The resolver contract is
+    ``resolve_revision_result_aliases``; profiles use the shared renderer schemas.
+    A supplied export catalog narrows canonical format/profile pairs without
+    redefining shared exporters: None uses shared defaults, while [] admits no
+    Render work. The native factory, typed rendering
+    service, and external-source callbacks are forwarded only for v2 discovery,
+    never executed or saved in admission context. The shared context helper
+    validates the service instance and requires all four external callbacks to
+    be callable together, without acquiring sources or reading configuration.
+    """
+    contract_version = plan_revision_contract_version(plan, context)
+    existing_results = resolve_revision_result_aliases(
+        context, user_id, result_alias_resolver=result_alias_resolver,
+    ) if contract_version == 2 else None
+    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
         seeds.get('elicitation_references') or [],
@@ -175,10 +228,18 @@ def validate_edited_plan(plan, context, user_id, settings, identity):
             'That version names sources that are no longer available. Your current plan is unchanged.',
             code='source_changed',
         )
-    agents, actions, caller = _revision_catalogs(context, user_id, settings, identity)
+    agents, actions, caller = _revision_catalogs(
+        context, user_id, settings, identity, contract_version=contract_version,
+        native_bridge_for_step=native_bridge_for_step,
+        rendering_service=rendering_service,
+        external_source_preflight=external_source_preflight,
+        external_source_admission=external_source_admission,
+        external_source_authorizer=external_source_authorizer,
+        capture_external_source_configuration=capture_external_source_configuration,
+    )
     capabilities = resolve_available_capabilities(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
-        request_context=caller,
+        request_context=caller, contract_version=contract_version, export_catalog=admitted_catalog,
     )
     try:
         checked = normalize_plan(
@@ -188,6 +249,8 @@ def validate_edited_plan(plan, context, user_id, settings, identity):
             turn_id=context['turn_id'], seeds=seeds,
             document_labels={item['document_id']: item['file_name'] for item in candidates},
             agent_names=[item['name'] for item in agents], actions=actions,
+            contract_version=contract_version, existing_results=existing_results,
+            composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
     except PlanValidationError as exc:
         raise PlanRevisionError(
@@ -209,16 +272,25 @@ def validate_edited_plan(plan, context, user_id, settings, identity):
 
 def build_plan_edit_outcome(
     record, data, user_id, settings, *, identity, conversation_context, conversation, ledger=None,
+    result_alias_resolver=None, export_catalog=None, composition_profiles=None,
+    native_bridge_for_step=None, rendering_service=None,
+    external_source_preflight=None,
+    external_source_admission=None, external_source_authorizer=None,
+    capture_external_source_configuration=None,
 ):
-    """Return publication arguments; no model response is a committed revision yet."""
+    """Prepare a revision without changing its admitted contract or executing work.
+
+    The optional resolver, catalogs, native factory, rendering service, and
+    external-source callbacks have the same server-only contract as
+    ``validate_edited_plan``. Supply current runtime dependencies again for
+    restore/replan validation; none are persisted.
+    """
     context = _turn_context(record)
     context['conversation_context'] = conversation_context
     validate_memory_audience(conversation, user_id, context.get('memory_audience'))
     chat = deepcopy(record.get('edit_chat') or [])
     action = data['action']
-    current_plan = apply_plan_edits(
-        deepcopy(record['plan']), data.get('edits', record.get('edit_narrowing')),
-    )
+    contract_version = context['planner_contract_version']
     instruction = data.get('instruction', '')
     user_content = instruction
     allow_elicitation = True
@@ -239,17 +311,28 @@ def build_plan_edit_outcome(
             raise PlanRevisionError('Choose a version of this unexecuted plan.', code='invalid_request', status_code=400)
         restored_context = _turn_context(source)
         restored_context['conversation_context'] = conversation_context
+        if restored_context['planner_contract_version'] != contract_version:
+            raise PlanRevisionError(
+                'A restored version cannot change the saved plan contract.',
+                code='source_changed',
+            )
+        if contract_version == 2:
+            resolve_revision_result_aliases(
+                restored_context, user_id, result_alias_resolver=result_alias_resolver,
+            )
         note = f"Restored version {int(source.get('revision') or 0) + 1}."
         return {
             'kind': 'plan', 'document': deepcopy(source['plan']),
             'turn_context': restored_context, 'origin': 'restore', 'instruction': note,
             'chat': [*chat, _chat_turn('user', note), _chat_turn('assistant', note)],
         }
+    current_plan = deepcopy(record['plan'])
     if action == 'answer':
         pending = record['edit_pending']
         question = pending['elicitation']
         context = deepcopy(pending['turn_context'])
         context['conversation_context'] = conversation_context
+        context.setdefault('planner_contract_version', contract_version)
         current_plan = deepcopy(pending['base_plan'])
         instruction = pending['instruction']
         validated, answer_context = normalize_elicitation_answer(
@@ -278,6 +361,20 @@ def build_plan_edit_outcome(
             else f"Answer: {answer_text[:1900]}" + (' (excerpt)' if len(answer_text) > 1900 else '')
         )
 
+    if plan_revision_contract_version(current_plan, context) != contract_version:
+        raise PlanRevisionError('The saved plan contract changed.', code='plan_changed')
+    existing_results = resolve_revision_result_aliases(
+        context, user_id, result_alias_resolver=result_alias_resolver,
+    ) if contract_version == 2 else None
+    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
+    if action != 'answer' or contract_version == 2:
+        narrowing = {} if action == 'answer' else data.get('edits', record.get('edit_narrowing'))
+        current_plan = apply_plan_edits(
+            current_plan, {} if contract_version == 2 and narrowing is None else narrowing,
+            existing_results=existing_results, contract_version=contract_version,
+            export_catalog=admitted_catalog,
+            composition_profiles=composition_profiles if contract_version == 2 else None,
+        )
     validate_clarification_answers(context.get('answered_questions') or [])
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
@@ -302,7 +399,15 @@ def build_plan_edit_outcome(
         user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
     )
     candidates = _available_sources(context, current_plan, user_id, settings, candidates)
-    agents, actions, caller = _revision_catalogs(context, user_id, settings, identity)
+    agents, actions, caller = _revision_catalogs(
+        context, user_id, settings, identity, contract_version=contract_version,
+        native_bridge_for_step=native_bridge_for_step,
+        rendering_service=rendering_service,
+        external_source_preflight=external_source_preflight,
+        external_source_admission=external_source_admission,
+        external_source_authorizer=external_source_authorizer,
+        capture_external_source_configuration=capture_external_source_configuration,
+    )
     resolution = context.get('request_resolution') or {}
     signals = build_conversation_signals(
         conversation_context['messages'], context['user_message'],
@@ -319,7 +424,9 @@ def build_plan_edit_outcome(
     )
     edit_context = {
         'current_plan': {
-            key: deepcopy(current_plan.get(key)) for key in ('intent', 'assumptions', 'steps')
+            key: deepcopy(current_plan[key])
+            for key in ('planner_contract_version', 'intent', 'assumptions', 'steps', 'final_response')
+            if key in current_plan
         },
         'current_request': current_request, 'instruction': instruction,
         'chat': [{key: turn[key] for key in ('role', 'content')} for turn in chat[-20:]],
@@ -349,6 +456,8 @@ def build_plan_edit_outcome(
             document_labels={item['document_id']: item['file_name'] for item in candidates},
             request_context=caller, edit_context=edit_context, allow_elicitation=allow_elicitation,
             revision=int(record.get('revision') or 0) + 1, planner_model=planner_model,
+            contract_version=contract_version, existing_results=existing_results,
+            composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
     finally:
         planner_model.close()

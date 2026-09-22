@@ -4,6 +4,7 @@
 import asyncio
 import base64
 from binascii import Error as BinasciiError
+from copy import deepcopy
 import json
 import logging
 import mimetypes
@@ -35,6 +36,10 @@ from functions_debug import debug_print
 from functions_keyvault import (
     retrieve_secret_from_key_vault_by_full_name,
     validate_secret_name_dynamic,
+)
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationDeniedError,
+    require_invocation_capture,
 )
 
 _logger = logging.getLogger("foundry_agent_runtime")
@@ -388,6 +393,122 @@ class AzureAIFoundryWorkflowAgent:
             yield stream_message
 
 
+def _captured_foundry_definition(definition, agent_id, endpoint, api_version, capture):
+    """Attest only definitions whose execution fields are pinned by this SDK path."""
+    # Server projections initialize application dependencies; discovery and legacy
+    # calls must not import them before the owning invocation is initialized.
+    from functions_orchestration_external_configuration import (
+        EXTERNAL_ACQUISITION_VERSION, FOUNDRY_OBSERVED_RUN, _pinned_tools, foundry_definition_snapshot,
+    )
+
+    try:
+        value = foundry_definition_snapshot(definition)
+    except Exception as exc:
+        capture.fail(exc)
+    if type(value) is not dict or (
+        value.get("id") != agent_id
+        or type(value.get("model")) is not str or not value["model"].strip()
+        or type(value.get("instructions")) is not str or not value["instructions"].strip()
+        or "{{" in value["instructions"]
+        or type(value.get("tools")) is not list
+        or type(api_version) is not str or not api_version.strip()
+    ):
+        capture.refuse()
+    if len(value["tools"]) > 64 or value.get("tool_resources") not in (None, {}):
+        capture.fail(OrchestrationInvocationDeniedError())
+    for key, upper in (("temperature", 2), ("top_p", 1)):
+        number = value.get(key)
+        if type(number) not in (float, int) or not 0 <= number <= upper:
+            capture.refuse()
+    response_format = value.get("response_format")
+    if response_format != "auto" and not (
+        type(response_format) is dict and response_format.get("type") in ("json_object", "json_schema")
+    ):
+        capture.refuse()
+    # Match current metadata's tool subset; execution still requires an observed run.
+    try:
+        _pinned_tools(value["tools"])
+    except Exception as exc:
+        capture.fail(exc)
+    return {
+        "version": EXTERNAL_ACQUISITION_VERSION, "kind": "foundry", "phase": "definition",
+        "binding": FOUNDRY_OBSERVED_RUN, "endpoint": endpoint, "api_version": api_version,
+        "definition": deepcopy(value),
+    }
+
+
+class _CapturedFoundryRuns:
+    """Observe existing SDK operations on one exclusively owned client."""
+
+    def __init__(self, operations, *, capture, settings, source, source_type, selector):
+        if not callable(getattr(operations, "create", None)) or not callable(getattr(operations, "get", None)):
+            capture.refuse()
+        self._operations = operations
+        self._capture = capture
+        self._settings = settings
+        self._source = deepcopy(source)
+        self._source_type = source_type
+        self._selector = selector
+        self._identity = None
+        self._thread_id = None
+
+    def __getattr__(self, name):
+        return getattr(self._operations, name)
+
+    def _observe(self, run, *, creating):
+        # The real SDK return is available here, before SK reduces it to messages.
+        from functions_orchestration_external_configuration import foundry_run_snapshot
+
+        try:
+            snapshot = foundry_run_snapshot(run)
+            definition = self._source["definition"]
+            expected = {key: value for key, value in definition.items() if key != "id"}
+            expected.update(self._source["overrides"])
+            identity = (snapshot["id"], snapshot["thread_id"])
+            if (
+                snapshot["agent_id"] != definition["id"]
+                or snapshot["thread_id"] != self._thread_id
+                or (creating and self._identity is not None)
+                or (not creating and identity != self._identity)
+                or any(key not in snapshot or snapshot[key] != value for key, value in expected.items())
+            ):
+                self._capture.refuse()
+            self._capture(
+                self._source_type, settings=self._settings,
+                source={**self._source, "phase": "run", "run": snapshot}, selector=self._selector,
+            )
+            self._identity = identity
+        except Exception as exc:
+            log_event("[FOUNDRY_AGENT] Execution configuration capture failed.",
+                      extra={"error_type": type(exc).__name__})
+            self._capture.fail(exc)
+
+    async def create(self, thread_id, *args, **kwargs):
+        self._capture.require_valid(captured=True)
+        if (
+            self._identity is not None or args or "body" in kwargs
+            or kwargs.get("agent_id") != self._source["definition"]["id"]
+        ):
+            self._capture.refuse()
+        self._thread_id = thread_id
+        run = await self._operations.create(thread_id=thread_id, **kwargs)
+        self._observe(run, creating=True)
+        return run
+
+    async def get(self, thread_id, run_id, **kwargs):
+        self._capture.require_valid(captured=True)
+        if self._identity is None or (run_id, thread_id) != self._identity:
+            self._capture.refuse()
+        run = await self._operations.get(thread_id=thread_id, run_id=run_id, **kwargs)
+        self._observe(run, creating=False)
+        return run
+
+    def require_observed_run(self):
+        self._capture.require_valid(captured=True)
+        if self._identity is None:
+            self._capture.refuse()
+
+
 async def execute_foundry_agent(
     *,
     foundry_settings: Dict[str, Any],
@@ -395,9 +516,17 @@ async def execute_foundry_agent(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
     max_completion_tokens: Optional[int] = None,
+    invocation_capture=None,
+    invocation_source_type="web",
+    invocation_source=None,
+    invocation_selector=None,
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry agent using Semantic Kernel's AzureAIAgent abstraction."""
 
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if invocation_capture is not None:
+        foundry_settings = deepcopy(foundry_settings)
+        global_settings = deepcopy(global_settings)
     message_history = _filter_foundry_document_context_messages(
         message_history,
         include_document_context=_coerce_bool(
@@ -425,16 +554,26 @@ async def execute_foundry_agent(
     )
     resolved_max_completion_tokens = _normalize_max_completion_tokens(max_completion_tokens)
     delegation_thread = None
+    captured_runs = None
+    original_runs = None
+    agent_operations = None
 
     try:
         definition = await client.agents.get_agent(agent_id)
+        capture_source = None
+        if invocation_capture is not None:
+            definition = deepcopy(definition)
+            effective_api_version = api_version or getattr(getattr(client, "_config", None), "api_version", None)
+            capture_source = _captured_foundry_definition(
+                definition, agent_id, endpoint, effective_api_version, invocation_capture,
+            )
         azure_agent = AzureAIAgent(client=client, definition=definition)
         responses = []
         invoke_kwargs = {
             "messages": message_history,
             "metadata": {k: str(v) for k, v in metadata.items() if v is not None},
         }
-        if metadata.get("delegation_invocation_id"):
+        if metadata.get("delegation_invocation_id") or invocation_capture is not None:
             # Retain the ephemeral thread before the first provider response so
             # cancellation can clean it up even when invoke never yields.
             from semantic_kernel.agents import AzureAIAgentThread
@@ -443,10 +582,44 @@ async def execute_foundry_agent(
             invoke_kwargs["thread"] = delegation_thread
         if resolved_max_completion_tokens is not None:
             invoke_kwargs["max_completion_tokens"] = resolved_max_completion_tokens
+        if invocation_capture is not None:
+            # SK takes tools from this private definition, not the invoke tools
+            # argument. All other mutable definition defaults are explicit.
+            invoke_kwargs.update({
+                key: deepcopy(capture_source["definition"][key])
+                for key in ("model", "instructions", "temperature", "top_p", "response_format")
+            })
+            capture_source["foundry_settings"] = deepcopy(foundry_settings)
+            capture_source["overrides"] = {
+                key: deepcopy(value) for key, value in invoke_kwargs.items()
+                if key not in ("messages", "metadata", "thread")
+            }
+            if invocation_source is not None:
+                invocation_capture(
+                    invocation_source_type, settings=global_settings,
+                    source=invocation_source, selector=invocation_selector,
+                )
+            invocation_capture(
+                invocation_source_type, settings=global_settings,
+                source=capture_source, selector=invocation_selector,
+            )
+            agent_operations = client.agents
+            original_runs = getattr(agent_operations, "runs", None)
+            captured_runs = _CapturedFoundryRuns(
+                original_runs, capture=invocation_capture, settings=global_settings,
+                source=capture_source, source_type=invocation_source_type, selector=invocation_selector,
+            )
+            agent_operations.runs = captured_runs
+            if client.agents is not agent_operations or client.agents.runs is not captured_runs:
+                invocation_capture.refuse()
 
         async for response in azure_agent.invoke(**invoke_kwargs):
+            if invocation_capture is not None:
+                captured_runs.require_observed_run()
             responses.append(response)
 
+        if invocation_capture is not None:
+            captured_runs.require_observed_run()
         if not responses:
             raise FoundryAgentInvocationError("Foundry agent returned no messages.")
 
@@ -498,6 +671,8 @@ async def execute_foundry_agent(
             metadata=message_obj.metadata or {},
         )
     finally:
+        if captured_runs is not None and agent_operations is not None:
+            agent_operations.runs = original_runs
         try:
             if delegation_thread is not None:
                 try:
@@ -518,9 +693,14 @@ async def execute_new_foundry_agent(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
     max_completion_tokens: Optional[int] = None,
+    invocation_capture=None,
 ) -> FoundryAgentInvocationResult:
     """Invoke the new Foundry application runtime through its Responses protocol endpoint."""
 
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if invocation_capture is not None:
+        # Responses applications expose no execution-bound definition snapshot.
+        invocation_capture.refuse()
     message_history = _filter_foundry_document_context_messages(
         message_history,
         include_document_context=_coerce_bool(
@@ -616,9 +796,13 @@ async def execute_new_foundry_agent_stream(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
     max_completion_tokens: Optional[int] = None,
+    invocation_capture=None,
 ) -> AsyncIterator[FoundryAgentStreamMessage]:
     """Stream a new Foundry application response through the Responses API."""
 
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if invocation_capture is not None:
+        invocation_capture.refuse()
     message_history = _filter_foundry_document_context_messages(
         message_history,
         include_document_context=_coerce_bool(
@@ -752,9 +936,14 @@ async def execute_foundry_workflow_agent(
     metadata: Dict[str, Any],
     workflow_name: Optional[str] = None,
     max_completion_tokens: Optional[int] = None,
+    invocation_capture=None,
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry workflow by consuming its streaming response."""
 
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if invocation_capture is not None:
+        # Workflow responses identify content, not the immutable workflow used.
+        invocation_capture.refuse()
     if metadata.get("delegation_invocation_id"):
         return await _execute_delegated_foundry_workflow(
             workflow_settings, global_settings, message_history, metadata,
@@ -892,9 +1081,13 @@ async def execute_foundry_workflow_agent_stream(
     metadata: Dict[str, Any],
     workflow_name: Optional[str] = None,
     max_completion_tokens: Optional[int] = None,
+    invocation_capture=None,
 ) -> AsyncIterator[FoundryAgentStreamMessage]:
     """Stream a Foundry workflow response through project-level OpenAI Responses."""
 
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if invocation_capture is not None:
+        invocation_capture.refuse()
     resolved_workflow_name = _resolve_foundry_workflow_name(
         workflow_settings,
         workflow_name,

@@ -1,7 +1,7 @@
 # test_orchestration_adapter_contract.py
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.105
+Version: 0.261.127
 Implemented in: 0.261.087
 
 This is the generalisation of a bug that reached production. A step failed live with
@@ -97,17 +97,22 @@ def test_every_capability_resolves_to_an_adapter():
 
         assert registered, 'ADAPTER_REGISTRY could not be read'
 
-        # Every CAPABILITY_* constant the registry defines must be a key in ADAPTER_REGISTRY.
-        # A capability offered to the planner with no adapter behind it is a plan that
-        # validates, runs, and fails at the step -- exactly the failure this suite exists
-        # to move earlier.
-        missing = sorted(set(constants) - set(registered))
+        with stubbed_app_imports():
+            from functions_orchestration_executor import _dependency_adapter
+            from functions_orchestration_registry import all_capability_ids
+
+            legacy_ids = set(all_capability_ids())
+            dependency_ids = all_capability_ids(contract_version=2)
+            dependency_adapters = {name: _dependency_adapter(name) for name in dependency_ids}
+        registered_ids = {constants[name] for name in registered}
+        missing = sorted(legacy_ids - registered_ids)
         assert not missing, (
             f"these capabilities have no registered adapter: {missing}. A capability the "
             f"planner can choose must be one the executor can run."
         )
 
-        print(f"  ok  all {len(constants)} capabilities resolve to an adapter")
+        assert all(callable(adapter) for adapter in dependency_adapters.values())
+        print(f"  ok  {len(legacy_ids)} legacy and {len(dependency_ids)} dependency capabilities resolve")
         return True
     except Exception as e:
         print(f"Test failed: {e}")

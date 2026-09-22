@@ -7,14 +7,14 @@ import html
 import json
 import math
 import re
-import sys
 import tempfile
+from contextlib import ExitStack
 from dataclasses import fields
 
 import yaml
 
 from functions_assistant_table_exports import neutralize_csv_spreadsheet_formula
-from functions_export_cleanup import ClosingExportResource, close_export_resource
+from functions_export_cleanup import ClosingExportResource
 from functions_generated_export_contracts import (
     GeneratedFileExportError,
     GeneratedFileExportLimits,
@@ -440,25 +440,22 @@ def _render_generated_file_source(source, request, *, max_output_bytes, check=No
     _validate_source_limits(source, limits, max_output_bytes, check)
     checks = _SourceChecks(source, check)
     checks.run()
-    stream = tempfile.TemporaryFile(mode='w+b', dir='.')
-    completed = False
-    try:
-        writer = _OutputWriter(stream, max_output_bytes, checks)
-        count = _RENDERERS[entry.renderer_id](writer, source, request, limits, checks)
-        stream.flush()
-        stream.seek(0)
-        checks.run()
-        result = GeneratedFileExportStream(
-            file_content=stream, output_format=entry.format_id, media_type=entry.media_type,
-            size_bytes=writer.size, content_sha256=writer.digest.hexdigest(),
-            record_count=count, profile=request.profile, source_kind=source.kind,
-            file_extension=entry.file_extension,
-            character_count=source.character_count if source.kind in ('text', 'markdown') else None,
-        )
-        completed = True
+    with ExitStack() as resources:
+        stream = resources.enter_context(ClosingExportResource(tempfile.TemporaryFile(mode='w+b', dir='.')))
+        try:
+            writer = _OutputWriter(stream, max_output_bytes, checks)
+            count = _RENDERERS[entry.renderer_id](writer, source, request, limits, checks)
+            stream.flush()
+            stream.seek(0)
+            checks.run()
+            result = GeneratedFileExportStream(
+                file_content=stream, output_format=entry.format_id, media_type=entry.media_type,
+                size_bytes=writer.size, content_sha256=writer.digest.hexdigest(),
+                record_count=count, profile=request.profile, source_kind=source.kind,
+                file_extension=entry.file_extension,
+                character_count=source.character_count if source.kind in ('text', 'markdown') else None,
+            )
+        except (RecursionError, UnicodeError) as exc:
+            raise GeneratedFileExportError('invalid_data', 'Source values must be bounded valid Unicode data.') from exc
+        resources.pop_all()
         return result
-    except (RecursionError, UnicodeError) as exc:
-        raise GeneratedFileExportError('invalid_data', 'Source values must be bounded valid Unicode data.') from exc
-    finally:
-        if not completed:
-            close_export_resource(stream, primary_error=sys.exc_info()[1])

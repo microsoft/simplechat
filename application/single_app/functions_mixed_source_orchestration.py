@@ -14,8 +14,10 @@ from content_screening.access import (
     assert_evidence_available,
     document_provenance,
     get_available_blob_reference,
+    raise_source_authority_error,
+    strict_source_authority_enabled,
 )
-from content_screening.contracts import SCREENING_FIELD, ScreeningError
+from content_screening.contracts import SCREENING_FIELD, ScreeningError, SourceAuthorityUnverifiedError
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging to avoid module-level import cycles."""
@@ -601,6 +603,15 @@ def _unresolved_manifest_entry(document_id):
 
 
 def _build_authorized_manifest_entry(document_id, user_id, document_context):
+    if strict_source_authority_enabled():
+        if document_context is None:
+            raise PermissionError("Source not found or access denied.")
+        if (
+            not isinstance(document_context, dict) or not isinstance(document_context.get("document"), dict)
+            or document_context["document"].get("id") != document_id
+            or document_context.get("scope") not in SOURCE_SCOPES
+        ):
+            raise_source_authority_error(SourceAuthorityUnverifiedError())
     if not isinstance(document_context, dict):
         return _unresolved_manifest_entry(document_id)
 
@@ -649,6 +660,8 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         scope_id = conversation_id
 
     if not scope_id:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(SourceAuthorityUnverifiedError())
         return _unresolved_manifest_entry(document_id)
 
     if scope != SOURCE_SCOPE_CHAT:
@@ -667,6 +680,15 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
     source_version = document_item.get("version")
     if source_version is None:
         source_version = document_item.get("source_version")
+    source_revision = document_item.get("_etag") or document_item.get("updated_at") or document_item.get("last_updated")
+    if strict_source_authority_enabled() and any(
+        value is not None and (
+            isinstance(value, bool) or not isinstance(value, (str, int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+        )
+        for value in (source_version, source_revision)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
     if source_version is not None and not isinstance(source_version, (str, int, float)):
         source_version = str(source_version)
 
@@ -707,7 +729,9 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
                 }
         except ScreeningError:
             raise
-        except Exception:
+        except Exception as error:
+            if strict_source_authority_enabled():
+                raise_source_authority_error(error)
             storage_locator = None
         if (
             SCREENING_FIELD not in document_item
@@ -730,7 +754,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "public_workspace_id": public_workspace_id,
         "conversation_id": conversation_id,
         "source_version": source_version,
-        "source_revision": document_item.get("_etag") or document_item.get("updated_at") or document_item.get("last_updated"),
+        "source_revision": source_revision,
         "storage_locator": storage_locator,
         "xsd_logical_path": document_item.get("xsd_logical_path"),
         "xsd_schema_status": document_item.get("xsd_schema_status"),
@@ -854,13 +878,17 @@ def resolve_authorized_source_manifest(
             )
         except MixedSourceCancellationError:
             raise
-        except Exception:
+        except Exception as error:
+            if strict_source_authority_enabled():
+                raise_source_authority_error(error)
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
         if (
             not isinstance(resolved_contexts, list)
             or len(resolved_contexts) != len(unique_document_ids)
         ):
+            if strict_source_authority_enabled():
+                raise_source_authority_error(SourceAuthorityUnverifiedError())
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
 
@@ -890,7 +918,9 @@ def resolve_authorized_source_manifest(
                 )
             except MixedSourceCancellationError:
                 raise
-            except Exception:
+            except Exception as error:
+                if strict_source_authority_enabled():
+                    raise_source_authority_error(error)
                 resolution_error_count += 1
         if (
             isinstance(document_context, dict)

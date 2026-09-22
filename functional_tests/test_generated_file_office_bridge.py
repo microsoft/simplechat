@@ -1,7 +1,7 @@
 # test_generated_file_office_bridge.py
 """
 Functional tests for the generated-file facade's explicit Office source bridge.
-Version: 0.261.126
+Version: 0.261.127
 Implemented in: 0.261.126
 Refs: microsoft/simplechat#1509; renderer preparation, not runtime activation.
 
@@ -586,6 +586,28 @@ def test_office_source_errors_survive_an_additional_iterator_cleanup_failure(
     assert iterator.close_calls == 1
     assert all(buffer.closed for buffer in office_buffers)
     assert any('cleanup' in note for note in getattr(primary, '__notes__', []))
+
+
+@pytest.mark.parametrize('output_format', ['xlsx', 'docx', 'pdf'])
+def test_office_cleanup_failure_is_not_hidden_by_a_callers_outer_handler(output_format, office_buffers):
+    outer = ValueError('already handled by the caller')
+    items = [{'id': '001', 'value': 1}] if output_format == 'xlsx' else ['x']
+    iterator = CleanupFailingIterator(items)
+    if output_format == 'xlsx':
+        source = RecordSource([], 1)
+        source.iter_records = lambda: iterator
+    else:
+        source = TextSource([], 1)
+        source.iter_text = lambda: iterator
+    try:
+        raise outer
+    except ValueError:
+        with pytest.raises(OSError) as failure:
+            render(output_format, source)
+    assert failure.value is iterator.cleanup_error
+    assert iterator.close_calls == 1
+    assert not getattr(outer, '__notes__', [])
+    assert all(buffer.closed for buffer in office_buffers)
 
 
 @pytest.mark.parametrize('output_format', ['docx', 'pdf'])

@@ -1,5 +1,8 @@
 # agent_delegation_runtime.py
-"""Isolated asynchronous agent calls. Implemented in version 0.261.093.
+"""Isolated asynchronous agent calls.
+
+Version: 0.261.127
+Implemented in: 0.261.093
 
 Provider and loader imports are deliberately lazy: plugin discovery imports the
 Call agent class before the application's Semantic Kernel loader is initialized.
@@ -29,6 +32,7 @@ from functions_agent_delegation import (
     agent_authentication_url, agent_reference, resolve_delegation_agent, resolve_delegation_call,
 )
 from functions_appinsights import log_event
+from functions_orchestration_invocation_capture import require_invocation_capture
 
 
 MAX_DELEGATION_DEPTH = 3
@@ -61,6 +65,8 @@ def _check_cancelled(frame):
         raise AgentExecutionCancelled("Agent execution was cancelled. Already submitted remote effects may continue.")
     if frame.deadline is not None and time.monotonic() >= frame.deadline:
         raise AgentDelegationTimeout("The delegated agent call timed out.")
+    if frame.invocation_capture is not None:
+        frame.invocation_capture.require_valid()
 
 
 async def await_agent_operation(awaitable, frame):
@@ -79,6 +85,8 @@ async def await_agent_operation(awaitable, frame):
             )
             if done:
                 frame.budget.raise_authentication_requirement(frame.identity)
+                if frame.invocation_capture is not None:
+                    frame.invocation_capture.require_valid()
                 return operation.result()
     finally:
         if not operation.done():
@@ -127,18 +135,47 @@ def _build_local_agent(target, settings):
     from semantic_kernel import Kernel
     from semantic_kernel_loader import load_agent_core_plugins, load_single_agent_for_kernel
 
+    frame = current_agent_execution()
+    capture_kwargs = {"invocation_capture": frame.invocation_capture} if frame.invocation_capture is not None else {}
     kernel = Kernel()
-    load_agent_core_plugins(kernel, settings)
+    load_agent_core_plugins(kernel, settings, **capture_kwargs)
     kernel, agents = load_single_agent_for_kernel(
         kernel, deepcopy(target), settings, SimpleNamespace(),
         mode_label="group" if target.get("is_group") else "global" if target.get("is_global") else "per-user",
         group_scope_id=target.get("group_id"),
-        execution_user_id=current_agent_execution().identity.user_id,
+        execution_user_id=frame.identity.user_id,
+        **capture_kwargs,
     )
     agent = (agents or {}).get(target.get("name"))
     if kernel is None or agent is None:
         raise AgentDelegationError("The configured agent could not be initialized.")
     return kernel, agent
+
+
+def _prepare_captured_agent(reference, settings, identity, capture):
+    if capture is not None:
+        if type(settings) is not dict:
+            capture.refuse()
+        reference = agent_reference(reference, identity.user_id)
+        capture(
+            "agent", settings=settings,
+            selector=f"{reference['scope_type']}:{reference['scope_id']}:{reference['id']}",
+        )
+
+
+def _preflight_captured_agent(target, frame):
+    if frame.invocation_capture is None:
+        return
+    from functions_assigned_knowledge import build_assigned_knowledge_runtime_filters
+
+    filters = build_assigned_knowledge_runtime_filters(target)
+    if (
+        target.get("agent_type", "local") != "aifoundry"
+        or (filters and (filters.get("has_workspace_knowledge") or filters.get("web_sources")))
+    ):
+        # Local loader configuration and resource-dependent remote execution
+        # need their own complete acquisition proofs before these modes can run.
+        frame.invocation_capture.refuse()
 
 
 def _observed_usage(result=None, kernel=None):
@@ -245,15 +282,27 @@ async def _target_messages(target, task, context, frame, settings):
 
 async def execute_target(target, task, context, frame):
     """Invoke precisely this canonical target; never select a default or by name."""
+    active = current_agent_execution()
+    if active is not None and active.invocation_capture is not None and (
+        frame.invocation_capture is not active.invocation_capture
+        or frame.identity.user_id != active.identity.user_id
+        or frame.identity.conversation_id != active.identity.conversation_id
+    ):
+        active.invocation_capture.refuse()
+
     from functions_settings import get_settings
     from functions_workflow_loop_runners import assert_workflow_loop_agent_type
 
     assert_workflow_loop_agent_type(target.get("agent_type", "local"))
 
+    _check_cancelled(frame)
+    _prepare_captured_agent(target, frame.invocation_settings, frame.identity, frame.invocation_capture)
     bridge = frame.identity.bridge(target) if frame.identity.bridge else nullcontext()
     kernel = None
     with bridge:
-        settings = get_settings()
+        _check_cancelled(frame)
+        _preflight_captured_agent(target, frame)
+        settings = deepcopy(frame.invocation_settings) if frame.invocation_settings is not None else get_settings()
         messages, citations = await _target_messages(target, task, context, frame, settings)
         _check_cancelled(frame)
         agent_type = target.get("agent_type") or "local"
@@ -275,6 +324,23 @@ async def execute_target(target, task, context, frame):
                 kind = {"aifoundry": "azure_ai_foundry", "new_foundry": "new_foundry", "foundry_workflow": "foundry_workflow"}[agent_type]
                 execute = {"aifoundry": execute_foundry_agent, "new_foundry": execute_new_foundry_agent, "foundry_workflow": execute_foundry_workflow_agent}[agent_type]
                 runtime_settings = (config.get("other_settings") or {}).get(kind) or {}
+                invocation_kwargs = {}
+                if frame.invocation_capture is not None:
+                    reference = agent_reference(target, frame.identity.user_id)
+                    selector = f"{reference['scope_type']}:{reference['scope_id']}:{reference['id']}"
+                    frame.invocation_capture(
+                        "agent", settings=settings, selector=selector,
+                        source={
+                            "version": "orchestration-external-acquisition-v1",
+                            "kind": "agent", "phase": "resolved",
+                            "reference": reference, "resolved_config": config,
+                        },
+                    )
+                    invocation_kwargs = {
+                        "invocation_capture": frame.invocation_capture,
+                        "invocation_source_type": "agent",
+                        "invocation_selector": selector,
+                    }
                 try:
                     result = await execute(
                         **{"workflow_settings" if agent_type == "foundry_workflow" else "foundry_settings": runtime_settings},
@@ -284,6 +350,7 @@ async def execute_target(target, task, context, frame):
                         # uploads from that id, which would expose the parent history.
                         metadata={"delegation_invocation_id": frame.invocation_id or frame.budget.root_id},
                         max_completion_tokens=config.get("max_completion_tokens"),
+                        **invocation_kwargs,
                     )
                 except RuntimeError as exc:
                     if type(exc).__name__ == "FoundryAgentUserAuthenticationRequired":
@@ -297,6 +364,8 @@ async def execute_target(target, task, context, frame):
                     raise
                 text, model = result.message, result.model
                 citations.extend(result.citations or [])
+            if frame.invocation_capture is not None:
+                frame.invocation_capture.require_valid(captured=True)
             if not text or not text.strip():
                 raise AgentDelegationError("The delegated agent returned no answer.")
             return {"response": text, "citations": citations, "model": model, "usage": _observed_usage(result, kernel)}
@@ -313,6 +382,8 @@ async def call_agent(action_id, task, context=""):
     parent = current_agent_execution()
     if parent is None or not parent.identity.user_id:
         raise AgentDelegationError("An authenticated agent execution context is required.")
+    if parent.invocation_capture is not None:
+        parent.invocation_capture.refuse()
     invocation_id = str(uuid.uuid4())
     frame = replace(parent, invocation_id=invocation_id, parent_invocation_id=parent.invocation_id,
                     action_id=action_id, depth=parent.depth + 1)
@@ -351,7 +422,7 @@ async def call_agent(action_id, task, context=""):
         )
         logged_start = True
         child = replace(frame, caller=target, ancestors=ancestry + (target_key,), deadline=deadline)
-        with agent_execution(child):
+        with agent_execution(child) as child:
             result = await await_agent_operation(execute_target(target, task, context, child), child)
         return PluginInvocationResult(
             json.dumps({"response": result["response"], "citations": result.get("citations") or [], "provenance": provenance}),
@@ -451,8 +522,10 @@ class AgentExecution:
         retry_override = self._stream_retry_override
         selected = self.agent
         try:
-            with agent_execution(frame):
+            with agent_execution(frame) as frame:
                 frame.budget.raise_authentication_requirement(frame.identity)
+                if frame.invocation_capture is not None:
+                    frame.invocation_capture.refuse()
                 if _has_delegation_tool(selected):
                     from functions_settings import get_settings
 
@@ -461,7 +534,11 @@ class AgentExecution:
                         current_settings = get_settings()
                         canonical = resolve_delegation_agent(self.reference, user_id=self.identity.user_id, settings=current_settings)
                     frame = replace(frame, caller=canonical, ancestors=(_agent_key(canonical, self.identity.user_id),))
-                    invocation_settings = dict(current_settings)
+                    _preflight_captured_agent(canonical, frame)
+                    invocation_settings = (
+                        deepcopy(frame.invocation_settings)
+                        if frame.invocation_settings is not None else dict(current_settings)
+                    )
                     # Workflow entrypoints override iteration count, not access
                     # policy. Keep that per-run tuning without retaining old gates.
                     if "max_auto_invoke_attempts" in self.settings:
@@ -527,14 +604,28 @@ def prepare_agent_execution(agent, reference, *, user_id, settings, conversation
                           cancel_requested=cancel_requested, budget=budget, prevent_replay=prevent_replay)
 
 
-async def invoke_scoped_agent(reference, task, *, identity, budget, cancel_requested=None):
+async def invoke_scoped_agent(
+    reference, task, *, identity, budget, cancel_requested=None, settings=None, invocation_capture=None,
+):
     """Worker-safe root execution; Flask compatibility belongs to the captured bridge."""
+    parent = current_agent_execution()
+    if parent is not None and parent.invocation_capture is not None:
+        parent.invocation_capture.refuse()
+    invocation_capture = require_invocation_capture(invocation_capture)
+    if cancel_requested and cancel_requested():
+        raise AgentExecutionCancelled("Agent execution was cancelled.")
+    _prepare_captured_agent(reference, settings, identity, invocation_capture)
     bridge = identity.bridge(reference) if identity.bridge else nullcontext()
     with bridge:
         canonical = resolve_delegation_agent(reference, user_id=identity.user_id)
     frame = AgentExecutionFrame(
         identity, canonical, budget, ancestors=(_agent_key(canonical, identity.user_id),),
         cancel_requested=cancel_requested,
+        invocation_capture=invocation_capture,
+        invocation_settings=deepcopy(settings) if invocation_capture is not None and settings is not None else None,
     )
-    with agent_execution(frame):
-        return await await_agent_operation(execute_target(canonical, task, "", frame), frame)
+    with agent_execution(frame) as frame:
+        result = await await_agent_operation(execute_target(canonical, task, "", frame), frame)
+        if frame.invocation_capture is not None:
+            frame.invocation_capture.require_valid(captured=True)
+        return result
