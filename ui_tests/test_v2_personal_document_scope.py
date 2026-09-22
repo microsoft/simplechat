@@ -307,7 +307,7 @@ def test_personal_failed_metadata_save_keeps_the_draft(personal_documents):
     title.fill("Unsaved personal revision")
     ui.reject_next("PATCH", "/api/documents/personal-alpha", error="Fixture metadata conflict.", status=409)
     dialog.get_by_role("button", name="Save", exact=True).click()
-    expect(ui.page.get_by_text("Fixture metadata conflict.", exact=True)).to_be_visible()
+    expect(dialog.get_by_role("alert")).to_have_text("Fixture metadata conflict.")
     expect(dialog).to_be_visible()
     expect(title).to_have_value("Unsaved personal revision")
     assert ui.documents["personal-alpha"]["title"] == "Personal Alpha"

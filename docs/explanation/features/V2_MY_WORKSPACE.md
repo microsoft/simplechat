@@ -25,8 +25,10 @@ counts, data adapters, routes, and authorization remain personal. See
 
 **Shared document reader expanded in version:** 0.261.128. Personal documents
 retain their own endpoints, saved views, and management commands while group
-documents use a read-only scoped adapter. Compact screens open filters/details
-in the existing modal surfaces. See
+documents use an explicit scoped reader. The **0.261.129** operation adapter
+adds authorized group management without reusing personal mutation URLs.
+Compact screens open filters/details in the existing modal surfaces and keep
+selected-file operations in a compact Actions picker. See
 [V2 Group Document Browsing](V2_GROUP_DOCUMENT_BROWSING.md).
 
 ### Dependencies

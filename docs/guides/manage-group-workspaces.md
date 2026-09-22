@@ -42,7 +42,8 @@ Section URLs include the group ID, so a bookmark opens the intended group.
 
 ### Browse group documents
 
-Native read-only document browsing is available from version **0.261.128**.
+Native document browsing is available from version **0.261.128**, with
+permission-aware document management added in **0.261.129**.
 Choose **Documents** to search by filename/title, use shared-workspace tags and
 classification filters, sort results, and page through the group's sources.
 Counts describe the whole visible workspace rather than the current page.
@@ -57,10 +58,33 @@ context into the existing chat experience. Current access is checked again
 before those sources are adopted. This does not create a group-only retrieval
 mode or override an existing conversation's workspace lock.
 
-Use **Classic** for uploads, metadata/tag changes, sharing or approval, deletion,
-reprocessing, and downloads. Those management operations are not yet part of
-the native group explorer. Group-specific saved views and content previews are
-also deferred.
+### Manage group files and tags
+
+Owners, Admins, and DocumentManagers can use the available upload, metadata,
+tag, extraction, reprocessing, deletion, and download commands. Each command
+also depends on group status and the selected files; readable incoming shares
+are not editable source documents. Ordinary User membership stays read-only.
+On compact screens, **Actions** holds selected-file commands while Upload and
+Filters stay directly reachable.
+
+Use **Tags** to create, rename, recolour, or remove the group's vocabulary.
+Changes apply to current documents owned by that group, not historical
+revisions or incoming shared sources. If propagation or a vocabulary update
+only partly succeeds, the old vocabulary can remain until the reported
+failures are resolved.
+
+Review each upload/bulk result. Queued extraction or metadata screening is not
+finished processing, and a partial outcome is not an instruction to retry the
+successful items. Failed metadata saves keep the draft.
+
+Before deleting, confirm the selected files and whether the operation covers
+only the current revision or every version. Files managed by sync or linked
+to conversations can require additional explicit choices. Historical or
+restricted content does not acquire ordinary editing rights merely because it
+is visible in the explorer.
+
+Use **Classic** for sharing and approval decisions that have not moved to V2.
+Group-specific saved views and content previews remain deferred.
 
 ### Use group tools and manage the workspace
 
@@ -82,8 +106,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-This release does not replace group document management, other classic editors,
-group membership administration, or public workspace pages.
+This release does not replace group sharing/approval management, other classic
+editors, group membership administration, or public workspace pages.
 
 ## Use the classic workspace
 

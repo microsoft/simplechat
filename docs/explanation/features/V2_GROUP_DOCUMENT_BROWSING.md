@@ -10,10 +10,11 @@ workspace selected in another tab.
 Implemented in version: **0.261.128**, recorded in
 `application/single_app/config.py`.
 
-This is the M2A read-only milestone. Group uploads, edits, tag changes,
-sharing/approval, deletion, reprocessing, downloads, and saved-view persistence
-remain outside this slice. **Classic** provides the existing management path.
-Personal document management remains available.
+This page records the M2A read foundation.
+[Native group document management](V2_GROUP_DOCUMENT_MANAGEMENT.md) expanded it
+in **0.261.129** with separately authorized operations. Group sharing/approval,
+saved-view persistence, and content preview remain later work, with Classic
+available for existing unported operations. Personal management stays separate.
 
 ### Dependencies
 
@@ -76,11 +77,12 @@ to checkboxes, select-all, range selection, keyboard navigation, detail
 commands, and chat handoff. Restricted rows do not regain old titles or
 abstracts from cached detail/poll responses.
 
-Read-only group mode gates mutations throughout the explorer: toolbar and row
+Missing management support leaves group mode read-only. Management eligibility
+is separate from scope identity and applies throughout the explorer: toolbar and row
 commands, detail controls, tag removal/drop, keyboard shortcuts, file drop,
-dialogs, and empty-state actions. It never substitutes personal mutation APIs
-for unimplemented group operations. Group screening-policy controls, content
-previews, and downloads are not offered by this slice.
+dialogs, and empty-state actions. Group operations never substitute personal
+mutation APIs. Screening-policy controls and content previews remain outside
+this experience; downloads require their own 0.261.129 operation policy.
 
 ## Using the native group Documents section
 
@@ -91,8 +93,8 @@ previews, and downloads are not offered by this slice.
 4. Select or inspect a document to review available metadata, ownership/share
    context, status, and Content Screening information.
 5. Use **Version history** to load the revisions the selected group may see.
-6. Select eligible sources and choose **Chat**, or use **Classic** for document
-   management.
+6. Select eligible sources and choose **Chat**, use permitted native management
+   commands, or use **Classic** for unported sharing/approval operations.
 
 On compact screens, **Filters** and the details toggle open the existing modal
 surfaces instead of squeezing three panes into the narrow content area. The
@@ -142,6 +144,5 @@ the API feature page. Polling tests install the clock before application timers
 are created and wait for the initial detail response before advancing a poll.
 
 No live Azure deployment, live model execution, or large-workspace latency
-benchmark is claimed. Group management operations, downloads/previews,
-group-specific saved-view persistence, and public workspace migration remain
-later milestones.
+benchmark is claimed. Group sharing/approval, previews, group-specific saved-view
+persistence, and public workspace migration remain later milestones.
