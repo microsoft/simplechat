@@ -30,6 +30,7 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
         super().__init__(page)
         self.downloads_enabled = False
         self.confirm_delete = False
+        self.failed_deletes = set()
         self.documents = {
             "personal-alpha": {
                 "id": "personal-alpha", "document_id": "personal-alpha",
@@ -133,12 +134,20 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
                 }, 207)
                 return
             deleted = []
+            errors = []
             for identifier in entry.body["document_ids"]:
+                if identifier in self.failed_deletes:
+                    errors.append({
+                        "document_id": identifier, "error": "fixture_delete_failed",
+                        "message": "Fixture retained this document.",
+                    })
+                    continue
                 self.documents.pop(identifier)
                 deleted.append({"document_id": identifier})
             self._json(route, {
-                "deleted": deleted, "errors": [], "deleted_count": len(deleted), "error_count": 0,
-            })
+                "deleted": deleted, "errors": errors,
+                "deleted_count": len(deleted), "error_count": len(errors),
+            }, 207 if errors else 200)
         elif entry.path == "/api/documents/personal-alpha/download" and entry.method == "GET":
             route.fulfill(
                 body=b"personal source fixture", content_type="application/octet-stream",
@@ -286,3 +295,39 @@ def test_personal_download_uses_the_personal_source_route(personal_documents):
     assert len(requests) == 1
     assert requests[0].path == "/api/documents/personal-alpha/download"
     assert requests[0].query == {}
+
+
+def test_personal_failed_metadata_save_keeps_the_draft(personal_documents):
+    ui = personal_documents
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True).check()
+    ui.page.get_by_role("button", name="Edit", exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name="Edit metadata", exact=True)
+    title = dialog.get_by_label(re.compile("^Title"))
+    title.fill("Unsaved personal revision")
+    ui.reject_next("PATCH", "/api/documents/personal-alpha", error="Fixture metadata conflict.", status=409)
+    dialog.get_by_role("button", name="Save", exact=True).click()
+    expect(ui.page.get_by_text("Fixture metadata conflict.", exact=True)).to_be_visible()
+    expect(dialog).to_be_visible()
+    expect(title).to_have_value("Unsaved personal revision")
+    assert ui.documents["personal-alpha"]["title"] == "Personal Alpha"
+    assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/")]
+
+
+def test_personal_partial_delete_retains_the_failed_document(personal_documents):
+    ui = personal_documents
+    ui.failed_deletes.add("personal-beta")
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select all documents on this page", exact=True).check()
+    ui.page.get_by_role("button", name="Delete", exact=True).first.click()
+    dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
+    dialog.get_by_role("button", name="Delete", exact=True).click()
+    expect(ui.page.get_by_text("Fixture retained this document.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("checkbox", name="Select Personal Beta", exact=True)).to_be_visible()
+    assert set(ui.documents) == {"personal-beta"}
+    writes = [entry for entry in ui.writes if entry.path.endswith("/bulk-delete")]
+    assert len(writes) == 1
+    assert writes[0].path == "/api/documents/bulk-delete"
+    assert set(writes[0].body["document_ids"]) == {"personal-alpha", "personal-beta"}
+    assert writes[0].query == {}
