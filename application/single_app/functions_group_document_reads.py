@@ -6,10 +6,6 @@ cannot be recovered by hydrating its hits. Explicit reads therefore use the
 existing scoped source query, independently of index readiness and caches.
 """
 
-import re
-
-from werkzeug.exceptions import HTTPException
-
 from config import cosmos_group_documents_container
 from content_screening.access import HELD_PUBLIC_FIELDS, public_document_payload
 from functions_document_access_index import document_matches_list_filters
@@ -21,31 +17,25 @@ from functions_document_queries import (
 from functions_documents import (
     ALLOWED_DOCUMENT_SORT_FIELDS,
     _document_revision_sort_key,
-    _get_document_family_key,
     build_workspace_tags_from_counts,
     sanitize_tags_for_filter,
     select_current_documents,
     sort_documents,
 )
 from functions_group import (
-    assert_group_role,
-    check_group_status_allows_operation,
     find_group_by_id,
-    get_user_role_in_group,
 )
-
-
-GROUP_DOCUMENT_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
-GROUP_DOCUMENT_READ_STATUSES = ("active", "locked", "upload_disabled")
-INVALID_GROUP_READ_ID = re.compile(r"[/\\?#,\x00-\x1f\x7f]")
-
-
-class GroupDocumentReadError(HTTPException):
-    """A stable, non-sensitive failure at the group read boundary."""
-
-    def __init__(self, message, status_code):
-        super().__init__(description=message)
-        self.code = status_code
+from functions_group_document_access import (
+    GroupDocumentReadError,
+    _group_document_share_status,
+    _validate_group_read_id,
+    get_group_document_actions,
+    group_document_family_records,
+    is_current_group_document,
+    require_group_document_read_context,
+)
+from functions_settings import get_settings
+from functions_group_document_policy import group_document_approval_pending
 
 
 def explicit_group_document_read_id(args, *, required=False):
@@ -61,51 +51,6 @@ def explicit_group_document_read_id(args, *, required=False):
     group_id = values[0]
     _validate_group_read_id(group_id)
     return group_id
-
-
-def _validate_group_read_id(group_id):
-    if (
-        not isinstance(group_id, str) or not group_id or len(group_id) > 512
-        or group_id != group_id.strip() or group_id in (".", "..")
-        or INVALID_GROUP_READ_ID.search(group_id)
-    ):
-        raise GroupDocumentReadError("Invalid group identifier.", 400)
-
-
-def require_group_document_read_context(user_id, group_id):
-    _validate_group_read_id(group_id)
-    if not user_id:
-        raise GroupDocumentReadError("User not authenticated.", 401)
-    try:
-        assert_group_role(user_id, group_id, allowed_roles=GROUP_DOCUMENT_READER_ROLES)
-    except LookupError as error:
-        raise GroupDocumentReadError("The selected group was not found.", 404) from error
-    except PermissionError as error:
-        raise GroupDocumentReadError("You do not have access to the selected group.", 403) from error
-    group = find_group_by_id(group_id)
-    if not group:
-        raise GroupDocumentReadError("The selected group was not found.", 404)
-    role = get_user_role_in_group(group, user_id)
-    if role not in GROUP_DOCUMENT_READER_ROLES:
-        raise GroupDocumentReadError("You do not have access to the selected group.", 403)
-    allowed, _reason = check_group_status_allows_operation(group, "view")
-    if not allowed or group.get("status", "active") not in GROUP_DOCUMENT_READ_STATUSES:
-        raise GroupDocumentReadError("Documents are unavailable for this group's current status.", 403)
-    return group, role
-
-
-def _group_document_share_status(document, group_id):
-    if document.get("group_id") == group_id:
-        return "owner"
-    entries = document.get("shared_group_ids")
-    if not isinstance(entries, list):
-        return None
-    for entry in entries:
-        if entry == group_id or entry == f"{group_id},approved":
-            return "approved"
-        if entry == f"{group_id},not_approved":
-            return "not_approved"
-    return None
 
 
 def _query_group_document_records(group_id, *, document_ids=None):
@@ -136,42 +81,63 @@ def _query_group_document_records(group_id, *, document_ids=None):
     ]
 
 
-def _project_group_document(document, group_id, group_names, *, query_timestamp=False):
+def _project_group_document(
+    document, group_id, source_groups, *, user_id, context=None, settings=None,
+    query_timestamp=False, include_actions=False, current_revision=None,
+):
     approval = _group_document_share_status(document, group_id)
     if approval is None:
         raise GroupDocumentReadError("Document not found or access denied.", 404)
     normalized = select_current_documents([dict(document)])[0]
     payload = public_document_payload(normalized)
-    if approval == "not_approved":
+    artifact_pending = group_document_approval_pending(document)
+    if approval == "not_approved" or artifact_pending:
+        request_fields = {
+            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
+            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
+        }
         payload = {
             key: value for key, value in payload.items()
-            if key in HELD_PUBLIC_FIELDS or key == "content_screening"
+            if key in HELD_PUBLIC_FIELDS or key == "content_screening" or (artifact_pending and key in request_fields)
         }
-        payload["status"] = "Awaiting group share approval"
+        payload["status"] = "Awaiting generated artifact approval" if artifact_pending else "Awaiting group share approval"
+        if artifact_pending:
+            payload["generated_artifact_promotion_status"] = "pending_approval"
         payload["enhanced_citations"] = False
     owner_group_id = document["group_id"]
     payload["group_id"] = owner_group_id
     payload["owner_group_id"] = owner_group_id
     payload["shared_approval_status"] = approval
+    payload.pop("document_actions", None)
+    payload.pop("owner_group_name", None)
     if approval != "owner":
         payload["shared_group_active_id"] = group_id
-        if owner_group_id not in group_names:
-            owner_group = find_group_by_id(owner_group_id)
-            group_names[owner_group_id] = str((owner_group or {}).get("name") or "Unknown Group").strip()
-        payload["owner_group_name"] = group_names[owner_group_id]
+        if include_actions:
+            if owner_group_id not in source_groups:
+                source_groups[owner_group_id] = find_group_by_id(owner_group_id)
+            payload["owner_group_name"] = str((source_groups[owner_group_id] or {}).get("name") or "Unknown Group").strip()
     else:
         payload.pop("shared_group_active_id", None)
         payload.pop("owner_group_name", None)
+    if include_actions:
+        payload["document_actions"] = get_group_document_actions(
+            document, user_id, group_id, context=context, settings=settings,
+            public_payload=payload, source_groups=source_groups,
+            current_revision=current_revision,
+        )
     # Retain a server-only sort/recent key while calculating queries. The final
     # response projection applies the screening allow-list again without it.
     if query_timestamp and "_ts" in document:
         payload["_ts"] = document["_ts"]
+    if query_timestamp:
+        payload["is_current_version"] = True
     return payload
 
 
 def load_group_document_browser_documents(user_id, group_id):
     require_group_document_read_context(user_id, group_id)
     records = _query_group_document_records(group_id)
+    context = require_group_document_read_context(user_id, group_id)
     by_owner = {}
     for record in records:
         by_owner.setdefault(record["group_id"], []).append(record)
@@ -183,7 +149,7 @@ def load_group_document_browser_documents(user_id, group_id):
     ]
     group_names = {}
     documents = [
-        _project_group_document(document, group_id, group_names, query_timestamp=True)
+        _project_group_document(document, group_id, group_names, user_id=user_id, context=context, query_timestamp=True)
         for document in current
     ]
     require_group_document_read_context(user_id, group_id)
@@ -249,7 +215,8 @@ def get_group_document_read_metadata(user_id, group_id, document_id):
     records = _query_group_document_records(group_id, document_ids=[document_id])
     if not records:
         raise GroupDocumentReadError("Document not found or access denied.", 404)
-    payload = _project_group_document(records[0], group_id, {})
+    payload = _project_group_document(records[0], group_id, {}, user_id=user_id)
+    payload["is_current_version"] = is_current_group_document(records[0])
     require_group_document_read_context(user_id, group_id)
     return payload
 
@@ -260,25 +227,7 @@ def get_group_document_read_versions(user_id, group_id, document_id):
     if not targets:
         raise GroupDocumentReadError("Document not found or access denied.", 404)
     target = targets[0]
-    if target.get("revision_family_id"):
-        identity_field = "revision_family_id"
-    elif target.get("document_kind") == "xml_schema" and target.get("xsd_revision_identity"):
-        identity_field = "xsd_revision_identity"
-    else:
-        identity_field = "file_name"
-    family = list(cosmos_group_documents_container.query_items(
-        query=f"SELECT * FROM c WHERE c.group_id = @owner_group_id AND c.{identity_field} = @family_identity",
-        parameters=[
-            {"name": "@owner_group_id", "value": target["group_id"]},
-            {"name": "@family_identity", "value": target.get(identity_field)},
-        ],
-        enable_cross_partition_query=True,
-    ))
-    family = [
-        document for document in family
-        if document.get("group_id") == target["group_id"]
-        and _get_document_family_key(document) == _get_document_family_key(target)
-    ]
+    family = group_document_family_records(target)
     if not any(
         document.get("id") == document_id and _group_document_share_status(document, group_id) is not None
         for document in family
@@ -295,7 +244,7 @@ def get_group_document_read_versions(user_id, group_id, document_id):
     ):
         if _group_document_share_status(document, group_id) is None:
             continue
-        payload = _project_group_document(document, group_id, group_names)
+        payload = _project_group_document(document, group_id, group_names, user_id=user_id)
         payload["revision_family_id"] = family_id
         payload["is_current_version"] = document["id"] == current_id
         versions.append(payload)
@@ -314,6 +263,8 @@ def refresh_group_document_read_payloads(documents, user_id, group_id):
     records = _query_group_document_records(
         group_id, document_ids=[document["id"] for document in documents],
     )
+    context = require_group_document_read_context(user_id, group_id)
+    settings = get_settings()
     by_id = {record["id"]: record for record in records}
     group_names = {}
     payloads = []
@@ -327,10 +278,13 @@ def refresh_group_document_read_payloads(documents, user_id, group_id):
         )
         if fresh["group_id"] != previous.get("group_id") or version_changed:
             raise GroupDocumentReadError("Document changed while reading. Refresh and try again.", 409)
-        payload = _project_group_document(fresh, group_id, group_names)
+        payload = _project_group_document(
+            fresh, group_id, group_names, user_id=user_id, context=context,
+            settings=settings, include_actions=True, current_revision=previous.get("is_current_version"),
+        )
         for field in ("revision_family_id", "is_current_version"):
             if field in previous:
-                payload[field] = previous[field]
+                payload[field] = False if field == "is_current_version" and fresh.get(field) is False else previous[field]
         payloads.append(payload)
     require_group_document_read_context(user_id, group_id)
     return payloads
