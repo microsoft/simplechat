@@ -13,17 +13,22 @@ import { ScreeningWorkspaceControls } from '../../components/screening/Screening
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { createGroupDocumentReader } from '../../lib/documentReadAdapter';
 import { createGroupDocumentOperations } from '../../lib/documentOperations';
+import { createDocumentCollaboration } from '../../lib/documentCollaboration';
 import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
 import { GlassButton } from '../../components/ui/primitives';
 
 export function GroupDocumentsSection({
     context, interactionDisabled, onOpenClassic, onDirtyChange, onBusyChange,
+    linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
 }: {
     context: GroupWorkspaceContext;
     interactionDisabled: boolean;
     onOpenClassic: () => void;
     onDirtyChange: (dirty: boolean) => void;
     onBusyChange: (busy: boolean) => void;
+    linkedDocumentId?: string | null;
+    linkedDocumentError?: string | null;
+    onClearLinkedDocument?: () => void;
 }) {
     const reader = useMemo(() => createGroupDocumentReader(
         context.scope.id, context.workspace.name, context.document_queries,
@@ -31,6 +36,9 @@ export function GroupDocumentsSection({
     const operations = useMemo(() => createGroupDocumentOperations(
         { kind: 'group', id: context.scope.id, name: context.workspace.name }, context.document_management,
     ), [context.scope.id, context.workspace.name, context.document_management]);
+    const collaboration = useMemo(() => createDocumentCollaboration(
+        { kind: 'group', id: context.scope.id, name: context.workspace.name }, context.document_collaboration,
+    ), [context.scope.id, context.workspace.name, context.document_collaboration]);
     const canChange = [...operations.supported].some((operation) => operation !== 'download');
 
     return (
@@ -48,9 +56,12 @@ export function GroupDocumentsSection({
                     : 'Read-only browsing for this group.'}</p>
             </div>
             <div className="min-h-0 flex-1">
-                <DocumentExplorer reader={reader} operations={operations} canChat={context.document_permissions.can_chat}
+                <DocumentExplorer reader={reader} operations={operations} collaboration={collaboration}
+                    canChat={context.document_permissions.can_chat}
                     interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
-                    onDirtyChange={onDirtyChange} onBusyChange={onBusyChange} />
+                    onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}
+                    linkedDocumentId={linkedDocumentId} linkedDocumentError={linkedDocumentError}
+                    onClearLinkedDocument={onClearLinkedDocument} />
             </div>
         </div>
     );

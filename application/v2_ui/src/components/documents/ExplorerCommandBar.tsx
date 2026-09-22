@@ -29,6 +29,7 @@ import {
     Tag as TagIcon,
     Trash2,
     Upload,
+    Users,
     X,
 } from 'lucide-react';
 import type { DocumentExplorerPrefs, DocumentQuery, DocumentSortField, WorkspaceDocument } from '../../lib/types';
@@ -76,6 +77,7 @@ export function ExplorerCommandBar({
     onSort,
     onShowFilters,
     selectedDocuments,
+    onReview,
 }: {
     /** What the user has typed. Distinct from `query.search`, which lags it by the debounce. */
     searchDraft: string;
@@ -84,6 +86,7 @@ export function ExplorerCommandBar({
     uploading: boolean;
     availability: DocumentActionAvailability;
     selectedDocuments: WorkspaceDocument[];
+    onReview?: () => void;
     canSaveView: boolean;
     onSearchChange: (value: string) => void;
     onSearchSubmit: (value: string) => void;
@@ -101,6 +104,7 @@ export function ExplorerCommandBar({
     onShowFilters?: () => void;
 }) {
     const hasSelection = selectionCount > 0;
+    const canReview = Boolean(onReview && selectedDocuments.length === 1 && availability.canReview?.(selectedDocuments[0]));
     const compactActions = Boolean(onShowFilters && (
         availability.upload || availability.downloads || availability.tagDocuments
         || availability.extractMetadata || availability.deleteDocuments
@@ -111,6 +115,7 @@ export function ExplorerCommandBar({
         { value: 'tag', label: 'Tag', visible: availability.tagDocuments, enabled: hasSelection && availability.allows('tag_documents', selectedDocuments), run: onTag },
         { value: 'extract', label: 'Extract', visible: availability.extractMetadata, enabled: hasSelection && availability.allows('extract_metadata', selectedDocuments), run: onExtractMetadata },
         { value: 'delete', label: 'Delete', visible: availability.deleteDocuments, enabled: hasSelection && availability.allows('delete', selectedDocuments), run: onDelete },
+        { value: 'review', label: 'Review', visible: canReview, enabled: canReview, run: () => onReview?.() },
     ].filter((action) => action.visible);
 
     return (
@@ -187,6 +192,9 @@ export function ExplorerCommandBar({
             >
                 <Trash2 size={14} />
                 Delete
+            </GlassButton> : null}
+            {canReview ? <GlassButton variant="ghost" size="sm" onClick={onReview}>
+                <Users size={14} />Sharing and review
             </GlassButton> : null}
             </>}
 

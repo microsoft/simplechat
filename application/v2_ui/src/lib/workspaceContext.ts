@@ -57,6 +57,10 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    document_collaboration?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 export function requireWorkspaceId(id: string): string {

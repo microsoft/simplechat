@@ -20,6 +20,8 @@ import {
 } from '../../lib/chatContextHandoff';
 import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { isScreeningBusy } from '../../lib/contentScreening';
+import { ApiError } from '../../lib/apiClient';
+import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
     supportedDocumentQuery, type DocumentReadAdapter,
@@ -82,6 +84,7 @@ import {
 import { DEFAULT_DOCUMENT_COLUMNS, DocumentTable } from './DocumentTable';
 import { DocumentTiles } from './DocumentTiles';
 import { DocumentDetailsPane } from './DocumentDetailsPane';
+import { DocumentCollaborationDialog } from './DocumentCollaborationDialog';
 import {
     DeleteDialog,
     MetadataDialog,
@@ -125,6 +128,7 @@ type ActiveDialog =
     | { kind: 'metadata'; document: WorkspaceDocument }
     | { kind: 'share'; document: WorkspaceDocument }
     | { kind: 'delete'; documents: WorkspaceDocument[]; blocked: DocumentOperationError[] }
+    | { kind: 'collaboration'; document: WorkspaceDocument | null; id: string }
     | null;
 
 /** Hand a blob to the browser as a download without navigating the tab. */
@@ -142,6 +146,10 @@ function saveBlob(blob: Blob, fileName: string) {
 interface DocumentExplorerProps {
     reader?: DocumentReadAdapter;
     operations?: DocumentOperationAdapter;
+    collaboration?: DocumentCollaborationAdapter;
+    linkedDocumentId?: string | null;
+    linkedDocumentError?: string | null;
+    onClearLinkedDocument?: () => void;
     canChat?: boolean;
     interactionDisabled?: boolean;
     onOpenClassic?: () => void;
@@ -150,7 +158,7 @@ interface DocumentExplorerProps {
 }
 
 export function DocumentExplorer({
-    reader = PERSONAL_DOCUMENT_READER, operations, ...props
+    reader = PERSONAL_DOCUMENT_READER, operations, collaboration, ...props
 }: DocumentExplorerProps) {
     const viewerId = useBootstrapStore((state) => state.data?.user.id);
     const resolvedOperations = useMemo(() => operations ?? (reader.scope.kind === 'group'
@@ -161,12 +169,17 @@ export function DocumentExplorer({
         <div role="alert"><EmptyState title="Document management scope does not match"
             description="Refresh this workspace before managing documents." /></div>
     );
-    return <ScopedDocumentExplorer key={scopeKey} scopeKey={scopeKey} reader={reader} operations={resolvedOperations} {...props} />;
+    if (collaboration && (reader.scope.kind !== 'group' || collaboration.scope.id !== reader.scope.id)) return (
+        <div role="alert"><EmptyState title="Document collaboration scope does not match"
+            description="Refresh this workspace before reviewing documents." /></div>
+    );
+    return <ScopedDocumentExplorer key={scopeKey} scopeKey={scopeKey} reader={reader} operations={resolvedOperations}
+        collaboration={collaboration} {...props} />;
 }
 
 function ScopedDocumentExplorer({
     reader, operations, scopeKey, canChat = true, interactionDisabled = false, onOpenClassic,
-    onDirtyChange, onBusyChange,
+    onDirtyChange, onBusyChange, collaboration, linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
 }: DocumentExplorerProps & { reader: DocumentReadAdapter; operations: DocumentOperationAdapter; scopeKey: string }) {
     const navigate = useNavigate();
     const features = useBootstrapStore((state) => state.data?.features);
@@ -209,6 +222,10 @@ function ScopedDocumentExplorer({
 
     const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
     const [inspectedId, setInspectedId] = useState<string | null>(null);
+    const [inspectedDocument, setInspectedDocument] = useState<WorkspaceDocument | null>(null);
+    const [linkedGone, setLinkedGone] = useState(false);
+    const [collaborationDirty, setCollaborationDirty] = useState(false);
+    const [collaborationBusy, setCollaborationBusy] = useState(false);
     const [loading, setLoading] = useState(true);
     const [task, setTask] = useState<ExplorerTask | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -227,7 +244,7 @@ function ScopedDocumentExplorer({
     const [feedback, setFeedback] = useState<{ title: string; errors: TagOperationError[] } | null>(null);
 
     // Dialogs disable their controls while any bulk work is running.
-    const busy = task !== null;
+    const busy = task !== null || collaborationBusy;
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLFieldSetElement>(null);
@@ -239,16 +256,28 @@ function ScopedDocumentExplorer({
     const documentReads = useRef(new Map<string, number>());
     const failedSelection = useRef(new Set<string>());
     const mutationBusy = useRef(false);
+    const collaborationBusyRef = useRef(false);
+    const previousLinkedDocument = useRef<string | null>(null);
+    const openedLinkedReview = useRef<string | null>(null);
     const listRevision = useRef(0);
     const access = useRef({ canChat, interactionDisabled });
     access.current = { canChat, interactionDisabled };
-    const operationContext = useRef({ operations, documents, interactionDisabled, loading, downloadsEnabled, features });
-    operationContext.current = { operations, documents, interactionDisabled, loading, downloadsEnabled, features };
+    const operationDocuments = inspectedDocument && documentId(inspectedDocument) === inspectedId
+        && !documents.some((document) => documentId(document) === inspectedId)
+        ? [...documents, inspectedDocument] : documents;
+    const operationContext = useRef({ operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features });
+    operationContext.current = { operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features };
 
     useEffect(() => {
-        onDirtyChange?.(dialog !== null);
+        onDirtyChange?.(dialog?.kind === 'collaboration' ? collaborationDirty : dialog !== null);
         return () => onDirtyChange?.(false);
-    }, [dialog, onDirtyChange]);
+    }, [dialog, collaborationDirty, onDirtyChange]);
+
+    const reportCollaborationBusy = useCallback((value: boolean) => {
+        collaborationBusyRef.current = value;
+        setCollaborationBusy(value);
+        onBusyChange?.(value);
+    }, [onBusyChange]);
 
     useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
@@ -266,6 +295,28 @@ function ScopedDocumentExplorer({
         media.addEventListener('change', update);
         return () => media.removeEventListener('change', update);
     }, []);
+
+    useEffect(() => {
+        const previous = previousLinkedDocument.current;
+        previousLinkedDocument.current = linkedDocumentId ?? null;
+        openedLinkedReview.current = null;
+        setInspectedDocument(null);
+        setLinkedGone(false);
+        setDetailError(null);
+        setDialog((current) => current?.kind === 'collaboration' ? null : current);
+        if (linkedDocumentError) {
+            setInspectedId(null);
+            setSelection(EMPTY_SELECTION);
+            return;
+        }
+        if (linkedDocumentId) {
+            setInspectedId(linkedDocumentId);
+            setSelection(EMPTY_SELECTION);
+            if (compact) setDetailsOpen(true);
+        } else {
+            setInspectedId((current) => current === previous ? null : current);
+        }
+    }, [linkedDocumentId, linkedDocumentError]);
 
     useEffect(() => {
         setQuery((current) => {
@@ -286,7 +337,7 @@ function ScopedDocumentExplorer({
     }, [chatSelectionReason, interactionDisabled, isGroup, operations]);
 
     const requirePersonalFeature = useCallback(() => {
-        if (isGroup || interactionDisabled || mutationBusy.current) {
+        if (isGroup || interactionDisabled || mutationBusy.current || collaborationBusyRef.current) {
             toast.error(isGroup ? 'This personal workspace feature is not available for group documents.'
                 : 'Refresh workspace access before changing documents.');
             return false;
@@ -296,7 +347,7 @@ function ScopedDocumentExplorer({
 
     const canPerform = useCallback((operation: DocumentOperation, targets: readonly WorkspaceDocument[] = []) => {
         const current = operationContext.current;
-        if (current.interactionDisabled || mutationBusy.current
+        if (current.interactionDisabled || mutationBusy.current || collaborationBusyRef.current
             || (targets.length > 0 && current.loading)) return false;
         if (current.operations.scope.kind === 'personal') {
             if (operation === 'download' && !current.downloadsEnabled) return false;
@@ -401,8 +452,10 @@ function ScopedDocumentExplorer({
             sharing: !isGroup && Boolean(features?.enable_file_sharing),
             classification: Boolean(features?.enable_document_classification),
             enhancedExtraction: Boolean(features?.enable_enhanced_extraction),
+            canReview: (document: WorkspaceDocument) => Boolean(collaboration
+                && !interactionDisabled && !busy && !loading && collaboration.allows('inspect', document)),
         }),
-        [isGroup, operations, canPerform, canChat, interactionDisabled, busy, loading, error, detailError, chatPending, downloadsEnabled, features],
+        [isGroup, operations, collaboration, canPerform, canChat, interactionDisabled, busy, loading, error, detailError, chatPending, downloadsEnabled, features],
     );
 
     const orderedIds = useMemo(
@@ -414,7 +467,9 @@ function ScopedDocumentExplorer({
         [documents, selection.ids],
     );
     const detailDocuments = inspectedId
-        ? documents.filter((item) => documentId(item) === inspectedId)
+        ? documents.some((item) => documentId(item) === inspectedId)
+            ? documents.filter((item) => documentId(item) === inspectedId)
+            : inspectedDocument && documentId(inspectedDocument) === inspectedId ? [inspectedDocument] : []
         : selectedDocuments;
 
     useEffect(() => {
@@ -450,19 +505,19 @@ function ScopedDocumentExplorer({
                 setDownloadsEnabled(!isGroup && Boolean(response.file_downloads_enabled));
                 setSelection((current) => pruneSelection(current, items.filter((item) =>
                     !selectionReason(item) || failedSelection.current.has(documentId(item))).map(documentId)));
-                setInspectedId((current) => items.some((item) => documentId(item) === current) ? current : null);
+                setInspectedId((current) => current === linkedDocumentId || items.some((item) => documentId(item) === current) ? current : null);
             } catch (loadError) {
                 if (controller.signal.aborted || !mounted.current) return;
                 setDocuments([]);
                 setTotalCount(0);
                 setSelection(EMPTY_SELECTION);
-                setInspectedId(null);
+                setInspectedId((current) => current === linkedDocumentId ? current : null);
                 setError(errorMessage(loadError, 'Failed to load documents.'));
             } finally {
                 if (!controller.signal.aborted && mounted.current) setLoading(false);
             }
         },
-        [query, reader, isGroup, interactionDisabled, selectionReason],
+        [query, reader, isGroup, interactionDisabled, selectionReason, linkedDocumentId],
     );
 
     const loadSidebar = useCallback(async () => {
@@ -496,14 +551,20 @@ function ScopedDocumentExplorer({
     /** Reload the list and the rail together, after anything that changes both. */
     const refreshAll = useCallback(async () => {
         setPollError(null);
+        if (inspectedId) {
+            setInspectedDocument(null);
+            setDetailRefresh((value) => value + 1);
+        }
         await Promise.all([loadDocuments(), loadSidebar()]);
-    }, [loadDocuments, loadSidebar]);
+    }, [loadDocuments, loadSidebar, inspectedId]);
 
-    const detailId = detailDocuments.length === 1 ? documentId(detailDocuments[0]) : null;
+    const detailId = inspectedId ?? (detailDocuments.length === 1 ? documentId(detailDocuments[0]) : null);
     useEffect(() => {
         detailRequest.current?.abort();
         setDetailError(null);
         setDetailLoading(false);
+        setLinkedGone(false);
+        if (inspectedId) setInspectedDocument(null);
         if (!detailId || interactionDisabled || (!isGroup && detailRefresh === 0)) return;
         const controller = new AbortController();
         detailRequest.current = controller;
@@ -513,13 +574,19 @@ function ScopedDocumentExplorer({
             if (!document || controller.signal.aborted || !mounted.current || revision !== listRevision.current) return;
             // Replace, never merge: a newly held or unapproved projection omits restricted metadata.
             setDocuments((current) => current.map((item) => documentId(item) === detailId ? document : item));
+            if (inspectedId === detailId) setInspectedDocument(document);
         }).catch((cause: unknown) => {
-            if (!controller.signal.aborted && mounted.current) setDetailError(errorMessage(cause, 'Could not refresh document details.'));
+            if (!controller.signal.aborted && mounted.current) {
+                setDetailError(cause instanceof ApiError && [403, 404].includes(cause.status)
+                    ? 'The requested document is unavailable in this group. It may be gone or you may no longer have access.'
+                    : errorMessage(cause, 'Could not refresh document details.'));
+                if (cause instanceof ApiError && cause.status === 404 && detailId === linkedDocumentId) setLinkedGone(true);
+            }
         }).finally(() => {
             if (!controller.signal.aborted && mounted.current) setDetailLoading(false);
         });
         return () => controller.abort();
-    }, [detailId, readCurrentDocument, interactionDisabled, detailRefresh, isGroup, query]);
+    }, [detailId, inspectedId, linkedDocumentId, readCurrentDocument, interactionDisabled, detailRefresh, isGroup, query]);
 
     /* ---------------------------------------------------------------------- */
     /* Progress polling                                                        */
@@ -527,11 +594,11 @@ function ScopedDocumentExplorer({
 
     const processingIds = useMemo(
         () =>
-            documents
+            operationDocuments
                 .filter((item) => documentStatus(item).state === 'processing' || isScreeningBusy(item))
                 .map(documentId)
                 .filter(Boolean),
-        [documents],
+        [documents, inspectedDocument],
     );
 
     useEffect(() => {
@@ -572,6 +639,7 @@ function ScopedDocumentExplorer({
             setDocuments((current) =>
                 current.map((item) => byId.get(documentId(item)) ?? item),
             );
+            setInspectedDocument((current) => current ? byId.get(documentId(current)) ?? current : null);
 
             const finished = [...byId.values()].some(
                 (item) => documentStatus(item).state !== 'processing' && !isScreeningBusy(item),
@@ -603,7 +671,7 @@ function ScopedDocumentExplorer({
     /* ---------------------------------------------------------------------- */
 
     const changeQuery = useCallback((change: Partial<DocumentQuery>) => {
-        if (interactionDisabled || chatPending || mutationBusy.current) return;
+        if (interactionDisabled || chatPending || mutationBusy.current || collaborationBusyRef.current) return;
         setQuery((current) => supportedDocumentQuery(applyQueryChange(current, change), reader));
     }, [reader, interactionDisabled, chatPending]);
 
@@ -622,7 +690,7 @@ function ScopedDocumentExplorer({
 
     const onSort = useCallback(
         (field: DocumentSortField) => {
-            if (interactionDisabled || chatPending || mutationBusy.current || !reader.queries.sortFields.includes(field)) return;
+            if (interactionDisabled || chatPending || mutationBusy.current || collaborationBusyRef.current || !reader.queries.sortFields.includes(field)) return;
             setQuery((current) => {
                 const next = toggleSort(current, field);
                 updatePrefs({ sortBy: next.sortBy, sortOrder: next.sortOrder });
@@ -638,18 +706,22 @@ function ScopedDocumentExplorer({
 
     const onSelect = useCallback(
         (id: string, intent: SelectionIntent) => {
-            if (interactionDisabled || chatPending || mutationBusy.current || loading || error || !orderedIds.includes(id)) {
+            if (interactionDisabled || chatPending || mutationBusy.current || collaborationBusyRef.current || loading || error || !orderedIds.includes(id)) {
                 return;
             }
+            if (linkedDocumentId || linkedDocumentError) onClearLinkedDocument?.();
             setInspectedId(null);
+            setInspectedDocument(null);
             setSelection((current) => applySelection(current, id, intent, orderedIds));
         },
-        [orderedIds, interactionDisabled, chatPending, loading, error],
+        [orderedIds, interactionDisabled, chatPending, loading, error, linkedDocumentId, linkedDocumentError, onClearLinkedDocument],
     );
 
     const onOpen = useCallback(
         (document: WorkspaceDocument) => {
-            if (interactionDisabled || chatPending || mutationBusy.current || loading || error) return;
+            if (interactionDisabled || chatPending || mutationBusy.current || collaborationBusyRef.current || loading || error) return;
+            if (linkedDocumentError || (linkedDocumentId && linkedDocumentId !== documentId(document))) onClearLinkedDocument?.();
+            setInspectedDocument(null);
             setInspectedId(documentId(document));
             if (selectionReason(document)) {
                 setSelection(EMPTY_SELECTION);
@@ -657,7 +729,8 @@ function ScopedDocumentExplorer({
             if (compact) setDetailsOpen(true);
             updatePrefs({ detailsPaneOpen: true });
         },
-        [updatePrefs, compact, selectionReason, interactionDisabled, chatPending, loading, error],
+        [updatePrefs, compact, selectionReason, interactionDisabled, chatPending, loading, error,
+            linkedDocumentId, linkedDocumentError, onClearLinkedDocument],
     );
 
     useEffect(() => {
@@ -679,11 +752,13 @@ function ScopedDocumentExplorer({
 
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
                 event.preventDefault();
+                if (linkedDocumentId || linkedDocumentError) onClearLinkedDocument?.();
                 setInspectedId(null);
                 setSelection({ ids: [...orderedIds], anchorId: orderedIds[0] ?? null });
                 return;
             }
             if (event.key === 'Escape') {
+                if (linkedDocumentId || linkedDocumentError) onClearLinkedDocument?.();
                 setSelection(EMPTY_SELECTION);
                 setInspectedId(null);
                 return;
@@ -704,7 +779,8 @@ function ScopedDocumentExplorer({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [orderedIds, dialog, interactionDisabled, chatPending, loading, error, filtersOpen, detailsOpen]);
+    }, [orderedIds, dialog, interactionDisabled, chatPending, loading, error, filtersOpen, detailsOpen,
+        linkedDocumentId, linkedDocumentError, onClearLinkedDocument]);
 
     const onDragStart = useCallback(
         (event: React.DragEvent, id: string) => {
@@ -732,7 +808,7 @@ function ScopedDocumentExplorer({
     /* Actions                                                                 */
     /* ---------------------------------------------------------------------- */
 
-    const openDialog = useCallback((value: NonNullable<ActiveDialog>) => {
+    const openDialog = useCallback((value: Exclude<NonNullable<ActiveDialog>, { kind: 'collaboration' }>) => {
         const targets = value.kind === 'metadata' || value.kind === 'share' ? [value.document] : value.documents;
         const allowed = value.kind === 'share' ? requirePersonalFeature()
             : operationTargets(value.kind === 'metadata' ? 'edit_metadata' : value.kind === 'tag' ? 'tag_documents' : 'delete', targets);
@@ -746,7 +822,7 @@ function ScopedDocumentExplorer({
     }, [operationTargets, requirePersonalFeature, onDirtyChange]);
 
     const closeDialog = useCallback(() => {
-        if (mutationBusy.current) {
+        if (mutationBusy.current || collaborationBusyRef.current) {
             toast.info('Wait for the current operation to finish. Closing does not cancel server work.');
             return;
         }
@@ -754,6 +830,37 @@ function ScopedDocumentExplorer({
         setDialogError(null);
         onDirtyChange?.(false);
     }, [onDirtyChange]);
+
+    const openCollaboration = useCallback((document: WorkspaceDocument | null, targetId?: string) => {
+        if (!collaboration || interactionDisabled || mutationBusy.current || collaborationBusyRef.current) return;
+        const id = document ? documentId(document) : targetId;
+        if (!id || (document ? !collaboration.allows('inspect', document) : !collaboration.supported.has('inspect'))) {
+            toast.error('Sharing review is not currently available for this document.');
+            return;
+        }
+        setDetailsOpen(false);
+        setCollaborationDirty(false);
+        setDialog({ kind: 'collaboration', document, id });
+    }, [collaboration, interactionDisabled]);
+
+    useEffect(() => {
+        if (!linkedDocumentId || openedLinkedReview.current === linkedDocumentId || detailLoading
+            || interactionDisabled || !collaboration || mutationBusy.current || collaborationBusyRef.current) return;
+        const target = inspectedDocument && documentId(inspectedDocument) === linkedDocumentId ? inspectedDocument : null;
+        if (target && collaboration.allows('inspect', target)) {
+            openedLinkedReview.current = linkedDocumentId;
+            openCollaboration(target);
+        } else if (linkedGone && collaboration.supported.has('inspect')) {
+            openedLinkedReview.current = linkedDocumentId;
+            openCollaboration(null, linkedDocumentId);
+        }
+    }, [linkedDocumentId, inspectedDocument, linkedGone, detailLoading, interactionDisabled, collaboration, openCollaboration]);
+
+    const refreshAfterCollaboration = useCallback(async (_receipt: CollaborationReceipt) => {
+        if (!mounted.current) return;
+        setSelection(EMPTY_SELECTION);
+        await refreshAll();
+    }, [refreshAll]);
 
     /**
      * Run one request per batch of documents, reporting progress as each lands.
@@ -914,7 +1021,7 @@ function ScopedDocumentExplorer({
      */
     const onChat = useCallback(
         async (targets: WorkspaceDocument[]) => {
-            if (!availability.chat || mutationBusy.current) {
+            if (!availability.chat || mutationBusy.current || collaborationBusyRef.current) {
                 toast.error('Chat is not currently available for this selection. Refresh workspace access and try again.');
                 return;
             }
@@ -1167,6 +1274,8 @@ function ScopedDocumentExplorer({
                 onOpen={onOpen}
                 onDragStart={availability.tagDocuments ? onDragStart : undefined}
                 canDrag={(document) => canPerform('tag_documents', [document])}
+                canReview={availability.canReview}
+                onReview={collaboration ? (document) => openCollaboration(document) : undefined}
                 selectionReason={selectionReason}
                 scope={reader.scope}
             />
@@ -1181,6 +1290,7 @@ function ScopedDocumentExplorer({
                 onSelect={onSelect}
                 onToggleSelectAll={() => {
                     if (interactionDisabled || chatPending || mutationBusy.current || loading || error) return;
+                    if (linkedDocumentId || linkedDocumentError) onClearLinkedDocument?.();
                     setInspectedId(null);
                     setSelection((current) => toggleSelectAll(current, orderedIds));
                 }}
@@ -1188,6 +1298,8 @@ function ScopedDocumentExplorer({
                 onOpen={onOpen}
                 onDragStart={availability.tagDocuments ? onDragStart : undefined}
                 canDrag={(document) => canPerform('tag_documents', [document])}
+                canReview={availability.canReview}
+                onReview={collaboration ? (document) => openCollaboration(document) : undefined}
                 selectionReason={selectionReason}
                 scope={reader.scope}
                 sortFields={reader.queries.sortFields}
@@ -1230,6 +1342,7 @@ function ScopedDocumentExplorer({
             onExtractMetadata: (targets) => void onExtractMetadata(targets),
             onReextract: (targets, mode) => void onReextract(targets, mode),
             onShare: (target) => openDialog({ kind: 'share', document: target }),
+            onReview: collaboration ? (target) => openCollaboration(target) : undefined,
             onManageTags: (targets) => openDialog({ kind: 'tag', documents: targets }),
             onDelete: (targets) => openDialog({ kind: 'delete', documents: targets, blocked: [] }),
             onSelectTag: (tag) => changeQuery({ tags: [tag] }),
@@ -1239,6 +1352,7 @@ function ScopedDocumentExplorer({
         classificationColors={classificationColors}
         onClose={() => {
             setDetailsOpen(false);
+            if (linkedDocumentId) onClearLinkedDocument?.();
             if (!compact) updatePrefs({ detailsPaneOpen: false });
         }}
     />;
@@ -1261,7 +1375,7 @@ function ScopedDocumentExplorer({
 
             <ExplorerCommandBar
                 searchDraft={searchDraft}
-                prefs={compact ? { ...prefs, detailsPaneOpen: detailsOpen } : prefs}
+                prefs={{ ...prefs, detailsPaneOpen: compact ? detailsOpen : prefs.detailsPaneOpen || Boolean(linkedDocumentId) }}
                 selectionCount={selectedDocuments.length}
                 selectedDocuments={selectedDocuments}
                 uploading={uploading}
@@ -1271,6 +1385,7 @@ function ScopedDocumentExplorer({
                 sortFields={reader.queries.sortFields}
                 onSort={onSort}
                 onShowFilters={compact ? () => setFiltersOpen(true) : undefined}
+                onReview={collaboration ? () => { if (selectedDocuments.length === 1) openCollaboration(selectedDocuments[0]); } : undefined}
                 onSearchChange={setSearchDraft}
                 onSearchSubmit={(value) => {
                     // Enter searches now rather than waiting out the debounce.
@@ -1287,6 +1402,7 @@ function ScopedDocumentExplorer({
                 }
                 onSaveView={onSaveView}
                 onPrefsChange={(change) => {
+                    if (change.detailsPaneOpen === false && linkedDocumentId) onClearLinkedDocument?.();
                     if (compact && change.detailsPaneOpen !== undefined) {
                         setDetailsOpen(change.detailsPaneOpen);
                         return;
@@ -1299,6 +1415,12 @@ function ScopedDocumentExplorer({
             />
 
             {chatPending ? <p role="status" className="text-xs text-text-3">Confirming selected documents for chat...</p> : null}
+            {linkedDocumentId || linkedDocumentError ? (
+                <div role={linkedDocumentError ? 'alert' : 'status'} className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-3">
+                    <span className="break-all">{linkedDocumentError || `Requested document: ${linkedDocumentId}`}</span>
+                    {onClearLinkedDocument ? <GlassButton size="sm" variant="ghost" onClick={onClearLinkedDocument}>Return to document list</GlassButton> : null}
+                </div>
+            ) : null}
             {isGroup && !canChat ? <p role="status" className="text-xs text-text-3">Chat is not available for this group. You can still inspect its documents.</p> : null}
             {feedback && !dialog ? <div className="space-y-1">
                 {feedback.errors.length ? <OperationFeedback {...feedback} documents={documents} />
@@ -1357,7 +1479,7 @@ function ScopedDocumentExplorer({
                     /> : null}
                 </div>
 
-                {!compact && prefs.detailsPaneOpen ? detailsPane : null}
+                {!compact && (prefs.detailsPaneOpen || linkedDocumentId) ? detailsPane : null}
             </div>
 
             {compact && filtersOpen ? <Modal title="Document filters" onClose={() => setFiltersOpen(false)}
@@ -1367,6 +1489,14 @@ function ScopedDocumentExplorer({
             {compact && detailsOpen ? <Modal title="Document details" onClose={() => setDetailsOpen(false)} tall bodyClassName="min-h-0 overflow-hidden p-2">
                 {detailsPane}
             </Modal> : null}
+
+            {dialog?.kind === 'collaboration' && collaboration ? (
+                <DocumentCollaborationDialog key={`${scopeKey}:${dialog.id}`} document={dialog.document}
+                    targetDocumentId={dialog.id} adapter={collaboration} reader={reader}
+                    interactionDisabled={interactionDisabled} onClose={closeDialog}
+                    onDirtyChange={setCollaborationDirty} onBusyChange={reportCollaborationBusy}
+                    onChanged={refreshAfterCollaboration} />
+            ) : null}
 
             {dialog?.kind === 'tag' ? (
                 <TagDialog

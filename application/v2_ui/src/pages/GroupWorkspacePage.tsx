@@ -13,7 +13,7 @@ import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
     GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupWorkspaceNavigationAvailability,
-    groupWorkspacePath, classicGroupSectionLabel,
+    groupWorkspacePath, classicGroupSectionLabel, readGroupDocumentTarget,
 } from '../lib/groupWorkspaceNavigation';
 import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { resolveWorkspaceSections } from '../lib/workspaceSections';
@@ -29,6 +29,8 @@ export function GroupWorkspacePage() {
     const navigate = useNavigate();
     const location = useLocation();
     const linkedWorkflow = new URLSearchParams(location.search).get('workflow_id');
+    const linkedDocument = useMemo(() => readGroupDocumentTarget(location.search), [location.search]);
+    const hasDocumentLink = Boolean(linkedDocument.id || linkedDocument.error);
     const bootstrap = useBootstrapStore((state) => state.data);
     const state = useGroupWorkspaceStore();
     const viewerId = bootstrap?.user?.id;
@@ -58,14 +60,17 @@ export function GroupWorkspacePage() {
     blockerRef.current = blocker;
 
     useEffect(() => {
-        if (!groupId && enabled && activeGroupId && !state.activating && !state.needsReconciliation && !externalTarget) {
+        if (!groupId && !hasDocumentLink && enabled && activeGroupId && !state.activating && !state.needsReconciliation && !externalTarget) {
             navigate(`${groupWorkspacePath(activeGroupId, linkedWorkflow ? 'workflows' : undefined)}${location.search}`, { replace: true });
         }
-        if (groupId && !section && linkedWorkflow && enabled) {
+        if (groupId && !section && linkedWorkflow && !hasDocumentLink && enabled) {
             navigate(`${groupWorkspacePath(groupId, 'workflows')}${location.search}`, { replace: true });
         }
+        if (groupId && !section && hasDocumentLink && enabled) {
+            navigate(`${groupWorkspacePath(groupId, 'documents')}${location.search}`, { replace: true });
+        }
     }, [groupId, enabled, activeGroupId, section, linkedWorkflow, location.search, navigate,
-        state.activating, state.needsReconciliation, externalTarget]);
+        state.activating, state.needsReconciliation, externalTarget, hasDocumentLink]);
 
     useEffect(() => {
         if (!groupId || !viewerId || !enabled) {
@@ -157,7 +162,14 @@ export function GroupWorkspacePage() {
             if (result.status === 'activated') {
                 if (blockerRef.current.state === 'blocked') blockerRef.current.reset();
                 const params = new URLSearchParams(location.search);
-                if (groupId && id !== groupId) params.delete('workflow_id');
+                if (groupId && id !== groupId) {
+                    params.delete('workflow_id');
+                }
+                if (id !== groupId) {
+                    params.delete('document_id');
+                    params.delete('group_id');
+                    params.delete('group_ids');
+                }
                 const nextSection = section || (params.get('workflow_id') ? 'workflows' : undefined);
                 navigate(`${groupWorkspacePath(id, nextSection)}${params.size ? `?${params}` : ''}`, { replace: !groupId });
             }
@@ -169,6 +181,13 @@ export function GroupWorkspacePage() {
             if (blockerRef.current.state === 'blocked' && !dirtyRef.current && !busyRef.current) blockerRef.current.reset();
         }
     };
+    const clearDocumentLink = useCallback(() => {
+        const params = new URLSearchParams(location.search);
+        params.delete('document_id');
+        params.delete('group_id');
+        params.delete('group_ids');
+        navigate(`${location.pathname}${params.size ? `?${params}` : ''}`, { replace: true });
+    }, [location.pathname, location.search, navigate]);
     const recover = async () => {
         setNotice('');
         try {
@@ -263,7 +282,8 @@ export function GroupWorkspacePage() {
                 </div>
             ) : !groupId ? (
                 <EmptyState icon={<Users size={28} />} title="Choose a group workspace"
-                    description="Select a group above to load its details and shared tools."
+                    description={hasDocumentLink ? 'A document link must include its explicit group. Choose a group and open the document from that workspace.'
+                        : 'Select a group above to load its details and shared tools.'}
                     action={<a href="/profile?tab=groups" className="text-sm text-accent underline">Find or manage your groups in classic</a>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
@@ -282,7 +302,9 @@ export function GroupWorkspacePage() {
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <GroupDocumentsSection context={context}
                                     interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}
-                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
+                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy}
+                                    linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
+                                    onClearLinkedDocument={clearDocumentLink} />
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description="You do not have access to this group's documents." />
                             )
                             : section === 'tags' && !resourceId ? (

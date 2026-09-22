@@ -2,8 +2,9 @@
 """
 Ensure new explicit-group operations cannot match legacy active-scoped routes.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.129
+Collaboration paths added in: 0.261.130
 
 A mixed deployment must reject an unsupported group-bound URL rather than
 silently execute an old route in the user's active group.
@@ -32,6 +33,15 @@ OPERATION_REQUESTS = [
     ("PATCH", "/api/groups/requested-group/documents/tags/finance"),
     ("DELETE", "/api/groups/requested-group/documents/tags/finance"),
     ("POST", "/api/groups/requested-group/documents/bulk-tag"),
+    ("GET", "/api/groups/requested-group/documents/document-id/sharing"),
+    ("GET", "/api/groups/requested-group/documents/document-id/sharing/targets"),
+    ("POST", "/api/groups/requested-group/documents/document-id/share"),
+    ("DELETE", "/api/groups/requested-group/documents/document-id/share/recipient"),
+    ("POST", "/api/groups/requested-group/documents/document-id/approve-share"),
+    ("DELETE", "/api/groups/requested-group/documents/document-id/received-share"),
+    ("POST", "/api/groups/requested-group/documents/document-id/artifact/approve"),
+    ("POST", "/api/groups/requested-group/documents/document-id/artifact/reject"),
+    ("POST", "/api/groups/requested-group/documents/document-id/artifact/cancel"),
 ]
 
 

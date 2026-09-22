@@ -69,6 +69,12 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
     "group_document_projection_writer",
 })
+# A pending generated artifact stays held, but the group review surface still
+# needs to say who requested it. Both allow-lists must name the same fields.
+GENERATED_ARTIFACT_REQUEST_FIELDS = frozenset({
+    "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
+    "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
+})
 
 
 def _require_available_metadata(document):
@@ -772,14 +778,22 @@ def guard_model_callable(invoke, evidence, user_id=None):
     return guarded
 
 
+def is_public_document_field(key):
+    """Redaction is a property of the field, never of the screening toggle."""
+    return (
+        key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
+        and not key.startswith("_") and not key.startswith("screening_")
+    )
+
+
 def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return {key: deepcopy(value) for key, value in document.items() if key not in {
-            "generated_artifact_publication_binding", "generated_artifact_publication_processing",
-            "group_document_projection_writer",
-        }}
+        return {
+            key: deepcopy(value) for key, value in document.items()
+            if is_public_document_field(key)
+        }
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -789,15 +803,10 @@ def public_document_payload(document):
         available = False
     public_fields = HELD_PUBLIC_FIELDS
     if document.get("generated_artifact_publication_binding"):
-        public_fields = public_fields | {
-            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
-            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
-        }
+        public_fields = public_fields | GENERATED_ARTIFACT_REQUEST_FIELDS
     payload = {
         key: deepcopy(value) for key, value in document.items()
-        if (available or key in public_fields)
-        and key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
-        and not key.startswith("_") and not key.startswith("screening_")
+        if (available or key in public_fields) and is_public_document_field(key)
     }
     marker = document.get(SCREENING_FIELD)
     summary_source = document

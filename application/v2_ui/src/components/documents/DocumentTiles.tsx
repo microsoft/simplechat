@@ -7,6 +7,7 @@
 // to reach the same place.
 
 import { clsx } from 'clsx';
+import { Users } from 'lucide-react';
 import { groupDocumentOrigin, type DocumentReadScope } from '../../lib/documentReadAdapter';
 import type { WorkspaceDocument } from '../../lib/types';
 import {
@@ -37,6 +38,8 @@ export function DocumentTiles({
     selectionReason,
     scope,
     canDrag,
+    canReview,
+    onReview,
 }: {
     documents: WorkspaceDocument[];
     selection: SelectionState;
@@ -48,6 +51,8 @@ export function DocumentTiles({
     selectionReason: (document: WorkspaceDocument) => string | null;
     scope: DocumentReadScope;
     canDrag: (document: WorkspaceDocument) => boolean;
+    canReview?: (document: WorkspaceDocument) => boolean;
+    onReview?: (document: WorkspaceDocument) => void;
 }) {
     const selectedIds = new Set(selection.ids);
 
@@ -128,6 +133,13 @@ export function DocumentTiles({
                                         <p className="text-[11px] text-text-3">
                                             {groupDocumentOrigin(document, scope.id)}
                                         </p>
+                                    ) : null}
+                                    {onReview && canReview?.(document) ? (
+                                        <button type="button" aria-label={`Review ${primary}`}
+                                            onClick={(event) => { event.stopPropagation(); onReview(document); }}
+                                            className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                                            <Users size={12} />Sharing and review
+                                        </button>
                                     ) : null}
                                 </div>
                             </div>
