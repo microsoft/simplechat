@@ -769,7 +769,7 @@
             <a class="dropdown-item" href="{{ url_for('frontend_feedback.my_feedback') }}">My Feedback</a>
           </li>
           {% endif %}
-          {% if app_settings.enable_content_safety %}
+          {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
           <li>
             <a class="dropdown-item" href="{{ url_for('frontend_safety.my_safety_violations') }}">My Safety Violations</a>
           </li>
@@ -793,7 +793,7 @@
           </li>
           {% endif %}
           {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
-          {% if app_settings.enable_content_safety %}
+          {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
             {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('frontend_safety.admin_safety_violations') }}">Safety Violations</a>

@@ -956,6 +956,10 @@ export interface WorkspaceAvailability {
  * why almost everything here is optional.
  */
 export interface ChatStreamEvent {
+    role?: MessageRole;
+    blocked?: boolean;
+    replace_content?: boolean;
+    full_content?: string;
     reasoning_adjustments?: ReasoningResolution[];
     reasoning_effort?: string | null;
     requested_reasoning_effort?: string | null;

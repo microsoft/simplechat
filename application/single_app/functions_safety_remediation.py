@@ -108,6 +108,8 @@ def execute_safety_violation_action(
     actor: Dict[str, str],
 ) -> Dict[str, Any]:
     """Execute a warning or access restriction for a safety violation."""
+    if safety_log.get("content_origin", "user") != "user":
+        raise ValueError("AI-generated findings cannot be used to warn or restrict a user.")
     target_user_id = str(safety_log.get('user_id') or '').strip()
     if not target_user_id:
         raise ValueError('Safety violation is missing a target user id')

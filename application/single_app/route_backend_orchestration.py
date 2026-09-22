@@ -39,6 +39,13 @@ from openai import OpenAIError
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from functions_appinsights import log_event
+from functions_chat_content_checks import (
+    CHECK_METADATA, check_chat_content, enabled_chat_scanners, orchestration_input_text,
+    prepare_checked_reply, should_withhold_chat_event, strip_private_chat_checks,
+)
+from functions_chat_content_review import (
+    checked_history_messages, record_blocked_chat_attempt, record_chat_content_incident, reply_is_retracted,
+)
 from functions_citation_tracking import merge_cited_documents_into_conversation
 from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_saved_analysis import (
@@ -232,8 +239,22 @@ def _coerce_int(value, default=0):
         return default
 
 
-def _sse(generator):
-    return Response(generator, mimetype='text/event-stream', headers=dict(SSE_HEADERS))
+def _sse(generator, *, check_settings=None):
+    def public_events():
+        try:
+            for frame in generator:
+                if frame.startswith("data:"):
+                    payload = json.loads(frame.partition("data:")[2].strip())
+                    if check_settings is not None and should_withhold_chat_event(payload, check_settings):
+                        continue
+                    yield serialize_sse(strip_private_chat_checks(payload))
+                else:
+                    yield frame
+        finally:
+            close = getattr(generator, "close", None)
+            if callable(close):
+                close()
+    return Response(public_events(), mimetype='text/event-stream', headers=dict(SSE_HEADERS))
 
 
 def _orchestration_enabled(settings):
@@ -531,6 +552,7 @@ def _load_conversation_snapshot(
         parameters=parameters,
         partition_key=conversation_id,
     ))
+    messages = checked_history_messages(messages, for_model=True)
     messages = sanitize_saved_analysis_messages(messages, user_id)
     snapshot = build_conversation_snapshot(
         messages, settings, turn_id=turn_id, truncated=len(messages) >= scan_limit
@@ -566,6 +588,7 @@ def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
         ],
         partition_key=conversation_id,
     )) if message_ids else []
+    messages = checked_history_messages(messages, for_model=True)
     messages = sanitize_saved_analysis_messages(messages, user_id)
     contexts = snapshot.get('analysis_result_contexts') or []
     for context in contexts:
@@ -896,6 +919,9 @@ def _persist_planned_turn(
     message_id, fingerprint = _save_turn_message(
         conversation_id, user_id, turn_context['turn_id'], turn_context['user_message'],
         previous=turn_context, prompt_selection=turn_context.get('prompt_selection'),
+        content_check={
+            **turn_context[CHECK_METADATA], "source": {"kind": "orchestration_turn", "run_id": plan["run_id"]},
+        } if turn_context.get(CHECK_METADATA) else None,
     )
     turn_context['user_message_id'] = message_id
     turn_context['user_message_fingerprint'] = fingerprint
@@ -907,7 +933,7 @@ def _persist_planned_turn(
         prepare_elicitation_outcome(submission, 'plan', plan, turn_context)
 
 
-def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None):
+def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None, content_check=None):
     """A stable ID makes retries and revised plans reuse their original user message."""
     _authorize_context_conversation(conversation_id, user_id)
     message_id = (previous or {}).get('user_message_id') or (
@@ -931,6 +957,9 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
             )
         ):
             raise ConversationContextError('This turn changed. Submit a new request.')
+        if content_check:
+            stored.setdefault("metadata", {})[CHECK_METADATA] = deepcopy(content_check)
+            cosmos_messages_container.upsert_item(stored)
         return message_id, normalized['fingerprint']
     # The flat turn id is what ties a reloaded thread back to its run: the live card stamps
     # the same field on its optimistic bubble, and a message fetched from the server has
@@ -942,6 +971,8 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
     }
     if prompt_selection:
         metadata['prompt_selection'] = prompt_selection
+    if content_check:
+        metadata[CHECK_METADATA] = deepcopy(content_check)
     saved = _save_message(
         conversation_id, 'user', message,
         metadata=metadata,
@@ -1017,6 +1048,27 @@ def _touch_conversation(conversation_id, user_id, title=None):
     return item
 
 
+def _run_response_removed(record):
+    if record.get("chat_content_output_pending"):
+        return True
+    if not record.get("chat_content_checked_output") or not record.get("assistant_message_id"):
+        return False
+    try:
+        message = cosmos_messages_container.read_item(
+            item=record["assistant_message_id"], partition_key=record["conversation_id"],
+        )
+    except CosmosResourceNotFoundError:
+        return True
+    return reply_is_retracted(message)
+
+
+def _hide_removed_step_summaries(steps):
+    return [
+        {**step, "summary": "Response details are unavailable during content review."}
+        for step in steps or []
+    ]
+
+
 def _run_summary_row(record):
     """Project a stored run down to what the drawer's map view actually reads.
 
@@ -1030,7 +1082,7 @@ def _run_summary_row(record):
     """
     record = record if isinstance(record, dict) else {}
     approval = record.get('approval') if isinstance(record.get('approval'), dict) else {}
-    return {
+    row = {
         'run_id': record.get('run_id') or record.get('id'),
         'conversation_id': record.get('conversation_id'),
         'turn_id': record.get('turn_id'),
@@ -1057,6 +1109,11 @@ def _run_summary_row(record):
         },
         **public_execution_fields(record),
     }
+    if _run_response_removed(record):
+        if "execution_steps" in row:
+            row["execution_steps"] = _hide_removed_step_summaries(row["execution_steps"])
+        row["artifact_count"] = 0
+    return row
 
 
 def _run_detail_row(record):
@@ -1193,7 +1250,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         model.close()
 
 
-def _finalize_execution(record, result, error, context, lease, answer_model, research_model, run_token_usage):
+def _finalize_execution(record, result, error, context, lease, answer_model, research_model, run_token_usage, settings=None):
     """Persist every terminal explanation on the worker, even after transport loss."""
     answer_model = getattr(context, 'answer_model', answer_model)
     current = lease.read()
@@ -1316,11 +1373,27 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
     if native_outputs:
         terminal_metadata['generated_tabular_outputs'] = native_outputs
     saved = False
+    checked_reply = {
+        "id": message_id, "conversation_id": record["conversation_id"],
+        "role": "assistant", "content": answer, "metadata": terminal_metadata,
+        "hybrid_citations": documents, "web_search_citations": web, "agent_citations": tools,
+        "generated_artifacts": result.get("artifacts") or [],
+    }
+    prepare_checked_reply(
+        checked_reply, user_id=record["user_id"],
+        settings=settings if settings is not None else get_settings(),
+    )
+    answer = checked_reply["content"]
+    terminal_metadata = checked_reply["metadata"]
+    if checked_reply["role"] == "safety":
+        documents, web, tools = [], [], []
+        saved_analyses, inherited_contexts = [], []
+        result = {**result, "message": answer, "artifacts": [], "saved_analyses": [], "analysis_result_contexts": []}
     try:
         lease.read()
         _authorize_context_conversation(record['conversation_id'], record['user_id'])
         persisted_id = _save_message(
-            record['conversation_id'], 'assistant', answer, message_id=message_id,
+            record['conversation_id'], checked_reply["role"], answer, message_id=message_id,
             persist=lease.publish_message,
             metadata=terminal_metadata,
             extra={
@@ -1333,11 +1406,22 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         if persisted_id != message_id:
             raise CheckpointError('message_not_saved')
         saved = True
+        canonical_reply = cosmos_messages_container.read_item(item=message_id, partition_key=record["conversation_id"])
+        if reply_is_retracted(canonical_reply):
+            checked_reply = canonical_reply
+            answer = canonical_reply["content"]
+            terminal_metadata = canonical_reply.get("metadata") or {}
+            documents, web, tools = [], [], []
+            saved_analyses, inherited_contexts = [], []
+            result = {**result, "message": answer, "artifacts": [], "saved_analyses": [], "analysis_result_contexts": []}
         lease.update({
             'assistant_message_id': message_id, 'message_saved': True, 'finalization_status': 'saved',
+            'chat_content_checked_output': CHECK_METADATA in terminal_metadata,
+            'chat_content_output_pending': False,
             **({'saved_analyses': saved_analyses} if saved_analyses else {}),
             **({'analysis_result_contexts': inherited_contexts} if inherited_contexts else {}),
         })
+        record_chat_content_incident(canonical_reply, record["user_id"])
         _touch_conversation(record['conversation_id'], record['user_id'])
         _record_cited_documents(record['conversation_id'], record['user_id'], documents)
     except Exception as exc:
@@ -1360,6 +1444,10 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
             })
     finalized = lease.close(release=True)
     public = public_execution_fields(finalized)
+    if not saved:
+        answer = failure_explanation(failures)
+        documents, web, tools = [], [], []
+        result = {**result, "artifacts": []}
     frame = build_run_done_event(
         record['conversation_id'], message_id=message_id if saved else None, run_id=record['id'],
         turn_id=record.get('turn_id'), full_content=answer, citations=documents, web_citations=web,
@@ -1369,10 +1457,13 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
         recovery=public['recovery'], message_saved=saved,
         finalization_status=public.get('finalization_status'), **answer_model.metadata(), **reasoning,
     )
-    if saved and inherited_contexts:
+    if saved:
         payload = json.loads(frame.partition('data:')[2].strip())
         payload['metadata'] = terminal_metadata
-        frame = f'data: {json.dumps(payload)}\n\n'
+        payload["role"] = checked_reply["role"]
+        payload["replace_content"] = True
+        payload["blocked"] = checked_reply["role"] == "safety"
+        frame = serialize_sse(strip_private_chat_checks(payload))
     return ([build_content_event(answer)] if saved else [build_error_event(build_failure('message_not_saved')['message'], record['conversation_id'])]) + [frame]
 
 
@@ -1681,11 +1772,21 @@ def register_route_backend_orchestration(bp):
                     resolved_conversation_id, created = conversation_id, False
                 else:
                     resolved_conversation_id, created = _ensure_conversation(
-                        conversation_id, user_id, title=message
+                        conversation_id, user_id
                     )
                 if not resolved_conversation_id:
                     yield build_error_event('That conversation could not be opened.')
                     return
+                input_check = check_chat_content(
+                    orchestration_input_text(message, answered_record),
+                    "chat_input", user_id=user_id, settings=settings,
+                )
+                if input_check.blocked:
+                    record_blocked_chat_attempt(input_check, user_id, resolved_conversation_id)
+                    yield build_error_event(input_check.notice, resolved_conversation_id)
+                    return
+                if input_check.metadata:
+                    turn_context[CHECK_METADATA] = input_check.metadata
                 if created or not conversation_id:
                     # Announced with the same event the chat stream uses, so the client
                     # adopts a new conversation's id by the path it already knows.
@@ -2189,6 +2290,22 @@ def register_route_backend_orchestration(bp):
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
         )
+        input_check = check_chat_content(
+            orchestration_input_text(user_message, record.get("answered_questions")),
+            "chat_input", user_id=user_id, settings=settings,
+        )
+        if input_check.blocked:
+            record_blocked_chat_attempt(input_check, user_id, conversation_id)
+            return jsonify({"error": input_check.notice, "blocked": True}), 422
+        if input_check.metadata:
+            _save_turn_message(
+                conversation_id, user_id, record["turn_id"], record["user_message"],
+                previous=record,
+                content_check={
+                    **input_check.metadata,
+                    "source": {"kind": "orchestration_turn", "run_id": run_id},
+                },
+            )
         resolution = record.get('request_resolution') or {}
         context_message_ids = resolution.get('message_ids')
         allowed_user_urls = revision_allowed_urls({
@@ -2328,6 +2445,12 @@ def register_route_backend_orchestration(bp):
         )
         try:
             lease.start()
+            lease.update({
+                "chat_content_output_pending": (
+                    settings.get("chat_content_output_mode") == "check_before_display"
+                    and bool(enabled_chat_scanners(settings, "chat_output"))
+                ),
+            })
         except Exception as exc:
             close_models()
             log_event(
@@ -2525,6 +2648,7 @@ def register_route_backend_orchestration(bp):
                             for frame in _finalize_execution(
                                 record, outcome.get('result'), outcome.get('error'), context, lease,
                                 answer_model, research_model, run_token_usage,
+                                settings=settings,
                             ):
                                 frames.put(frame)
                         except Exception as exc:
@@ -2563,7 +2687,7 @@ def register_route_backend_orchestration(bp):
 
             thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
 
-        response = _sse(generate())
+        response = _sse(generate(), check_settings=settings)
         def close_unstarted():
             if not worker_started:
                 lease.close()
@@ -2720,6 +2844,8 @@ def register_route_backend_orchestration(bp):
                 for step_id, step in committed.items() if step_id not in listed
             )
             steps.sort(key=lambda step: step.get('step_index', 0))
+            if _run_response_removed(reconciled):
+                steps = _hide_removed_step_summaries(steps)
         except ConversationContextError:
             return jsonify({'error': 'Run not found.'}), 404
         except Exception as exc:

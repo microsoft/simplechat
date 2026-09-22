@@ -22,7 +22,7 @@
 // stream here is reported rather than recovered.
 
 import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
-import { readSsePost } from './sse';
+import { readSsePost, resolveStreamContent } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
@@ -1132,6 +1132,10 @@ export async function runOrchestration(
     }
 
     const onEvent = (event: RunStreamEvent): boolean => {
+        if (event.replace_content === true) {
+            result.accumulated = resolveStreamContent(event, '');
+            handlers.onContent?.('', result.accumulated);
+        }
         if (typeof event.error === 'string' && event.error && !event.done) {
             result.errored = true;
             handlers.onError?.(event.error, event);
@@ -1154,7 +1158,7 @@ export async function runOrchestration(
             // rather than return so a frame that ever carried both is still fully handled.
         }
 
-        if (typeof event.content === 'string' && event.content.length > 0) {
+        if (event.replace_content !== true && typeof event.content === 'string' && event.content.length > 0) {
             result.accumulated += event.content;
             handlers.onContent?.(event.content, result.accumulated);
         }
@@ -1163,7 +1167,7 @@ export async function runOrchestration(
             if (typeof event.full_content === 'string') {
                 result.accumulated = event.full_content;
             }
-            const wasCancelled = orchestrationTerminalStatus(event) === 'cancelled';
+            const wasCancelled = event.blocked !== true && orchestrationTerminalStatus(event) === 'cancelled';
 
             if (wasCancelled) {
                 result.cancelled = true;

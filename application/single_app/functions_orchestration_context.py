@@ -1150,6 +1150,8 @@ def normalize_history_message(message):
     if (
         metadata.get('masked')
         or metadata.get('is_generated_chat_artifact')
+        or (metadata.get('chat_content_checks') or {}).get('decision') == 'block'
+        or (metadata.get('content_moderation') or {}).get('removed') is True
         or thread.get('active_thread') is False
     ):
         return None

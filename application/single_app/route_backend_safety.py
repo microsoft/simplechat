@@ -4,10 +4,20 @@ import csv
 import io
 import logging
 
+from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError, CosmosResourceNotFoundError
 from flask import make_response
 
 from config import *
 from functions_appinsights import log_event
+from functions_chat_content_checks import strip_private_chat_checks
+from functions_chat_content_review import (
+    ChatContentReviewConflict,
+    content_checks_report_enabled,
+    list_unchecked_chat_content,
+    recheck_chat_message,
+)
+from content_screening.contracts import ScreeningError, ScreeningValidationError
 from functions_approvals import (
     TYPE_BLOCK_USER,
     TYPE_SUSPEND_USER,
@@ -159,6 +169,7 @@ def _query_safety_logs(
 
     if user_id:
         where_clauses.append("c.user_id = @user_id")
+        where_clauses.append("(NOT IS_DEFINED(c.content_origin) OR c.content_origin = 'user')")
         parameters.append({"name": "@user_id", "value": user_id})
 
     if filter_status:
@@ -183,7 +194,7 @@ def _query_safety_logs(
     ))
     for log_item in logs:
         log_item.update(serialize_archive_metadata(log_item))
-    return logs
+    return strip_private_chat_checks(logs) if user_id else logs
 
 
 def _paginate_safety_logs(logs, page, page_size):
@@ -325,11 +336,69 @@ def _log_safety_audit_failure(log_id, lifecycle_action):
     )
 
 def register_route_backend_safety(bp):
+    def chat_check_error(error):
+        if isinstance(error, (CosmosAccessConditionFailedError, CosmosResourceNotFoundError)):
+            error = ChatContentReviewConflict()
+        log_event(
+            "[CHAT_CONTENT_CHECKS] Administrator chat check request failed.",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+        if isinstance(error, ScreeningError):
+            return jsonify({"error": error.public_message, "code": error.code}), error.status_code
+        return jsonify({
+            "error": "The chat content check could not be completed. Reload and try again.",
+            "code": "chat_content_check_unavailable",
+        }), 503
+
+    @bp.route("/api/safety/chat-checks", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @safety_violation_admin_required
+    @content_checks_report_enabled
+    def get_unchecked_chat_content():
+        try:
+            allowed = {"source", "checkpoint", "scanner", "continuation", "page_size"}
+            if set(request.args) - allowed or any(len(values) != 1 for _key, values in request.args.lists()):
+                raise ScreeningValidationError()
+            page_size = request.args.get("page_size", "25")
+            if not page_size.isascii() or not page_size.isdigit() or len(page_size) > 3:
+                raise ScreeningValidationError()
+            page = list_unchecked_chat_content(
+                source=request.args.get("source", "all"),
+                checkpoint=request.args.get("checkpoint") or None,
+                scanner=request.args.get("scanner") or None,
+                continuation=request.args.get("continuation") or None,
+                page_size=int(page_size),
+            )
+            return jsonify(page)
+        except (ScreeningError, AzureError) as error:
+            return chat_check_error(error)
+
+    @bp.route("/api/safety/chat-checks/recheck", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @safety_violation_admin_required
+    @content_checks_report_enabled
+    def recheck_unchecked_chat_content():
+        try:
+            if not request.is_json or request.content_length and request.content_length > 8192:
+                raise ScreeningValidationError()
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict) or set(data) != {"source", "conversation_id", "message_id", "etag"}:
+                raise ScreeningValidationError()
+            result = recheck_chat_message(
+                **data, actor_id=_get_safety_session_user_id(), settings=get_settings(),
+            )
+            return jsonify(result)
+        except (ScreeningError, AzureError) as error:
+            return chat_check_error(error)
+
     @bp.route('/api/safety/logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def get_safety_logs():
         """
         Returns safety logs with server-side pagination and filtering.
@@ -370,7 +439,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def get_safety_log_stats():
         """Return aggregate safety violation statistics for the admin page."""
         try:
@@ -394,7 +463,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def export_safety_logs():
         """Export safety violation rows as CSV for the active filter set."""
         try:
@@ -417,7 +486,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def update_safety_log(log_id):
         """
         Updates status, action, and notes on a safety log.
@@ -439,6 +508,9 @@ def register_route_backend_safety(bp):
                 return jsonify({'error': 'Invalid safety action'}), 400
 
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+
+            if action in SAFETY_REMEDIATION_ACTIONS and item.get("content_origin", "user") != "user":
+                return jsonify({"error": "AI-generated findings cannot be used to warn or restrict a user."}), 400
 
             if not item.get("created_at"):
                 item["created_at"] = datetime.utcnow().isoformat()
@@ -565,7 +637,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def archive_safety_log(log_id):
         """Archive or unarchive a safety violation record."""
         data = request.get_json() or {}
@@ -615,7 +687,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def delete_safety_log(log_id):
         """Permanently delete a safety violation without deleting its audit history."""
         actor = _get_safety_actor_context()
@@ -660,7 +732,7 @@ def register_route_backend_safety(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def get_my_safety_logs():
         """
         Returns the current user's safety logs with server-side pagination and filtering.
@@ -693,14 +765,14 @@ def register_route_backend_safety(bp):
             }), 200
 
         except Exception as e:
-            print(f"Error in get_my_safety_logs: {str(e)}")
-            return jsonify({"error": f"An error occurred while fetching your safety logs: {str(e)}"}), 500
+            log_event("[CONTENT_SAFETY] User content-check records could not be read.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+            return jsonify({"error": "Your content-check records could not be loaded."}), 500
 
     @bp.route('/api/safety/logs/my/stats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def get_my_safety_log_stats():
         """Return aggregate safety violation statistics for the current user."""
         user_id = _get_safety_session_user_id()
@@ -716,13 +788,14 @@ def register_route_backend_safety(bp):
             )
             return jsonify(_build_safety_stats(logs)), 200
         except Exception as e:
-            return jsonify({"error": f"Failed to retrieve safety stats: {str(e)}"}), 500
+            log_event("[CONTENT_SAFETY] User content-check statistics could not be read.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+            return jsonify({"error": "Your content-check statistics could not be loaded."}), 500
 
     @bp.route('/api/safety/logs/my/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def export_my_safety_logs():
         """Export the current user's safety violation rows as CSV for the active filter set."""
         user_id = _get_safety_session_user_id()
@@ -738,13 +811,14 @@ def register_route_backend_safety(bp):
             )
             return _build_safety_export_response(logs, 'my_safety_violations_export', include_user_id=False)
         except Exception as e:
-            return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
+            log_event("[CONTENT_SAFETY] User content-check export failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+            return jsonify({"error": "Your content-check records could not be exported."}), 500
 
     @bp.route('/api/safety/logs/my/<string:log_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @enabled_required("enable_content_safety")
+    @content_checks_report_enabled
     def update_my_safety_log(log_id):
         """
         Allows the user to update only their own safety log, 
@@ -764,6 +838,8 @@ def register_route_backend_safety(bp):
 
             if item.get("user_id") != user_id:
                 return jsonify({"error": "You do not have permission to update this record."}), 403
+            if item.get("content_origin", "user") != "user":
+                return jsonify({"error": "Content-check record not found."}), 404
 
             if not item.get("created_at"):
                 item["created_at"] = datetime.utcnow().isoformat()
@@ -776,4 +852,5 @@ def register_route_backend_safety(bp):
 
             return jsonify({"message": "Safety log updated successfully."}), 200
         except exceptions.CosmosHttpResponseError as e:
-            return jsonify({"error": str(e)}), 404
+            log_event("[CONTENT_SAFETY] User content-check note could not be saved.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+            return jsonify({"error": "The content-check note could not be saved."}), 404

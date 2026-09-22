@@ -751,6 +751,10 @@ export function AdminSettingsPage() {
                             <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }}
                                 configurationVersion={screeningConfigurationVersion} disabled={saving} />
                             <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
+                            <a href="/admin/safety_violations#unchecked-chat-content"
+                                className="inline-block text-sm text-accent hover:underline">
+                                Review unchecked chat content
+                            </a>
                         </div>
                     );
                 case 'custom-pages-table':
@@ -937,7 +941,7 @@ export function AdminSettingsPage() {
                 error={error}
                 warning={warning}
                 disabled={saving || (
-                    field.key === 'enable_content_screening'
+                    field.key === 'enable_content_screening_workspace_uploads'
                     && !asBoolean(value) && !isRequirementSatisfied(field, settings, draft)
                 )}
                 onChange={(next) => {

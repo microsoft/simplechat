@@ -13,6 +13,11 @@ from flask import Response, current_app, jsonify, redirect, request, session, st
 from config import *
 from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
 from functions_appinsights import log_event
+from functions_chat_content_checks import (
+    CHECK_CONTEXT_KEY, CHECK_METADATA, blocked_chat_payload, check_chat_content,
+    strip_private_chat_checks,
+)
+from functions_chat_content_review import record_blocked_chat_attempt, refresh_checked_message
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -367,7 +372,8 @@ def _collaboration_events_for_viewer(events, viewer_user_id, conversation_id):
         if isinstance(payload, dict) and isinstance(payload.get('message'), dict):
             try:
                 messages = hydrate_m365_pending_action_cards(
-                    [payload['message']], viewer_user_id, conversation_id,
+                    [strip_private_chat_checks(refresh_checked_message(payload["message"], source="shared"))],
+                    viewer_user_id, conversation_id,
                 )
             except (M365PolicyError, PermissionError, AzureError, ValueError) as error:
                 log_event(
@@ -795,6 +801,12 @@ def _find_collaboration_originating_request(conversation_id, message_doc):
 
 
 def register_route_backend_collaboration(bp):
+    @bp.after_request
+    def public_collaboration_json_response(response):
+        if response.is_json:
+            response.set_data(current_app.json.dumps(strip_private_chat_checks(response.get_json())))
+        return response
+
     @bp.route('/api/collaboration/file-approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -2394,6 +2406,10 @@ def register_route_backend_collaboration(bp):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            input_check = check_chat_content(message_content, "chat_input", user_id=current_user["user_id"])
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, current_user["user_id"], conversation_id)
+                return jsonify({"error": input_check.notice, "blocked": True}), 422
             mentioned_participants = resolve_collaboration_mentions(
                 conversation_doc,
                 data.get('mentioned_participants'),
@@ -2405,7 +2421,10 @@ def register_route_backend_collaboration(bp):
                 message_content,
                 reply_to_message_id=reply_to_message_id,
                 mentioned_participants=mentioned_participants,
-                extra_metadata={'prompt_selection': prompt_selection} if prompt_selection else None,
+                extra_metadata={
+                    **({'prompt_selection': prompt_selection} if prompt_selection else {}),
+                    **({CHECK_METADATA: input_check.metadata} if input_check.metadata else {}),
+                },
             )
             create_collaboration_message_notifications(updated_conversation_doc, message_doc)
             serialized_message = serialize_collaboration_message(message_doc)
@@ -2456,6 +2475,13 @@ def register_route_backend_collaboration(bp):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            input_check = check_chat_content(message_content, "chat_input", user_id=current_user["user_id"])
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, current_user["user_id"], conversation_id)
+                return Response(
+                    f"data: {json.dumps(blocked_chat_payload(input_check, conversation_id=conversation_id))}\n\n",
+                    mimetype="text/event-stream",
+                )
             source_conversation_doc, conversation_doc = ensure_collaboration_source_conversation(
                 conversation_doc,
                 current_user,
@@ -2470,6 +2496,8 @@ def register_route_backend_collaboration(bp):
             )
             invocation_target = data.get('invocation_target') if isinstance(data.get('invocation_target'), dict) else None
             extra_metadata = {}
+            if input_check.metadata:
+                extra_metadata[CHECK_METADATA] = input_check.metadata
             if invocation_target:
                 extra_metadata['ai_invocation_target'] = invocation_target
             prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message_content)
@@ -2525,6 +2553,7 @@ def register_route_backend_collaboration(bp):
             )
 
             session_snapshot = dict(session)
+            content_check_context = request.environ.get(CHECK_CONTEXT_KEY)
             source_owner_user = normalize_collaboration_user({
                 'user_id': updated_conversation_doc.get('created_by_user_id'),
                 'display_name': updated_conversation_doc.get('created_by_display_name'),
@@ -2578,6 +2607,8 @@ def register_route_backend_collaboration(bp):
 
                     buffer = ''
                     with current_app.test_request_context('/api/chat/stream', method='POST', json=stream_request_payload):
+                        if content_check_context is not None:
+                            request.environ[CHECK_CONTEXT_KEY] = content_check_context
                         session.clear()
                         session.update(session_snapshot)
                         internal_response = current_app.make_response(internal_stream_view())

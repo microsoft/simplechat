@@ -1710,6 +1710,13 @@ def get_settings(use_cosmos=False, include_source=False):
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'enable_content_screening': False,
+        'enable_content_screening_workspace_uploads': True,
+        'enable_content_screening_chat_input': False,
+        'enable_content_screening_chat_output': False,
+        'enable_content_safety_chat_input': True,
+        'enable_content_safety_chat_output': False,
+        'chat_content_output_mode': 'stream_then_check',
+        'chat_content_scan_failure_action': 'allow_unchecked',
         'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
         'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
@@ -2070,31 +2077,46 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
         raise ScreeningValidationError()
     if any(key.startswith('content_screening') for key in new_settings):
         raise ScreeningValidationError()
-    if 'enable_content_screening' in new_settings and type(new_settings['enable_content_screening']) is not bool:
-        raise ScreeningValidationError()
+    for key in (
+        'enable_content_screening', 'enable_content_screening_workspace_uploads',
+        'enable_content_screening_chat_input', 'enable_content_screening_chat_output',
+        'enable_content_safety_chat_input', 'enable_content_safety_chat_output',
+    ):
+        if key in new_settings and type(new_settings[key]) is not bool:
+            raise ScreeningValidationError("Content check switches must be boolean values.")
+    for key, choices in {
+        'chat_content_output_mode': ('stream_then_check', 'check_before_display'),
+        'chat_content_scan_failure_action': ('allow_unchecked', 'block'),
+    }.items():
+        if key in new_settings and new_settings[key] not in choices:
+            raise ScreeningValidationError("The chat content check behavior is invalid.")
     merged = {**current_settings, **new_settings}
     if merged.get('enable_content_screening') is not True:
         return
-    if merged.get('enable_enhanced_citations') is not True:
+    uploads_enabled = merged.get('enable_content_screening_workspace_uploads', True) is True
+    if uploads_enabled and merged.get('enable_enhanced_citations') is not True:
         raise ScreeningCitationsRequiredError()
     storage_fields = (
         'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint',
         'office_docs_key', 'office_docs_authentication_type',
     )
     activating = current_settings.get('enable_content_screening') is not True
+    activating_uploads = uploads_enabled and current_settings.get('enable_content_screening_workspace_uploads', True) is not True
     storage_changed = any(
         field in new_settings and new_settings[field] != current_settings.get(field)
         for field in storage_fields
     )
-    if activating or storage_changed or 'enable_content_screening' in new_settings:
+    if activating or storage_changed or any(key.startswith('enable_content_screening') for key in new_settings):
         # Import at the operation boundary; the service itself reads settings.
         from content_screening.service import validate_screening_configuration
 
         try:
             validate_screening_configuration(
-                merged, repository=repository, check_storage=activating or storage_changed,
+                merged, repository=repository,
+                check_storage=uploads_enabled and (activating or activating_uploads or storage_changed),
                 proposed_settings=True,
                 allow_missing_policy=new_settings.get('enable_content_screening') is True,
+                document_operation=uploads_enabled,
             )
         except ScreeningError:
             raise
@@ -2157,7 +2179,10 @@ def update_settings(new_settings, *, expected_etag=None):
                     from content_screening.service import initialize_screening_policy, validate_screening_configuration
 
                     initialize_screening_policy()
-                    validate_screening_configuration(candidate, proposed_settings=True)
+                    validate_screening_configuration(
+                        candidate, proposed_settings=True,
+                        document_operation=candidate.get('enable_content_screening_workspace_uploads', True) is True,
+                    )
                 yield
 
         _get_app_settings_store().write(

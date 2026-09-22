@@ -65,9 +65,14 @@ export function findCapabilityField(fields: AdminField[]): AdminField | undefine
  * Deduplicated by key, because a prerequisite usually applies to several fields and
  * stating it once at the top reads better than repeating it on each.
  */
-export function collectRequirements(fields: AdminField[]): AdminFieldRequirement[] {
+export function collectRequirements(fields: AdminField[], settings?: Json, draft: Json = {}): AdminFieldRequirement[] {
     const seen = new Map<string, AdminFieldRequirement>();
     for (const field of fields) {
+        if (settings && field.role !== 'capability') {
+            const read = (key: string) => readSectionValue(settings, draft, key);
+            if (!evaluateDependency(field.depends_on, read)) continue;
+            if (field.type === 'switch' && field.key && !asBoolean(read(field.key) ?? field.default)) continue;
+        }
         if (field.requires && !seen.has(field.requires.key)) {
             seen.set(field.requires.key, field.requires);
         }
@@ -91,7 +96,7 @@ export function deriveSectionStatus(
     const read = (key: string) => readSectionValue(settings, draft, key);
     const capability = findCapabilityField(fields);
 
-    const unmet = collectRequirements(fields).some(
+    const unmet = collectRequirements(fields, settings, draft).some(
         (requirement) => !asBoolean(read(requirement.key)),
     );
     if (unmet) {

@@ -1,7 +1,7 @@
 # test_content_screening_policy_parity.py
 """
 Classic and V2 screening policy editor parity, using their real browser assets.
-Version: 0.261.114
+Version: 0.261.127
 Implemented in: 0.261.108
 Empty-policy activation coverage: 0.261.114
 
@@ -112,7 +112,7 @@ class PolicyUi:
         if self.classic:
             self.app.page.locator("#enable_content_screening").set_checked(enabled)
         else:
-            set_toggle(self.app.page, "Screen workspace content before publication", enabled)
+            set_toggle(self.app.page, "Enable Content Screening", enabled)
             self.app.page.get_by_role("button", name="Save changes", exact=True).click()
             expect(self.app.page.get_by_text("Saved 1 setting.", exact=True)).to_be_visible()
         expect(self.editor.get_by_role("button", name="Reload saved policy", exact=True)).to_be_enabled()
@@ -213,7 +213,7 @@ def test_policy_draft_survives_an_activation_storage_failure(policy_ui):
         ui.app.page.locator("#enable_content_screening").check()
         expect(ui.editor.get_by_text("Content Screening could not be changed.", exact=False)).to_be_visible()
     else:
-        set_toggle(ui.app.page, "Screen workspace content before publication", True)
+        set_toggle(ui.app.page, "Enable Content Screening", True)
         ui.app.page.get_by_role("button", name="Save changes", exact=True).click()
         expect(ui.app.page.get_by_text("Settings were not saved.", exact=False)).to_be_visible()
     expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("Keep my draft")
@@ -268,7 +268,7 @@ def test_settings_refresh_does_not_overwrite_a_concurrent_policy_change(policy_u
     if ui.classic:
         ui.app.page.locator("#enable_content_screening").check()
     else:
-        set_toggle(ui.app.page, "Screen workspace content before publication", True)
+        set_toggle(ui.app.page, "Enable Content Screening", True)
         ui.app.page.get_by_role("button", name="Save changes", exact=True).click()
     expect(ui.editor.get_by_text("policy draft", exact=False).filter(has_text="retained")).to_be_visible()
     expect(ui.rules.get_by_label("Rule name", exact=True)).to_have_value("My unsaved name")
@@ -489,7 +489,7 @@ def test_classic_policy_can_be_prepared_before_citations_without_enrolling_conte
     ui.global_policy["enabled"] = False
     ui.open_admin()
     editor = ui.page.locator("#screening-admin-policy")
-    expect(ui.page.locator("#enable_content_screening")).to_be_disabled()
+    expect(ui.page.locator("#enable_content_screening")).to_be_enabled()
     expect(editor.get_by_label("Baseline policy enabled", exact=True)).to_be_enabled()
     set_toggle(editor, "Baseline policy enabled", True)
     editor.get_by_role("button", name="Save screening policy", exact=True).click()

@@ -30,7 +30,8 @@ export function SettingsPage() {
     // A tab whose capability is off is hidden rather than shown empty: its endpoints fail
     // in that state, so it could only ever display an error.
     const tabs = useMemo(
-        () => SETTINGS_TABS.filter((tab) => !tab.feature || features[tab.feature] === true),
+        () => SETTINGS_TABS.filter((tab) => !tab.feature || features[tab.feature] === true
+            || (tab.id === 'violations' && features.enable_content_screening === true)),
         [features],
     );
 

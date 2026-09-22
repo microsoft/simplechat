@@ -194,6 +194,10 @@ function PolicyEditor({
                         <p className="text-sm font-semibold text-text-1">{summary.label}</p>
                         <p className="text-xs text-text-3">{summary.detail}</p>
                         <p className="text-xs text-text-3">This summarizes the current draft. Save the policy to apply it; new scans must also be enabled separately.</p>
+                        {global ? <p className="text-xs text-text-3">
+                            Enabled chat checkpoints use this same baseline. An empty baseline cannot produce a passed chat check;
+                            those attempts follow the failure setting and are recorded privately for administrators.
+                        </p> : null}
                     </div> : null}
                     <ScreeningPolicyFields policy={policy} templates={templates} models={models}
                         baseline={global} disabled={disabled} onChange={(next) => {

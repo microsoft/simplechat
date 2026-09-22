@@ -1,7 +1,7 @@
 # test_content_screening_empty_policy.py
 """
 Functional tests for enabled-empty Content Screening configuration.
-Version: 0.261.114
+Version: 0.261.127
 Implemented in: 0.261.114
 
 Exercise real policy persistence and shared settings writes behind isolated
@@ -57,6 +57,7 @@ def activation(monkeypatch):
     helpers = settings_tests.settings_functions(
         get_settings=lambda **kwargs: copy.deepcopy(settings),
         cosmos_settings_container=container,
+        _get_app_settings_store=lambda: settings_tests.AppSettingsStore(container),
     )
     monkeypatch.setattr(service, "_repository", lambda value=None: repository if value is None else value)
     monkeypatch.setattr(service, "_settings", lambda value=None: settings if value is None else value)
@@ -74,13 +75,16 @@ def enable(activation):
 
 
 def test_first_settings_activation_creates_and_reuses_enabled_empty_baseline(activation):
-    assert enable(activation) is True
+    activated = enable(activation)
+    assert activated is True
     saved = activation.repository.get_policy("global", "global")
     assert saved["policy"] == normalize_policy({**default_policy(), "enabled": True})
     assert saved["actor_id"] == "system-content-screening"
     assert activation.settings["enable_content_screening"] is True
-    assert enable(activation) is True
-    assert activation.repository.get_policy("global", "global") == saved
+    activated_again = enable(activation)
+    reloaded = activation.repository.get_policy("global", "global")
+    assert activated_again is True
+    assert reloaded == saved
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -88,21 +92,26 @@ def test_activation_never_replaces_or_activates_an_existing_policy(activation, e
     policy = settings_tests.activation_policy(ai_enabled=False)
     policy["enabled"] = enabled
     saved = activation.repository.save_policy("global", "global", policy, "administrator")
-    assert enable(activation) is True
-    assert activation.repository.get_policy("global", "global") == saved
+    activated = enable(activation)
+    reloaded = activation.repository.get_policy("global", "global")
+    assert activated is True
+    assert reloaded == saved
 
 
 def test_prerequisite_failure_does_not_initialize_policy_or_enable_settings(activation):
     with patch.object(service, "validate_screening_configuration", side_effect=ScreeningConfigurationError()):
-        assert enable(activation) is False
-    assert activation.repository.get_policy("global", "global") is None
+        activated = enable(activation)
+        assert activated is False
+    saved = activation.repository.get_policy("global", "global")
+    assert saved is None
     activation.container.replace_item.assert_not_called()
     assert activation.settings["enable_content_screening"] is False
 
 
 def test_policy_creation_failure_cannot_report_settings_success_or_leak_errors(activation):
     with patch.object(activation.repository, "save_policy", side_effect=RuntimeError("private-provider-canary")):
-        assert enable(activation) is False
+        activated = enable(activation)
+        assert activated is False
     activation.container.replace_item.assert_not_called()
     assert activation.settings["enable_content_screening"] is False
     assert "private-provider-canary" not in str(activation.helpers["log_event"].call_args_list)
@@ -111,13 +120,16 @@ def test_policy_creation_failure_cannot_report_settings_success_or_leak_errors(a
 def test_failed_settings_write_keeps_blank_policy_reusable_without_enabling_scanning(activation):
     replace = activation.container.replace_item.side_effect
     activation.container.replace_item.side_effect = RuntimeError("private-provider-canary")
-    assert enable(activation) is False
+    activated = enable(activation)
+    assert activated is False
     saved = activation.repository.get_policy("global", "global")
     assert saved["policy"]["enabled"] is True and saved["policy"]["rules"] == []
     assert activation.settings["enable_content_screening"] is False
     activation.container.replace_item.side_effect = replace
-    assert enable(activation) is True
-    assert activation.repository.get_policy("global", "global") == saved
+    activated = enable(activation)
+    reloaded = activation.repository.get_policy("global", "global")
+    assert activated is True
+    assert reloaded == saved
 
 
 @pytest.mark.parametrize("invalid_model", [False, True])
@@ -133,7 +145,8 @@ def test_concurrent_policy_creation_is_preserved_and_revalidated(activation, inv
     with patch.object(activation.repository, "save_policy", side_effect=concurrent_create), patch.dict(sys.modules, {
         "content_screening.model": SimpleNamespace(validate_model_bindings=model_validation),
     }):
-        assert enable(activation) is not invalid_model
+        activated = enable(activation)
+        assert activated is not invalid_model
     saved = activation.repository.get_policy("global", "global")
     assert saved["policy"] == normalize_policy(concurrent)
     assert saved["actor_id"] == "another-administrator"
@@ -150,21 +163,26 @@ def test_missing_policy_during_runtime_is_not_a_silent_unscreened_fallback(activ
     service.validate_screening_configuration(
         activation.settings, proposed_settings=True, allow_missing_policy=True,
     )
-    assert activation.repository.get_policy("global", "global") is None
+    saved = activation.repository.get_policy("global", "global")
+    assert saved is None
 
 
 @pytest.mark.parametrize("marker", [None, {}, {"state": "pending_review"}, {"state": "cleared"}])
 def test_existing_or_malformed_enrollment_never_uses_empty_policy_bypass(activation, marker):
-    assert enable(activation) is True
+    activated = enable(activation)
+    assert activated is True
     document = {"id": "document", "user_id": "owner", "version": 1, SCREENING_FIELD: marker}
-    assert service.document_requires_screening(document) is True
+    required = service.document_requires_screening(document)
+    assert required is True
     activation.settings["enable_content_screening"] = False
-    assert service.document_requires_screening(document) is True
+    still_required = service.document_requires_screening(document)
+    assert still_required is True
 
 
 @pytest.mark.parametrize("enrolled", [False, True])
 def test_reprocessing_dispatch_keeps_old_enrollment_but_skips_empty_policy_for_unmarked_content(activation, enrolled):
-    assert enable(activation) is True
+    activated = enable(activation)
+    assert activated is True
     document = {"id": "document", "user_id": "owner", "version": 1}
     if enrolled:
         document[SCREENING_FIELD] = {"state": "pending_review"}
@@ -197,7 +215,8 @@ def test_v2_settings_handler_uses_shared_empty_policy_persistence(activation):
     payload, status = admin_settings_tests.invoke(handler, {"enable_content_screening": True})
     assert status == 200 and payload["settings"]["enable_content_screening"] is True
     assert activation.settings["enable_content_screening"] is True
-    assert activation.repository.get_policy("global", "global")["policy"]["rules"] == []
+    saved = activation.repository.get_policy("global", "global")
+    assert saved["policy"]["rules"] == []
 
 
 def test_classic_configuration_route_initializes_policy_and_roundtrips_empty_saves(activation):

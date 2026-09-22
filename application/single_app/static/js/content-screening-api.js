@@ -242,7 +242,10 @@
         getPolicy,
         getModels,
         getTemplates: async () => normalizeTemplates((await getConfiguration()).templates),
-        configure: enabled => screening.request(`${base}/configuration`, mutationOptions("PUT", { enabled })),
+        configure: (enabled, workspaceUploadsEnabled) => screening.request(`${base}/configuration`, mutationOptions("PUT", {
+            enabled,
+            ...(typeof workspaceUploadsEnabled === "boolean" ? { workspace_uploads_enabled: workspaceUploadsEnabled } : {})
+        })),
         savePolicy: (scope, policy, snapshot) => screening.request(policyPath(scope), mutationOptions("PUT", { policy, etag: etagOf(snapshot) }, snapshot)),
         testPolicy: (scope, policy, sampleText) => screening.request(`${policyPath(scope)}/test`, mutationOptions("POST", { policy, sample_text: sampleText })),
         getStatus: (scope, documentId) => {
