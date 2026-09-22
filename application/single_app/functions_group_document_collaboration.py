@@ -231,6 +231,15 @@ def get_group_document_collaboration_actions(
                 publication_state = _publication_view(document, user_id, group_id, (group, role, settings, supported))
                 if publication_state and pending_action in publication_state["actions"]:
                     actions.add(pending_action)
+        elif (
+            operation.get("phase") == "executing" and _operation_bound(document, operation)
+            and operation.get("action") == "approve_artifact"
+        ):
+            # Only receipt-proven pre-queue bootstrap recovery is advertised by
+            # the publication adapter; no other executing operation is replayable.
+            publication_state = _publication_view(document, user_id, group_id, (group, role, settings, supported))
+            if publication_state and "approve_artifact" in publication_state["actions"]:
+                actions.add("approve_artifact")
         return [action for action in supported if action in actions]
     if role in GROUP_DOCUMENT_MANAGER_ROLES:
         if relationship == "owner":

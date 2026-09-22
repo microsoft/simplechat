@@ -224,6 +224,15 @@ def _set_document_state(repository, scan, state, **updates):
     )
 
 
+def _consume_publication_reservation(document, scan_id):
+    if document.get("group_id") and document.get("generated_artifact_publication_receipt_id"):
+        # Publication imports ingestion; resolve the receipt owner only at scan
+        # execution, never during service/configuration bootstrap.
+        from functions_artifact_publication import consume_artifact_publication_screening_scan
+
+        consume_artifact_publication_screening_scan(document, scan_id)
+
+
 def begin_scan(subject, actor_id, *, repository=None, storage=None, job_id=None, scan_id=None,
                expected_document_etag=None, parent_scan_id=None):
     repository = _repository(repository)
@@ -243,6 +252,7 @@ def begin_scan(subject, actor_id, *, repository=None, storage=None, job_id=None,
     ):
         raise ScreeningConflictError()
     scan_id = scan_id or uuid.uuid4().hex
+    _consume_publication_reservation(document, scan_id)
     existing = repository.get_scan(scan_id)
     if existing:
         if (
@@ -532,6 +542,7 @@ def inspect_scan(scan_id, units, actor_id, *, repository=None, storage=None, eng
     units = normalize_units(units)
     scan = _read_scan(repository, scan_id)
     subject = Subject.from_dict(scan["subject"])
+    _consume_publication_reservation(repository.read_document(subject), scan_id)
     fingerprint = content_fingerprint(units)
     if scan.get("content_fingerprint") not in (None, fingerprint):
         raise ScreeningConflictError("A source change requires a new scan.")

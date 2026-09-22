@@ -1,7 +1,7 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.122
+Version: 0.261.131
 Implemented in: 0.261.109
 
 Exercise real publication, normalization, and route bodies with Cosmos/queue
@@ -236,6 +236,7 @@ def publication(monkeypatch):
         cosmos_public_documents_container=destinations["public"], cosmos_notifications_container=notifications,
     )
     install("functions_appinsights", log_event=lambda *args, **kwargs: None)
+    install("functions_settings", get_settings=lambda: {"enable_content_screening": False})
     install("functions_collaboration", build_conversation_participation_context=check_conversation)
     install("functions_documents", create_document=create_document, update_document=update_document,
         allowed_file=lambda name: name.endswith((".md", ".csv", ".json", ".xml", ".xsd", ".docx", ".pdf")))

@@ -9,17 +9,79 @@ from pathlib import Path
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
-from content_screening.access import assert_document_available
-from content_screening.contracts import AVAILABLE_STATES, HELD_STATES, SCREENING_FIELD, DocumentHeldError
+from content_screening.access import PROVENANCE_FIELD, assert_document_available
+from content_screening.contracts import (
+    AVAILABLE_STATES, HELD_STATES, SCREENING_FIELD, DocumentHeldError,
+    hash_payload, subject_from_document,
+)
 
 
 PUBLICATION_BINDING = "generated_artifact_publication_binding"
 PUBLICATION_PROCESSING = "generated_artifact_publication_processing"
+PUBLICATION_SCREENING_RESERVATION = "screening_reservation"
+PUBLICATION_SCREENING_CONSUMPTION = "screening_reservation_consumption"
+SCREENING_BOOTSTRAP_REMEDY = (
+    "This screening reservation cannot start publication. Cancel the pending publication request "
+    "and request publication again. If approval already committed, reconcile its existing handoff; "
+    "do not queue another copy."
+)
 PUBLICATION_STATUS_FIELDS = (
     "version", "id", "document_id", "document_version", "destination", "completion_policy",
     "policy_satisfied", "state", "submission", "approval", "processing", "screening", "index",
     "reason_code", "retryable", "unresolved_stages",
 )
+
+
+def publication_screening_reservation(document):
+    """Identify only a pristine origin reservation, never a scan or a clearance.
+
+    The reserved UUID and original marker timestamp distinguish successive
+    reservations for the same subject. Cosmos resource identity, when present,
+    also binds the proof to the stored document instance rather than its name.
+    """
+    marker = document.get(SCREENING_FIELD)
+    if not isinstance(marker, dict) or set(marker) != {
+        "schema_version", "state", "source_revision", "scan_id", "content_fingerprint",
+        "finding_count", "review_required", "generation", "origin_upload", "updated_at",
+    }:
+        return None
+    if (
+        not document.get("group_id") or document.get("public_workspace_id")
+        or type(document.get("version")) is not int or document["version"] != 1
+        or document.get("revision_family_id") not in (None, document.get("id"))
+        or not _current_revision(document)
+        or type(marker.get("schema_version")) is not int or marker["schema_version"] != 1
+        or marker.get("state") != "pending_scan" or marker.get("source_revision") != "1"
+        or type(marker.get("generation")) is not int or marker["generation"] != 1
+        or marker.get("origin_upload") is not True or marker.get("review_required") is not False
+        or type(marker.get("finding_count")) is not int or marker["finding_count"] != 0
+        or marker.get("content_fingerprint") is not None
+        or not isinstance(marker.get("scan_id"), str) or not marker["scan_id"]
+        or not isinstance(marker.get("updated_at"), str) or not marker["updated_at"]
+        or PUBLICATION_PROCESSING in document or PROVENANCE_FIELD in document
+    ):
+        return None
+    if any(document.get(field) for field in (
+        "blob_path", "archived_blob_path", "original_blob_path", "blob_etag", "blob_content_hash",
+        "source_ref", "canonical_ref", "units_ref", "result_ref", "active_manifest_id",
+        "active_content_manifest", "source_file_available", "enhanced_citations",
+        "content", "text", "chunks", "pages", "title", "abstract", "keywords", "authors",
+        "publication_date", "vision_analysis",
+    )):
+        return None
+    if any(
+        field in document and (type(document[field]) is not int or document[field] != 0)
+        for field in ("num_chunks", "num_file_chunks", "number_of_pages", "current_file_chunk")
+    ) or document.get("percentage_complete", 0) != 0:
+        return None
+    subject = subject_from_document(document).to_dict()
+    return {
+        "schema_version": 1, "subject": subject,
+        "fingerprint": hash_payload({
+            "subject": subject, "marker": marker,
+            "resource_id": document.get("_rid"), "upload_date": document.get("upload_date"),
+        }),
+    }
 
 
 def public_publication_status(value):

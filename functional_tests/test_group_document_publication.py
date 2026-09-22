@@ -287,11 +287,11 @@ def set_actor(env, actor):
         state["user"] = {"oid": actor, "roles": ["User"]}
 
 
-def submit(env, *, legacy=False):
+def submit(env, *, legacy=False, request_id="exact-publication-request"):
     result = env.canonical.publish_generated_chat_artifact_for_user(
         REQUESTER, conversation_id="private-conversation", message_id=env.artifact_id,
         destination={"workspace_scope": "group", "group_id": "group-a"},
-        request_id="exact-publication-request", requester_display_name="Requester",
+        request_id=request_id, requester_display_name="Requester",
     )
     target = result["document"]["id"]
     env.target = target
