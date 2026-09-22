@@ -161,7 +161,11 @@ from functions_source_review import (
     is_url_access_enabled_for_user,
 )
 from functions_workspace_sections import build_workspace_section_availability
-from functions_workspace_context import WorkspaceContextError, build_group_workspace_context
+from functions_workspace_context import (
+    WorkspaceContextError,
+    build_group_workspace_context,
+    build_public_workspace_context,
+)
 from route_frontend_chats import (
     _build_chat_model_catalog,
     _build_chat_prompt_catalog,
@@ -616,6 +620,36 @@ def register_route_backend_v2(bp):
                 "[V2_BOOTSTRAP] Unable to resolve selected group workspace context.",
                 level=logging.ERROR,
                 extra={"user_id": user_id, "group_id": group_id, "error_type": type(exc).__name__},
+            )
+            payload, status = {"error": "Workspace details are temporarily unavailable. Please retry."}, 503
+        return jsonify(payload), status, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/workspaces/public/<workspace_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def v2_public_workspace_context(workspace_id):
+        """Return safe metadata and eligibility for this explicitly selected public workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+        try:
+            user_info = dict(get_current_user_info() or {})
+            session_user = session.get("user")
+            if isinstance(session_user, dict) and session_user.get("roles"):
+                user_info["roles"] = session_user["roles"]
+            payload = build_public_workspace_context(
+                user_id, workspace_id, get_settings(), user_info=user_info,
+            )
+            status = 200
+        except WorkspaceContextError as exc:
+            payload, status = {"error": exc.public_message}, exc.status_code
+        except Exception as exc:
+            log_event(
+                "[V2_BOOTSTRAP] Unable to resolve selected public workspace context.",
+                level=logging.ERROR,
+                extra={"user_id": user_id, "workspace_id": workspace_id, "error_type": type(exc).__name__},
             )
             payload, status = {"error": "Workspace details are temporarily unavailable. Please retry."}, 503
         return jsonify(payload), status, {"Cache-Control": "no-store"}

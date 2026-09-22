@@ -28,11 +28,19 @@ from functions_settings import (
 )
 from functions_workspace_branding import get_workspace_logo_metadata, normalize_workspace_hero_color
 from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
+from functions_public_workspaces import (
+    check_public_workspace_status_allows_operation,
+    find_public_workspace_by_id,
+    get_user_role_in_public_workspace,
+)
 
 
 GROUP_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
 GROUP_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_STATUSES = ("active", "locked", "upload_disabled", "inactive")
+PUBLIC_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
+PUBLIC_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+PUBLIC_STATUSES = ("active", "locked", "upload_disabled", "inactive")
 INVALID_SCOPE_ID = re.compile(r"[/\\?#\x00-\x1f\x7f]")
 
 
@@ -201,5 +209,106 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         "document_collaboration": {
             "schema_version": 1,
             "operations": group_document_collaboration_operations(group, role, settings),
+        },
+    }
+
+
+def build_public_workspace_context(user_id, workspace_id, settings, *, user_info=None):
+    """Resolve one explicit public workspace without reading or changing active preferences.
+
+    This is the read-only M3A slice. The workspace is always taken from the caller's
+    explicit target, never from a stored active-workspace preference, and this context
+    is an interface hint only: every document route reauthorizes independently.
+    """
+    if (
+        not isinstance(workspace_id, str)
+        or not workspace_id
+        or workspace_id in (".", "..")
+        or workspace_id != workspace_id.strip()
+        or INVALID_SCOPE_ID.search(workspace_id)
+    ):
+        raise WorkspaceContextError("Invalid public workspace identifier.", 400)
+    if not user_id or not settings.get("enable_public_workspaces", False):
+        raise WorkspaceContextError("Public workspaces are unavailable.", 403)
+
+    workspace = find_public_workspace_by_id(workspace_id)
+    if not workspace:
+        raise WorkspaceContextError("The selected public workspace was not found.", 404)
+    role = get_user_role_in_public_workspace(workspace, user_id)
+    if role not in PUBLIC_READER_ROLES:
+        raise WorkspaceContextError("You do not have access to the selected public workspace.", 403)
+
+    stored_status = workspace.get("status", "active")
+    status = stored_status if stored_status in PUBLIC_STATUSES else "unknown"
+    view_allowed, status_reason = check_public_workspace_status_allows_operation(workspace, "view")
+    if status == "unknown":
+        view_allowed = False
+        status_reason = "This workspace's status is not recognized. Contact an administrator."
+    active = status == "active"
+
+    def section(enabled, can_manage=False, reason="This section is not available for public workspaces yet."):
+        available = bool(view_allowed and enabled)
+        return {
+            "enabled": available,
+            "can_manage": bool(available and active and can_manage),
+            "reason": None if available else (status_reason if not view_allowed else reason),
+        }
+
+    # M3A delivers only read-only document browsing. Every other section is present
+    # for a stable shell shape but marked unavailable until M3B/M3C.
+    sections = {
+        "documents": section(True),
+        "tags": section(False),
+        "prompts": section(False),
+        "agents": section(False),
+        "actions": section(False),
+        "endpoints": section(False),
+        "workflows": section(False),
+        "identities": section(False),
+        "sync": section(False),
+    }
+    for section_id, entry in sections.items():
+        entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
+
+    logo = get_workspace_logo_metadata(workspace)
+    owner = workspace.get("owner") or {}
+    return {
+        "schema_version": 1,
+        "enabled": True,
+        "viewer_id": user_id,
+        "scope": {"kind": "public", "id": workspace_id},
+        "workspace": {
+            "name": str(workspace.get("name") or "Untitled workspace"),
+            "description": str(workspace.get("description") or ""),
+            "owner": {
+                "display_name": str(owner.get("displayName") or ""),
+                "email": str(owner.get("email") or ""),
+            },
+            "hero_color": normalize_workspace_hero_color(workspace.get("heroColor")),
+            "logo_url": (
+                f"/api/public_workspaces/{quote(workspace_id, safe='')}/logo?v={logo['logoVersion']}"
+                if logo["hasLogo"] else None
+            ),
+        },
+        "role": role,
+        "status": status,
+        "can_manage_workspace": role in ("Owner", "Admin"),
+        "sections": sections,
+        "document_permissions": {
+            "can_view": bool(view_allowed),
+            "can_chat": bool(view_allowed and check_public_workspace_status_allows_operation(workspace, "chat")[0]),
+            # Mutations and downloads are not delivered by the M3A read-only slice.
+            "can_upload": False,
+            "can_edit": False,
+            "can_delete": False,
+            "can_download": False,
+        },
+        "document_queries": {
+            "sort_fields": [
+                "_ts", "file_name", "title", "upload_date", "file_size",
+                "number_of_pages", "version", "document_classification",
+            ],
+            "facets": True,
+            "places": True,
         },
     }
