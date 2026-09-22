@@ -1845,7 +1845,7 @@
                         <h5 class="mb-2"><i class="bi bi-shield-exclamation me-2"></i>My Safety Violations</h5>
                         <p class="text-muted mb-0">Review flagged messages, update your own notes, and export the current filtered set.</p>
                     </div>
-                    {% if app_settings.enable_content_safety %}
+                    {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
                     <button type="button" class="btn btn-outline-primary" id="profile-violations-export-btn">
                         <i class="bi bi-download me-1"></i>Export Violations
                     </button>
@@ -1853,7 +1853,7 @@
                 </div>
             </div>
 
-            {% if app_settings.enable_content_safety %}
+            {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
             <div class="row g-3 mb-4">
                 <div class="col-md-3">
                     <div class="stat-card">
@@ -2478,7 +2478,7 @@
 window.profilePageConfig = {
     initialTab: {{ (initial_tab | default('stats')) | tojson }},
     feedbackEnabled: {{ (app_settings.enable_user_feedback | default(false)) | tojson }},
-    contentSafetyEnabled: {{ (app_settings.enable_content_safety | default(false)) | tojson }},
+    contentSafetyEnabled: {{ ((app_settings.enable_content_safety | default(false)) or (app_settings.enable_content_screening | default(false))) | tojson }},
     groupWorkspacesEnabled: {{ (app_settings.enable_group_workspaces | default(false)) | tojson }},
     publicWorkspacesEnabled: {{ (app_settings.enable_public_workspaces | default(false)) | tojson }},
     canCreateGroups: {{ profile_can_create_groups | tojson }},

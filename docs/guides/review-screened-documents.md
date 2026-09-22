@@ -4,7 +4,7 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.114"
+version: "0.261.127"
 ---
 
 ## What this does
@@ -21,7 +21,9 @@ An administrator must configure Enhanced Citations and its storage account befor
 
 Open **Admin Settings > Security > Content Screening**. This is a separate tab from Content Safety in both the classic and V2 interfaces. You can prepare the policy before configuring Enhanced Citations; an unmet storage prerequisite does not hide the editor.
 
-After Enhanced Citations is configured, enable Content Screening. V2 calls this **Screen workspace content before publication** and persists it with **Save changes**; the classic new-scan switch saves immediately. If no baseline exists, activation creates an enabled empty policy. An existing policy is preserved, including its enabled or disabled state. You do not need to enable Azure AI Content Safety.
+After Enhanced Citations is configured, enable **Content Screening** and leave **Screen workspace uploads** selected. V2 persists these choices with **Save changes**; the classic master switch saves immediately with the current upload selection. If no baseline exists, activation creates an enabled empty policy. An existing policy is preserved, including its enabled or disabled state. You do not need to enable Azure AI Content Safety.
+
+Since **0.261.127**, separate chat-text checkpoints can reuse this baseline. Disabling upload screening permits chat-only use without Enhanced Citations, but never releases an existing document hold. See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}).
 
 You can leave the policy empty and save it without adding rules or choosing a model. New uploads follow normal processing until their effective baseline/workspace policy contains checks. They are not labeled as having passed screening. Existing held documents still require review; clearing every rule is not a way to release them.
 

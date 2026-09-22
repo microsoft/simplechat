@@ -13,6 +13,21 @@ import type { ChatStreamEvent, ChatStreamRequest } from './types';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
+export function resolveStreamContent(event: ChatStreamEvent, accumulated: string): string {
+    if (typeof event.full_content === 'string') return event.full_content;
+    if (event.replace_content === true) {
+        return typeof event.content === 'string' ? event.content
+            : typeof event.partial_content === 'string' ? event.partial_content : '';
+    }
+    return typeof event.partial_content === 'string' ? event.partial_content : accumulated;
+}
+
+export function isReplyRemoved(metadata: unknown): boolean {
+    if (!metadata || typeof metadata !== 'object' || !('content_moderation' in metadata)) return false;
+    const moderation = metadata.content_moderation;
+    return Boolean(moderation && typeof moderation === 'object' && 'removed' in moderation && moderation.removed === true);
+}
+
 /**
  * Repairs frames whose blank-line delimiter was emitted literally escaped as `\n\n`
  * instead of as real newlines. Older server paths can produce this, and V1 carries the
@@ -253,6 +268,10 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        if (event.replace_content === true) {
+            result.accumulated = resolveStreamContent(event, '');
+            handlers.onContent?.('', result.accumulated);
+        }
         if (event.error || event.auth_required === true) {
             result.errored = true;
             reportError(event.error || 'Foundry sign-in or consent is required.', event);
@@ -274,17 +293,18 @@ async function consumeStreamResponse(
             return false;
         }
 
-        if (typeof event.content === 'string' && event.content.length > 0) {
+        if (event.replace_content !== true && typeof event.content === 'string' && event.content.length > 0) {
             result.accumulated += event.content;
             handlers.onContent?.(event.content, result.accumulated);
         }
 
         if (event.done) {
-            const wasCancelled =
+            const wasCancelled = event.blocked !== true && (
                 Boolean(event.cancelled) ||
                 Boolean(event.canceled) ||
                 event.type === 'cancelled' ||
-                event.type === 'canceled';
+                event.type === 'canceled');
+            result.accumulated = resolveStreamContent(event, result.accumulated);
 
             if (wasCancelled) {
                 result.cancelled = true;

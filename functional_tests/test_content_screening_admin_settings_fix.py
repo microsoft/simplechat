@@ -1,7 +1,7 @@
 # test_content_screening_admin_settings_fix.py
 """
 Functional regressions for discoverable and persistent screening administration.
-Version: 0.261.114
+Version: 0.261.127
 Implemented in: 0.261.107
 Enabled-empty policies implemented in: 0.261.114
 
@@ -95,7 +95,9 @@ def test_screening_has_its_own_visible_admin_section_and_editor():
     schema = fields.ADMIN_SETTINGS_FIELDS["content-screening-section"]
     toggle = next(field for field in schema if field.get("key") == "enable_content_screening")
     assert "depends_on" not in toggle
-    assert toggle["requires"]["key"] == "enable_enhanced_citations"
+    assert "requires" not in toggle
+    uploads = next(field for field in schema if field.get("key") == "enable_content_screening_workspace_uploads")
+    assert uploads["requires"]["key"] == "enable_enhanced_citations"
     assert toggle["role"] == "capability"
     assert any(field.get("component") == "content-screening-policy" for field in schema)
     assert all(field.get("key") != "enable_content_screening" for field in fields.ADMIN_SETTINGS_FIELDS["content-safety-section"])

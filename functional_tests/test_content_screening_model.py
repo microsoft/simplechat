@@ -1,7 +1,7 @@
 # test_content_screening_model.py
 """
 Behavioral regression tests for the isolated content-screening model evaluator.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.106
 
 Exercise the real evaluator and existing endpoint/capability/parameter helpers.
@@ -38,6 +38,7 @@ from content_screening.contracts import (
 )
 from content_screening.policies import DEFAULT_LIMITS, compose_policy, default_policy, normalize_limits
 from functions_model_capabilities import resolve_model_reasoning_effort
+from functions_model_endpoint_urls import normalize_endpoint_text
 from test_ai_connection_text_consumers import load_boundaries
 from test_model_endpoints_key_vault_secret_storage import (
     load_functions_keyvault_module,
@@ -210,7 +211,7 @@ def adapter_boundaries():
         "model_endpoint_clients.py",
         {
             "ModelEndpointBehavior", "normalize_anthropic_finish_reason",
-            "normalize_endpoint_text", "get_endpoint_path", "get_endpoint_origin",
+            "get_endpoint_path", "get_endpoint_origin",
             "is_anthropic_model", "endpoint_uses_openai_style_protocol", "infer_model_endpoint_protocol",
             "normalize_openai_style_base_url", "normalize_anthropic_messages_url",
             "resolve_openai_style_request_api_version", "build_openai_style_chat_client",
@@ -222,6 +223,7 @@ def adapter_boundaries():
             "SimpleNamespace": SimpleNamespace, "urlparse": urlparse, "json": json,
             "OpenAI": Mock(), "requests": SimpleNamespace(Response=object, post=Mock()),
             "resolve_model_reasoning_effort": resolve_model_reasoning_effort,
+            "normalize_endpoint_text": normalize_endpoint_text,
         },
         constants=(
             "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI", "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE",

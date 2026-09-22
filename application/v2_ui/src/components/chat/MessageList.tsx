@@ -442,11 +442,19 @@ function MessageBubbleInner({
     const artifactsReplaceText = !hasSavedAnalysis && suppressesAssistantText(artifacts);
     useEffect(() => {
         const store = useChatStore.getState();
+        if (
+            message.role === 'safety'
+            && store.analysisResultContext?.message_id === message.id
+            && store.analysisResultContext?.conversation_id === message.conversation_id
+        ) {
+            store.clearAnalysisResultContext();
+            return;
+        }
         if ((analysisUnavailable || masks.fullyMasked || masks.ranges.length > 0) &&
             sameAnalysis(store.analysisResultContext, savedAnalysis)) {
             store.clearAnalysisResultContext();
         }
-    }, [analysisUnavailable, masks.fullyMasked, masks.ranges.length, savedAnalysis]);
+    }, [analysisUnavailable, masks.fullyMasked, masks.ranges.length, savedAnalysis, message.id, message.role, message.conversation_id]);
     const artifactCards = artifacts.map((artifact, index) => (
         <GeneratedArtifactCard
             key={artifact.artifact_message_id || artifact.document_id || artifact.export_run_id || `artifact-${index}`}
@@ -488,6 +496,18 @@ function MessageBubbleInner({
 
     if (message.role === 'file') {
         return <FileMessage message={message} />;
+    }
+
+    if (message.role === 'safety') {
+        return (
+            <div id={`message-${message.id}`} role="status" aria-live="polite"
+                className="rounded-2xl border border-warn/30 bg-warn/10 px-4 py-3 text-text-1">
+                <p className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <TriangleAlert size={16} aria-hidden="true" /> Content check
+                </p>
+                <AssistantMarkdown content={message.content} />
+            </div>
+        );
     }
 
     if (editing) {

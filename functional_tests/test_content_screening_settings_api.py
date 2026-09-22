@@ -1,7 +1,7 @@
 # test_content_screening_settings_api.py
 """
 Functional tests for content screening settings and authenticated API contracts.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.106
 Embedding settings concurrency and sanitization merge coverage: 0.261.113
 Enabled-empty policies implemented in: 0.261.114
@@ -151,7 +151,9 @@ class ScreeningSettingsTests(unittest.TestCase):
         field = admin_settings_fields.get_field_definition("enable_content_screening")
         self.assertIs(field["default"], False)
         self.assertNotIn("depends_on", field)
-        self.assertEqual(field["requires"]["key"], "enable_enhanced_citations")
+        self.assertNotIn("requires", field)
+        upload = admin_settings_fields.get_field_definition("enable_content_screening_workspace_uploads")
+        self.assertEqual(upload["requires"]["key"], "enable_enhanced_citations")
         tree = ast.parse((APP_DIR / "functions_settings.py").read_text(encoding="utf-8"))
         default_values = [
             value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
@@ -160,6 +162,28 @@ class ScreeningSettingsTests(unittest.TestCase):
             and isinstance(value, ast.Constant)
         ]
         self.assertIn(False, default_values)
+
+    def test_chat_only_screening_does_not_require_document_storage(self):
+        result = self.functions["update_settings"]({
+            "enable_content_screening": True,
+            "enable_content_screening_workspace_uploads": False,
+            "enable_content_screening_chat_input": True,
+        })
+        self.assertTrue(result)
+        self.assertFalse(self.validate.call_args_list[0].kwargs["check_storage"])
+        self.assertFalse(self.validate.call_args_list[0].kwargs["document_operation"])
+
+    def test_checkpoint_switches_and_shared_modes_reject_invalid_types(self):
+        for updates in (
+            {"enable_content_screening_chat_input": "true"},
+            {"enable_content_safety_chat_output": 1},
+            {"chat_content_output_mode": "unchecked"},
+            {"chat_content_scan_failure_action": "ignore"},
+        ):
+            with self.subTest(updates=updates):
+                result = self.functions["update_settings"](updates)
+                self.assertFalse(result)
+        self.container.replace_item.assert_not_called()
 
     def test_partial_schema_updates_cannot_disable_required_citations(self):
         admin_settings_fields = import_app_module("admin_settings_fields")

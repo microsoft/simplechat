@@ -753,6 +753,9 @@
         appendCategoryBadges(document.getElementById('editCategories'), item, 'No triggered categories');
         document.getElementById('editStatus').value = item.status || 'New';
         document.getElementById('editAction').value = item.action || 'None';
+        for (const option of document.getElementById('editAction').options) {
+            option.disabled = item.content_origin === 'assistant' && SAFETY_REMEDIATION_ACTIONS.has(option.value);
+        }
         document.getElementById('editNotes').value = item.notes || '';
         document.getElementById('editLogId').value = item.id || '';
         setTextContent('safetyEditStatus', '');

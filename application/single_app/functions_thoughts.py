@@ -2,11 +2,13 @@
 
 import uuid
 import time
+import logging
 from datetime import datetime, timedelta, timezone
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from config import cosmos_thoughts_container, cosmos_archived_thoughts_container
 from functions_appinsights import log_event
 from functions_settings import get_settings
+from functions_chat_content_checks import enabled_chat_scanners
 
 
 class ThoughtTracker:
@@ -19,14 +21,16 @@ class ThoughtTracker:
     interrupt the chat processing flow.
     """
 
-    def __init__(self, conversation_id, message_id, thread_id, user_id, force_enabled=False):
+    def __init__(self, conversation_id, message_id, thread_id, user_id, force_enabled=False, settings=None):
         self.conversation_id = conversation_id
         self.message_id = message_id
         self.thread_id = thread_id
         self.user_id = user_id
         self.current_index = 0
-        settings = get_settings()
+        settings = settings if settings is not None else get_settings()
         self.enabled = force_enabled or settings.get('enable_thoughts', True)
+        self.content_checked_output = bool(enabled_chat_scanners(settings, "chat_output"))
+        self.hold_for_content_checks = self.content_checked_output and settings.get("chat_content_output_mode") == "check_before_display"
 
     def add_thought(self, step_type, content, detail=None, activity=None):
         """Write a thought step to Cosmos immediately.
@@ -57,6 +61,9 @@ class ThoughtTracker:
             'duration_ms': None,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }
+        if self.content_checked_output:
+            thought_doc["chat_content_checked_output"] = True
+            thought_doc["chat_content_pending_hold"] = self.hold_for_content_checks
         if isinstance(activity, dict) and activity:
             thought_doc['activity'] = dict(activity)
         self.current_index += 1
@@ -64,7 +71,7 @@ class ThoughtTracker:
         try:
             cosmos_thoughts_container.upsert_item(thought_doc)
         except Exception as e:
-            log_event(f"ThoughtTracker.add_thought failed: {e}", level="WARNING")
+            log_event("[THOUGHTS] Adding a processing note failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
             return None
 
         return thought_id
@@ -82,7 +89,7 @@ class ThoughtTracker:
             thought_doc['duration_ms'] = duration_ms
             cosmos_thoughts_container.upsert_item(thought_doc)
         except Exception as e:
-            log_event(f"ThoughtTracker.complete_thought failed: {e}", level="WARNING")
+            log_event("[THOUGHTS] Completing a processing note failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
 
     def timed_thought(self, step_type, content, detail=None):
         """Convenience: add a thought and return a timer helper.
@@ -115,6 +122,41 @@ class _ThoughtTimer:
 # CRUD helpers
 # ---------------------------------------------------------------------------
 
+def _visible_chat_thoughts(thoughts, *, message_reader=None):
+    """Polling and exports must honor the same hold/removal as the answer stream."""
+    marked = [thought for thought in thoughts if thought.get("chat_content_checked_output")]
+    if not marked:
+        return thoughts
+    if message_reader is None:
+        from config import cosmos_messages_container
+
+        message_reader = lambda conversation_id, message_id: cosmos_messages_container.read_item(
+            item=message_id, partition_key=conversation_id,
+        )
+    messages = {}
+    for thought in marked:
+        key = (thought["conversation_id"], thought["message_id"])
+        if key not in messages:
+            try:
+                messages[key] = message_reader(*key)
+            except CosmosResourceNotFoundError:
+                messages[key] = None
+    visible = []
+    for thought in thoughts:
+        key = (thought.get("conversation_id"), thought.get("message_id"))
+        if key in messages:
+            message = messages[key]
+            if message is None and thought.get("chat_content_pending_hold"):
+                continue
+            if message is not None and (message.get("metadata") or {}).get("content_moderation", {}).get("removed"):
+                continue
+        visible.append({
+            name: value for name, value in thought.items()
+            if name not in ("chat_content_checked_output", "chat_content_pending_hold")
+        })
+    return visible
+
+
 def get_thoughts_for_message(conversation_id, message_id, user_id):
     """Return all thoughts for a specific assistant message, ordered by step_index."""
     try:
@@ -133,13 +175,13 @@ def get_thoughts_for_message(conversation_id, message_id, user_id):
             parameters=params,
             partition_key=user_id
         ))
-        return results
+        return _visible_chat_thoughts(results)
     except Exception as e:
-        log_event(f"get_thoughts_for_message failed: {e}", level="WARNING")
+        log_event("[CHAT_CONTENT_CHECKS] Processing notes could not be read.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
         return []
 
 
-def delete_thoughts_for_message(conversation_id, message_id, user_id):
+def delete_scoped_thoughts_for_message(conversation_id, message_id, user_id):
     """Remove a known, authorized message's processing notes without hiding errors."""
     if not all(isinstance(value, str) and value for value in (conversation_id, message_id, user_id)):
         raise ValueError("Thought cleanup requires a conversation, message, and owner.")
@@ -208,9 +250,9 @@ def get_pending_thoughts(conversation_id, user_id, message_id=None):
             ]
 
         pending_thoughts.sort(key=lambda t: t.get('step_index', 0))
-        return pending_thoughts
+        return _visible_chat_thoughts(pending_thoughts)
     except Exception as e:
-        log_event(f"get_pending_thoughts failed: {e}", level="WARNING")
+        log_event("[THOUGHTS] Pending processing notes could not be read.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
         return []
 
 
@@ -230,9 +272,9 @@ def get_thoughts_for_conversation(conversation_id, user_id, raise_on_error=False
             parameters=params,
             partition_key=user_id
         ))
-        return results
+        return _visible_chat_thoughts(results)
     except Exception as e:
-        log_event(f"get_thoughts_for_conversation failed: {e}", level="WARNING")
+        log_event("[THOUGHTS] Conversation processing notes could not be read.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
         if raise_on_error:
             raise
         return []
@@ -257,7 +299,7 @@ def archive_thoughts_for_conversation(conversation_id, user_id, raise_on_error=F
                 partition_key=user_id
             )
     except Exception as e:
-        log_event(f"archive_thoughts_for_conversation failed: {e}", level="WARNING")
+        log_event("[THOUGHTS] Archiving processing notes failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
         if raise_on_error:
             raise
 
@@ -276,7 +318,7 @@ def delete_thoughts_for_conversation(conversation_id, user_id, raise_on_error=Fa
                 partition_key=user_id
             )
     except Exception as e:
-        log_event(f"delete_thoughts_for_conversation failed: {e}", level="WARNING")
+        log_event("[THOUGHTS] Deleting conversation processing notes failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
         if raise_on_error:
             raise
 
@@ -302,4 +344,4 @@ def delete_thoughts_for_message(message_id, user_id):
                 partition_key=user_id
             )
     except Exception as e:
-        log_event(f"delete_thoughts_for_message failed: {e}", level="WARNING")
+        log_event("[THOUGHTS] Deleting message processing notes failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)

@@ -99,6 +99,7 @@ export interface CollaborationEventHandlers {
         message: CollaborationMessage,
         conversation: CollaborationConversation | undefined,
     ) => void;
+    onMessageUpdated?: (message: CollaborationMessage) => void;
     onMessageDeleted?: (
         messageId: string,
         deletedByUserId: string | undefined,
@@ -235,6 +236,10 @@ export function dispatchCollaborationEvent(
             if (payload.message) {
                 handlers.onMessageCreated?.(payload.message, conversation);
             }
+            return;
+
+        case 'collaboration.message.updated':
+            if (payload.message) handlers.onMessageUpdated?.(payload.message);
             return;
 
         case 'collaboration.message.deleted':

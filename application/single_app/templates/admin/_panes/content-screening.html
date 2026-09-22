@@ -3,22 +3,80 @@
     <section class="card p-3 mb-3 content-screening" id="content-screening-section" aria-labelledby="content-screening-heading">
         <h5 id="content-screening-heading"><i class="bi bi-shield-check me-2" aria-hidden="true"></i>Content Screening</h5>
         <p class="text-body-secondary">
-            Inspect extracted workspace knowledge for sensitive information and document-borne instructions before
-            publication. This is separate from Azure AI Content Safety chat filtering.
+            Check workspace uploads, submitted chat messages, and AI replies using the saved PII, regex,
+            literal, and optional AI rules. Azure AI Content Safety is a separate scanner.
         </p>
         <div class="form-check form-switch mb-3">
             <input type="checkbox" class="form-check-input" id="enable_content_screening" name="enable_content_screening"
                 {% if settings.enable_content_screening|default(false) %}checked{% endif %} disabled
                 aria-describedby="content-screening-dependency-help" />
-            <label class="form-check-label" for="enable_content_screening">Enable Content Screening for new scans</label>
+            <label class="form-check-label" for="enable_content_screening">Enable Content Screening</label>
         </div>
         <p id="content-screening-dependency-help" class="small text-body-secondary">
-            Off by default. Requires Enhanced Citations and its working private storage configuration under
-            <strong>Chat &gt; Citations &gt; Enhanced</strong>.
+            Off by default. Workspace scans require Enhanced Citations and its working private storage under
+            <strong>Chat &gt; Citations &gt; Enhanced</strong>; chat-only checks do not.
             Enabling creates an enabled empty baseline if none exists. New uploads use normal processing until
             applicable checks are added. Disabling new scans or emptying a policy never releases a held document.
-            This switch saves immediately; detailed policies are saved separately below.
+            This master switch and the current upload selection save immediately when you change the master.
+            Use the main Save button for the other switches and chat behavior. Save policy edits separately below.
         </p>
+        <input type="hidden" name="chat_content_settings_present" value="1" />
+        <fieldset class="mb-3" aria-describedby="chat-screening-checkpoints-help">
+            <legend class="h6">Where to check</legend>
+            <p id="chat-screening-checkpoints-help" class="small text-body-secondary">
+                These choices take effect only while Content Screening is enabled. Turn off workspace uploads
+                before enabling chat-only screening without Enhanced Citations. Existing document holds stay in place.
+            </p>
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="enable_content_screening_workspace_uploads"
+                    name="enable_content_screening_workspace_uploads"
+                    {% if settings.enable_content_screening_workspace_uploads|default(true) %}checked{% endif %} />
+                <label class="form-check-label" for="enable_content_screening_workspace_uploads">Screen workspace uploads</label>
+            </div>
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="enable_content_screening_chat_input"
+                    name="enable_content_screening_chat_input"
+                    {% if settings.enable_content_screening_chat_input|default(false) %}checked{% endif %} />
+                <label class="form-check-label" for="enable_content_screening_chat_input">Screen submitted chat messages</label>
+            </div>
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="enable_content_screening_chat_output"
+                    name="enable_content_screening_chat_output"
+                    {% if settings.enable_content_screening_chat_output|default(false) %}checked{% endif %} />
+                <label class="form-check-label" for="enable_content_screening_chat_output">Screen AI replies</label>
+            </div>
+        </fieldset>
+        <fieldset class="mb-4" id="chat-content-behavior">
+            <legend class="h6">Chat check behavior (both scanners)</legend>
+            <div class="mb-3">
+                <label for="chat_content_output_mode" class="form-label">When to show AI replies</label>
+                <select id="chat_content_output_mode" name="chat_content_output_mode" class="form-select"
+                    aria-describedby="chat-content-output-help">
+                    <option value="stream_then_check" {% if settings.chat_content_output_mode|default('stream_then_check') == 'stream_then_check' %}selected{% endif %}>Stream first, then remove flagged replies</option>
+                    <option value="check_before_display" {% if settings.chat_content_output_mode == 'check_before_display' %}selected{% endif %}>Check before displaying the reply</option>
+                </select>
+                <p id="chat-content-output-help" class="form-text">
+                    Streaming first cannot undo text someone already read or copied. Holding a reply still
+                    follows the failure setting below if a check cannot finish.
+                </p>
+            </div>
+            <div class="mb-3">
+                <label for="chat_content_scan_failure_action" class="form-label">When a chat check cannot finish</label>
+                <select id="chat_content_scan_failure_action" name="chat_content_scan_failure_action" class="form-select"
+                    aria-describedby="chat-content-failure-help">
+                    <option value="allow_unchecked" {% if settings.chat_content_scan_failure_action|default('allow_unchecked') == 'allow_unchecked' %}selected{% endif %}>Allow quietly and mark not checked for admins</option>
+                    <option value="block" {% if settings.chat_content_scan_failure_action == 'block' %}selected{% endif %}>Stop messages or remove unchecked replies</option>
+                </select>
+                <p id="chat-content-failure-help" class="form-text">
+                    The default keeps technical check failures out of the user's way and records private metadata
+                    for an admin recheck. Actual findings always block messages or remove replies.
+                    This setting does not release held workspace documents.
+                </p>
+            </div>
+            <a href="/admin/safety_violations#unchecked-chat-content" class="btn btn-outline-secondary">
+                Review unchecked chat content
+            </a>
+        </fieldset>
         <div id="screening-admin-policy" data-content-screening-policy data-scope-type="global"></div>
         <div class="d-flex flex-wrap gap-2 mt-3">
             <a class="btn btn-outline-secondary" href="/content-review">Open content review</a>

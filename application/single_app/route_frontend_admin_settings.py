@@ -37,6 +37,7 @@ from functions_ai_connection_migration import (
 )
 from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
@@ -2411,6 +2412,7 @@ def register_route_frontend_admin_settings(bp):
                 return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
                 **m365_settings,
+                **chat_content_form_updates(form_data, settings),
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,

@@ -41,6 +41,7 @@ from functions_activity_logging import (
     log_conversation_deletion,
 )
 from functions_appinsights import log_event
+from functions_chat_content_checks import strip_private_chat_checks
 from functions_citation_tracking import (
     initialize_conversation_used_document_tracking,
     merge_cited_documents_into_conversation,
@@ -405,6 +406,11 @@ def _publicize_image_revisions(metadata):
 
 
 def serialize_collaboration_message(message_doc):
+    # The caller has authorized this shared conversation; refresh a marked
+    # source so cached mirrors cannot expose a later-withdrawn reply.
+    from functions_chat_content_review import refresh_checked_message
+
+    message_doc = refresh_checked_message(message_doc, source="shared")
     metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
     display_role = _get_collaboration_display_role(message_doc)
     serialized_role = display_role if display_role in ('file', 'image') else message_doc.get('role')
@@ -426,7 +432,7 @@ def serialize_collaboration_message(message_doc):
         'reply_to_message_id': message_doc.get('reply_to_message_id'),
         'timestamp': message_doc.get('timestamp'),
         'sender': metadata.get('sender', {}),
-        'metadata': metadata,
+        'metadata': strip_private_chat_checks(metadata, metadata=True),
         'explicit_ai_invocation': bool(metadata.get('explicit_ai_invocation', False)),
         'model_deployment_name': message_doc.get('model_deployment_name'),
         'augmented': bool(message_doc.get('augmented', False)),
