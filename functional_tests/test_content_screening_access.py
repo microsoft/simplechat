@@ -1,7 +1,7 @@
 # test_content_screening_access.py
 """
 Behavioral regression tests for authoritative document quarantine access.
-Version: 0.261.106
+Version: 0.261.130
 Implemented in: 0.261.106
 
 Uses fake Cosmos/Blob containers, injected canonical storage, and a local Flask
@@ -373,6 +373,12 @@ class AuthoritativeAvailabilityTests(ScreeningAccessFixture):
         for field in ("abstract", "title", "keywords", "authors", "blob_path", "private_findings"):
             self.assertNotIn(field, payload)
         self.assertNotIn("canonical_ref", payload["content_screening"])
+
+    def test_projection_writer_claim_is_private_with_or_without_screening(self):
+        for record in ({"id": "document-1"}, deepcopy(self.document)):
+            record["group_document_projection_writer"] = {"token": "PRIVATE-WRITER-TOKEN", "state": "executing"}
+            payload = access.public_document_payload(record)
+            self.assertNotIn("group_document_projection_writer", payload)
 
     def test_mutations_reject_nested_and_camel_case_state_fields(self):
         for payload in (

@@ -67,6 +67,7 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "original_blob_container", "active_manifest_id", "active_content_manifest",
     PROVENANCE_FIELD,
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
+    "group_document_projection_writer",
 })
 
 
@@ -777,6 +778,7 @@ def public_document_payload(document):
     if SCREENING_FIELD not in document:
         return {key: deepcopy(value) for key, value in document.items() if key not in {
             "generated_artifact_publication_binding", "generated_artifact_publication_processing",
+            "group_document_projection_writer",
         }}
     try:
         _require_available_metadata(document)

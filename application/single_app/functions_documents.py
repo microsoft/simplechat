@@ -8,6 +8,7 @@ import traceback
 import zipfile
 import hashlib
 from functools import partial
+from contextlib import nullcontext
 from io import BytesIO
 from flask import make_response
 from azure.core import MatchConditions
@@ -63,6 +64,11 @@ from functions_document_access_index import (
 from functions_data_management_search_write_fence import (
     DataManagementSearchWritesFrozenError,
     hold_data_management_search_write_slot,
+)
+from functions_group_document_projection_fence import (
+    GroupDocumentProjectionConflict,
+    assert_group_document_source_writable,
+    hold_group_document_projection,
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
@@ -153,7 +159,9 @@ def _search_indexing_results_succeeded(results):
     )
 
 
-def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+def _execute_document_search_write(
+    search_client, operation_name, *args, group_id=None, document_id=None, document_version=None, **kwargs,
+):
     """Serialize bounded target Search writes with an active Data Management migration fence."""
     kwargs.update({
         "connection_timeout": 30,
@@ -173,10 +181,33 @@ def _execute_document_search_write(search_client, operation_name, *args, **kwarg
             (getattr(document.get("embedding"), "profile_id", None) for document in documents if document.get("embedding") is not None),
             None,
         )
+    if group_id is not None and not document_id:
+        raise GroupDocumentProjectionConflict("The group projection has no document identity.")
+    projection = (
+        hold_group_document_projection(
+            cosmos_group_documents_container, document_id, group_id,
+            expected_version=document_version, log=log_event,
+        ) if group_id is not None else nullcontext(None)
+    )
     with hold_data_management_search_write_slot(cosmos_data_management_jobs_container, **slot_options):
         if vector_write:
             prepare_embedding_search_documents(search_client, documents)
-        results = getattr(search_client, operation_name)(*args, **kwargs)
+        with projection as current:
+            if current is not None:
+                allowed = set(current.get("shared_group_ids") or [])
+                for payload in documents or []:
+                    if not isinstance(payload, dict):
+                        raise GroupDocumentProjectionConflict("The group projection payload is invalid.")
+                    if payload.get("document_id", document_id) != document_id:
+                        raise GroupDocumentProjectionConflict("The group projection targets another document.")
+                    if "shared_group_ids" in payload:
+                        payload["shared_group_ids"] = [
+                            entry for entry in payload["shared_group_ids"] or [] if entry in allowed
+                        ]
+                    if current.get("is_current_version") is False and "group_id" in payload:
+                        payload["group_id"] = _build_archived_scope_value(group_id)
+                        payload["shared_group_ids"] = []
+            results = getattr(search_client, operation_name)(*args, **kwargs)
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
             f"Azure AI Search did not acknowledge every {operation_name} document mutation."
@@ -1688,11 +1719,14 @@ def _upsert_document_and_sync_access_index(cosmos_container, document_item, oper
         )
     except CosmosResourceNotFoundError:
         current_document = None
-    if strict and current_document is None and document_item.get("_etag"):
+    coordinated_group = bool(document_item.get("group_id")) and not document_item.get("public_workspace_id")
+    if current_document and coordinated_group:
+        assert_group_document_source_writable(current_document)
+    if (strict or coordinated_group) and current_document is None and document_item.get("_etag"):
         raise ScreeningConflictError()
-    if current_document and (strict or SCREENING_FIELD in current_document):
+    if current_document and (strict or coordinated_group or SCREENING_FIELD in current_document):
         expected_etag = document_item.get("_etag")
-        if (strict and not expected_etag) or expected_etag != current_document.get("_etag"):
+        if ((strict or coordinated_group) and not expected_etag) or expected_etag != current_document.get("_etag"):
             raise ScreeningConflictError()
         if document_item.get("version") != current_document.get("version"):
             raise ScreeningConflictError()
@@ -1702,7 +1736,7 @@ def _upsert_document_and_sync_access_index(cosmos_container, document_item, oper
             item=document_item["id"], body=document_item,
             etag=expected_etag, match_condition=MatchConditions.IfNotModified,
         )
-    elif current_document is None and (strict or SCREENING_FIELD in document_item):
+    elif current_document is None and (strict or coordinated_group or SCREENING_FIELD in document_item):
         persisted_document = cosmos_container.create_item(document_item)
     else:
         persisted_document = cosmos_container.upsert_item(document_item)
@@ -1759,6 +1793,9 @@ def set_document_chunk_visibility(document_item, active=True):
         search_client,
         "merge_documents",
         documents=documents_to_update,
+        group_id=group_id if is_group and not is_public_workspace else None,
+        document_id=document_id,
+        document_version=document_item.get("version"),
     )
     return len(documents_to_update)
 
@@ -2506,6 +2543,9 @@ def save_video_chunk(
                 client,
                 "upload_documents",
                 documents=[chunk],
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
             debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
@@ -3979,6 +4019,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
             search_client,
             "upload_documents",
             documents=[chunk_document],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=version,
         )
 
     except Exception as e:
@@ -4176,6 +4219,9 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 search_client,
                 "upload_documents",
                 documents=sub_batch,
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
 
     except Exception as e:
@@ -4360,6 +4406,9 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             search_client,
             "merge_documents",
             documents=[metadata_update],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=chunk_item.get("version"),
         )
 
     except Exception as e:
@@ -4803,6 +4852,7 @@ def delete_document(
         elif is_group:
             if document_item.get("group_id") != group_id:
                 raise PermissionError("Document access denied.")
+            assert_group_document_source_writable(document_item)
         elif document_item.get("user_id") != user_id:
             raise PermissionError("Document access denied.")
         if strict and (not expected_etag or document_item.get("_etag") != expected_etag):
@@ -4880,10 +4930,11 @@ def delete_document(
                 item=document_id, partition_key=document_id,
                 etag=current_document["_etag"], match_condition=MatchConditions.IfNotModified,
             )
-        elif strict:
+        elif strict or is_group:
             cosmos_container.delete_item(
                 item=document_id, partition_key=document_id,
-                etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+                etag=expected_etag if strict else document_item["_etag"],
+                match_condition=MatchConditions.IfNotModified,
             )
         else:
             cosmos_container.delete_item(

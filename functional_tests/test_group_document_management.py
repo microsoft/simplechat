@@ -1,7 +1,7 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.129
 
 Real Flask routes, management/access/policy modules, conditional document writes,
@@ -10,6 +10,7 @@ search and provider seams. No Azure writes, model calls or deployment occur.
 """
 
 import ast
+import importlib
 from copy import deepcopy
 from datetime import datetime, timezone
 from functools import partial
@@ -297,6 +298,9 @@ def management(environment):
         "initial_document_marker": lambda _item: None,
         "ALLOWED_EXTENSIONS": {"pdf", "png", "txt", "csv", "docx"},
         "prepare_document_deletion": prepare_delete,
+        "assert_group_document_source_writable": importlib.import_module(
+            "functions_group_document_projection_fence"
+        ).assert_group_document_source_writable,
     })
     execute_functions("functions_documents.py", {
         "_get_blob_service_client", "_blob_exists", "_get_documents_container",
