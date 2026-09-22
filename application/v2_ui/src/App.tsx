@@ -19,6 +19,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
+import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 
@@ -205,15 +206,11 @@ export function App() {
                 <Route path="/groups/:groupId/:section/:resourceId" element={<GroupWorkspacePage />} />
                 <Route
                     path="/public"
-                    element={
-                        <PlaceholderPage
-                            title="Public workspaces"
-                            description="Public workspace browsing has not been rebuilt in the V2 interface yet."
-                            classicHref="/public_directory"
-                            classicLabel="Open public workspaces"
-                        />
-                    }
+                    element={<PublicWorkspacePage />}
                 />
+                <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>

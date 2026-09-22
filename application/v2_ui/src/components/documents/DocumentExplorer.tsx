@@ -18,7 +18,7 @@ import {
     buildContextHandoffParams,
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
-import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
+import { groupScope, publicScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { isScreeningBusy } from '../../lib/contentScreening';
 import { ApiError } from '../../lib/apiClient';
 import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
@@ -187,7 +187,8 @@ function ScopedDocumentExplorer({
     const userSettings = useUserSettingsStore((state) => state.settings);
     const saveUserSettings = useUserSettingsStore((state) => state.update);
     const isGroup = reader.scope.kind === 'group';
-    const scopeLabel = reader.scope.kind === 'group' ? reader.scope.name : 'My workspace';
+    const isPersonal = reader.scope.kind === 'personal';
+    const scopeLabel = reader.scope.kind === 'personal' ? 'My workspace' : reader.scope.name;
 
     const storedPrefs = userSettings.v2DocumentsPrefs;
     const prefs: DocumentExplorerPrefs = useMemo(
@@ -202,8 +203,8 @@ function ScopedDocumentExplorer({
     );
 
     const savedViews = useMemo(
-        () => isGroup ? [] : parseSavedViews(userSettings.v2DocumentSavedViews),
-        [isGroup, userSettings.v2DocumentSavedViews],
+        () => isPersonal ? parseSavedViews(userSettings.v2DocumentSavedViews) : [],
+        [isPersonal, userSettings.v2DocumentSavedViews],
     );
 
     const [query, setQuery] = useState<DocumentQuery>(() => supportedDocumentQuery({
@@ -331,19 +332,19 @@ function ScopedDocumentExplorer({
 
     const selectionReason = useCallback((document: WorkspaceDocument) => {
         const chatReason = chatSelectionReason(document);
-        if (interactionDisabled || !isGroup || !chatReason) return chatReason;
+        if (interactionDisabled || isPersonal || !chatReason) return chatReason;
         return [...operations.supported].some((operation) => !['upload', 'manage_tags'].includes(operation)
             && operations.allows(operation, [document])) ? null : chatReason;
-    }, [chatSelectionReason, interactionDisabled, isGroup, operations]);
+    }, [chatSelectionReason, interactionDisabled, isPersonal, operations]);
 
     const requirePersonalFeature = useCallback(() => {
-        if (isGroup || interactionDisabled || mutationBusy.current || collaborationBusyRef.current) {
-            toast.error(isGroup ? 'This personal workspace feature is not available for group documents.'
+        if (!isPersonal || interactionDisabled || mutationBusy.current || collaborationBusyRef.current) {
+            toast.error(!isPersonal ? 'This feature is not available for shared workspace documents.'
                 : 'Refresh workspace access before changing documents.');
             return false;
         }
         return true;
-    }, [isGroup, interactionDisabled]);
+    }, [isPersonal, interactionDisabled]);
 
     const canPerform = useCallback((operation: DocumentOperation, targets: readonly WorkspaceDocument[] = []) => {
         const current = operationContext.current;
@@ -447,15 +448,15 @@ function ScopedDocumentExplorer({
             reprocess: operations.supported.has('reprocess'),
             allows: canPerform,
             chat: canChat && !interactionDisabled && !busy && !loading && !error && !detailError && !chatPending,
-            downloads: isGroup ? operations.supported.has('download') : downloadsEnabled,
-            extractMetadata: isGroup ? operations.supported.has('extract_metadata') : Boolean(features?.enable_extract_meta_data),
-            sharing: !isGroup && Boolean(features?.enable_file_sharing),
+            downloads: isPersonal ? downloadsEnabled : operations.supported.has('download'),
+            extractMetadata: isPersonal ? Boolean(features?.enable_extract_meta_data) : operations.supported.has('extract_metadata'),
+            sharing: isPersonal && Boolean(features?.enable_file_sharing),
             classification: Boolean(features?.enable_document_classification),
             enhancedExtraction: Boolean(features?.enable_enhanced_extraction),
             canReview: (document: WorkspaceDocument) => Boolean(collaboration
                 && !interactionDisabled && !busy && !loading && collaboration.allows('inspect', document)),
         }),
-        [isGroup, operations, collaboration, canPerform, canChat, interactionDisabled, busy, loading, error, detailError, chatPending, downloadsEnabled, features],
+        [isPersonal, operations, collaboration, canPerform, canChat, interactionDisabled, busy, loading, error, detailError, chatPending, downloadsEnabled, features],
     );
 
     const orderedIds = useMemo(
@@ -502,7 +503,7 @@ function ScopedDocumentExplorer({
                 }
                 setDocuments(items);
                 setTotalCount(total);
-                setDownloadsEnabled(!isGroup && Boolean(response.file_downloads_enabled));
+                setDownloadsEnabled(isPersonal && Boolean(response.file_downloads_enabled));
                 setSelection((current) => pruneSelection(current, items.filter((item) =>
                     !selectionReason(item) || failedSelection.current.has(documentId(item))).map(documentId)));
                 setInspectedId((current) => current === linkedDocumentId || items.some((item) => documentId(item) === current) ? current : null);
@@ -517,7 +518,7 @@ function ScopedDocumentExplorer({
                 if (!controller.signal.aborted && mounted.current) setLoading(false);
             }
         },
-        [query, reader, isGroup, interactionDisabled, selectionReason, linkedDocumentId],
+        [query, reader, isPersonal, interactionDisabled, selectionReason, linkedDocumentId],
     );
 
     const loadSidebar = useCallback(async () => {
@@ -565,7 +566,7 @@ function ScopedDocumentExplorer({
         setDetailLoading(false);
         setLinkedGone(false);
         if (inspectedId) setInspectedDocument(null);
-        if (!detailId || interactionDisabled || (!isGroup && detailRefresh === 0)) return;
+        if (!detailId || interactionDisabled || (isPersonal && detailRefresh === 0)) return;
         const controller = new AbortController();
         detailRequest.current = controller;
         const revision = listRevision.current;
@@ -586,7 +587,7 @@ function ScopedDocumentExplorer({
             if (!controller.signal.aborted && mounted.current) setDetailLoading(false);
         });
         return () => controller.abort();
-    }, [detailId, inspectedId, linkedDocumentId, readCurrentDocument, interactionDisabled, detailRefresh, isGroup, query]);
+    }, [detailId, inspectedId, linkedDocumentId, readCurrentDocument, interactionDisabled, detailRefresh, isPersonal, query]);
 
     /* ---------------------------------------------------------------------- */
     /* Progress polling                                                        */
@@ -946,13 +947,13 @@ function ScopedDocumentExplorer({
     const onDropOnTag = useCallback(
         (tagName: string, ids: string[], draggedScope?: string) => {
             const targets = documents.filter((document) => ids.includes(documentId(document)));
-            if ((draggedScope !== scopeKey && (isGroup || draggedScope)) || !ids.length || targets.length !== ids.length) {
+            if ((draggedScope !== scopeKey && (!isPersonal || draggedScope)) || !ids.length || targets.length !== ids.length) {
                 toast.error('Drag documents from this workspace only. No tags were changed.');
                 return;
             }
             void runBulkTag(targets, 'add_tags', [tagName], { undoable: true });
         },
-        [documents, scopeKey, isGroup, runBulkTag],
+        [documents, scopeKey, isPersonal, runBulkTag],
     );
 
     const onUploadFiles = useCallback(
@@ -1039,7 +1040,7 @@ function ScopedDocumentExplorer({
             chatRequest.current = controller;
             setChatPending(true);
             try {
-                if (isGroup) documents = await Promise.all(documents.map((document) => reader.detail(documentId(document), controller.signal)));
+                if (!isPersonal) documents = await Promise.all(documents.map((document) => reader.detail(documentId(document), controller.signal)));
                 if (controller.signal.aborted || !mounted.current || access.current.interactionDisabled || !access.current.canChat) return;
                 const blocked = documents.map((document) => documentSelectionReason(document, reader.scope)).find(Boolean);
                 if (blocked) {
@@ -1047,12 +1048,14 @@ function ScopedDocumentExplorer({
                     toast.error(blocked);
                     return;
                 }
-                const scope = reader.scope.kind === 'group' ? groupScope(reader.scope) : PERSONAL_SCOPE;
-                const tags = isGroup ? query.tags : [];
+                const scope = reader.scope.kind === 'group' ? groupScope(reader.scope)
+                    : reader.scope.kind === 'public' ? publicScope(reader.scope) : PERSONAL_SCOPE;
+                const tags = isPersonal ? [] : query.tags;
                 const handoff = buildContextHandoffParams({
                     documentIds: documents.map(documentId),
                     docScope: reader.scope.kind,
                     groupId: reader.scope.kind === 'group' ? reader.scope.id : undefined,
+                    workspaceId: reader.scope.kind === 'public' ? reader.scope.id : undefined,
                     tags,
                 });
                 const state: ContextHandoffState = {
@@ -1066,7 +1069,7 @@ function ScopedDocumentExplorer({
                 if (!controller.signal.aborted && mounted.current) setChatPending(false);
             }
         },
-        [navigate, reader, isGroup, query.tags, availability.chat, chatSelectionReason],
+        [navigate, reader, isPersonal, query.tags, availability.chat, chatSelectionReason],
     );
 
     const onExtractMetadata = useCallback(
@@ -1315,7 +1318,7 @@ function ScopedDocumentExplorer({
         classifications={availability.classification ? classifications : []}
         onQueryChange={changeQuery}
         onApplySavedView={(view) => {
-            if (isGroup || interactionDisabled) return;
+            if (!isPersonal || interactionDisabled) return;
             setSearchDraft(view.query.search);
             setQuery((current) => applySavedView(current, view));
         }}
@@ -1380,7 +1383,7 @@ function ScopedDocumentExplorer({
                 selectedDocuments={selectedDocuments}
                 uploading={uploading}
                 availability={{ ...availability, chat: availability.chat && selectedDocuments.every((document) => !chatSelectionReason(document)) }}
-                canSaveView={!isGroup && isSaveableQuery(query)}
+                canSaveView={isPersonal && isSaveableQuery(query)}
                 query={query}
                 sortFields={reader.queries.sortFields}
                 onSort={onSort}
@@ -1421,7 +1424,7 @@ function ScopedDocumentExplorer({
                     {onClearLinkedDocument ? <GlassButton size="sm" variant="ghost" onClick={onClearLinkedDocument}>Return to document list</GlassButton> : null}
                 </div>
             ) : null}
-            {isGroup && !canChat ? <p role="status" className="text-xs text-text-3">Chat is not available for this group. You can still inspect its documents.</p> : null}
+            {!isPersonal && !canChat ? <p role="status" className="text-xs text-text-3">{isGroup ? 'Chat is not available for this group. You can still inspect its documents.' : 'Chat is not available for this public workspace. You can still inspect its documents.'}</p> : null}
             {feedback && !dialog ? <div className="space-y-1">
                 {feedback.errors.length ? <OperationFeedback {...feedback} documents={documents} />
                     : <p role="status" className="text-xs text-text-3">{feedback.title}</p>}
@@ -1505,7 +1508,7 @@ function ScopedDocumentExplorer({
                     busy={busy}
                     disabled={!canPerform('tag_documents', dialog.documents)}
                     canCreateTag={availability.manageTags}
-                    scopeLabel={isGroup ? scopeLabel : undefined}
+                    scopeLabel={!isPersonal ? scopeLabel : undefined}
                     error={dialogError}
                     errors={feedback?.errors}
                     onClose={closeDialog}
@@ -1521,18 +1524,18 @@ function ScopedDocumentExplorer({
                     classificationEnabled={availability.classification}
                     busy={busy}
                     disabled={!canPerform('edit_metadata', [dialog.document])}
-                    disabledReason={isGroup && !loading && !interactionDisabled
+                    disabledReason={!isPersonal && !loading && !interactionDisabled
                         && !documents.some((document) => documentId(document) === documentId(dialog.document))
                         ? 'This document is no longer in the current results. Your draft still targets its original revision and will not be saved onto a replacement.'
                         : undefined}
                     error={dialogError}
-                    scopeLabel={isGroup ? scopeLabel : undefined}
+                    scopeLabel={!isPersonal ? scopeLabel : undefined}
                     onClose={closeDialog}
                     onSave={(draft) => void onSaveMetadata(dialog.document, draft)}
                 />
             ) : null}
 
-            {!isGroup && dialog?.kind === 'share' ? (
+            {isPersonal && dialog?.kind === 'share' ? (
                 <ShareDialog
                     document={dialog.document}
                     onClose={() => setDialog(null)}
@@ -1547,7 +1550,7 @@ function ScopedDocumentExplorer({
                     busy={busy}
                     disabled={!canPerform('delete', dialog.documents)}
                     scopeLabel={scopeLabel}
-                    legacyPersonal={!isGroup}
+                    legacyPersonal={isPersonal}
                     onClose={closeDialog}
                     onConfirm={(options) => void onConfirmDelete(dialog.documents, options)}
                 />

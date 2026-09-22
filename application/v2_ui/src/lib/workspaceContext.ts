@@ -63,6 +63,42 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
     };
 }
 
+/**
+ * The read-only public workspace context (M3A). Mirrors the group context field-for-field
+ * except it never advertises document_management, document_collaboration or native_delegation,
+ * which stay out of scope until later milestones.
+ */
+export interface PublicWorkspaceContext extends WorkspaceAvailability {
+    schema_version: 1;
+    enabled: true;
+    viewer_id: string;
+    scope: Extract<WorkspaceRef, { kind: 'public' }>;
+    workspace: {
+        name: string;
+        description: string;
+        owner: { display_name: string; email: string };
+        hero_color: string;
+        logo_url: string | null;
+    };
+    role: GroupWorkspaceRole;
+    status: GroupWorkspaceStatus;
+    can_manage_workspace: boolean;
+    sections: Record<GroupWorkspaceSectionId, WorkspaceSectionAccess>;
+    document_permissions: {
+        can_view: boolean;
+        can_chat: boolean;
+        can_upload: boolean;
+        can_edit: boolean;
+        can_delete: boolean;
+        can_download: boolean;
+    };
+    document_queries: {
+        sort_fields: string[];
+        facets: boolean;
+        places: boolean;
+    };
+}
+
 export function requireWorkspaceId(id: string): string {
     if (typeof id !== 'string' || !id || id === '.' || id === '..'
         || id !== id.trim() || /[/\\?#\u0000-\u001f\u007f]/.test(id)) {
@@ -97,13 +133,15 @@ function isSectionAccess(value: unknown): value is WorkspaceSectionAccess {
         && (value.enabled ? value.reason === null : typeof value.reason === 'string' && Boolean(value.reason.trim()));
 }
 
-export function isGroupWorkspaceContext(
+function matchesWorkspaceContextShape(
     value: unknown,
     viewerId: string,
-    groupId: string,
-): value is GroupWorkspaceContext {
+    id: string,
+    kind: 'group' | 'public',
+    logoPrefix: string,
+): boolean {
     if (!isRecord(value) || value.schema_version !== 1 || value.enabled !== true || value.viewer_id !== viewerId
-        || !isRecord(value.scope) || value.scope.kind !== 'group' || value.scope.id !== groupId
+        || !isRecord(value.scope) || value.scope.kind !== kind || value.scope.id !== id
         || !isRecord(value.workspace) || !isRecord(value.sections)
         || !isRecord(value.document_permissions) || !isRecord(value.document_queries)) return false;
     const { workspace, sections, document_permissions: permissions, document_queries: queries } = value;
@@ -111,7 +149,6 @@ export function isGroupWorkspaceContext(
         || !isRecord(workspace.owner) || typeof workspace.owner.display_name !== 'string'
         || typeof workspace.owner.email !== 'string'
         || typeof workspace.hero_color !== 'string' || !/^#[0-9a-f]{6}$/i.test(workspace.hero_color)) return false;
-    const logoPrefix = `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`;
     if (workspace.logo_url !== null && (typeof workspace.logo_url !== 'string'
         || !workspace.logo_url.startsWith(logoPrefix)
         || !/^[1-9]\d*$/.test(workspace.logo_url.slice(logoPrefix.length)))) return false;
@@ -120,13 +157,36 @@ export function isGroupWorkspaceContext(
         && typeof value.status === 'string'
         && ['active', 'locked', 'upload_disabled', 'inactive', 'unknown'].includes(value.status)
         && typeof value.can_manage_workspace === 'boolean'
-        && GROUP_WORKSPACE_SECTION_IDS.every((id) => isSectionAccess(sections[id]))
+        && GROUP_WORKSPACE_SECTION_IDS.every((sectionId) => isSectionAccess(sections[sectionId]))
         && (value.native_delegation === undefined || isSectionAccess(value.native_delegation))
         && ['can_view', 'can_chat', 'can_upload', 'can_edit', 'can_delete', 'can_download']
             .every((key) => typeof permissions[key] === 'boolean')
         && Array.isArray(queries.sort_fields)
         && queries.sort_fields.every((field) => typeof field === 'string' && field.length > 0)
         && typeof queries.facets === 'boolean' && typeof queries.places === 'boolean';
+}
+
+export function isGroupWorkspaceContext(
+    value: unknown,
+    viewerId: string,
+    groupId: string,
+): value is GroupWorkspaceContext {
+    return matchesWorkspaceContextShape(value, viewerId, groupId, 'group',
+        `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`);
+}
+
+/**
+ * Public workspace logos are still served from the legacy underscore route
+ * `/api/public_workspaces/<id>/logo`, even though the M3A document reads use the hyphenated
+ * `/api/public-workspaces/<id>/documents` family. Validate the underscore prefix.
+ */
+export function isPublicWorkspaceContext(
+    value: unknown,
+    viewerId: string,
+    workspaceId: string,
+): value is PublicWorkspaceContext {
+    return matchesWorkspaceContextShape(value, viewerId, workspaceId, 'public',
+        `/api/public_workspaces/${encodeWorkspaceId(workspaceId)}/logo?v=`);
 }
 
 export async function fetchGroupWorkspaceContext(
@@ -138,6 +198,20 @@ export async function fetchGroupWorkspaceContext(
     requireWorkspaceId(viewerId);
     const response = await api.get<unknown>(`/api/v2/workspaces/group/${encodeWorkspaceId(id)}`, signal);
     if (!isGroupWorkspaceContext(response, viewerId, id)) {
+        throw new Error('The workspace returned invalid or mismatched details. Refresh and try again.');
+    }
+    return response;
+}
+
+export async function fetchPublicWorkspaceContext(
+    workspaceId: string,
+    viewerId: string,
+    signal?: AbortSignal,
+): Promise<PublicWorkspaceContext> {
+    const id = requireWorkspaceId(workspaceId);
+    requireWorkspaceId(viewerId);
+    const response = await api.get<unknown>(`/api/v2/workspaces/public/${encodeWorkspaceId(id)}`, signal);
+    if (!isPublicWorkspaceContext(response, viewerId, id)) {
         throw new Error('The workspace returned invalid or mismatched details. Refresh and try again.');
     }
     return response;

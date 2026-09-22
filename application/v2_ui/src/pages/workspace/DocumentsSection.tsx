@@ -11,10 +11,10 @@ import { Link } from 'react-router-dom';
 import { DocumentExplorer } from '../../components/documents/DocumentExplorer';
 import { ScreeningWorkspaceControls } from '../../components/screening/ScreeningWorkspaceControls';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
-import { createGroupDocumentReader } from '../../lib/documentReadAdapter';
-import { createGroupDocumentOperations } from '../../lib/documentOperations';
+import { createGroupDocumentReader, createPublicDocumentReader } from '../../lib/documentReadAdapter';
+import { createGroupDocumentOperations, createPublicDocumentOperations } from '../../lib/documentOperations';
 import { createDocumentCollaboration } from '../../lib/documentCollaboration';
-import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
+import type { GroupWorkspaceContext, PublicWorkspaceContext } from '../../lib/workspaceContext';
 import { GlassButton } from '../../components/ui/primitives';
 
 export function GroupDocumentsSection({
@@ -57,6 +57,50 @@ export function GroupDocumentsSection({
             </div>
             <div className="min-h-0 flex-1">
                 <DocumentExplorer reader={reader} operations={operations} collaboration={collaboration}
+                    canChat={context.document_permissions.can_chat}
+                    interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
+                    onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}
+                    linkedDocumentId={linkedDocumentId} linkedDocumentError={linkedDocumentError}
+                    onClearLinkedDocument={onClearLinkedDocument} />
+            </div>
+        </div>
+    );
+}
+
+export function PublicDocumentsSection({
+    context, interactionDisabled, onOpenClassic, onDirtyChange, onBusyChange,
+    linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
+}: {
+    context: PublicWorkspaceContext;
+    interactionDisabled: boolean;
+    onOpenClassic: () => void;
+    onDirtyChange: (dirty: boolean) => void;
+    onBusyChange: (busy: boolean) => void;
+    linkedDocumentId?: string | null;
+    linkedDocumentError?: string | null;
+    onClearLinkedDocument?: () => void;
+}) {
+    const reader = useMemo(() => createPublicDocumentReader(
+        context.scope.id, context.workspace.name, context.document_queries,
+    ), [context.scope.id, context.workspace.name, context.document_queries]);
+    const operations = useMemo(() => createPublicDocumentOperations(
+        { kind: 'public', id: context.scope.id, name: context.workspace.name },
+    ), [context.scope.id, context.workspace.name]);
+
+    return (
+        <div className="flex h-full min-h-0 flex-col gap-2">
+            <div className="shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-semibold text-text-1">Documents</h2>
+                    <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
+                        aria-label="Open classic public workspace" title="Browse public documents in classic">
+                        <span className="hidden sm:inline">Browse in</span> Classic<ArrowUpRight size={14} />
+                    </GlassButton>
+                </div>
+                <p className="mt-0.5 text-sm text-text-3">Read-only browsing for this public workspace.</p>
+            </div>
+            <div className="min-h-0 flex-1">
+                <DocumentExplorer reader={reader} operations={operations}
                     canChat={context.document_permissions.can_chat}
                     interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
                     onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}

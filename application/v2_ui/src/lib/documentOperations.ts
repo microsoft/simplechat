@@ -453,3 +453,14 @@ export function createGroupDocumentOperations(
     if (scope.kind !== 'group') throw new Error('Group operations require an explicit group scope.');
     return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management));
 }
+
+/**
+ * Public workspaces are read-only in M3A. The empty supported set means every mutation gate
+ * (documentOperationAllowed / requireOperation) refuses, so no write endpoint is ever reached.
+ */
+export function createPublicDocumentOperations(
+    scope: Extract<DocumentReadScope, { kind: 'public' }>,
+): DocumentOperationAdapter {
+    if (scope.kind !== 'public') throw new Error('Public operations require an explicit public workspace scope.');
+    return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, new Set());
+}

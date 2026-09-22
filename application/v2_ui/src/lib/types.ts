@@ -215,6 +215,8 @@ export interface WorkspaceDocument {
     shared_approval_status?: 'owner' | 'approved' | 'not_approved' | 'none' | string;
     /** Group ownership is independent of the authenticated viewer's personal ownership. */
     group_id?: string;
+    /** Public workspace ownership, the public-scope analogue of group_id. */
+    public_workspace_id?: string;
     owner_group_id?: string;
     owner_group_name?: string;
     shared_group_active_id?: string;
@@ -251,6 +253,7 @@ export interface DocumentListResponse {
 export interface DocumentVersionsResponse {
     document_id?: string;
     group_id?: string;
+    public_workspace_id?: string;
     revision_family_id?: string;
     versions?: WorkspaceDocument[];
 }
