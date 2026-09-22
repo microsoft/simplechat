@@ -4,6 +4,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.131)**
 
+#### New Features
+
+*   **Native Group Document Sharing And Approval Review**
+    *   Share a group document with another group, accept or remove a received share, and approve, reject, or withdraw a pending generated artifact — all inside the native workspace explorer, without switching to the legacy group workspace page.
+    *   A notification opens the exact group and document it refers to, including when that document is not on the current page. A notification that does not match has no navigation or activation side effect, and a link to a denied or deleted document does not silently fall back to another document.
+    *   Decisions are bound to the document revision the reviewer actually saw. A conflicting change keeps the entered target and asks for an explicit refresh instead of resolving itself, and a partial outcome is repaired rather than replayed as a new decision.
+    *   Sharing calls name the group in the URL rather than relying on the account's current selection, so changing groups mid-decision cannot redirect one, and an older server rejects the call instead of acting in the wrong group.
+    *   (Ref: `functions_group_document_collaboration.py`, `functions_group_document_publication.py`, `route_backend_group_documents.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Group Document Collaboration](features/V2_GROUP_DOCUMENT_COLLABORATION.md), [Collaboration APIs](features/GROUP_DOCUMENT_COLLABORATION_APIS.md))
+
 #### Bug Fixes
 
 *   **Document Payload Redaction No Longer Depends On The Screening Toggle**
@@ -11,7 +20,8 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The same document was already redacted correctly whenever screening was enabled, so exposure depended on an unrelated administrative setting rather than on the sensitivity of the field.
     *   Root cause was a duplicated redaction rule: the unscreened path carried a hand-maintained three-field literal that had fallen behind the full private-field set. Both paths now share one predicate, so they cannot drift apart as new private fields are added.
     *   The generated-artifact request allow-list was duplicated the same way across the payload serializer and the group projection, where drift would silently drop requester attribution from pending artifact reviews. It is now a single shared constant.
-    *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments.
+    *   Group collaboration internals — the sharing ledger, the publication receipt id, and the generated artifact source conversation, message, container, and blob path — are redacted for every caller rather than only in the group browser projection.
+    *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments. Share rosters remain serialized, because the surfaces that render share status and counts read them directly.
     *   (Ref: `content_screening/access.py`, `functions_group_document_reads.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, `GENERATED_ARTIFACT_REQUEST_FIELDS`, [Payload Redaction Fix](fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
 
 ### **(v0.261.123)**

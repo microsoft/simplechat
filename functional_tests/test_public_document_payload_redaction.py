@@ -150,6 +150,45 @@ def test_group_projection_does_not_keep_its_own_privacy_pop_list():
         )
 
 
+def test_share_rosters_stay_serializable_for_the_surfaces_that_render_them():
+    """`shared_user_ids` and `shared_group_ids` must NOT be globally private.
+
+    Live UI reads both straight off the document payload to render share
+    status and share counts: V2's DocumentDetailsPane, the legacy personal
+    workspace scripts, and the legacy group workspace template. Marking them
+    private silently turns every share badge into 0.
+
+    Per-audience narrowing belongs in the projection that knows the audience —
+    `_project_group_document` already rewrites `shared_group_ids` for
+    non-owner-managers — not in the global redaction set.
+    """
+    assert "shared_user_ids" not in PRIVATE_DOCUMENT_FIELDS
+    assert "shared_group_ids" not in PRIVATE_DOCUMENT_FIELDS
+    assert is_public_document_field("shared_user_ids")
+    assert is_public_document_field("shared_group_ids")
+
+    payload = public_document_payload({
+        **SAFE_FIELDS,
+        "shared_user_ids": ["user-2,approved"],
+        "shared_group_ids": ["group-b,approved"],
+    })
+
+    assert payload["shared_user_ids"] == ["user-2,approved"]
+    assert payload["shared_group_ids"] == ["group-b,approved"]
+
+
+def test_recomputed_action_hints_are_never_served_from_storage():
+    """A stored copy is always stale; the projection re-adds fresh values."""
+    payload = public_document_payload({
+        **SAFE_FIELDS,
+        "document_actions": ["delete"],
+        "document_collaboration_actions": ["share"],
+    })
+
+    assert "document_actions" not in payload
+    assert "document_collaboration_actions" not in payload
+
+
 def test_non_mapping_input_still_returns_an_empty_payload():
     assert public_document_payload(None) == {}
     assert public_document_payload("doc-1") == {}
