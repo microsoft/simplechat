@@ -20,6 +20,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
     *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
 
+### **(v0.261.040)**
+
+#### Bug Fixes
+
+*   **Collaborative Prompts Now Receive Model Responses**
+    *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
+    *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
 ### **(v0.261.030)**
 
 #### Bug Fixes

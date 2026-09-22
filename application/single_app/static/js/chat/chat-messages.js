@@ -7424,7 +7424,10 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
 }
 
 export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvocationTarget = null) {
-  return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
+  return Boolean(
+    buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget)
+    || String(messageData.message || '').trim()
+  );
 }
 
 function buildVoiceResponseCompletionHandler(responseModality) {
