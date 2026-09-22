@@ -4757,6 +4757,12 @@ def delete_from_blob_storage(
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+        if persisted_sources_only:
+            persisted_paths = {
+                path for path in (document_item.get("blob_path"), document_item.get("archived_blob_path"))
+                if isinstance(path, str) and path
+            }
+            delete_targets = [target for target in delete_targets if target[1] in persisted_paths]
         if not delete_targets:
             return
 

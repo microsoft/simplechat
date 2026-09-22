@@ -262,6 +262,33 @@ def get_user_role_in_group(group_doc, user_id):
     return None
 
 
+def get_group_document_reviewer_ids(group_doc):
+    group_doc = group_doc or {}
+    candidates = [
+        (group_doc.get("owner") or {}).get("id"),
+        *(group_doc.get("admins") or []),
+        *(group_doc.get("documentManagers") or []),
+    ]
+    return sorted({
+        user_id for user_id in candidates
+        if isinstance(user_id, str) and user_id
+        and get_user_role_in_group(group_doc, user_id) in {"Owner", "Admin", "DocumentManager"}
+    })
+
+
+def discover_group_records(search=""):
+    """The sharing directory uses the same all-group visibility as showAll=true."""
+    search = str(search or "").lower()
+    groups = list(cosmos_groups_container.query_items(
+        query="SELECT * FROM c WHERE c.type = 'group' or NOT IS_DEFINED(c.type)",
+        enable_cross_partition_query=True,
+    ))
+    return [
+        group for group in groups
+        if not search or any(search in str(group.get(field) or "").lower() for field in ("name", "description", "id"))
+    ]
+
+
 def require_active_group(
     user_id: str,
     allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager", "User"),

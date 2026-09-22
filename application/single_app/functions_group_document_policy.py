@@ -12,6 +12,28 @@ GROUP_DOCUMENT_OPERATIONS = (
 GROUP_DOCUMENT_MUTABLE_SCREENING_STATES = frozenset({
     "pending_review", "scan_error", "incomplete", "rejected", "deleting",
 })
+GROUP_DOCUMENT_COLLABORATION_OPERATIONS = (
+    "inspect", "share", "unshare", "approve_share", "remove_share",
+    "approve_artifact", "reject_artifact", "cancel_artifact",
+)
+GROUP_DOCUMENT_COLLABORATION_STATUSES = frozenset({"active", "upload_disabled"})
+
+
+def group_document_collaboration_operations(group, role, settings):
+    if (
+        role not in (*GROUP_DOCUMENT_MANAGER_ROLES, "User")
+        or not settings.get("enable_group_workspaces", False)
+        or group.get("status", "active") not in {"active", "locked", "upload_disabled"}
+    ):
+        return []
+    operations = {"inspect"}
+    if group.get("status", "active") in GROUP_DOCUMENT_COLLABORATION_STATUSES:
+        operations.add("cancel_artifact")
+        if role in GROUP_DOCUMENT_MANAGER_ROLES:
+            operations.update({"share", "unshare", "approve_share", "remove_share", "reject_artifact"})
+            if group.get("status", "active") == "active":
+                operations.add("approve_artifact")
+    return [operation for operation in GROUP_DOCUMENT_COLLABORATION_OPERATIONS if operation in operations]
 
 
 def group_document_approval_pending(document):

@@ -55,22 +55,10 @@ def register_route_backend_groups(bp):
         show_all_str = request.args.get("showAll", "false").lower()
         show_all = (show_all_str == "true")
 
-        query = "SELECT * FROM c WHERE c.type = 'group' or NOT IS_DEFINED(c.type)"
-        all_items = list(cosmos_groups_container.query_items(
-            query=query,
-            enable_cross_partition_query=True
-        ))
+        all_items = discover_group_records(search_query)
 
         results = []
         for g in all_items:
-            name = g.get("name", "").lower()
-            desc = g.get("description", "").lower()
-            group_id = str(g.get("id", "")).lower()
-
-            if search_query:
-                if search_query not in name and search_query not in desc and search_query not in group_id:
-                    continue
-
             if not show_all:
                 if is_user_in_group(g, user_id):
                     continue

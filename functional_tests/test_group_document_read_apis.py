@@ -267,6 +267,8 @@ def environment(monkeypatch):
             ):
                 document_namespace[name] = Mock(side_effect=AssertionError("Read tests must not mutate storage."))
             document_namespace["validate_document_access_index_shadow"] = Mock()
+            document_namespace["_execute_document_search_write"] = Mock(side_effect=AssertionError("Read tests cannot write Search."))
+            document_namespace["_get_search_client"] = Mock(side_effect=AssertionError("Read tests cannot query Search ACLs."))
             scoped.setitem(sys.modules, "functions_documents", module_stub("functions_documents", **document_namespace))
             # Resolve screening only after replacing application bootstrap dependencies.
             from content_screening import access
@@ -323,6 +325,9 @@ def environment(monkeypatch):
             load_real_module(scoped, "functions_group_document_policy")
             group_access = load_real_module(scoped, "functions_group_document_access")
             management = load_real_module(scoped, "functions_group_document_management")
+            load_real_module(scoped, "functions_group_document_projection_fence")
+            collaboration = load_real_module(scoped, "functions_group_document_collaboration")
+            group_publication = load_real_module(scoped, "functions_group_document_publication")
             helper = load_real_module(scoped, "functions_group_document_reads")
             route = load_real_module(scoped, "route_backend_group_documents")
             app = Flask("group_document_read_contract")
@@ -341,6 +346,8 @@ def environment(monkeypatch):
             env.route = route
             env.group_access = group_access
             env.management = management
+            env.collaboration = collaboration
+            env.group_publication = group_publication
             env.config = config
             env.scoped_monkeypatch = scoped
             env.access = access

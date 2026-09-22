@@ -137,6 +137,10 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-folder-x',
         'color': 'danger'
     },
+    'group_document_share_removed': {
+        'icon': 'bi-folder-minus',
+        'color': 'info'
+    },
     'system_announcement': {
         'icon': 'bi-megaphone',
         'color': 'info'
@@ -331,7 +335,9 @@ def _get_notification_type_config(notification):
     )
 
 
-def get_notifications_by_metadata(metadata_filters=None, notification_types=None, *, safe_errors=False):
+def get_notifications_by_metadata(
+    metadata_filters=None, notification_types=None, *, safe_errors=False, strict=False, missing_metadata_fields=(),
+):
     """Fetch notifications matching metadata values and optional types."""
     try:
         query_parts = ["SELECT * FROM c WHERE 1=1"]
@@ -351,6 +357,10 @@ def get_notifications_by_metadata(metadata_filters=None, notification_types=None
             parameter_name = f"@metadata_{key}"
             query_parts.append(f"AND c.metadata.{key} = {parameter_name}")
             parameters.append({"name": parameter_name, "value": value})
+        for key in missing_metadata_fields:
+            if key not in {"request_id", "document_version"}:
+                raise ValueError("Unsupported notification absence filter.")
+            query_parts.append(f"AND NOT IS_DEFINED(c.metadata.{key})")
 
         return list(cosmos_notifications_container.query_items(
             query=" ".join(query_parts),
@@ -358,6 +368,9 @@ def get_notifications_by_metadata(metadata_filters=None, notification_types=None
             enable_cross_partition_query=True
         ))
     except Exception as e:
+        if strict:
+            _log_notification_failure("notification_lookup_failed", e)
+            raise
         if safe_errors:
             _log_notification_failure("notification_lookup_failed", e)
             return []
@@ -365,20 +378,31 @@ def get_notifications_by_metadata(metadata_filters=None, notification_types=None
         return []
 
 
-def delete_notifications_by_metadata(metadata_filters=None, notification_types=None, *, safe_errors=False):
+def delete_notifications_by_metadata(
+    metadata_filters=None, notification_types=None, *, safe_errors=False, strict=False, missing_metadata_fields=(),
+    operation_guard=None,
+):
     """Delete notifications matching metadata values and optional types."""
     deleted_count = 0
+    if operation_guard is not None:
+        operation_guard()
     notifications = get_notifications_by_metadata(
         metadata_filters=metadata_filters,
         notification_types=notification_types,
         **({"safe_errors": True} if safe_errors else {}),
+        **({"strict": True} if strict else {}),
+        **({"missing_metadata_fields": missing_metadata_fields} if missing_metadata_fields else {}),
     )
 
     for notification in notifications:
-        partition_key = _get_notification_partition_key(notification)
-        if not partition_key:
+        partition_key = notification.get("user_id") if strict else _get_notification_partition_key(notification)
+        if strict and (not notification.get("id") or "user_id" not in notification):
+            raise ValueError("Notification identity could not be confirmed.")
+        if not strict and not partition_key:
             continue
 
+        if operation_guard is not None:
+            operation_guard()
         try:
             cosmos_notifications_container.delete_item(
                 item=notification['id'],
@@ -386,6 +410,11 @@ def delete_notifications_by_metadata(metadata_filters=None, notification_types=N
             )
             deleted_count += 1
         except Exception as e:
+            if strict:
+                if getattr(e, "status_code", None) == 404:
+                    continue
+                _log_notification_failure("notification_cleanup_failed", e)
+                raise
             if safe_errors:
                 _log_notification_failure("notification_cleanup_failed", e)
                 continue
@@ -408,7 +437,8 @@ def create_notification(
     metadata=None,
     assignment=None,
     notification_id=None,
-    idempotency_key=None
+    idempotency_key=None,
+    strict=False,
 ):
     """
     Create a notification for personal, group, or public workspace scope.
@@ -437,6 +467,8 @@ def create_notification(
             A duplicate create point-reads and returns the existing notification,
             preserving its original content, timestamp, read and dismissal state.
             The key itself is never stored or logged. Do not combine with notification_id.
+        strict (bool, optional): Propagate delivery and readback failures to callers
+            that must distinguish uncertain transport outcomes from known refusals.
         
     Returns:
         dict: Created notification, existing notification for a repeated retry key,
@@ -516,15 +548,23 @@ def create_notification(
                     return _read_existing_notification(notification_doc)
                 except Exception as read_error:
                     _log_notification_failure("notification_retry_lookup_failed", read_error)
+                    if strict:
+                        raise
                     return None
             _log_notification_failure("notification_delivery_failed", e)
+            if strict:
+                raise
             return None
         if notification_id:
             if getattr(e, 'status_code', None) == 409:
                 return {'id': notification_id}
             _log_notification_failure("notification_delivery_failed", e)
+            if strict:
+                raise
             return None
         debug_print(f"Error creating notification: {e}")
+        if strict:
+            raise
         return None
 
 

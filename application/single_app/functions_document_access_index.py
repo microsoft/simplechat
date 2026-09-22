@@ -3624,8 +3624,10 @@ def delete_document_access_index_for_document(
     }
 
 
-def sync_document_access_index_for_document_fail_open(document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None):
-    """Synchronize projection rows without failing the source document mutation."""
+def sync_document_access_index_for_document_fail_open(
+    document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None, *, raise_on_error=False,
+):
+    """Record projection failures, optionally preserving the exception for a durable caller."""
     try:
         return sync_document_access_index_for_document(document_item, operation=operation, settings=settings)
     except Exception as exc:
@@ -3661,6 +3663,8 @@ def sync_document_access_index_for_document_fail_open(document_item, operation=D
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
+        if raise_on_error:
+            raise
         return {
             'success': False,
             'status': 'repair_required',
