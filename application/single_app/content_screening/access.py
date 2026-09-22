@@ -70,8 +70,13 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "generated_artifact_publication_receipt_id",
     "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
     "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
+    "generated_artifact_approved_by_user_id", "generated_artifact_approved_by_display_name",
+    "generated_artifact_approved_at",
     "group_document_projection_writer", "group_document_collaboration_operation",
     "document_share_details",
+    # Recomputed per request from current authorization, so a stored copy is
+    # always stale. The group projection re-adds them after serialization.
+    "document_actions", "document_collaboration_actions",
 })
 # A pending generated artifact stays held, but the group review surface still
 # needs to say who requested it. Both allow-lists must name the same fields.
