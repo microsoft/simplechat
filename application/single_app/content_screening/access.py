@@ -844,7 +844,7 @@ def public_documents_payload(documents, user_id=None, *, metadata_reader=None):
     return payloads
 
 
-def register_document_api_guards(blueprint, *, user_resolver=None, document_projector=None):
+def register_document_api_guards(blueprint, *, user_resolver=None, document_projector=None, source_validator=None):
     """Protect ordinary classic/V2 document responses and mutation requests."""
     flask = import_module("flask")
 
@@ -861,7 +861,7 @@ def register_document_api_guards(blueprint, *, user_resolver=None, document_proj
     @blueprint.after_request
     def enforce_document_response(response):
         try:
-            assert_current_request_sources_available()
+            (source_validator or assert_current_request_sources_available)()
             if response.is_json and response.status_code < 300:
                 payload = response.get_json()
                 if isinstance(payload, dict):

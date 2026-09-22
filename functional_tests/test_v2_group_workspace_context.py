@@ -2,7 +2,7 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.128
+Version: 0.261.129
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 
@@ -181,6 +181,31 @@ def test_projection_is_allowlisted_explicit_and_uncached(environment):
     text = response.get_data(as_text=True)
     for private_value in ("fixture-only-private-value", "fixture-only-logo", "private-pending-user", "model_endpoints"):
         assert private_value not in text
+
+
+@pytest.mark.parametrize("actor,status,expected", [
+    ("owner", "active", ["upload", "edit_metadata", "tag_documents", "manage_tags", "delete", "download", "reprocess"]),
+    ("admin", "locked", ["download"]),
+    ("manager", "upload_disabled", ["delete", "download", "reprocess"]),
+    ("reader", "active", []),
+    ("owner", "inactive", []),
+    ("owner", "unknown", []),
+])
+def test_management_handshake_matches_current_role_and_status(environment, actor, status, expected):
+    environment.records["group-a"]["status"] = status
+    response = read_as(environment, actor)
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["document_management"] == {"schema_version": 1, "operations": expected}
+
+
+def test_management_handshake_respects_extraction_and_download_settings(environment):
+    environment.settings["enable_extract_meta_data"] = True
+    environment.downloads.return_value = False
+    response = read_as(environment)
+    operations = response.get_json()["document_management"]["operations"]
+    assert "extract_metadata" in operations
+    assert "download" not in operations
 
 
 @pytest.mark.parametrize("user_id,role,manage,automation", [

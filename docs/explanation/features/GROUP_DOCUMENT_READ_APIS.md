@@ -1,4 +1,4 @@
-# Group Document Read APIs (v0.261.128)
+# Group Document Read APIs (v0.261.129)
 
 ## Overview
 
@@ -7,7 +7,8 @@ without changing, or relying on, the user's saved active group. This is the
 backend read-only slice of the V2 shared workspace rollout, not its management
 or download milestone.
 
-Implemented in version: **0.261.128**, tracked in
+Implemented in version: **0.261.128**. Management capability and pending-artifact
+projection updates were implemented in **0.261.129**, tracked in
 `application/single_app/config.py`.
 
 Dependencies are the existing group and group-document Cosmos containers,
@@ -84,6 +85,19 @@ Existing holds remain effective when the screening setting is disabled.
 Unapproved shares use the stable status `Awaiting group share approval` rather
 than exposing the source's free-text processing diagnostics.
 
+Pending generated artifacts are also restricted when no screening marker is
+present, including the initial `Pending approval` status before a promotion
+marker exists. Their safe requester/status fields and promotion flag remain;
+owned documents still report `shared_approval_status=owner`.
+
+Version 0.261.129 adds fresh `document_actions` to outgoing records and an
+optional `document_management` handshake to workspace context. These are
+computed only at the final outgoing-record boundary; list query, facets and
+tag calculations never probe every candidate's blob for operation eligibility.
+Stored action fields are not trusted. See
+[Group Document Management APIs](GROUP_DOCUMENT_MANAGEMENT_APIS.md) for policy,
+immutable operation URLs and result contracts.
+
 The final response guard batch-refreshes returned IDs in the selected group.
 It never probes personal documents with matching IDs, borrows another group's
 membership, or silently turns a revoked target into an empty successful page.
@@ -129,8 +143,8 @@ with a different partition path are not a supported alternative schema.
 personal routes retain their user-relative semantics. Existing revision,
 filter, sort, tag-color, membership, and screening helpers remain in use.
 `functions_workspace_context.py` advertises the eight supported sorts and
-facets/places. Management permissions in that context do not make management
-operations part of this read-only milestone.
+facets/places. Read contracts remain unchanged by the additive M2B management
+handshake and routes.
 
 ## Testing and validation
 

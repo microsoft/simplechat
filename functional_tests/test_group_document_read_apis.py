@@ -1,7 +1,7 @@
 # test_group_document_read_apis.py
 """
 Functional tests for explicitly scoped group document browsing.
-Version: 0.261.128
+Version: 0.261.129
 Implemented in: 0.261.128
 
 The real group read module, route registrar, group membership helpers, document
@@ -115,6 +115,7 @@ class ReadOnlyContainer:
 def document(document_id, group_id="group-a", **changes):
     value = {
         "id": document_id,
+        "_etag": f"etag-{document_id}",
         "document_id": document_id,
         "group_id": group_id,
         "user_id": "unrelated-uploader",
@@ -166,6 +167,7 @@ def environment(monkeypatch):
             groups = {
                 group_id: {
                     "id": group_id, "name": f"Name of {group_id}", "status": "active",
+                    "_etag": f"etag-{group_id}",
                     "owner": {"id": "owner"}, "admins": ["admin"],
                     "documentManagers": ["manager"], "users": [{"userId": "reader"}],
                     "pendingUsers": [{"userId": "pending-member"}],
@@ -191,6 +193,7 @@ def environment(monkeypatch):
                 "functions_settings", get_settings=lambda: settings,
                 get_user_settings=user_settings,
                 is_group_workspace_file_download_enabled=lambda _settings, _group: env.downloads,
+                is_enhanced_extraction_enabled=lambda value: value.get("enable_enhanced_extraction", False),
             )
             settings_namespace = {"wraps": wraps, "get_settings": lambda: settings, "jsonify": jsonify}
             execute_functions("functions_settings.py", {"enabled_required"}, settings_namespace)
@@ -222,7 +225,14 @@ def environment(monkeypatch):
             ))
             real_groups = load_real_module(scoped, "functions_group")
             queries = load_real_module(scoped, "functions_document_queries")
-            document_namespace = {"re": re, "cosmos_group_documents_container": source}
+            document_namespace = {
+                "re": re, "cosmos_group_documents_container": source,
+                "IMAGE_EXTENSIONS": {"png", "jpg", "jpeg", "bmp", "tiff", "tif", "heif", "heic"},
+                "storage_account_group_documents_container_name": "group-documents",
+                "storage_account_user_documents_container_name": "user-documents",
+                "storage_account_public_documents_container_name": "public-documents",
+                "_blob_exists": Mock(return_value=False),
+            }
             tree = ast.parse((APP_ROOT / "functions_documents.py").read_text(encoding="utf-8"))
             constant_names = {
                 "NUMERIC_DOCUMENT_SORT_FIELDS", "TEXT_DOCUMENT_SORT_FIELDS", "ALLOWED_DOCUMENT_SORT_FIELDS",
@@ -233,14 +243,29 @@ def environment(monkeypatch):
                 and any(isinstance(target, ast.Name) and target.id in constant_names for target in node.targets)
             ]
             exec(compile(ast.Module(body=constants, type_ignores=[]), "functions_documents.py", "exec"), document_namespace)
+            error_classes = [
+                node for node in tree.body if isinstance(node, ast.ClassDef)
+                and node.name in {"DocumentMutationPropagationError", "DocumentRevisionDeleteError"}
+            ]
+            exec(compile(ast.Module(body=error_classes, type_ignores=[]), "functions_documents.py", "exec"), document_namespace)
             execute_functions("functions_documents.py", {
                 "_safe_int", "_safe_float", "_get_document_family_key", "_document_revision_sort_key",
                 "_choose_current_document", "select_current_documents", "sort_documents",
                 "_has_persisted_blob_reference", "_normalize_document_enhanced_citations",
                 "normalize_tag", "sanitize_tags_for_filter", "normalize_tag_color", "get_safe_tag_color",
                 "get_default_tag_color", "get_workspace_tag_definitions", "build_workspace_tags_from_counts",
-                "get_workspace_tags",
+                "get_workspace_tags", "validate_tags", "validate_tag_color",
+                "is_pdf_file_name", "is_pdf_or_image_file_name",
+                "_get_document_scope_id", "_get_blob_container_name", "build_current_blob_path",
+                "get_document_blob_storage_info",
             }, document_namespace)
+            for name in (
+                "allowed_file", "create_document", "update_document", "delete_document_revision",
+                "build_document_download_response", "build_documents_zip_download_response",
+                "process_document_upload_background", "process_metadata_extraction_background",
+                "process_document_reprocess_extraction_background",
+            ):
+                document_namespace[name] = Mock(side_effect=AssertionError("Read tests must not mutate storage."))
             document_namespace["validate_document_access_index_shadow"] = Mock()
             scoped.setitem(sys.modules, "functions_documents", module_stub("functions_documents", **document_namespace))
             # Resolve screening only after replacing application bootstrap dependencies.
@@ -276,7 +301,8 @@ def environment(monkeypatch):
                 "functions_artifact_publication": {"decide_artifact_publication": Mock()},
                 "functions_file_sync": {
                     "FILE_SYNC_SCOPE_GROUP": "group", "apply_synced_document_delete_action": Mock(),
-                    "build_synced_document_delete_guard": Mock(),
+                    "FILE_SYNC_DELETE_ACTIONS": {"delete_only", "ignore_remote"},
+                    "build_synced_document_delete_guard": Mock(return_value=None),
                 },
                 "functions_notifications": {"create_notification": Mock(), "delete_notifications_by_metadata": Mock()},
                 "functions_simplechat_operations": {
@@ -284,7 +310,9 @@ def environment(monkeypatch):
                 },
                 "utils_cache": {"invalidate_group_search_cache": Mock()},
                 "functions_debug": {"debug_print": Mock()},
-                "functions_activity_logging": {"log_document_upload": Mock()},
+                "functions_activity_logging": {
+                    "log_document_upload": Mock(), "log_document_metadata_update_transaction": Mock(),
+                },
                 "swagger_wrapper": {
                     "swagger_route": lambda **_kwargs: lambda function: function,
                     "get_auth_security": lambda: [{"sessionAuth": []}],
@@ -292,6 +320,9 @@ def environment(monkeypatch):
             }
             for name, values in stubs.items():
                 scoped.setitem(sys.modules, name, module_stub(name, **values))
+            load_real_module(scoped, "functions_group_document_policy")
+            group_access = load_real_module(scoped, "functions_group_document_access")
+            management = load_real_module(scoped, "functions_group_document_management")
             helper = load_real_module(scoped, "functions_group_document_reads")
             route = load_real_module(scoped, "route_backend_group_documents")
             app = Flask("group_document_read_contract")
@@ -308,6 +339,10 @@ def environment(monkeypatch):
             env.app = app
             env.helper = helper
             env.route = route
+            env.group_access = group_access
+            env.management = management
+            env.config = config
+            env.scoped_monkeypatch = scoped
             env.access = access
             env.queries = queries
             env.real_groups = real_groups

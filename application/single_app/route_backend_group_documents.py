@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 from functools import wraps
 import logging
 
-from content_screening.access import public_documents_payload, register_document_api_guards
+from content_screening.access import (
+    assert_current_request_sources_available,
+    public_documents_payload,
+    register_document_api_guards,
+)
 from content_screening.contracts import ScreeningError
 from config import *
 from functions_authentication import *
@@ -22,6 +26,23 @@ from functions_group_document_reads import (
     query_group_document_list,
     refresh_group_document_read_payloads,
     require_group_document_read_context,
+)
+from functions_group_document_management import (
+    GroupDocumentOperationError,
+    change_group_document_tag,
+    create_group_document_tag,
+    delete_group_document,
+    delete_group_documents,
+    download_group_documents,
+    group_operation_error,
+    queue_group_document_jobs,
+    require_payload,
+    tag_group_documents,
+    update_group_document_metadata,
+    upload_group_documents,
+    validate_delete_options,
+    validate_group_download_response,
+    validate_metadata_changes,
 )
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
@@ -108,6 +129,39 @@ def _project_group_document_read_response(documents, user_id):
             level=logging.ERROR,
         )
         raise GroupDocumentReadError("Unable to retrieve group documents.", 500) from error
+
+
+def _validate_group_document_response_sources():
+    binding = getattr(g, "group_document_download_binding", None)
+    if binding:
+        validate_group_download_response(
+            binding["user_id"], binding["group_id"], binding["documents"],
+        )
+    else:
+        assert_current_request_sources_available()
+
+
+def _group_document_management_boundary(function):
+    @wraps(function)
+    def guarded(group_id, *args, **kwargs):
+        try:
+            return function(group_id, *args, **kwargs)
+        except Exception as error:
+            payload, status = group_operation_error(
+                error, function.__name__, group_id=group_id, document_id=kwargs.get("document_id"),
+            )
+            return jsonify(payload), status
+    return guarded
+
+
+def _group_management_query(allowed=()):
+    if set(request.args) - set(allowed) or any(len(values) != 1 for _key, values in request.args.lists()):
+        raise GroupDocumentOperationError("Invalid query parameters for this group operation.", 400)
+    return request.args.to_dict()
+
+
+def _group_management_body(allowed, required=()):
+    return require_payload(request.get_json(silent=True), allowed, required)
 
 
 def _cleanup_group_generated_artifact_notifications(document_id, group_id):
@@ -358,7 +412,165 @@ def register_route_backend_group_documents(bp):
     - POST /api/group_documents/upload
     - DELETE /api/group_documents/<doc_id>
     """
-    register_document_api_guards(bp, document_projector=_project_group_document_read_response)
+    register_document_api_guards(
+        bp, document_projector=_project_group_document_read_response,
+        source_validator=_validate_group_document_response_sources,
+    )
+
+    @bp.route('/api/groups/<group_id>/documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_upload(group_id):
+        _group_management_query()
+        if request.form or set(request.files) - {"file"}:
+            raise GroupDocumentOperationError("Only file upload fields are accepted.", 400)
+        payload, status = upload_group_documents(
+            get_current_user_id(), group_id, request.files.getlist("file"), current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_metadata(group_id, document_id):
+        _group_management_query()
+        changes = validate_metadata_changes(request.get_json(silent=True))
+        receipt = update_group_document_metadata(get_current_user_id(), group_id, document_id, changes)
+        return jsonify(receipt), 202 if receipt["status"] == "queued" else 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_delete(group_id, document_id):
+        options = validate_delete_options(_group_management_query({
+            "delete_mode", "conversation_linked_delete_confirmed", "file_sync_delete_action",
+        }), query=True)
+        if request.get_data():
+            raise GroupDocumentOperationError("Deletion options must be supplied in the query.", 400)
+        return jsonify(delete_group_document(get_current_user_id(), group_id, document_id, options)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/bulk-delete', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_delete(group_id):
+        _group_management_query()
+        payload, status = delete_group_documents(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/download', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_download(group_id, document_id):
+        _group_management_query()
+        user_id = get_current_user_id()
+        response, documents = download_group_documents(user_id, group_id, [document_id])
+        g.group_document_download_binding = {"user_id": user_id, "group_id": group_id, "documents": documents}
+        return response
+
+    @bp.route('/api/groups/<group_id>/documents/download', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_download(group_id):
+        _group_management_query()
+        payload = _group_management_body({"document_ids"}, {"document_ids"})
+        user_id = get_current_user_id()
+        response, documents = download_group_documents(user_id, group_id, payload["document_ids"])
+        g.group_document_download_binding = {"user_id": user_id, "group_id": group_id, "documents": documents}
+        return response
+
+    @bp.route('/api/groups/<group_id>/documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_extract(group_id):
+        _group_management_query()
+        payload, status = queue_group_document_jobs(
+            get_current_user_id(), group_id, request.get_json(silent=True),
+            "extract_metadata", current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/reprocess_extraction', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_reprocess(group_id):
+        _group_management_query()
+        payload, status = queue_group_document_jobs(
+            get_current_user_id(), group_id, request.get_json(silent=True),
+            "reprocess", current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_create(group_id):
+        _group_management_query()
+        payload, status = create_group_document_tag(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags/<path:tag_name>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_update(group_id, tag_name):
+        _group_management_query()
+        payload, status = change_group_document_tag(
+            get_current_user_id(), group_id, tag_name, request.get_json(silent=True),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags/<path:tag_name>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_delete(group_id, tag_name):
+        _group_management_query()
+        if request.get_data():
+            raise GroupDocumentOperationError("A tag deletion does not accept a request body.", 400)
+        payload, status = change_group_document_tag(get_current_user_id(), group_id, tag_name, delete=True)
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/bulk-tag', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_tag(group_id):
+        _group_management_query()
+        payload, status = tag_group_documents(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
 
     @bp.route('/api/group_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())

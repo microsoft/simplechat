@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.128
+Version: 0.261.129
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -123,6 +123,18 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_group_documents.py", "api_scoped_group_document_upload"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_metadata"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_extract"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_reprocess"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_tag"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_documents"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_facets"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_tags"): ("login_required", "user_required", "enabled_required"),
