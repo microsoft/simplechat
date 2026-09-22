@@ -134,7 +134,7 @@ export function ExplorerRail({
     onApplySavedView: (view: DocumentSavedView) => void;
     onDeleteSavedView: (view: DocumentSavedView) => void;
     /** Applies a tag to the dragged documents. Undefined disables the drop target. */
-    onDropOnTag?: (tagName: string, documentIds: string[]) => void;
+    onDropOnTag?: (tagName: string, documentIds: string[], scopeKey?: string) => void;
     placesEnabled?: boolean;
     sharedLabel?: string;
     compact?: boolean;
@@ -162,16 +162,19 @@ export function ExplorerRail({
         onQueryChange({ tags: active && query.tags.length === 1 ? [] : [name] });
     };
 
-    const readDraggedIds = (event: React.DragEvent): string[] => {
+    const readDraggedIds = (event: React.DragEvent): { ids: string[]; scopeKey?: string } | null => {
         const raw = event.dataTransfer.getData('application/x-simplechat-documents');
         if (!raw) {
-            return [];
+            return null;
         }
         try {
             const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+            if (Array.isArray(parsed)) return { ids: parsed.filter((id): id is string => typeof id === 'string' && Boolean(id)) };
+            return parsed && typeof parsed.scopeKey === 'string' && Array.isArray(parsed.documentIds)
+                && parsed.documentIds.every((id: unknown) => typeof id === 'string' && Boolean(id))
+                ? { ids: parsed.documentIds, scopeKey: parsed.scopeKey } : { ids: [] };
         } catch {
-            return [];
+            return { ids: [] };
         }
     };
 
@@ -243,9 +246,9 @@ export function ExplorerRail({
                                     ? (event) => {
                                           event.preventDefault();
                                           setDropTarget(null);
-                                          const ids = readDraggedIds(event);
-                                          if (ids.length > 0) {
-                                              onDropOnTag(tag.name, ids);
+                                          const dragged = readDraggedIds(event);
+                                          if (dragged) {
+                                              onDropOnTag(tag.name, dragged.ids, dragged.scopeKey);
                                           }
                                       }
                                     : undefined

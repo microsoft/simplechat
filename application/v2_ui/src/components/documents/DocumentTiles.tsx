@@ -36,6 +36,7 @@ export function DocumentTiles({
     onDragStart,
     selectionReason,
     scope,
+    canDrag,
 }: {
     documents: WorkspaceDocument[];
     selection: SelectionState;
@@ -46,6 +47,7 @@ export function DocumentTiles({
     onDragStart?: (event: React.DragEvent, id: string) => void;
     selectionReason: (document: WorkspaceDocument) => string | null;
     scope: DocumentReadScope;
+    canDrag: (document: WorkspaceDocument) => boolean;
 }) {
     const selectedIds = new Set(selection.ids);
 
@@ -63,7 +65,7 @@ export function DocumentTiles({
                 return (
                     <li key={id}>
                         <div
-                            draggable={available && Boolean(onDragStart)}
+                            draggable={available && Boolean(onDragStart) && canDrag(document)}
                             onDragStart={onDragStart ? (event) => onDragStart(event, id) : undefined}
                             onClick={(event) =>
                                 available ? onSelect(

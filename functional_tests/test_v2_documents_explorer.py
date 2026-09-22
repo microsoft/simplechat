@@ -3,7 +3,7 @@
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.128
+Version: 0.261.129
 Implemented in: 0.261.048
 Shared workspace shell integration: 0.261.127
 
@@ -444,8 +444,10 @@ def test_the_explorer_is_wired_to_its_parts():
                    "describeActiveFilters", "clearAllFilters", "toggleSort"):
         assert helper in explorer, f"The explorer should use {helper} from documentExplorer"
 
-    assert "bulkDeletePersonalDocuments" in explorer
-    assert "bulkTagPersonalDocuments" in explorer
+    operations = _read(V2_SRC / "lib" / "documentOperations.ts")
+    assert "adapter.deleteDocuments(" in explorer and "bulkDeletePersonalDocuments" in operations
+    assert "adapter.tagDocuments(" in explorer and "bulkTagPersonalDocuments" in operations
+    assert "PERSONAL_DOCUMENT_OPERATIONS" in explorer, "Personal defaults must remain explicit"
     assert "onDropOnTag" in explorer, "Drag-to-tag should be wired to the rail"
     assert "application/x-simplechat-documents" in explorer, (
         "The drag payload needs an explicit type so unrelated drops are ignored"
@@ -672,13 +674,12 @@ def test_bulk_work_reports_determinate_progress():
     )
     assert "batched(" in explorer, "Batching should use the tested helper"
 
-    # The regression that made this necessary: a task left set forever. Every path that
-    # starts one must clear it in a finally.
-    starts = explorer.count("setTask({")
-    clears = explorer.count("setTask(null)")
-    assert clears >= 3, (
-        f"Every operation that sets a progress task must clear it; found {starts} starts "
-        f"and only {clears} clears"
+    # Shared lifecycle helpers keep group dirty/busy guards and progress in agreement.
+    finish = explorer.split("const finishMutation = useCallback(")[1].split("const readCurrentDocument")[0]
+    assert "setTask(null)" in finish and "onBusyChange?.(false)" in finish
+    assert "beginMutation(" in explorer and "processed += batch.length" in explorer
+    assert explorer.count("finally {\n                finishMutation();") >= 3, (
+        "Bulk, upload and metadata operations must release the common busy/progress guard."
     )
 
     print("  ok  bulk work is batched and reports determinate, always-cleared progress")

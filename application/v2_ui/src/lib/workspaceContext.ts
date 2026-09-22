@@ -53,6 +53,10 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         facets: boolean;
         places: boolean;
     };
+    document_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 export function requireWorkspaceId(id: string): string {

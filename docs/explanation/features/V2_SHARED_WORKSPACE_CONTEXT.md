@@ -13,10 +13,12 @@ Implemented in version: **0.261.126**, recorded in
 The shared group shell was implemented in version: **0.261.127**, also recorded
 in `application/single_app/config.py`. It integrates the existing native group
 workflows and Call agent tools into My Workspace's layout.
-[Native read-only group Documents](V2_GROUP_DOCUMENT_BROWSING.md) was added in
-**0.261.128**. Group document management and other unported editors remain
-explicit classic handoffs. Public pages and public context endpoints are not
-implemented by these slices.
+[Native group document browsing](V2_GROUP_DOCUMENT_BROWSING.md) was added in
+**0.261.128**, followed by
+[permission-aware document and tag management](V2_GROUP_DOCUMENT_MANAGEMENT.md)
+in **0.261.129**. Sharing/approval and other unported editors remain explicit
+classic handoffs. Public pages and public context endpoints are not implemented
+by these slices.
 
 ### Dependencies
 
@@ -48,6 +50,7 @@ depending on the first page of a membership list.
 | `native_delegation` | Eligibility for the already-shipped Call agent interface, which does not depend on the personal-kernel flag required by the full legacy authoring tabs. |
 | `document_permissions` | Distinct view, chat, upload, edit, delete, and download eligibility. |
 | `document_queries` | Actual current query capabilities, not a promise that personal explorer features already work for groups. |
+| `document_management` | Versioned support and current workspace-level operation eligibility; missing support leaves the group interface read-only. |
 
 Responses use `Cache-Control: no-store`. Raw settings, group membership arrays,
 pending requests, endpoint configurations, credentials, and logo bytes are not
@@ -90,8 +93,9 @@ membership.
 These fields are UI eligibility hints, not grants. Resource endpoints must still
 authorize the caller, explicit scope, actual object, operation, ownership/share
 relationship, and current policy. The 0.261.128 group read contract advertises
-all eight explorer sort fields, facets, and standing views. Group document
-mutations and additional resource adapters remain later work.
+all eight explorer sort fields, facets, and standing views. Version 0.261.129
+adds immutable-target management routes and fresh per-document `document_actions`.
+Group sharing/approval and additional resource adapters remain later work.
 
 ## Client activation contract
 
@@ -202,6 +206,8 @@ inspection, and runtime assertions.
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action
 availability, or metadata updates.
+The **0.261.129** management baseline also covers personal uploads, tagging,
+version/sync deletion confirmation, and downloads.
 
 Route-policy tests include the new endpoint. Existing personal bootstrap,
 workspace, and browser journeys protect compatibility. These isolated tests do
@@ -210,5 +216,5 @@ document operations.
 
 The projection loads one group's metadata and policy, not its collections,
 statistics, or all membership pages. Native group reads use separate explicit
-document adapters. Public UI, group document mutations, native management, and
-additional resource adapters remain separate milestones.
+document adapters. Public UI, group sharing/approval, broader native management,
+and additional resource adapters remain separate milestones.

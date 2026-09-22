@@ -22,6 +22,7 @@ import { useGroupWorkspaceStore, WorkspaceRequestSuperseded } from '../stores/gr
 import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
 import { WorkflowsSection } from './workspace/WorkflowsSection';
 import { GroupDocumentsSection } from './workspace/DocumentsSection';
+import { GroupTagsSection } from './workspace/TagsSection';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -45,6 +46,8 @@ export function GroupWorkspacePage() {
     const initialization = useRef<{ key: string; promise: Promise<unknown> } | null>(null);
     dirtyRef.current = dirty;
     busyRef.current = resourceBusy;
+    const reportDocumentDirty = useCallback((value: boolean) => { dirtyRef.current = value; setDirty(value); }, []);
+    const reportDocumentBusy = useCallback((value: boolean) => { busyRef.current = value; setResourceBusy(value); }, []);
 
     const blocker = useBlocker(({ currentLocation, nextLocation }) => {
         const transitioning = useGroupWorkspaceStore.getState().activating;
@@ -127,7 +130,7 @@ export function GroupWorkspacePage() {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
         return {
             id, label, icon, group, blurb: GROUP_SECTION_BLURBS[id],
-            availabilityLabel: id === 'workflows' || id === 'documents' ? undefined
+            availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' ? undefined
                 : id === 'actions' && context?.native_delegation?.enabled ? 'Call agent' : 'Classic',
         };
     }), [context?.native_delegation?.enabled]);
@@ -278,8 +281,15 @@ export function GroupWorkspacePage() {
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <GroupDocumentsSection context={context}
-                                    interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')} />
+                                    interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}
+                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description="You do not have access to this group's documents." />
+                            )
+                            : section === 'tags' && !resourceId ? (
+                                context.document_permissions.can_view ? <GroupTagsSection context={context}
+                                    interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}
+                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
+                                    : <EmptyState icon={<Lock size={28} />} title="Tags are not available" description="You do not have access to this group's documents." />
                             )
                             : section === 'workflows' && !resourceId ? <WorkflowsSection scope={{ type: 'group', groupId: context.scope.id }}
                                 allowManage={context.sections.workflows.can_manage} interactionDisabled={accessUnconfirmed}
