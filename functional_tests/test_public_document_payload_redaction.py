@@ -20,6 +20,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from content_screening.access import (  # noqa: E402
+    GENERATED_ARTIFACT_REQUEST_FIELDS,
     PRIVATE_DOCUMENT_FIELDS,
     is_public_document_field,
     public_document_payload,
@@ -111,6 +112,58 @@ def test_every_private_field_is_rejected_by_the_shared_predicate():
 def test_non_mapping_input_still_returns_an_empty_payload():
     assert public_document_payload(None) == {}
     assert public_document_payload("doc-1") == {}
+
+
+def test_generated_artifact_request_fields_have_exactly_one_definition():
+    """The group projection and the payload allow-list must never drift apart.
+
+    ``_project_group_document`` filters the payload that ``public_document_payload``
+    produced, so a field named by only one of the two silently disappears from a
+    pending generated artifact review. Assigning a single field stays legitimate;
+    re-enumerating the group as a literal is the drift this guards against.
+    """
+    reads_source = (APP_DIR / "functions_group_document_reads.py").read_text(encoding="utf-8")
+    access_source = (APP_DIR / "content_screening" / "access.py").read_text(encoding="utf-8")
+
+    assert "GENERATED_ARTIFACT_REQUEST_FIELDS" in reads_source, (
+        "functions_group_document_reads.py must take the allow-list from the shared constant"
+    )
+    relisted = [
+        line.strip() for line in reads_source.splitlines()
+        if sum(1 for field in GENERATED_ARTIFACT_REQUEST_FIELDS if f'"{field}"' in line) > 1
+    ]
+    assert relisted == [], f"allow-list re-enumerated instead of imported: {relisted}"
+
+    definitions = [
+        line.strip() for line in access_source.splitlines()
+        if sum(1 for field in GENERATED_ARTIFACT_REQUEST_FIELDS if f'"{field}"' in line) > 1
+    ]
+    assert len(definitions) == 2, (
+        f"expected only the two lines of GENERATED_ARTIFACT_REQUEST_FIELDS, got {definitions}"
+    )
+
+
+def test_request_fields_are_not_simultaneously_private():
+    """A field cannot be both held-review-visible and redacted."""
+    assert not (GENERATED_ARTIFACT_REQUEST_FIELDS & PRIVATE_DOCUMENT_FIELDS)
+    assert all(is_public_document_field(field) for field in GENERATED_ARTIFACT_REQUEST_FIELDS)
+
+
+def test_pending_artifact_exposes_requester_fields_but_not_its_binding():
+    """The binding stays private while the request attribution stays visible."""
+    document = {
+        **SAFE_FIELDS,
+        "generated_artifact_publication_binding": {"source": "conversation-1"},
+        "generated_artifact_promotion_status": "pending_approval",
+        "generated_artifact_requested_by_display_name": "Dana Owner",
+        SCREENING_FIELD: {"state": "pending", "scan_id": "scan-1", "content_fingerprint": "fp-1"},
+    }
+
+    payload = public_document_payload(document)
+
+    assert "generated_artifact_publication_binding" not in payload
+    assert payload["generated_artifact_requested_by_display_name"] == "Dana Owner"
+    assert payload["generated_artifact_promotion_status"] == "pending_approval"
 
 
 if __name__ == "__main__":

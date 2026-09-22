@@ -69,6 +69,12 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
     "group_document_projection_writer",
 })
+# A pending generated artifact stays held, but the group review surface still
+# needs to say who requested it. Both allow-lists must name the same fields.
+GENERATED_ARTIFACT_REQUEST_FIELDS = frozenset({
+    "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
+    "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
+})
 
 
 def _require_available_metadata(document):
@@ -797,10 +803,7 @@ def public_document_payload(document):
         available = False
     public_fields = HELD_PUBLIC_FIELDS
     if document.get("generated_artifact_publication_binding"):
-        public_fields = public_fields | {
-            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
-            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
-        }
+        public_fields = public_fields | GENERATED_ARTIFACT_REQUEST_FIELDS
     payload = {
         key: deepcopy(value) for key, value in document.items()
         if (available or key in public_fields) and is_public_document_field(key)

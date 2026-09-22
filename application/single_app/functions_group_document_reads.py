@@ -7,7 +7,11 @@ existing scoped source query, independently of index readiness and caches.
 """
 
 from config import cosmos_group_documents_container
-from content_screening.access import HELD_PUBLIC_FIELDS, public_document_payload
+from content_screening.access import (
+    GENERATED_ARTIFACT_REQUEST_FIELDS,
+    HELD_PUBLIC_FIELDS,
+    public_document_payload,
+)
 from functions_document_access_index import document_matches_list_filters
 from functions_document_queries import (
     DOCUMENT_PLACE_FILTERS,
@@ -92,13 +96,10 @@ def _project_group_document(
     payload = public_document_payload(normalized)
     artifact_pending = group_document_approval_pending(document)
     if approval == "not_approved" or artifact_pending:
-        request_fields = {
-            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
-            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
-        }
         payload = {
             key: value for key, value in payload.items()
-            if key in HELD_PUBLIC_FIELDS or key == "content_screening" or (artifact_pending and key in request_fields)
+            if key in HELD_PUBLIC_FIELDS or key == "content_screening"
+            or (artifact_pending and key in GENERATED_ARTIFACT_REQUEST_FIELDS)
         }
         payload["status"] = "Awaiting generated artifact approval" if artifact_pending else "Awaiting group share approval"
         if artifact_pending:

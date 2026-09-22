@@ -10,8 +10,9 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed document list and detail responses returning storage internals when content screening was disabled or a document was never enrolled. Affected values included blob paths and containers, SAS and download URLs, canonical source references, screening provenance, and Cosmos system fields.
     *   The same document was already redacted correctly whenever screening was enabled, so exposure depended on an unrelated administrative setting rather than on the sensitivity of the field.
     *   Root cause was a duplicated redaction rule: the unscreened path carried a hand-maintained three-field literal that had fallen behind the full private-field set. Both paths now share one predicate, so they cannot drift apart as new private fields are added.
+    *   The generated-artifact request allow-list was duplicated the same way across the payload serializer and the group projection, where drift would silently drop requester attribution from pending artifact reviews. It is now a single shared constant.
     *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments.
-    *   (Ref: `content_screening/access.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, [Payload Redaction Fix](fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
+    *   (Ref: `content_screening/access.py`, `functions_group_document_reads.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, `GENERATED_ARTIFACT_REQUEST_FIELDS`, [Payload Redaction Fix](fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
 
 ### **(v0.261.123)**
 
