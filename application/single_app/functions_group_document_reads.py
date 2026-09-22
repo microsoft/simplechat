@@ -42,10 +42,8 @@ from functions_settings import get_settings
 from functions_group_document_policy import group_document_approval_pending
 from functions_group_document_policy import GROUP_DOCUMENT_MANAGER_ROLES
 from functions_group_document_collaboration import (
-    COLLABORATION_OPERATION,
     get_group_document_collaboration_actions,
 )
-from functions_group_document_projection_fence import GROUP_DOCUMENT_PROJECTION_WRITER
 
 
 def explicit_group_document_read_id(args, *, required=False):
@@ -115,17 +113,10 @@ def _project_group_document(
     payload["group_id"] = owner_group_id
     payload["owner_group_id"] = owner_group_id
     payload["shared_approval_status"] = approval
+    # Recomputed per request from current authorization, so a stored copy is
+    # always stale. Privacy redaction belongs in PRIVATE_DOCUMENT_FIELDS.
     payload.pop("document_actions", None)
     payload.pop("document_collaboration_actions", None)
-    payload.pop(COLLABORATION_OPERATION, None)
-    payload.pop(GROUP_DOCUMENT_PROJECTION_WRITER, None)
-    payload.pop("document_share_details", None)
-    for private_field in (
-        "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
-        "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
-        "generated_artifact_publication_receipt_id",
-    ):
-        payload.pop(private_field, None)
     owner_manager = approval == "owner" and context is not None and context[1] in GROUP_DOCUMENT_MANAGER_ROLES
     if not owner_manager:
         payload["shared_group_ids"] = (

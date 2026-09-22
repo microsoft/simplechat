@@ -44,7 +44,14 @@ SECRET_FIELDS = {
     "original_blob_path": "group-a/original/q4.pdf",
     "screening_provenance": {"scan_id": "internal-scan"},
     "group_document_projection_writer": {"operation_id": "op-1"},
+    "group_document_collaboration_operation": {"operation_id": "op-1"},
     "generated_artifact_publication_binding": {"source": "conversation-1"},
+    "generated_artifact_publication_receipt_id": "receipt-1",
+    "generated_artifact_source_conversation_id": "conversation-1",
+    "generated_artifact_source_message_id": "message-1",
+    "generated_artifact_source_blob_container": "conversation-artifacts",
+    "generated_artifact_source_blob_path": "user-1/conversation-1/generated/chart.png",
+    "document_share_details": {"groups": {"group-b": {"approval_status": "approved"}}},
     "_rid": "RID==",
     "_self": "dbs/db/colls/docs/docs/doc-1",
     "_etag": '"0x8D9"',
@@ -107,6 +114,40 @@ def test_every_private_field_is_rejected_by_the_shared_predicate():
     assert not is_public_document_field("_ts")
     assert not is_public_document_field("screening_provenance")
     assert is_public_document_field("file_name")
+
+
+def test_collaboration_state_is_never_serialized_into_a_document_payload():
+    """M2C sharing state and artifact sources must not ride along on a document.
+
+    ``_project_group_document`` used to pop these itself, which meant any other
+    caller of ``public_document_payload`` — including the group document detail
+    endpoint — still emitted them.
+    """
+    collaboration_fields = {
+        "document_share_details", "group_document_collaboration_operation",
+        "generated_artifact_publication_receipt_id",
+        "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
+        "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
+    }
+    assert collaboration_fields <= PRIVATE_DOCUMENT_FIELDS
+
+    payload = public_document_payload({
+        **SAFE_FIELDS, **{field: SECRET_FIELDS[field] for field in collaboration_fields},
+    })
+
+    assert set(payload) == set(SAFE_FIELDS)
+
+
+def test_group_projection_does_not_keep_its_own_privacy_pop_list():
+    """Privacy belongs in PRIVATE_DOCUMENT_FIELDS, not in one projection."""
+    reads_source = (APP_DIR / "functions_group_document_reads.py").read_text(encoding="utf-8")
+
+    for field in ("document_share_details", "generated_artifact_source_blob_path",
+                  "generated_artifact_publication_receipt_id"):
+        assert f'"{field}"' not in reads_source, (
+            f"{field} is redacted only in functions_group_document_reads.py; add it to "
+            "PRIVATE_DOCUMENT_FIELDS so every caller of public_document_payload is covered"
+        )
 
 
 def test_non_mapping_input_still_returns_an_empty_payload():
