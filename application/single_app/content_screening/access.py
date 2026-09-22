@@ -70,7 +70,6 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "group_document_projection_writer",
     "group_document_collaboration_operation", "document_share_details",
     "document_actions", "document_collaboration_actions",
-    "shared_group_ids", "shared_user_ids",
     "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
     "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
     "generated_artifact_publication_receipt_id",
