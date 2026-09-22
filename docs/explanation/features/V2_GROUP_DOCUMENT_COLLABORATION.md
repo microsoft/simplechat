@@ -6,10 +6,10 @@ Implemented in version: **0.261.131**, tracked in
 `application/single_app/config.py`.
 
 The M2C native sharing and approval review surface is integrated into the
-shared workspace shell. This page describes the browser experience and the
-client contract it holds the server to. The endpoint reference for the server
-side is published separately once the backend slice lands in this same
-milestone.
+shared workspace shell, together with its backend slice. This page describes
+the browser experience and the client contract it holds the server to. The
+server endpoints are documented in
+[Group Document Collaboration APIs](GROUP_DOCUMENT_COLLABORATION_APIS.md).
 
 ## Purpose and boundaries
 
@@ -169,12 +169,11 @@ bundle.
 
 ## Known limitations
 
-The server-side slice of M2C lands in this same milestone; until it does, the
-capability handshake leaves the surface unavailable rather than degraded.
 Public workspace sharing is M3 and is not covered here.
 
 ## Related
 
+- [Group Document Collaboration APIs](GROUP_DOCUMENT_COLLABORATION_APIS.md) — the server endpoints
 - [V2 Group Document Browsing](V2_GROUP_DOCUMENT_BROWSING.md) — M2A read surface
 - [V2 Group Document Management](V2_GROUP_DOCUMENT_MANAGEMENT.md) — M2B operations
 - [Group Document Projection Coordination](GROUP_DOCUMENT_PROJECTION_COORDINATION.md) — why a revoked share cannot be republished by an older writer
