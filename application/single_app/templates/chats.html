@@ -1624,6 +1624,9 @@
         deep_research_max_search_queries_per_turn: {{ settings.deep_research_max_search_queries_per_turn|default(3, true)|tojson }},
         enforce_workspace_scope_lock: {{ settings.enforce_workspace_scope_lock|tojson }},
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
+        enable_default_model_for_new_conversations: {{ settings.enable_default_model_for_new_conversations|default(false, true)|tojson }},
+        default_model_selection: {{ settings.default_model_selection|default({}, true)|tojson|safe }},
+        default_reasoning_effort: {{ settings.default_reasoning_effort|default('', true)|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
         enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
         enable_mixed_source_chat_search: {{ settings.enable_mixed_source_chat_search|default(false, true)|tojson }},
@@ -1636,6 +1639,10 @@
         app_title: {{ settings.app_title|default('Simple Chat', true)|tojson }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
+    window.adminNewConversationDefaultsActive = Boolean(
+        window.appSettings.enable_multi_model_endpoints
+        && window.appSettings.enable_default_model_for_new_conversations
+    );
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;

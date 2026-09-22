@@ -1503,11 +1503,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
         'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
+        'enable_default_model_for_new_conversations': False,
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
             'provider': ''
         },
+        'default_reasoning_effort': '',
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
