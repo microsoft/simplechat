@@ -9,7 +9,11 @@ application bootstrap or cloud calls.
 """
 
 import copy
-import importlib.util
+import ast
+import importlib
+import subprocess
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Lock, Thread
 
@@ -19,10 +23,13 @@ from azure.core.exceptions import ServiceResponseError
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "application" / "single_app" / "functions_group_document_projection_fence.py"
-SPEC = importlib.util.spec_from_file_location("group_projection_fence_test_module", MODULE_PATH)
-fence = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(fence)
+APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
+original_path = list(sys.path)
+try:
+    sys.path.insert(0, str(APP_DIR))
+    fence = importlib.import_module("functions_group_document_projection_fence")
+finally:
+    sys.path[:] = original_path
 
 
 class ConditionalSource:
@@ -196,6 +203,154 @@ def test_remote_writer_cannot_finish_after_a_successful_revocation():
     saved = store.replace_item(item="doc", body=snapshot, etag=snapshot["_etag"], match_condition=MatchConditions.IfNotModified)
     with fence.hold_group_document_projection(store, "doc", "owner") as current:
         assert current["shared_group_ids"] == saved["shared_group_ids"] == []
+
+
+def _search_writer(store, *, frozen=False):
+    names = {"_execute_document_search_write", "_search_indexing_results_succeeded"}
+    tree = ast.parse((APP_DIR / "functions_documents.py").read_text(encoding="utf-8"))
+    module = ast.Module(
+        body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
+        type_ignores=[],
+    )
+    events = []
+    @contextmanager
+    def migration_slot(*args, **kwargs):
+        events.append("migration")
+        if frozen:
+            raise RuntimeError("Fixture migration freeze")
+        yield
+    from contextlib import nullcontext
+    scope = {
+        "hold_group_document_projection": fence.hold_group_document_projection,
+        "GroupDocumentProjectionConflict": fence.GroupDocumentProjectionConflict,
+        "nullcontext": nullcontext,
+        "cosmos_group_documents_container": store,
+        "cosmos_data_management_jobs_container": object(),
+        "hold_data_management_search_write_slot": migration_slot,
+        "prepare_embedding_search_documents": lambda *args: events.append("embedding"),
+        "_build_archived_scope_value": lambda value: f"archived_{value}",
+        "log_event": lambda *args, **kwargs: None,
+    }
+    exec(compile(module, "functions_documents.py", "exec"), scope)
+    return scope["_execute_document_search_write"], events
+
+
+def test_real_search_boundary_drops_revoked_snapshot_grants_and_blocks_overlapping_collaboration():
+    store = ConditionalSource()
+    store.document["shared_group_ids"] = []
+    store.document[fence.GROUP_DOCUMENT_COLLABORATION_OPERATION] = operation("complete")
+    execute, events = _search_writer(store)
+    captured = []
+    class Search:
+        def upload_documents(self, *, documents, **kwargs):
+            current = store.read_item(item="doc", partition_key="doc")
+            with pytest.raises(fence.GroupDocumentProjectionConflict):
+                fence.assert_no_group_document_projection_writer(current)
+            captured.extend(copy.deepcopy(documents))
+            return [{"succeeded": True}]
+    old_chunk = {
+        "id": "doc_1", "document_id": "doc", "group_id": "owner", "version": 2,
+        "shared_group_ids": ["recipient,approved"],
+    }
+    results = execute(
+        Search(), "upload_documents", documents=[old_chunk],
+        group_id="owner", document_id="doc", document_version=2,
+    )
+    assert results == [{"succeeded": True}]
+    assert captured[0]["shared_group_ids"] == []
+    assert events == ["migration"]
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in store.document
+
+
+def test_existing_migration_freeze_still_precedes_embedding_preparation():
+    store = ConditionalSource()
+    execute, events = _search_writer(store, frozen=True)
+    class Search:
+        def upload_documents(self, **kwargs):
+            pytest.fail("A frozen migration cannot publish.")
+    with pytest.raises(RuntimeError, match="Fixture migration freeze"):
+        execute(Search(), "upload_documents", documents=[{"id": "personal_1", "embedding": [1.0]}])
+    assert events == ["migration"]
+
+
+def test_real_dai_boundary_reloads_source_instead_of_regranting_a_stale_snapshot():
+    from test_cosmos_wave5a_document_access_read_switch import _load_document_access_index_module, _document
+    with _load_document_access_index_module() as (indexing, index, _settings):
+        source = _document("doc", "author", group_id="owner", version=2, _etag="source", shared_group_ids=[])
+        stale = {**source, "shared_group_ids": ["recipient,approved"]}
+        indexing.cosmos_group_documents_container.upsert_item(source)
+        original_upsert = index.upsert_item
+        def captured_upsert(body):
+            current = indexing.cosmos_group_documents_container.read_item(item="doc", partition_key="doc")
+            with pytest.raises(fence.GroupDocumentProjectionConflict):
+                fence.assert_no_group_document_projection_writer(current)
+            return original_upsert(body)
+        index.upsert_item = captured_upsert
+        try:
+            outcome = indexing.sync_document_access_index_for_document(stale, force=True)
+        finally:
+            index.upsert_item = original_upsert
+        rows = list(index.items.values())
+        current = indexing.cosmos_group_documents_container.read_item(item="doc", partition_key="doc")
+    assert outcome["success"] is True
+    assert rows
+    assert not [row for row in rows if row.get("scope_id") == "recipient"]
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in current
+
+
+def test_legacy_group_source_update_cannot_overwrite_a_new_collaboration_claim():
+    store = ConditionalSource()
+    source = store.read_item(item="doc", partition_key="doc")
+    source["title"] = "An older metadata request"
+    tree = ast.parse((APP_DIR / "functions_documents.py").read_text(encoding="utf-8"))
+    module = ast.Module(
+        body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+              and node.name == "_upsert_document_and_sync_access_index"],
+        type_ignores=[],
+    )
+    projected = []
+    scope = {
+        "CosmosResourceNotFoundError": type("Missing", (Exception,), {}),
+        "SCREENING_FIELD": "content_screening",
+        "ScreeningConflictError": fence.GroupDocumentProjectionConflict,
+        "assert_group_document_source_writable": fence.assert_group_document_source_writable,
+        "MatchConditions": MatchConditions,
+        "sync_document_access_index_for_document_fail_open": lambda *args, **kwargs: projected.append(args),
+    }
+    exec(compile(module, "functions_documents.py", "exec"), scope)
+    def concurrent_claim(current_store):
+        current_store.document[fence.GROUP_DOCUMENT_COLLABORATION_OPERATION] = operation("claimed")
+        current_store.document["shared_group_ids"] = []
+        current_store.document["_etag"] = "2"
+    store.before_replace = concurrent_claim
+    with pytest.raises(CosmosHttpResponseError):
+        scope["_upsert_document_and_sync_access_index"](store, source, "document_updated", strict=False)
+    assert projected == []
+    assert store.document["shared_group_ids"] == []
+    assert store.document[fence.GROUP_DOCUMENT_COLLABORATION_OPERATION]["phase"] == "claimed"
+    assert "title" not in store.document
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_fence_helper_cold_import_has_no_application_bootstrap_or_network(optimized):
+    probe = """
+import importlib
+import socket
+import sys
+def deny(*args, **kwargs):
+    raise RuntimeError("Unexpected network access")
+socket.socket.connect = deny
+socket.create_connection = deny
+sys.path.insert(0, sys.argv[1])
+module = importlib.import_module("functions_group_document_projection_fence")
+if "config" in sys.modules or "functions_settings" in sys.modules:
+    raise RuntimeError("Fence helper crossed an application bootstrap boundary")
+if module.GROUP_DOCUMENT_PROJECTION_WRITER != "group_document_projection_writer":
+    raise RuntimeError("Unexpected writer-field contract")
+"""
+    command = [sys.executable, *(["-O"] if optimized else []), "-c", probe, str(APP_DIR)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 if __name__ == "__main__":

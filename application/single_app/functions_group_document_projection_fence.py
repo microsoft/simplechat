@@ -25,6 +25,8 @@ _writer_context = ContextVar("group_document_projection_writer_context", default
 class GroupDocumentProjectionConflict(RuntimeError):
     """A source cannot safely accept another writer or collaboration change."""
 
+    status_code = 409
+
 
 def _identity(document):
     return document.get("id"), document.get("group_id"), str(document.get("version") or 1)

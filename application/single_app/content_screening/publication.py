@@ -242,10 +242,18 @@ def publish_document(document, units, scan, actor_id, *, storage):
             item["shared_group_ids"] = [] if is_archived else document.get("shared_group_ids", [])
         batch.append(item)
         if len(batch) == 32:
-            helpers._execute_document_search_write(client, "upload_documents", documents=batch)
+            helpers._execute_document_search_write(
+                client, "upload_documents", documents=batch,
+                group_id=scope_args["group_id"], document_id=subject.document_id,
+                document_version=document.get("version") or 1,
+            )
             batch = []
     if batch:
-        helpers._execute_document_search_write(client, "upload_documents", documents=batch)
+        helpers._execute_document_search_write(
+            client, "upload_documents", documents=batch,
+            group_id=scope_args["group_id"], document_id=subject.document_id,
+            document_version=document.get("version") or 1,
+        )
     _remove_previous_raw_projection(document, scan, projection, storage)
     return {
         **metadata, **projection, "num_chunks": len(chunks), "number_of_pages": len(chunks),

@@ -1,7 +1,7 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.118
+Version: 0.261.130
 Implemented in: 0.261.106
 Enabled-empty upload admission implemented in: 0.261.114
 Publication processing evidence implemented in: 0.261.118
@@ -54,6 +54,9 @@ from functions_embeddings import EmbeddingVector
 from functions_artifact_publication_readiness import (
     PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
     inspect_publication_readiness,
+)
+from functions_group_document_projection_fence import (
+    GroupDocumentProjectionConflict, hold_group_document_projection,
 )
 from test_content_screening_persistence import FakeBlob, FakeBlobContainer, FakeBlobService, FakeCosmos, FakeSdkError
 
@@ -280,6 +283,10 @@ def pipeline(monkeypatch):
         "AUDIO_EXTENSIONS": {"mp3"}, "VISIO_EXTENSIONS": {"vsdx"},
         "EMAIL_EXTENSIONS": {"msg"},
         "hold_data_management_search_write_slot": search_write_slot,
+        "hold_group_document_projection": hold_group_document_projection,
+        "GroupDocumentProjectionConflict": GroupDocumentProjectionConflict,
+        "nullcontext": nullcontext,
+        "_build_archived_scope_value": helpers._build_archived_scope_value,
         "prepare_embedding_search_documents": embedding_compatibility.prepare_embedding_search_documents,
         "cosmos_data_management_jobs_container": None,
     }
