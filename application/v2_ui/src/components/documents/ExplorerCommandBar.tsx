@@ -31,7 +31,8 @@ import {
     Upload,
     X,
 } from 'lucide-react';
-import type { DocumentExplorerPrefs, DocumentQuery, DocumentSortField } from '../../lib/types';
+import type { DocumentExplorerPrefs, DocumentQuery, DocumentSortField, WorkspaceDocument } from '../../lib/types';
+import type { DocumentActionAvailability } from './DocumentDetailsPane';
 import {
     DOCUMENT_PAGE_SIZES,
     describePage,
@@ -74,13 +75,15 @@ export function ExplorerCommandBar({
     sortFields,
     onSort,
     onShowFilters,
+    selectedDocuments,
 }: {
     /** What the user has typed. Distinct from `query.search`, which lags it by the debounce. */
     searchDraft: string;
     prefs: DocumentExplorerPrefs;
     selectionCount: number;
     uploading: boolean;
-    availability: { downloads: boolean; extractMetadata: boolean; manage: boolean; chat: boolean };
+    availability: DocumentActionAvailability;
+    selectedDocuments: WorkspaceDocument[];
     canSaveView: boolean;
     onSearchChange: (value: string) => void;
     onSearchSubmit: (value: string) => void;
@@ -98,25 +101,47 @@ export function ExplorerCommandBar({
     onShowFilters?: () => void;
 }) {
     const hasSelection = selectionCount > 0;
+    const compactActions = Boolean(onShowFilters && (
+        availability.upload || availability.downloads || availability.tagDocuments
+        || availability.extractMetadata || availability.deleteDocuments
+    ));
+    const actions = [
+        { value: 'chat', label: 'Chat', visible: true, enabled: hasSelection && availability.chat, run: onChat },
+        { value: 'download', label: 'Download', visible: availability.downloads, enabled: hasSelection && availability.allows('download', selectedDocuments), run: onDownload },
+        { value: 'tag', label: 'Tag', visible: availability.tagDocuments, enabled: hasSelection && availability.allows('tag_documents', selectedDocuments), run: onTag },
+        { value: 'extract', label: 'Extract', visible: availability.extractMetadata, enabled: hasSelection && availability.allows('extract_metadata', selectedDocuments), run: onExtractMetadata },
+        { value: 'delete', label: 'Delete', visible: availability.deleteDocuments, enabled: hasSelection && availability.allows('delete', selectedDocuments), run: onDelete },
+    ].filter((action) => action.visible);
 
     return (
         <div className="flex flex-wrap items-center gap-2 border-b border-edge px-1 pb-2">
-            {availability.manage ? (
+            {availability.upload ? (
                 <>
-                    <GlassButton variant="primary" size="sm" onClick={onUpload} disabled={uploading}>
+                    <GlassButton variant="primary" size="sm" onClick={onUpload} disabled={uploading || !availability.allows('upload')}>
                         <Upload size={14} />
                         Upload
                     </GlassButton>
-                    <span aria-hidden="true" className="h-5 w-px bg-edge" />
+                    {!compactActions ? <span aria-hidden="true" className="h-5 w-px bg-edge" /> : null}
                 </>
             ) : null}
 
+            {compactActions ? (
+                <select aria-label="Document actions" value="" disabled={!actions.some((action) => action.enabled)}
+                    onChange={(event) => {
+                        const action = actions.find((entry) => entry.value === event.target.value);
+                        if (action?.enabled) action.run();
+                    }}
+                    className="h-8 min-w-0 rounded-lg border border-edge bg-surface-1 px-2 text-sm text-text-2 disabled:opacity-50">
+                    <option value="" disabled>Actions</option>
+                    {actions.map((action) => <option key={action.value} value={action.value} disabled={!action.enabled}>{action.label}</option>)}
+                </select>
+            ) : <>
             {availability.downloads ? (
                 <GlassButton
                     variant="ghost"
                     size="sm"
                     onClick={onDownload}
-                    disabled={!hasSelection}
+                    disabled={!hasSelection || !availability.allows('download', selectedDocuments)}
                     title={
                         selectionCount > 1
                             ? 'Download the selected documents as a ZIP'
@@ -128,14 +153,14 @@ export function ExplorerCommandBar({
                 </GlassButton>
             ) : null}
 
-            {availability.manage ? (
-                <GlassButton variant="ghost" size="sm" onClick={onTag} disabled={!hasSelection}>
+            {availability.tagDocuments ? (
+                <GlassButton variant="ghost" size="sm" onClick={onTag} disabled={!hasSelection || !availability.allows('tag_documents', selectedDocuments)}>
                     <TagIcon size={14} />
                     Tag
                 </GlassButton>
             ) : null}
 
-            <GlassButton variant={availability.manage ? 'ghost' : 'primary'} size="sm"
+            <GlassButton variant={availability.upload ? 'ghost' : 'primary'} size="sm"
                 onClick={onChat} disabled={!hasSelection || !availability.chat} title="Chat with selected documents">
                 <MessageSquare size={14} />
                 Chat
@@ -146,30 +171,38 @@ export function ExplorerCommandBar({
                     variant="ghost"
                     size="sm"
                     onClick={onExtractMetadata}
-                    disabled={!hasSelection}
+                    disabled={!hasSelection || !availability.allows('extract_metadata', selectedDocuments)}
                 >
                     <Sparkles size={14} />
                     Extract
                 </GlassButton>
             ) : null}
 
-            {availability.manage ? <GlassButton
+            {availability.deleteDocuments ? <GlassButton
                 variant="ghost"
                 size="sm"
                 onClick={onDelete}
-                disabled={!hasSelection}
+                disabled={!hasSelection || !availability.allows('delete', selectedDocuments)}
                 className="hover:bg-danger-soft hover:text-danger"
             >
                 <Trash2 size={14} />
                 Delete
             </GlassButton> : null}
+            </>}
 
-            {onShowFilters ? <GlassButton variant="ghost" size="sm" onClick={onShowFilters}>
+            {onShowFilters && !compactActions ? <GlassButton variant="ghost" size="sm" onClick={onShowFilters}>
                 <SlidersHorizontal size={14} />Filters
             </GlassButton> : null}
 
             <div className="ml-auto flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 xl:basis-auto">
-                <div className="relative min-w-0 grow basis-full sm:basis-44">
+                <div className="flex min-w-0 grow basis-full items-center gap-1 sm:basis-44">
+                    {compactActions && onShowFilters ? (
+                        <button type="button" aria-label="Filters" title="Filters" onClick={onShowFilters}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-surface-1 text-text-2 hover:bg-surface-2">
+                            <SlidersHorizontal size={14} />
+                        </button>
+                    ) : null}
+                    <div className="relative min-w-0 flex-1">
                     <Search
                         size={14}
                         className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-text-3"
@@ -196,6 +229,7 @@ export function ExplorerCommandBar({
                         aria-label="Search documents. Press Enter to search immediately."
                         className="h-8 w-full rounded-lg border border-edge bg-surface-1 pr-2 pl-7 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
                     />
+                    </div>
                 </div>
 
                 {canSaveView ? (

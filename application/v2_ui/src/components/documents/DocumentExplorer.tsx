@@ -19,11 +19,16 @@ import {
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
 import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
-import { isScreeningAvailable, isScreeningBusy } from '../../lib/contentScreening';
+import { isScreeningBusy } from '../../lib/contentScreening';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
     supportedDocumentQuery, type DocumentReadAdapter,
 } from '../../lib/documentReadAdapter';
+import {
+    changedDocumentMetadata, createGroupDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS,
+    type DocumentBatchOutcome, type DocumentDeleteOptions, type DocumentOperation,
+    type DocumentOperationAdapter, type DocumentOperationError, type TagOperationError,
+} from '../../lib/documentOperations';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -61,18 +66,6 @@ import {
     removeSavedView,
     upsertSavedView,
 } from '../../lib/documentSavedViews';
-import {
-    bulkDeletePersonalDocuments,
-    bulkTagPersonalDocuments,
-    createPersonalDocumentTag,
-    downloadPersonalDocument,
-    downloadPersonalDocuments,
-    extractPersonalDocumentMetadata,
-    reprocessPersonalDocumentExtraction,
-    updatePersonalDocumentMetadata,
-    uploadPersonalDocuments,
-    type BulkDeleteError,
-} from '../../lib/endpoints';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { toast } from '../../stores/toastStore';
@@ -94,6 +87,7 @@ import {
     MetadataDialog,
     ShareDialog,
     TagDialog,
+    OperationFeedback,
     type MetadataDraft,
 } from './DocumentDialogs';
 
@@ -130,7 +124,7 @@ type ActiveDialog =
     | { kind: 'tag'; documents: WorkspaceDocument[] }
     | { kind: 'metadata'; document: WorkspaceDocument }
     | { kind: 'share'; document: WorkspaceDocument }
-    | { kind: 'delete'; documents: WorkspaceDocument[]; blocked: BulkDeleteError[] }
+    | { kind: 'delete'; documents: WorkspaceDocument[]; blocked: DocumentOperationError[] }
     | null;
 
 /** Hand a blob to the browser as a download without navigating the tab. */
@@ -147,28 +141,40 @@ function saveBlob(blob: Blob, fileName: string) {
 
 interface DocumentExplorerProps {
     reader?: DocumentReadAdapter;
+    operations?: DocumentOperationAdapter;
     canChat?: boolean;
     interactionDisabled?: boolean;
     onOpenClassic?: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
+    onBusyChange?: (busy: boolean) => void;
 }
 
 export function DocumentExplorer({
-    reader = PERSONAL_DOCUMENT_READER, ...props
+    reader = PERSONAL_DOCUMENT_READER, operations, ...props
 }: DocumentExplorerProps) {
     const viewerId = useBootstrapStore((state) => state.data?.user.id);
+    const resolvedOperations = useMemo(() => operations ?? (reader.scope.kind === 'group'
+        ? createGroupDocumentOperations(reader.scope, undefined) : PERSONAL_DOCUMENT_OPERATIONS), [reader, operations]);
     if (!viewerId) return null;
-    return <ScopedDocumentExplorer key={documentExplorerScopeKey(viewerId, reader.scope)} reader={reader} {...props} />;
+    const scopeKey = documentExplorerScopeKey(viewerId, reader.scope);
+    if (documentExplorerScopeKey(viewerId, resolvedOperations.scope) !== scopeKey) return (
+        <div role="alert"><EmptyState title="Document management scope does not match"
+            description="Refresh this workspace before managing documents." /></div>
+    );
+    return <ScopedDocumentExplorer key={scopeKey} scopeKey={scopeKey} reader={reader} operations={resolvedOperations} {...props} />;
 }
 
 function ScopedDocumentExplorer({
-    reader, canChat = true, interactionDisabled = false, onOpenClassic,
-}: DocumentExplorerProps & { reader: DocumentReadAdapter }) {
+    reader, operations, scopeKey, canChat = true, interactionDisabled = false, onOpenClassic,
+    onDirtyChange, onBusyChange,
+}: DocumentExplorerProps & { reader: DocumentReadAdapter; operations: DocumentOperationAdapter; scopeKey: string }) {
     const navigate = useNavigate();
     const features = useBootstrapStore((state) => state.data?.features);
     const settings = useBootstrapStore((state) => state.data?.settings);
     const userSettings = useUserSettingsStore((state) => state.settings);
     const saveUserSettings = useUserSettingsStore((state) => state.update);
-    const readOnly = reader.scope.kind === 'group';
+    const isGroup = reader.scope.kind === 'group';
+    const scopeLabel = reader.scope.kind === 'group' ? reader.scope.name : 'My workspace';
 
     const storedPrefs = userSettings.v2DocumentsPrefs;
     const prefs: DocumentExplorerPrefs = useMemo(
@@ -183,8 +189,8 @@ function ScopedDocumentExplorer({
     );
 
     const savedViews = useMemo(
-        () => readOnly ? [] : parseSavedViews(userSettings.v2DocumentSavedViews),
-        [readOnly, userSettings.v2DocumentSavedViews],
+        () => isGroup ? [] : parseSavedViews(userSettings.v2DocumentSavedViews),
+        [isGroup, userSettings.v2DocumentSavedViews],
     );
 
     const [query, setQuery] = useState<DocumentQuery>(() => supportedDocumentQuery({
@@ -217,6 +223,8 @@ function ScopedDocumentExplorer({
     const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 1279px)').matches);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
+    const [dialogError, setDialogError] = useState<string | null>(null);
+    const [feedback, setFeedback] = useState<{ title: string; errors: TagOperationError[] } | null>(null);
 
     // Dialogs disable their controls while any bulk work is running.
     const busy = task !== null;
@@ -229,9 +237,20 @@ function ScopedDocumentExplorer({
     const detailRequest = useRef<AbortController | null>(null);
     const chatRequest = useRef<AbortController | null>(null);
     const documentReads = useRef(new Map<string, number>());
+    const failedSelection = useRef(new Set<string>());
+    const mutationBusy = useRef(false);
     const listRevision = useRef(0);
     const access = useRef({ canChat, interactionDisabled });
     access.current = { canChat, interactionDisabled };
+    const operationContext = useRef({ operations, documents, interactionDisabled, loading, downloadsEnabled, features });
+    operationContext.current = { operations, documents, interactionDisabled, loading, downloadsEnabled, features };
+
+    useEffect(() => {
+        onDirtyChange?.(dialog !== null);
+        return () => onDirtyChange?.(false);
+    }, [dialog, onDirtyChange]);
+
+    useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
     useEffect(() => {
         mounted.current = true;
@@ -255,19 +274,73 @@ function ScopedDocumentExplorer({
         });
     }, [reader]);
 
-    const selectionReason = useCallback((document: WorkspaceDocument) =>
-        interactionDisabled ? 'Refresh workspace access before selecting documents.'
-            : documentSelectionReason(document, reader.scope, canChat),
+    const chatSelectionReason = useCallback((document: WorkspaceDocument) =>
+        interactionDisabled ? 'Refresh workspace access before selecting documents.' : documentSelectionReason(document, reader.scope, canChat),
     [reader, canChat, interactionDisabled]);
 
-    const requirePersonalWrite = useCallback(() => {
-        if (readOnly || interactionDisabled) {
-            toast.error(readOnly ? 'Document management is available in the classic group workspace.'
+    const selectionReason = useCallback((document: WorkspaceDocument) => {
+        const chatReason = chatSelectionReason(document);
+        if (interactionDisabled || !isGroup || !chatReason) return chatReason;
+        return [...operations.supported].some((operation) => !['upload', 'manage_tags'].includes(operation)
+            && operations.allows(operation, [document])) ? null : chatReason;
+    }, [chatSelectionReason, interactionDisabled, isGroup, operations]);
+
+    const requirePersonalFeature = useCallback(() => {
+        if (isGroup || interactionDisabled || mutationBusy.current) {
+            toast.error(isGroup ? 'This personal workspace feature is not available for group documents.'
                 : 'Refresh workspace access before changing documents.');
             return false;
         }
         return true;
-    }, [readOnly, interactionDisabled]);
+    }, [isGroup, interactionDisabled]);
+
+    const canPerform = useCallback((operation: DocumentOperation, targets: readonly WorkspaceDocument[] = []) => {
+        const current = operationContext.current;
+        if (current.interactionDisabled || mutationBusy.current
+            || (targets.length > 0 && current.loading)) return false;
+        if (current.operations.scope.kind === 'personal') {
+            if (operation === 'download' && !current.downloadsEnabled) return false;
+            if (operation === 'extract_metadata' && !current.features?.enable_extract_meta_data) return false;
+        }
+        const fresh = targets.map((target) => current.documents.find((document) => documentId(document) === documentId(target)));
+        if (fresh.some((document) => !document)) return false;
+        return current.operations.allows(operation, fresh.filter((document): document is WorkspaceDocument => Boolean(document)));
+    }, []);
+
+    const operationTargets = useCallback((operation: DocumentOperation, targets: WorkspaceDocument[] = []) => {
+        if (!mounted.current) return null;
+        if (!canPerform(operation, targets)) {
+            const current = operationContext.current;
+            const message = current.operations.scope.kind === 'group' && current.operations.supported.size === 0
+                ? 'Document management is available in the classic group workspace.'
+                : 'This operation is not currently permitted for every selected document. Refresh access or adjust the selection.';
+            setDialogError(message);
+            toast.error(message);
+            return null;
+        }
+        const current = operationContext.current;
+        return {
+            adapter: current.operations,
+            targets: targets.map((target) => current.documents.find((document) => documentId(document) === documentId(target))!),
+        };
+    }, [canPerform]);
+
+    const beginMutation = useCallback((label: string, total: number) => {
+        mutationBusy.current = true;
+        onBusyChange?.(true);
+        setDialogError(null);
+        setFeedback(null);
+        setTask({ label, completed: 0, total });
+    }, [onBusyChange]);
+
+    const finishMutation = useCallback(() => {
+        mutationBusy.current = false;
+        if (mounted.current) {
+            setTask(null);
+            setUploading(false);
+            onBusyChange?.(false);
+        }
+    }, [onBusyChange]);
 
     const readCurrentDocument = useCallback(async (id: string, signal: AbortSignal) => {
         const revision = (documentReads.current.get(id) ?? 0) + 1;
@@ -315,15 +388,21 @@ function ScopedDocumentExplorer({
 
     const availability = useMemo(
         () => ({
-            manage: !readOnly,
-            chat: canChat && !interactionDisabled && !loading && !error && !detailError && !chatPending,
-            downloads: !readOnly && downloadsEnabled,
-            extractMetadata: !readOnly && Boolean(features?.enable_extract_meta_data),
-            sharing: !readOnly && Boolean(features?.enable_file_sharing),
+            upload: operations.supported.has('upload'),
+            tagDocuments: operations.supported.has('tag_documents'),
+            manageTags: operations.supported.has('manage_tags'),
+            editMetadata: operations.supported.has('edit_metadata'),
+            deleteDocuments: operations.supported.has('delete'),
+            reprocess: operations.supported.has('reprocess'),
+            allows: canPerform,
+            chat: canChat && !interactionDisabled && !busy && !loading && !error && !detailError && !chatPending,
+            downloads: isGroup ? operations.supported.has('download') : downloadsEnabled,
+            extractMetadata: isGroup ? operations.supported.has('extract_metadata') : Boolean(features?.enable_extract_meta_data),
+            sharing: !isGroup && Boolean(features?.enable_file_sharing),
             classification: Boolean(features?.enable_document_classification),
             enhancedExtraction: Boolean(features?.enable_enhanced_extraction),
         }),
-        [readOnly, canChat, interactionDisabled, loading, error, detailError, chatPending, downloadsEnabled, features],
+        [isGroup, operations, canPerform, canChat, interactionDisabled, busy, loading, error, detailError, chatPending, downloadsEnabled, features],
     );
 
     const orderedIds = useMemo(
@@ -331,16 +410,17 @@ function ScopedDocumentExplorer({
         [documents, selectionReason],
     );
     const selectedDocuments = useMemo(
-        () => documents.filter((item) => !selectionReason(item) && selection.ids.includes(documentId(item))),
-        [documents, selection.ids, selectionReason],
+        () => documents.filter((item) => selection.ids.includes(documentId(item))),
+        [documents, selection.ids],
     );
     const detailDocuments = inspectedId
         ? documents.filter((item) => documentId(item) === inspectedId)
         : selectedDocuments;
 
     useEffect(() => {
-        setSelection((current) => pruneSelection(current, orderedIds));
-    }, [orderedIds]);
+        const retained = documents.filter((document) => failedSelection.current.has(documentId(document))).map(documentId);
+        setSelection((current) => pruneSelection(current, [...orderedIds, ...retained]));
+    }, [orderedIds, documents]);
 
     /* ---------------------------------------------------------------------- */
     /* Loading                                                                 */
@@ -367,8 +447,9 @@ function ScopedDocumentExplorer({
                 }
                 setDocuments(items);
                 setTotalCount(total);
-                setDownloadsEnabled(!readOnly && Boolean(response.file_downloads_enabled));
-                setSelection((current) => pruneSelection(current, items.filter((item) => !selectionReason(item)).map(documentId)));
+                setDownloadsEnabled(!isGroup && Boolean(response.file_downloads_enabled));
+                setSelection((current) => pruneSelection(current, items.filter((item) =>
+                    !selectionReason(item) || failedSelection.current.has(documentId(item))).map(documentId)));
                 setInspectedId((current) => items.some((item) => documentId(item) === current) ? current : null);
             } catch (loadError) {
                 if (controller.signal.aborted || !mounted.current) return;
@@ -381,7 +462,7 @@ function ScopedDocumentExplorer({
                 if (!controller.signal.aborted && mounted.current) setLoading(false);
             }
         },
-        [query, reader, readOnly, interactionDisabled, selectionReason],
+        [query, reader, isGroup, interactionDisabled, selectionReason],
     );
 
     const loadSidebar = useCallback(async () => {
@@ -423,7 +504,7 @@ function ScopedDocumentExplorer({
         detailRequest.current?.abort();
         setDetailError(null);
         setDetailLoading(false);
-        if (!detailId || interactionDisabled || (!readOnly && detailRefresh === 0)) return;
+        if (!detailId || interactionDisabled || (!isGroup && detailRefresh === 0)) return;
         const controller = new AbortController();
         detailRequest.current = controller;
         const revision = listRevision.current;
@@ -438,7 +519,7 @@ function ScopedDocumentExplorer({
             if (!controller.signal.aborted && mounted.current) setDetailLoading(false);
         });
         return () => controller.abort();
-    }, [detailId, readCurrentDocument, interactionDisabled, detailRefresh, readOnly, query]);
+    }, [detailId, readCurrentDocument, interactionDisabled, detailRefresh, isGroup, query]);
 
     /* ---------------------------------------------------------------------- */
     /* Progress polling                                                        */
@@ -522,7 +603,7 @@ function ScopedDocumentExplorer({
     /* ---------------------------------------------------------------------- */
 
     const changeQuery = useCallback((change: Partial<DocumentQuery>) => {
-        if (interactionDisabled || chatPending) return;
+        if (interactionDisabled || chatPending || mutationBusy.current) return;
         setQuery((current) => supportedDocumentQuery(applyQueryChange(current, change), reader));
     }, [reader, interactionDisabled, chatPending]);
 
@@ -541,7 +622,7 @@ function ScopedDocumentExplorer({
 
     const onSort = useCallback(
         (field: DocumentSortField) => {
-            if (interactionDisabled || chatPending || !reader.queries.sortFields.includes(field)) return;
+            if (interactionDisabled || chatPending || mutationBusy.current || !reader.queries.sortFields.includes(field)) return;
             setQuery((current) => {
                 const next = toggleSort(current, field);
                 updatePrefs({ sortBy: next.sortBy, sortOrder: next.sortOrder });
@@ -557,7 +638,7 @@ function ScopedDocumentExplorer({
 
     const onSelect = useCallback(
         (id: string, intent: SelectionIntent) => {
-            if (interactionDisabled || chatPending || loading || error || !orderedIds.includes(id)) {
+            if (interactionDisabled || chatPending || mutationBusy.current || loading || error || !orderedIds.includes(id)) {
                 return;
             }
             setInspectedId(null);
@@ -568,7 +649,7 @@ function ScopedDocumentExplorer({
 
     const onOpen = useCallback(
         (document: WorkspaceDocument) => {
-            if (interactionDisabled || chatPending || loading || error) return;
+            if (interactionDisabled || chatPending || mutationBusy.current || loading || error) return;
             setInspectedId(documentId(document));
             if (selectionReason(document)) {
                 setSelection(EMPTY_SELECTION);
@@ -588,7 +669,7 @@ function ScopedDocumentExplorer({
                     target.tagName === 'TEXTAREA' ||
                     target.tagName === 'SELECT' ||
                     target.isContentEditable);
-            if (typing || dialog || interactionDisabled || chatPending || loading || error || filtersOpen || detailsOpen) {
+            if (typing || dialog || interactionDisabled || chatPending || mutationBusy.current || loading || error || filtersOpen || detailsOpen) {
                 return;
             }
             if (!containerRef.current?.contains(document.activeElement) &&
@@ -627,23 +708,24 @@ function ScopedDocumentExplorer({
 
     const onDragStart = useCallback(
         (event: React.DragEvent, id: string) => {
-            if (readOnly || interactionDisabled || !orderedIds.includes(id)) {
+            const ids = selection.ids.includes(id) ? selection.ids : [id];
+            const targets = documents.filter((document) => ids.includes(documentId(document)));
+            if (interactionDisabled || targets.length !== ids.length || !canPerform('tag_documents', targets)) {
                 event.preventDefault();
                 return;
             }
             // Dragging an unselected row drags that row alone, which is what every file
             // manager does and what stops a stale selection being filed by accident.
-            const ids = selection.ids.includes(id) ? selection.ids : [id];
             if (!selection.ids.includes(id)) {
                 setSelection({ ids: [id], anchorId: id });
             }
             event.dataTransfer.setData(
                 'application/x-simplechat-documents',
-                JSON.stringify(ids),
+                JSON.stringify({ scopeKey, documentIds: ids }),
             );
             event.dataTransfer.effectAllowed = 'copy';
         },
-        [selection.ids, orderedIds, readOnly, interactionDisabled],
+        [selection.ids, documents, scopeKey, canPerform, interactionDisabled],
     );
 
     /* ---------------------------------------------------------------------- */
@@ -651,8 +733,27 @@ function ScopedDocumentExplorer({
     /* ---------------------------------------------------------------------- */
 
     const openDialog = useCallback((value: NonNullable<ActiveDialog>) => {
-        if (requirePersonalWrite()) setDialog(value);
-    }, [requirePersonalWrite]);
+        const targets = value.kind === 'metadata' || value.kind === 'share' ? [value.document] : value.documents;
+        const allowed = value.kind === 'share' ? requirePersonalFeature()
+            : operationTargets(value.kind === 'metadata' ? 'edit_metadata' : value.kind === 'tag' ? 'tag_documents' : 'delete', targets);
+        if (allowed) {
+            setDetailsOpen(false);
+            setDialogError(null);
+            setFeedback(null);
+            onDirtyChange?.(true);
+            setDialog(value);
+        }
+    }, [operationTargets, requirePersonalFeature, onDirtyChange]);
+
+    const closeDialog = useCallback(() => {
+        if (mutationBusy.current) {
+            toast.info('Wait for the current operation to finish. Closing does not cancel server work.');
+            return;
+        }
+        setDialog(null);
+        setDialogError(null);
+        onDirtyChange?.(false);
+    }, [onDirtyChange]);
 
     /**
      * Run one request per batch of documents, reporting progress as each lands.
@@ -663,164 +764,144 @@ function ScopedDocumentExplorer({
      */
     const runBatched = useCallback(
         async (
+            operation: DocumentOperation,
             label: string,
-            ids: string[],
-            perBatch: (batch: string[]) => Promise<void>,
-        ): Promise<{ completed: number; failed: number }> => {
-            const batches = batched(ids, BULK_BATCH_SIZE);
-            let completed = 0;
-            let failed = 0;
-
-            setTask({ label, completed: 0, total: ids.length });
+            targets: WorkspaceDocument[],
+            perBatch: (adapter: DocumentOperationAdapter, batch: WorkspaceDocument[]) => Promise<DocumentBatchOutcome>,
+        ): Promise<DocumentBatchOutcome | null> => {
+            const captured = operationTargets(operation, targets);
+            if (!captured) return null;
+            const batches = batched(captured.targets, BULK_BATCH_SIZE);
+            const outcome: DocumentBatchOutcome = { succeeded: [], errors: [] };
+            let processed = 0;
+            beginMutation(label, captured.targets.length);
             try {
                 for (const batch of batches) {
+                    if (!mounted.current) return null;
                     try {
-                        await perBatch(batch);
-                        completed += batch.length;
+                        const result = await perBatch(captured.adapter, batch);
+                        outcome.succeeded.push(...result.succeeded);
+                        outcome.errors.push(...result.errors);
                     } catch (batchError) {
-                        failed += batch.length;
-                        toast.error(errorMessage(batchError, `${label} failed.`));
+                        outcome.errors.push(...batch.map((document) => ({
+                            document_id: documentId(document),
+                            message: errorMessage(batchError, `${label} was not confirmed. Refresh before retrying.`),
+                        })));
                     }
-                    setTask({ label, completed: completed + failed, total: ids.length });
+                    processed += batch.length;
+                    if (mounted.current) setTask({ label, completed: processed, total: captured.targets.length });
                 }
+                if (!mounted.current) return null;
+                const failedIds = [...new Set(outcome.errors.map((error) => error.document_id))];
+                failedSelection.current = new Set(failedIds);
+                if (failedIds.length || operation === 'delete') {
+                    setSelection({ ids: failedIds, anchorId: failedIds[0] ?? null });
+                }
+                const title = `${label}: ${outcome.succeeded.length} of ${captured.targets.length} confirmed.`;
+                setFeedback({ title, errors: outcome.errors });
+                if (outcome.errors.length) toast.error(`${title} Review the failed items before retrying.`);
+                else toast.success(title);
+                await refreshAll();
+                return outcome;
             } finally {
-                setTask(null);
+                finishMutation();
             }
-
-            return { completed, failed };
         },
-        [],
+        [operationTargets, beginMutation, finishMutation, refreshAll],
     );
 
     const runBulkTag = useCallback(
         async (
-            ids: string[],
+            targets: WorkspaceDocument[],
             action: 'add_tags' | 'remove_tags',
             tagNames: string[],
             options: { undoable?: boolean } = {},
-        ) => {
-            if (!requirePersonalWrite()) return;
-            if (ids.length === 0 || tagNames.length === 0) {
-                return;
-            }
-
+        ): Promise<DocumentBatchOutcome | null> => {
+            if (!targets.length || !tagNames.length) return null;
             const verb = action === 'add_tags' ? 'Tagging' : 'Untagging';
-            const { completed } = await runBatched(
-                `${verb} ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
-                ids,
-                (batch) => bulkTagPersonalDocuments(batch, action, tagNames).then(() => undefined),
+            const outcome = await runBatched(
+                'tag_documents', verb, targets,
+                (adapter, batch) => adapter.tagDocuments(batch, action, tagNames),
             );
-
-            await refreshAll();
-
-            if (completed === 0) {
-                return;
-            }
-
-            const done = action === 'add_tags' ? 'Tagged' : 'Untagged';
-            const message = `${done} ${completed} ${completed === 1 ? 'document' : 'documents'} with ${tagNames.join(', ')}`;
-            if (options.undoable) {
-                toast.success(message, {
+            if (mounted.current && outcome && !outcome.errors.length && options.undoable) {
+                toast.success(`${verb} confirmed.`, {
                     label: 'Undo',
                     onAct: () => {
-                        void runBulkTag(
-                            ids,
-                            action === 'add_tags' ? 'remove_tags' : 'add_tags',
-                            tagNames,
-                        );
+                        if (mounted.current) void runBulkTag(targets, action === 'add_tags' ? 'remove_tags' : 'add_tags', tagNames);
                     },
                 });
-            } else {
-                toast.success(message);
             }
+            return outcome;
         },
-        [refreshAll, runBatched, requirePersonalWrite],
+        [runBatched],
     );
 
     const onDropOnTag = useCallback(
-        (tagName: string, ids: string[]) => {
-            void runBulkTag(ids, 'add_tags', [tagName], { undoable: true });
+        (tagName: string, ids: string[], draggedScope?: string) => {
+            const targets = documents.filter((document) => ids.includes(documentId(document)));
+            if ((draggedScope !== scopeKey && (isGroup || draggedScope)) || !ids.length || targets.length !== ids.length) {
+                toast.error('Drag documents from this workspace only. No tags were changed.');
+                return;
+            }
+            void runBulkTag(targets, 'add_tags', [tagName], { undoable: true });
         },
-        [runBulkTag],
+        [documents, scopeKey, isGroup, runBulkTag],
     );
 
     const onUploadFiles = useCallback(
         async (files: File[]) => {
-            if (!requirePersonalWrite()) return;
-            if (files.length === 0) {
-                return;
-            }
-
+            if (!files.length) return;
+            const captured = operationTargets('upload');
+            if (!captured) return;
             const maxSizeMb = Number(settings?.max_file_size_mb ?? 0);
-            if (maxSizeMb > 0) {
-                const tooLarge = files.filter((file) => file.size > maxSizeMb * 1024 * 1024);
-                if (tooLarge.length > 0) {
-                    toast.error(
-                        `${tooLarge.map((file) => file.name).join(', ')} exceeds the ${maxSizeMb} MB limit.`,
-                    );
-                    files = files.filter((file) => file.size <= maxSizeMb * 1024 * 1024);
-                    if (files.length === 0) {
-                        return;
-                    }
-                }
-            }
-
+            const tooLarge = maxSizeMb > 0 ? files.filter((file) => file.size > maxSizeMb * 1024 * 1024) : [];
+            const accepted = files.filter((file) => !tooLarge.includes(file));
+            const validationErrors = tooLarge.map((file) => ({
+                document_id: file.name, message: `Exceeds the ${maxSizeMb} MB upload limit.`,
+            }));
+            beginMutation('Uploading files', files.length);
             setUploading(true);
-            const pendingId = toast.pending(
-                `Uploading ${files.length} ${files.length === 1 ? 'file' : 'files'}…`,
-            );
             try {
-                const response = await uploadPersonalDocuments(files);
-                const uploaded = response.document_ids?.length ?? 0;
-                // The route answers 207 for a partial success, so `errors` has to be read
-                // even though the request itself succeeded.
-                if (response.errors?.length) {
-                    toast.settle(
-                        pendingId,
-                        'error',
-                        `Uploaded ${uploaded} of ${files.length}. ${response.errors[0]}`,
-                    );
-                } else {
-                    toast.settle(pendingId, 'success', `Uploaded ${uploaded} of ${files.length}.`);
+                const response = accepted.length ? await captured.adapter.upload(accepted)
+                    : { document_ids: [], processed_filenames: [], errors: [] };
+                if (!mounted.current) return;
+                const errors = [...validationErrors, ...response.errors.map((message) => ({ document_id: 'Upload', message }))];
+                if (response.document_ids.length + errors.length < files.length) {
+                    errors.push({ document_id: 'Upload', message: 'The server did not confirm every file. Refresh before retrying.' });
                 }
+                const title = `Accepted ${response.document_ids.length} of ${files.length} files. Processing is queued, not complete.`;
+                setFeedback({ title, errors });
+                if (errors.length) toast.error(title);
+                else toast.info(title);
                 await refreshAll();
             } catch (uploadError) {
-                toast.settle(
-                    pendingId,
-                    'error',
-                    errorMessage(uploadError, 'Upload failed.'),
-                );
+                if (mounted.current) {
+                    const message = errorMessage(uploadError, 'Upload was not confirmed. Refresh before retrying.');
+                    setFeedback({ title: 'Upload was not confirmed', errors: [{ document_id: 'Upload', message }] });
+                    toast.error(message);
+                }
             } finally {
-                setUploading(false);
+                finishMutation();
             }
         },
-        [refreshAll, settings, requirePersonalWrite],
+        [operationTargets, beginMutation, finishMutation, refreshAll, settings],
     );
 
     const onDownload = useCallback(async (targets: WorkspaceDocument[]) => {
-        if (!requirePersonalWrite()) return;
-        if (targets.some((target) => !isScreeningAvailable(target))) {
-            toast.error('Held content cannot be downloaded. Open Content review.');
-            return;
-        }
-        const ids = targets.map(documentId).filter(Boolean);
-        if (ids.length === 0) {
-            return;
-        }
-        const pendingId = toast.pending('Preparing download…');
+        const captured = operationTargets('download', targets);
+        if (!captured) return;
+        beginMutation('Preparing download', captured.targets.length);
         try {
-            if (ids.length === 1) {
-                const blob = await downloadPersonalDocument(ids[0]);
-                saveBlob(blob, String(targets[0].file_name ?? 'document'));
-            } else {
-                const blob = await downloadPersonalDocuments(ids);
-                saveBlob(blob, 'documents.zip');
-            }
-            toast.settle(pendingId, 'success', 'Download ready.');
+            const blob = await captured.adapter.download(captured.targets);
+            if (!mounted.current) return;
+            saveBlob(blob, targets.length === 1 ? String(targets[0].file_name ?? 'document') : 'documents.zip');
+            toast.success('Download ready.');
         } catch (downloadError) {
-            toast.settle(pendingId, 'error', errorMessage(downloadError, 'Download failed.'));
+            if (mounted.current) toast.error(errorMessage(downloadError, 'Download failed. No file was saved.'));
+        } finally {
+            finishMutation();
         }
-    }, [requirePersonalWrite]);
+    }, [operationTargets, beginMutation, finishMutation]);
 
     /**
      * Hand the selection to the composer.
@@ -833,11 +914,11 @@ function ScopedDocumentExplorer({
      */
     const onChat = useCallback(
         async (targets: WorkspaceDocument[]) => {
-            if (!availability.chat) {
+            if (!availability.chat || mutationBusy.current) {
                 toast.error('Chat is not currently available for this selection. Refresh workspace access and try again.');
                 return;
             }
-            const reason = targets.map(selectionReason).find(Boolean);
+            const reason = targets.map(chatSelectionReason).find(Boolean);
             if (reason) {
                 toast.error(reason);
                 return;
@@ -851,7 +932,7 @@ function ScopedDocumentExplorer({
             chatRequest.current = controller;
             setChatPending(true);
             try {
-                if (readOnly) documents = await Promise.all(documents.map((document) => reader.detail(documentId(document), controller.signal)));
+                if (isGroup) documents = await Promise.all(documents.map((document) => reader.detail(documentId(document), controller.signal)));
                 if (controller.signal.aborted || !mounted.current || access.current.interactionDisabled || !access.current.canChat) return;
                 const blocked = documents.map((document) => documentSelectionReason(document, reader.scope)).find(Boolean);
                 if (blocked) {
@@ -860,7 +941,7 @@ function ScopedDocumentExplorer({
                     return;
                 }
                 const scope = reader.scope.kind === 'group' ? groupScope(reader.scope) : PERSONAL_SCOPE;
-                const tags = readOnly ? query.tags : [];
+                const tags = isGroup ? query.tags : [];
                 const handoff = buildContextHandoffParams({
                     documentIds: documents.map(documentId),
                     docScope: reader.scope.kind,
@@ -878,166 +959,116 @@ function ScopedDocumentExplorer({
                 if (!controller.signal.aborted && mounted.current) setChatPending(false);
             }
         },
-        [navigate, reader, readOnly, query.tags, availability.chat, selectionReason],
+        [navigate, reader, isGroup, query.tags, availability.chat, chatSelectionReason],
     );
 
     const onExtractMetadata = useCallback(
         async (targets: WorkspaceDocument[]) => {
-            if (!requirePersonalWrite()) return;
-            if (targets.some((target) => !isScreeningAvailable(target))) {
-                toast.error('Held content cannot be analyzed. Open Content review.');
-                return;
-            }
-            const ids = targets.map(documentId).filter(Boolean);
-            if (ids.length === 0) {
-                return;
-            }
-            try {
-                await extractPersonalDocumentMetadata(ids);
-                toast.info(
-                    `Metadata extraction queued for ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}.`,
-                );
-                window.setTimeout(() => void refreshAll(), 1500);
-            } catch (extractError) {
-                toast.error(errorMessage(extractError, 'Could not queue metadata extraction.'));
-            }
+            await runBatched('extract_metadata', 'Metadata extraction queued', targets, (adapter, batch) => adapter.extractMetadata(batch));
         },
-        [refreshAll, requirePersonalWrite],
+        [runBatched],
     );
 
     const onReextract = useCallback(
         async (targets: WorkspaceDocument[], mode: 'read' | 'layout') => {
-            if (!requirePersonalWrite()) return;
-            if (targets.some((target) => !isScreeningAvailable(target))) {
-                toast.error('Use Content review to retry screening of held content.');
+            if (mode === 'layout' && !features?.enable_enhanced_extraction) {
+                toast.error('Enhanced extraction is not enabled.');
                 return;
             }
-            const ids = targets.map(documentId).filter(Boolean);
-            if (ids.length === 0) {
-                return;
-            }
-            try {
-                await reprocessPersonalDocumentExtraction(ids, mode);
-                toast.info(
-                    `Re-extraction queued as ${mode === 'layout' ? 'enhanced' : 'standard'}.`,
-                );
-                window.setTimeout(() => void refreshAll(), 1500);
-            } catch (reextractError) {
-                toast.error(errorMessage(reextractError, 'Could not queue re-extraction.'));
-            }
+            await runBatched('reprocess', 'Reprocessing queued', targets, (adapter, batch) => adapter.reprocess(batch, mode));
         },
-        [refreshAll, requirePersonalWrite],
+        [runBatched, features],
     );
 
     const onSaveMetadata = useCallback(
         async (target: WorkspaceDocument, draft: MetadataDraft) => {
-            if (!requirePersonalWrite()) return;
-            setTask({ label: 'Saving metadata', completed: 0, total: 1 });
+            const captured = operationTargets('edit_metadata', [target]);
+            if (!captured) return;
+            const changes = changedDocumentMetadata(target, draft);
+            beginMutation('Saving metadata', 1);
             try {
-                await updatePersonalDocumentMetadata(documentId(target), {
-                    title: draft.title,
-                    abstract: draft.abstract,
-                    publication_date: draft.publication_date,
-                    document_classification: draft.document_classification,
-                    authors: draft.authors
-                        .split(',')
-                        .map((entry) => entry.trim())
-                        .filter(Boolean),
-                    keywords: draft.keywords
-                        .split(',')
-                        .map((entry) => entry.trim())
-                        .filter(Boolean),
-                });
+                const status = await captured.adapter.editMetadata(captured.targets[0], changes);
+                if (!mounted.current) return;
                 setDialog(null);
-                toast.success('Metadata saved.');
+                if (status === 'queued') {
+                    setDocuments((current) => current.filter((document) => documentId(document) !== documentId(target)));
+                    setInspectedId(null);
+                    toast.info('Metadata saved. Screening is queued; the document remains unavailable until released.');
+                } else toast.success('Metadata saved.');
                 await refreshAll();
             } catch (saveError) {
-                toast.error(errorMessage(saveError, 'Could not save metadata.'));
+                if (mounted.current) {
+                    const message = errorMessage(saveError, 'Could not save metadata. Your draft is kept.');
+                    setDialogError(message);
+                    toast.error(message);
+                }
             } finally {
-                setTask(null);
+                finishMutation();
             }
         },
-        [refreshAll, requirePersonalWrite],
+        [operationTargets, beginMutation, finishMutation, refreshAll],
     );
 
     const onConfirmDelete = useCallback(
         async (
             targets: WorkspaceDocument[],
-            options: { force: boolean; deleteAllVersions: boolean },
+            options: DocumentDeleteOptions,
         ) => {
-            if (!requirePersonalWrite()) return;
-            const ids = targets.map(documentId).filter(Boolean);
-            if (ids.length === 0) {
-                return;
-            }
-
-            // Batched like the tag path: deleting a document removes its search-index chunks
-            // as well as its record, so a large selection is slow enough to need reporting.
-            const blocked: BulkDeleteError[] = [];
-            const failed: BulkDeleteError[] = [];
-            let deletedCount = 0;
-
-            setTask({
-                label: `Deleting ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
-                completed: 0,
-                total: ids.length,
-            });
-            try {
-                let processed = 0;
-                for (const batch of batched(ids, BULK_BATCH_SIZE)) {
-                    try {
-                        const response = await bulkDeletePersonalDocuments(batch, {
-                            deleteMode: options.deleteAllVersions
-                                ? 'all_versions'
-                                : 'current_only',
-                            conversationLinkedDeleteConfirmed: options.force,
-                            fileSyncDeleteAction: options.force ? 'keep_source' : null,
-                        });
-                        deletedCount += response.deleted_count ?? 0;
-                        for (const entry of response.errors ?? []) {
-                            (entry.needs_confirmation ? blocked : failed).push(entry);
-                        }
-                    } catch (batchError) {
-                        toast.error(
-                            errorMessage(batchError, 'Could not delete some documents.'),
-                        );
-                    }
-                    processed += batch.length;
-                    setTask({
-                        label: `Deleting ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
-                        completed: processed,
-                        total: ids.length,
-                    });
-                }
-            } finally {
-                setTask(null);
-            }
-
-            if (blocked.length > 0) {
-                // Kept open, now listing exactly what was refused and why, so the user can
-                // decide about those documents rather than about the batch.
-                setDialog({ kind: 'delete', documents: targets, blocked });
-            } else {
-                setDialog(null);
-            }
-
-            if (deletedCount > 0) {
-                toast.success(
-                    `Deleted ${deletedCount} ${deletedCount === 1 ? 'document' : 'documents'}.`,
-                );
-            }
-            if (failed.length > 0) {
-                toast.error(failed[0].message ?? 'Some documents could not be deleted.');
-            }
-
-            setSelection(EMPTY_SELECTION);
-            await refreshAll();
+            const outcome = await runBatched('delete', 'Deleting documents', targets, (adapter, batch) => adapter.deleteDocuments(batch, options));
+            if (!outcome || !mounted.current) return;
+            setDialog(outcome.errors.length ? {
+                kind: 'delete', documents: targets.filter((document) => outcome.errors.some((error) => error.document_id === documentId(document))),
+                blocked: outcome.errors,
+            } : null);
         },
-        [refreshAll, requirePersonalWrite],
+        [runBatched],
     );
 
+    const onApplyTags = useCallback(async (added: string[], removed: string[]) => {
+        if (dialog?.kind !== 'tag') return;
+        const targets = dialog.documents;
+        const outcome = await runBatched('tag_documents', 'Updating document tags', targets, async (adapter, batch) => {
+            const results: DocumentBatchOutcome[] = [];
+            if (added.length) results.push(await adapter.tagDocuments(batch, 'add_tags', added));
+            if (removed.length) results.push(await adapter.tagDocuments(batch, 'remove_tags', removed));
+            const errors = results.flatMap((result) => result.errors);
+            return {
+                succeeded: batch.map(documentId).filter((id) =>
+                    results.every((result) => result.succeeded.includes(id)) && !errors.some((error) => error.document_id === id)),
+                errors,
+            };
+        });
+        if (!outcome || !mounted.current) return;
+        setDialog(outcome.errors.length ? {
+            kind: 'tag', documents: targets.filter((document) => outcome.errors.some((error) => error.document_id === documentId(document))),
+        } : null);
+    }, [dialog, runBatched]);
+
+    const onCreateTag = useCallback(async (name: string): Promise<string | null> => {
+        const captured = operationTargets('manage_tags');
+        if (!captured) return null;
+        beginMutation('Creating tag', 1);
+        try {
+            const outcome = await captured.adapter.createTag(name);
+            if (!mounted.current) return null;
+            if (outcome.errors.length || outcome.vocabularyRetained) {
+                setFeedback({ title: 'The tag change is not complete', errors: outcome.errors });
+                setDialogError('The tag change is not complete. Refresh the vocabulary before retrying.');
+                await loadSidebar();
+                return null;
+            }
+            await loadSidebar();
+            return outcome.tag?.name ?? name.trim();
+        } catch (cause) {
+            if (mounted.current) setDialogError(errorMessage(cause, 'Could not create the tag. Your draft is kept.'));
+            return null;
+        } finally {
+            finishMutation();
+        }
+    }, [operationTargets, beginMutation, finishMutation, loadSidebar]);
+
     const onSaveView = useCallback(() => {
-        if (!requirePersonalWrite()) return;
+        if (!requirePersonalFeature()) return;
         const name = window.prompt('Name this view');
         if (!name?.trim()) {
             return;
@@ -1045,11 +1076,11 @@ function ScopedDocumentExplorer({
         const view = createSavedView(name, query);
         saveUserSettings({ v2DocumentSavedViews: upsertSavedView(savedViews, view) });
         toast.success(`Saved "${view.name}" to the rail.`);
-    }, [query, savedViews, saveUserSettings, requirePersonalWrite]);
+    }, [query, savedViews, saveUserSettings, requirePersonalFeature]);
 
     const onDeleteSavedView = useCallback(
         (view: DocumentSavedView) => {
-            if (!requirePersonalWrite()) return;
+            if (!requirePersonalFeature()) return;
             if (!window.confirm(`Remove the saved view "${view.name}"?`)) {
                 return;
             }
@@ -1057,7 +1088,7 @@ function ScopedDocumentExplorer({
                 v2DocumentSavedViews: removeSavedView(savedViews, view.id),
             });
         },
-        [savedViews, saveUserSettings, requirePersonalWrite],
+        [savedViews, saveUserSettings, requirePersonalFeature],
     );
 
     /* ---------------------------------------------------------------------- */
@@ -1065,7 +1096,7 @@ function ScopedDocumentExplorer({
     /* ---------------------------------------------------------------------- */
 
     const chips = describeActiveFilters(query).map((chip) =>
-        readOnly && chip.kind === 'place' && chip.value === 'shared'
+        isGroup && chip.kind === 'place' && chip.value === 'shared'
             ? { ...chip, label: 'Shared with this group' } : chip);
 
     const content = () => {
@@ -1094,7 +1125,7 @@ function ScopedDocumentExplorer({
                     description={
                         filtered
                             ? undefined
-                            : readOnly ? 'This group has no visible documents. Use the classic workspace to manage files.'
+                            : !availability.upload ? 'This group has no visible documents. Use the classic workspace to manage files.'
                                 : 'Upload a file to make it available for grounded chat.'
                     }
                     action={
@@ -1109,7 +1140,7 @@ function ScopedDocumentExplorer({
                             >
                                 Clear filters
                             </GlassButton>
-                        ) : readOnly ? (
+                        ) : !availability.upload ? (
                             onOpenClassic ? <GlassButton size="sm" onClick={onOpenClassic}>Manage files in classic</GlassButton> : undefined
                         ) : (
                             <GlassButton
@@ -1134,7 +1165,8 @@ function ScopedDocumentExplorer({
                 classificationColors={classificationColors}
                 onSelect={onSelect}
                 onOpen={onOpen}
-                onDragStart={readOnly ? undefined : onDragStart}
+                onDragStart={availability.tagDocuments ? onDragStart : undefined}
+                canDrag={(document) => canPerform('tag_documents', [document])}
                 selectionReason={selectionReason}
                 scope={reader.scope}
             />
@@ -1148,13 +1180,14 @@ function ScopedDocumentExplorer({
                 classificationColors={classificationColors}
                 onSelect={onSelect}
                 onToggleSelectAll={() => {
-                    if (interactionDisabled || chatPending || loading || error) return;
+                    if (interactionDisabled || chatPending || mutationBusy.current || loading || error) return;
                     setInspectedId(null);
                     setSelection((current) => toggleSelectAll(current, orderedIds));
                 }}
                 onSort={onSort}
                 onOpen={onOpen}
-                onDragStart={readOnly ? undefined : onDragStart}
+                onDragStart={availability.tagDocuments ? onDragStart : undefined}
+                canDrag={(document) => canPerform('tag_documents', [document])}
                 selectionReason={selectionReason}
                 scope={reader.scope}
                 sortFields={reader.queries.sortFields}
@@ -1170,24 +1203,24 @@ function ScopedDocumentExplorer({
         classifications={availability.classification ? classifications : []}
         onQueryChange={changeQuery}
         onApplySavedView={(view) => {
-            if (readOnly || interactionDisabled) return;
+            if (isGroup || interactionDisabled) return;
             setSearchDraft(view.query.search);
             setQuery((current) => applySavedView(current, view));
         }}
         onDeleteSavedView={onDeleteSavedView}
-        onDropOnTag={readOnly ? undefined : onDropOnTag}
+        onDropOnTag={availability.tagDocuments ? onDropOnTag : undefined}
         placesEnabled={reader.queries.places}
-        sharedLabel={readOnly ? 'Shared with this group' : 'Shared with me'}
+        sharedLabel={isGroup ? 'Shared with this group' : 'Shared with me'}
         compact={compact}
     />;
     const detailsPane = <DocumentDetailsPane
         documents={detailDocuments}
-        availability={availability}
+        availability={{ ...availability, chat: availability.chat && detailDocuments.every((document) => !chatSelectionReason(document)) }}
         reader={reader}
-        selectionReason={selectionReason}
+        selectionReason={chatSelectionReason}
         loading={detailLoading}
         error={detailError}
-        interactionDisabled={interactionDisabled || chatPending}
+        interactionDisabled={interactionDisabled || chatPending || busy}
         compact={compact}
         onRefresh={() => setDetailRefresh((value) => value + 1)}
         actions={{
@@ -1200,7 +1233,7 @@ function ScopedDocumentExplorer({
             onManageTags: (targets) => openDialog({ kind: 'tag', documents: targets }),
             onDelete: (targets) => openDialog({ kind: 'delete', documents: targets, blocked: [] }),
             onSelectTag: (tag) => changeQuery({ tags: [tag] }),
-            onRemoveTag: (targets, tag) => void runBulkTag(targets.map(documentId).filter(Boolean), 'remove_tags', [tag]),
+            onRemoveTag: (targets, tag) => void runBulkTag(targets, 'remove_tags', [tag]),
         }}
         tagColors={tagColors}
         classificationColors={classificationColors}
@@ -1211,10 +1244,10 @@ function ScopedDocumentExplorer({
     />;
 
     return (
-        <fieldset ref={containerRef} disabled={interactionDisabled || chatPending} aria-label="Documents explorer"
+        <fieldset ref={containerRef} disabled={interactionDisabled || chatPending || busy} aria-label="Documents explorer"
             aria-busy={loading}
             className="flex h-full min-h-0 min-w-0 flex-col gap-2">
-            {!readOnly ? <input
+            {availability.upload ? <input
                 ref={fileInputRef}
                 type="file"
                 multiple
@@ -1230,9 +1263,10 @@ function ScopedDocumentExplorer({
                 searchDraft={searchDraft}
                 prefs={compact ? { ...prefs, detailsPaneOpen: detailsOpen } : prefs}
                 selectionCount={selectedDocuments.length}
+                selectedDocuments={selectedDocuments}
                 uploading={uploading}
-                availability={availability}
-                canSaveView={!readOnly && isSaveableQuery(query)}
+                availability={{ ...availability, chat: availability.chat && selectedDocuments.every((document) => !chatSelectionReason(document)) }}
+                canSaveView={!isGroup && isSaveableQuery(query)}
                 query={query}
                 sortFields={reader.queries.sortFields}
                 onSort={onSort}
@@ -1265,7 +1299,11 @@ function ScopedDocumentExplorer({
             />
 
             {chatPending ? <p role="status" className="text-xs text-text-3">Confirming selected documents for chat...</p> : null}
-            {readOnly && !canChat ? <p role="status" className="text-xs text-text-3">Chat is not available for this group. You can still inspect its documents.</p> : null}
+            {isGroup && !canChat ? <p role="status" className="text-xs text-text-3">Chat is not available for this group. You can still inspect its documents.</p> : null}
+            {feedback && !dialog ? <div className="space-y-1">
+                {feedback.errors.length ? <OperationFeedback {...feedback} documents={documents} />
+                    : <p role="status" className="text-xs text-text-3">{feedback.title}</p>}
+            </div> : null}
             {sidebarError || pollError ? (
                 <div className="space-y-1 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
                     <p>{sidebarError || pollError}</p>
@@ -1330,46 +1368,41 @@ function ScopedDocumentExplorer({
                 {detailsPane}
             </Modal> : null}
 
-            {!readOnly && dialog?.kind === 'tag' ? (
+            {dialog?.kind === 'tag' ? (
                 <TagDialog
                     documents={dialog.documents}
                     tags={tags}
                     busy={busy}
-                    onClose={() => setDialog(null)}
-                    onApply={async (added, removed) => {
-                        const ids = dialog.documents.map(documentId).filter(Boolean);
-                        setDialog(null);
-                        if (added.length > 0) {
-                            await runBulkTag(ids, 'add_tags', added);
-                        }
-                        if (removed.length > 0) {
-                            await runBulkTag(ids, 'remove_tags', removed);
-                        }
-                    }}
-                    onCreateTag={async (name) => {
-                        if (!requirePersonalWrite()) return;
-                        try {
-                            await createPersonalDocumentTag(name);
-                            await loadSidebar();
-                        } catch (createError) {
-                            toast.error(errorMessage(createError, 'Could not create the tag.'));
-                        }
-                    }}
+                    disabled={!canPerform('tag_documents', dialog.documents)}
+                    canCreateTag={availability.manageTags}
+                    scopeLabel={isGroup ? scopeLabel : undefined}
+                    error={dialogError}
+                    errors={feedback?.errors}
+                    onClose={closeDialog}
+                    onApply={(added, removed) => void onApplyTags(added, removed)}
+                    onCreateTag={onCreateTag}
                 />
             ) : null}
 
-            {!readOnly && dialog?.kind === 'metadata' ? (
+            {dialog?.kind === 'metadata' ? (
                 <MetadataDialog
                     document={dialog.document}
                     classifications={classifications}
                     classificationEnabled={availability.classification}
                     busy={busy}
-                    onClose={() => setDialog(null)}
+                    disabled={!canPerform('edit_metadata', [dialog.document])}
+                    disabledReason={isGroup && !loading && !interactionDisabled
+                        && !documents.some((document) => documentId(document) === documentId(dialog.document))
+                        ? 'This document is no longer in the current results. Your draft still targets its original revision and will not be saved onto a replacement.'
+                        : undefined}
+                    error={dialogError}
+                    scopeLabel={isGroup ? scopeLabel : undefined}
+                    onClose={closeDialog}
                     onSave={(draft) => void onSaveMetadata(dialog.document, draft)}
                 />
             ) : null}
 
-            {!readOnly && dialog?.kind === 'share' ? (
+            {!isGroup && dialog?.kind === 'share' ? (
                 <ShareDialog
                     document={dialog.document}
                     onClose={() => setDialog(null)}
@@ -1377,12 +1410,15 @@ function ScopedDocumentExplorer({
                 />
             ) : null}
 
-            {!readOnly && dialog?.kind === 'delete' ? (
+            {dialog?.kind === 'delete' ? (
                 <DeleteDialog
                     documents={dialog.documents}
                     blocked={dialog.blocked}
                     busy={busy}
-                    onClose={() => setDialog(null)}
+                    disabled={!canPerform('delete', dialog.documents)}
+                    scopeLabel={scopeLabel}
+                    legacyPersonal={!isGroup}
+                    onClose={closeDialog}
                     onConfirm={(options) => void onConfirmDelete(dialog.documents, options)}
                 />
             ) : null}

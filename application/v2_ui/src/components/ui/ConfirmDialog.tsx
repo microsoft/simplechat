@@ -23,6 +23,7 @@ export function ConfirmDialog({
     confirmIcon,
     cancelLabel = 'Cancel',
     busy = false,
+    confirmDisabled = false,
     tone = 'danger',
     children,
     onConfirm,
@@ -34,6 +35,7 @@ export function ConfirmDialog({
     confirmIcon?: ReactNode;
     cancelLabel?: string;
     busy?: boolean;
+    confirmDisabled?: boolean;
     tone?: 'danger' | 'primary';
     /** Extra detail below the description, such as a list of what is affected. */
     children?: ReactNode;
@@ -53,7 +55,7 @@ export function ConfirmDialog({
                     <GlassButton
                         variant={tone === 'danger' ? 'danger' : 'primary'}
                         size="sm"
-                        disabled={busy}
+                        disabled={busy || confirmDisabled}
                         onClick={onConfirm}
                     >
                         {busy ? <Loader2 size={14} className="animate-spin" /> : confirmIcon}

@@ -29,6 +29,7 @@ import { isScreeningAvailable } from '../../lib/contentScreening';
 import {
     documentSelectionReason, groupDocumentOrigin, type DocumentReadAdapter,
 } from '../../lib/documentReadAdapter';
+import type { DocumentOperation } from '../../lib/documentOperations';
 import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 import {
     commonTags,
@@ -75,7 +76,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export interface DocumentActionAvailability {
-    manage: boolean;
+    upload: boolean;
+    tagDocuments: boolean;
+    manageTags: boolean;
+    editMetadata: boolean;
+    deleteDocuments: boolean;
+    reprocess: boolean;
+    allows: (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => boolean;
     chat: boolean;
     downloads: boolean;
     extractMetadata: boolean;
@@ -116,37 +123,32 @@ function ActionButtons({
 }) {
     const single = documents.length === 1 ? documents[0] : null;
     const blockedReason = documents.map(selectionReason).find(Boolean);
-    if (blockedReason) {
-        return (
-            <p className="px-3 py-2.5 text-xs text-text-3">
-                {blockedReason}
-            </p>
-        );
-    }
-
     return (
+        <>
+        {blockedReason ? <p className="px-3 py-2.5 text-xs text-text-3">{blockedReason}</p> : null}
         <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
-            <GlassButton variant="primary" size="sm" disabled={!availability.chat} onClick={() => actions.onChat(documents)}>
+            <GlassButton variant="primary" size="sm" disabled={!availability.chat || Boolean(blockedReason)} onClick={() => actions.onChat(documents)}>
                 <MessageSquare size={14} />
                 Chat
             </GlassButton>
 
             {availability.downloads ? (
-                <GlassButton variant="subtle" size="sm" onClick={() => actions.onDownload(documents)}>
+                <GlassButton variant="subtle" size="sm" disabled={!availability.allows('download', documents)} onClick={() => actions.onDownload(documents)}>
                     <Download size={14} />
                     Download
                 </GlassButton>
             ) : null}
 
-            {availability.manage ? <GlassButton variant="subtle" size="sm" onClick={() => actions.onManageTags(documents)}>
+            {availability.tagDocuments ? <GlassButton variant="subtle" size="sm" disabled={!availability.allows('tag_documents', documents)} onClick={() => actions.onManageTags(documents)}>
                 <TagIcon size={14} />
                 Tag
             </GlassButton> : null}
 
-            {single && availability.manage ? (
+            {single && availability.editMetadata ? (
                 <GlassButton
                     variant="subtle"
                     size="sm"
+                    disabled={!availability.allows('edit_metadata', documents)}
                     onClick={() => actions.onEditMetadata(single)}
                 >
                     <Pencil size={14} />
@@ -159,6 +161,7 @@ function ActionButtons({
                     variant="subtle"
                     size="sm"
                     onClick={() => actions.onExtractMetadata(documents)}
+                    disabled={!availability.allows('extract_metadata', documents)}
                     title="Ask the model to re-read the file and fill in title, authors, keywords and abstract"
                 >
                     <Sparkles size={14} />
@@ -173,11 +176,12 @@ function ActionButtons({
                 </GlassButton>
             ) : null}
 
-            {availability.manage ? <GlassButton variant="danger" size="sm" onClick={() => actions.onDelete(documents)}>
+            {availability.deleteDocuments ? <GlassButton variant="danger" size="sm" disabled={!availability.allows('delete', documents)} onClick={() => actions.onDelete(documents)}>
                 <Trash2 size={14} />
                 Delete
             </GlassButton> : null}
         </div>
+        </>
     );
 }
 
@@ -194,10 +198,14 @@ function ReextractSection({
     documents,
     enhancedEnabled,
     onReextract,
+    disabled = false,
+    requireAll = false,
 }: {
     documents: WorkspaceDocument[];
     enhancedEnabled: boolean;
     onReextract: (documents: WorkspaceDocument[], mode: ExtractionMode) => void;
+    disabled?: boolean;
+    requireAll?: boolean;
 }) {
     const { supported, unsupported, current } = summarizeExtraction(documents.filter(isScreeningAvailable));
 
@@ -262,10 +270,10 @@ function ReextractSection({
                             key={option.mode}
                             variant="subtle"
                             size="sm"
-                            disabled={blocked}
-                            onClick={() => onReextract(supported, option.mode)}
+                            disabled={blocked || disabled}
+                            onClick={() => onReextract(requireAll ? documents : supported, option.mode)}
                             title={
-                                blocked
+                                disabled ? 'Every selected document must permit reprocessing.' : blocked
                                     ? 'Enhanced extraction is switched off for this deployment.'
                                     : `${option.hint} Re-reads ${supported.length === 1 ? 'this document' : `these ${supported.length} documents`}.`
                             }
@@ -277,7 +285,9 @@ function ReextractSection({
                 })}
             </div>
 
-            {unsupported.length > 0 ? (
+            {unsupported.length > 0 && requireAll ? <p className="mt-1.5 text-xs text-text-3">
+                Choose only documents that support reprocessing; this selection will not be silently reduced.
+            </p> : unsupported.length > 0 ? (
                 <p className="mt-1.5 text-[11px] text-text-3">
                     {unsupported.length} of the selected{' '}
                     {unsupported.length === 1 ? 'document is' : 'documents are'} not a PDF or
@@ -444,7 +454,7 @@ export function DocumentDetailsPane({
                                         key={tag}
                                         name={tag}
                                         color={tagColors[tag]}
-                                        onRemove={availability.manage ? () => actions.onRemoveTag(documents, tag) : undefined}
+                                        onRemove={availability.allows('tag_documents', documents) ? () => actions.onRemoveTag(documents, tag) : undefined}
                                     />
                                 ))}
                             </div>
@@ -455,10 +465,12 @@ export function DocumentDetailsPane({
                         )}
                     </Section>
 
-                    {availability.manage ? <ReextractSection
+                    {availability.reprocess ? <ReextractSection
                         documents={documents}
                         enhancedEnabled={availability.enhancedExtraction}
                         onReextract={actions.onReextract}
+                        disabled={!availability.allows('reprocess', documents)}
+                        requireAll={reader.scope.kind === 'group'}
                     /> : null}
                 </div>
 
@@ -507,7 +519,7 @@ export function DocumentDetailsPane({
 
                 {reader.scope.kind === 'group' ? <Section title="Group access">
                     <p className="text-xs text-text-2">{groupDocumentOrigin(document, reader.scope.id)}</p>
-                    <p className="mt-1 text-xs text-text-3">Browsing {reader.scope.name}. Document management is available in classic.</p>
+                    <p className="mt-1 text-xs text-text-3">Browsing {reader.scope.name}. Actions follow this group's current permissions.</p>
                 </Section> : null}
 
                 {Object.prototype.hasOwnProperty.call(document, 'content_screening') ? (
@@ -525,7 +537,7 @@ export function DocumentDetailsPane({
                                     name={tag}
                                     color={tagColors[tag]}
                                     onClick={() => actions.onSelectTag(tag)}
-                                    onRemove={availability.manage && available ? () => actions.onRemoveTag([document], tag) : undefined}
+                                    onRemove={available && availability.allows('tag_documents', [document]) ? () => actions.onRemoveTag([document], tag) : undefined}
                                 />
                             ))}
                         </div>
@@ -605,10 +617,12 @@ export function DocumentDetailsPane({
 
                 <DocumentVersions key={documentId(document)} document={document} reader={reader} enabled={!interactionDisabled} />
 
-                {availability.manage ? <ReextractSection
+                {availability.reprocess ? <ReextractSection
                     documents={[document]}
                     enhancedEnabled={availability.enhancedExtraction}
                     onReextract={actions.onReextract}
+                    disabled={!availability.allows('reprocess', [document])}
+                    requireAll={reader.scope.kind === 'group'}
                 /> : null}
             </div>
 

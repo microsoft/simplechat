@@ -102,6 +102,7 @@ export function DocumentTable({
     selectionReason,
     scope,
     sortFields,
+    canDrag,
 }: {
     documents: WorkspaceDocument[];
     columns: string[];
@@ -117,6 +118,7 @@ export function DocumentTable({
     selectionReason: (document: WorkspaceDocument) => string | null;
     scope: DocumentReadScope;
     sortFields: readonly DocumentSortField[];
+    canDrag: (document: WorkspaceDocument) => boolean;
 }) {
     const activeColumns = DOCUMENT_COLUMNS.filter((column) => columns.includes(column.id));
     const selectedIds = new Set(selection.ids);
@@ -202,7 +204,7 @@ export function DocumentTable({
                     return (
                         <tr
                             key={id}
-                            draggable={available && Boolean(onDragStart)}
+                            draggable={available && Boolean(onDragStart) && canDrag(document)}
                             onDragStart={onDragStart ? (event) => onDragStart(event, id) : undefined}
                             onClick={(event) =>
                                 available ? onSelect(

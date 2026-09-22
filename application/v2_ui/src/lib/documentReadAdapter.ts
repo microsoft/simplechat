@@ -4,6 +4,7 @@ import { api } from './apiClient';
 import { isScreeningAvailable } from './contentScreening';
 import {
     buildDocumentListParams, DEFAULT_DOCUMENT_QUERY, DOCUMENT_SORT_FIELDS, documentId,
+    generatedArtifactRestriction,
 } from './documentExplorer';
 import {
     fetchPersonalDocument, fetchPersonalDocumentFacets, fetchPersonalDocuments,
@@ -158,6 +159,8 @@ export function supportedDocumentQuery(query: DocumentQuery, reader: DocumentRea
 export function documentSelectionReason(
     document: WorkspaceDocument, scope: DocumentReadScope, canChat = true,
 ): string | null {
+    const publicationRestriction = generatedArtifactRestriction(document);
+    if (publicationRestriction) return publicationRestriction;
     if (!isScreeningAvailable(document)) {
         return 'Held sources cannot be selected for chat. An authorized reviewer must resolve the hold in Content review.';
     }

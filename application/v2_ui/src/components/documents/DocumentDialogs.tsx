@@ -10,6 +10,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, Trash2 } from 'lucide-react';
 import type { WorkspaceDocument, WorkspaceTag } from '../../lib/types';
 import {
+    changedDocumentMetadata, type DocumentDeleteOptions, type DocumentOperationError,
+    type SyncedDeleteAction, type TagOperationError,
+} from '../../lib/documentOperations';
+import {
     commonTags,
     documentDisplayName,
     normalizeStringList,
@@ -20,7 +24,6 @@ import {
     searchShareableUsers,
     sharePersonalDocument,
     unsharePersonalDocument,
-    type BulkDeleteError,
     type SharedDocumentUser,
 } from '../../lib/endpoints';
 import { GlassButton } from '../ui/primitives';
@@ -83,13 +86,23 @@ export function TagDialog({
     onClose,
     onApply,
     onCreateTag,
+    disabled = false,
+    canCreateTag = true,
+    error,
+    errors = [],
+    scopeLabel,
 }: {
     documents: WorkspaceDocument[];
     tags: WorkspaceTag[];
     busy: boolean;
+    disabled?: boolean;
+    canCreateTag?: boolean;
+    error?: string | null;
+    errors?: TagOperationError[];
+    scopeLabel?: string;
     onClose: () => void;
     onApply: (added: string[], removed: string[]) => void;
-    onCreateTag: (name: string) => Promise<void>;
+    onCreateTag: (name: string) => Promise<string | null>;
 }) {
     const shared = useMemo(() => new Set(commonTags(documents)), [documents]);
     const present = useMemo(() => {
@@ -126,14 +139,16 @@ export function TagDialog({
 
     const createTag = async () => {
         const name = newTag.trim();
-        if (!name) {
+        if (!name || busy || disabled || creating || !canCreateTag) {
             return;
         }
         setCreating(true);
         try {
-            await onCreateTag(name);
-            setAdded((current) => new Set(current).add(name));
-            setNewTag('');
+            const created = await onCreateTag(name);
+            if (created) {
+                setAdded((current) => new Set(current).add(created));
+                setNewTag('');
+            }
         } finally {
             setCreating(false);
         }
@@ -146,17 +161,17 @@ export function TagDialog({
                     ? `Tag ${documentDisplayName(documents[0]).primary}`
                     : `Tag ${documents.length} documents`
             }
-            description="Tags are flat: a document can carry as many as it needs."
+            description={`${scopeLabel ? `${scopeLabel}. ` : ''}Tags are flat: a document can carry as many as it needs.`}
             onClose={onClose}
             footer={
                 <>
-                    <GlassButton variant="ghost" size="sm" onClick={onClose}>
+                    <GlassButton variant="ghost" size="sm" disabled={busy || creating} onClick={onClose}>
                         Cancel
                     </GlassButton>
                     <GlassButton
                         variant="primary"
                         size="sm"
-                        disabled={busy || (added.size === 0 && removed.size === 0)}
+                        disabled={busy || disabled || creating || (added.size === 0 && removed.size === 0)}
                         onClick={() => onApply([...added], [...removed])}
                     >
                         {busy ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -166,7 +181,10 @@ export function TagDialog({
             }
         >
             <div className="space-y-3">
-                <div className="flex gap-2">
+                {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
+                <OperationFeedback title="Some document tags were not updated" errors={errors} documents={documents} />
+                {disabled && !busy ? <p className="text-xs text-text-3">Refresh workspace access or adjust the selection before applying changes. Your draft is kept.</p> : null}
+                {canCreateTag ? <div className="flex gap-2">
                     <input
                         type="text"
                         value={newTag}
@@ -184,16 +202,16 @@ export function TagDialog({
                         variant="subtle"
                         size="sm"
                         onClick={() => void createTag()}
-                        disabled={!newTag.trim() || creating}
+                        disabled={!newTag.trim() || creating || busy || disabled}
                     >
                         {creating ? <Loader2 size={14} className="animate-spin" /> : null}
                         Create
                     </GlassButton>
-                </div>
+                </div> : null}
 
                 {tags.length === 0 ? (
                     <p className="py-4 text-center text-xs text-text-3">
-                        No tags yet. Create one above.
+                        {canCreateTag ? 'No tags yet. Create one above.' : 'No tags are available to apply.'}
                     </p>
                 ) : (
                     <ul className="space-y-0.5">
@@ -210,6 +228,7 @@ export function TagDialog({
                                         <input
                                             type="checkbox"
                                             checked={checked}
+                                            disabled={busy}
                                             ref={(node) => {
                                                 if (node) {
                                                     node.indeterminate = onSome && !willAdd;
@@ -267,6 +286,10 @@ export function MetadataDialog({
     busy,
     onClose,
     onSave,
+    disabled = false,
+    disabledReason,
+    error,
+    scopeLabel,
 }: {
     document: WorkspaceDocument;
     classifications: { label: string; color?: string }[];
@@ -274,6 +297,10 @@ export function MetadataDialog({
     busy: boolean;
     onClose: () => void;
     onSave: (draft: MetadataDraft) => void;
+    disabled?: boolean;
+    disabledReason?: string;
+    error?: string | null;
+    scopeLabel?: string;
 }) {
     const [draft, setDraft] = useState<MetadataDraft>({
         title: String(document.title ?? ''),
@@ -290,18 +317,18 @@ export function MetadataDialog({
     return (
         <Modal
             title="Edit metadata"
-            description={String(document.file_name ?? '')}
+            description={`${scopeLabel ? `${scopeLabel}: ` : ''}${String(document.file_name ?? '')}`}
             onClose={onClose}
             size="lg"
             footer={
                 <>
-                    <GlassButton variant="ghost" size="sm" onClick={onClose}>
+                    <GlassButton variant="ghost" size="sm" disabled={busy} onClick={onClose}>
                         Cancel
                     </GlassButton>
                     <GlassButton
                         variant="primary"
                         size="sm"
-                        disabled={busy}
+                        disabled={busy || disabled || !Object.keys(changedDocumentMetadata(document, draft)).length}
                         onClick={() => onSave(draft)}
                     >
                         {busy ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -310,7 +337,10 @@ export function MetadataDialog({
                 </>
             }
         >
-            <div className="space-y-3">
+            <fieldset disabled={busy} className="min-w-0 space-y-3">
+                {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
+                {disabled && !busy ? <p className="text-xs text-text-3">{disabledReason
+                    || 'Saving is paused until workspace and document permissions are confirmed. Your draft is kept.'}</p> : null}
                 <TextField
                     label="Title"
                     value={draft.title}
@@ -371,7 +401,7 @@ export function MetadataDialog({
                         className="w-full resize-y rounded-lg border border-edge bg-surface-1 px-2.5 py-1.5 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
                     />
                 </label>
-            </div>
+            </fieldset>
         </Modal>
     );
 }
@@ -394,38 +424,54 @@ export function DeleteDialog({
     busy,
     onClose,
     onConfirm,
+    disabled = false,
+    scopeLabel = 'My workspace',
+    legacyPersonal = false,
 }: {
     documents: WorkspaceDocument[];
-    blocked: BulkDeleteError[];
+    blocked: DocumentOperationError[];
     busy: boolean;
     onClose: () => void;
-    onConfirm: (options: { force: boolean; deleteAllVersions: boolean }) => void;
+    onConfirm: (options: DocumentDeleteOptions) => void;
+    disabled?: boolean;
+    scopeLabel?: string;
+    legacyPersonal?: boolean;
 }) {
     const [deleteAllVersions, setDeleteAllVersions] = useState(true);
+    const [conversationConfirmed, setConversationConfirmed] = useState(false);
+    const [syncAction, setSyncAction] = useState<SyncedDeleteAction | null>(null);
     const hasBlocked = blocked.length > 0;
+    const syncGuards = blocked.filter((error) => error.needs_confirmation && error.error === 'synced_document_delete_requires_action');
+    const needsConversation = blocked.some((error) => error.needs_confirmation
+        && error.error === 'conversation_linked_document_delete_requires_confirmation');
+    const unsupportedGuard = blocked.some((error) => error.needs_confirmation
+        && !['synced_document_delete_requires_action', 'conversation_linked_document_delete_requires_confirmation'].includes(error.error ?? ''));
+    const syncOptions = (syncGuards[0]?.options ?? []).filter((option) =>
+        ['delete_only', 'ignore_remote'].includes(option.action)
+        && syncGuards.every((guard) => guard.options?.some((candidate) => candidate.action === option.action)));
+    const guardsConfirmed = legacyPersonal || (!unsupportedGuard && (!needsConversation || conversationConfirmed)
+        && (!syncGuards.length || syncOptions.some((option) => option.action === syncAction)));
 
     return (
         <Modal
             title={hasBlocked ? 'Some documents need confirmation' : 'Delete documents'}
-            description={
-                hasBlocked
-                    ? undefined
-                    : documents.length === 1
-                      ? documentDisplayName(documents[0]).primary
-                      : `${documents.length} documents will be removed from your workspace.`
-            }
+            description={`${scopeLabel}: ${documents.length} ${documents.length === 1 ? 'document' : 'documents'}. ${deleteAllVersions ? 'Every version will be deleted.' : 'Only the current revision will be deleted.'}`}
             onClose={onClose}
             footer={
                 <>
-                    <GlassButton variant="ghost" size="sm" onClick={onClose}>
+                    <GlassButton variant="ghost" size="sm" disabled={busy} onClick={onClose}>
                         Cancel
                     </GlassButton>
                     <GlassButton
                         variant="danger"
                         size="sm"
-                        disabled={busy}
+                        disabled={busy || disabled || !guardsConfirmed}
                         onClick={() =>
-                            onConfirm({ force: hasBlocked, deleteAllVersions })
+                            onConfirm({
+                                deleteMode: deleteAllVersions ? 'all_versions' : 'current_only',
+                                conversationLinkedDeleteConfirmed: legacyPersonal ? hasBlocked : needsConversation && conversationConfirmed,
+                                fileSyncDeleteAction: legacyPersonal ? (hasBlocked ? 'keep_source' : null) : syncGuards.length ? syncAction : null,
+                            })
                         }
                     >
                         {busy ? (
@@ -433,17 +479,14 @@ export function DeleteDialog({
                         ) : (
                             <Trash2 size={14} />
                         )}
-                        {hasBlocked ? 'Delete anyway' : 'Delete'}
+                        {hasBlocked ? legacyPersonal ? 'Delete anyway' : 'Retry delete' : 'Delete'}
                     </GlassButton>
                 </>
             }
         >
             {hasBlocked ? (
                 <div className="space-y-2">
-                    <p className="text-xs text-text-2">
-                        These are referenced elsewhere. Deleting them will not remove those
-                        references.
-                    </p>
+                    <p className="text-xs text-text-2">Review each failed item and its required confirmation before retrying.</p>
                     <ul className="space-y-1.5">
                         {blocked.map((entry) => {
                             const document = documents.find(
@@ -464,6 +507,10 @@ export function DeleteDialog({
                                     <p className="mt-0.5 text-[11px] text-text-3">
                                         {entry.message ?? entry.error}
                                     </p>
+                                    {entry.file_sync ? <p className="mt-1 break-words text-xs text-text-3">
+                                        Source: {entry.file_sync.source_name || entry.file_sync.source_id}.
+                                        {' '}{entry.file_sync.relative_path || entry.file_sync.remote_path}
+                                    </p> : null}
                                 </li>
                             );
                         })}
@@ -472,7 +519,7 @@ export function DeleteDialog({
             ) : (
                 <div className="space-y-3">
                     <ul className="max-h-48 space-y-1 overflow-y-auto">
-                        {documents.slice(0, 20).map((document) => (
+                        {documents.map((document) => (
                             <li
                                 key={String(document.id ?? document.document_id)}
                                 className="truncate text-xs text-text-2"
@@ -480,13 +527,10 @@ export function DeleteDialog({
                                 {documentDisplayName(document).primary}
                             </li>
                         ))}
-                        {documents.length > 20 ? (
-                            <li className="text-xs text-text-3">
-                                and {documents.length - 20} more
-                            </li>
-                        ) : null}
                     </ul>
-
+                </div>
+            )}
+            <fieldset disabled={busy} className="mt-3 space-y-3">
                     <label className="flex cursor-pointer items-start gap-2">
                         <input
                             type="checkbox"
@@ -502,10 +546,47 @@ export function DeleteDialog({
                             </span>
                         </span>
                     </label>
-                </div>
-            )}
+                    {needsConversation && !legacyPersonal ? <label className="flex items-start gap-2 text-xs text-text-2">
+                        <input type="checkbox" checked={conversationConfirmed} onChange={(event) => setConversationConfirmed(event.target.checked)} />
+                        Delete the conversation-linked files; their conversation references will remain.
+                    </label> : null}
+                    {syncGuards.length > 0 && !legacyPersonal ? <label className="block text-xs text-text-2">
+                        Synced-file action
+                        <select aria-label="Synced-file action" value={syncAction ?? ''}
+                            onChange={(event) => setSyncAction(event.target.value === 'delete_only' || event.target.value === 'ignore_remote' ? event.target.value : null)}
+                            className="mt-1 block w-full rounded-lg border border-edge bg-surface-1 px-2 py-2">
+                            <option value="">Choose the advertised source action</option>
+                            {syncOptions.map((option) => <option key={option.action} value={option.action}>{option.label}</option>)}
+                        </select>
+                    </label> : null}
+                    {!legacyPersonal && (unsupportedGuard || (syncGuards.length > 0 && !syncOptions.length))
+                        ? <p role="alert" className="text-xs text-danger">This confirmation cannot be completed here. Use classic management or refresh document access.</p> : null}
+                    {disabled ? <p className="text-xs text-text-3">Deletion is not currently permitted for every selected document. No denied items will be silently skipped.</p> : null}
+            </fieldset>
         </Modal>
     );
+}
+
+export function OperationFeedback({
+    title, errors, documents = [],
+}: {
+    title: string;
+    errors: TagOperationError[];
+    documents?: WorkspaceDocument[];
+}) {
+    if (!errors.length) return null;
+    return <div role="alert" className="space-y-2 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
+        <p className="font-medium">{title}</p>
+        <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+            {errors.map((error, index) => {
+                const id = 'document_id' in error ? error.document_id : `vocabulary:${error.group_id}`;
+                const document = documents.find((record) => String(record.id ?? record.document_id) === id);
+                return <li key={`${id}:${index}`} className="break-words">
+                    {'document_id' in error ? document?.file_name || id : 'Tag vocabulary'}: {error.message || error.error || 'The operation was not confirmed.'}
+                </li>;
+            })}
+        </ul>
+    </div>;
 }
 
 /* -------------------------------------------------------------------------- */

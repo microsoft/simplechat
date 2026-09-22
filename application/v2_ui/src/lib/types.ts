@@ -183,6 +183,9 @@ export interface PromptOption {
 }
 
 export interface WorkspaceDocument {
+    /** Fresh operation policy, never inferred from personal ownership or chat eligibility. */
+    document_actions?: string[];
+    generated_artifact_promotion_status?: string;
     content_screening?: ContentScreeningSummary | null;
     id?: string;
     document_id?: string;
