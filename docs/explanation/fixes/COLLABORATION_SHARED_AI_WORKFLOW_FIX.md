@@ -1,10 +1,13 @@
 # Collaboration Shared AI Workflow Fix
 
-Fixed/Implemented in version: **0.241.021**
+Original implementation: **0.241.021**
+Plain-prompt coverage completed in: **0.261.040**
 
 ## Overview
 
-Collaborative conversations were still posting plain shared messages even when the chat toolbar had an active workspace search, web search, image generation, prompt, or agent selection. That meant shared conversations did not enter the same model and agent workflow that single-user chat already uses.
+The original collaborative AI implementation added a shared streaming route and correctly covered prompts with an active workspace search, web search, image generation, prompt, agent selection, or explicit model target. It did not cover ordinary prompts with none of those triggers.
+
+That uncovered case meant an ordinary prompt after inviting participants followed the human-only shared-message path. It was persisted successfully but never invoked the model. This was a missing-case follow-up to the original implementation, not a confirmed rollback of the entire collaboration AI workflow.
 
 The shared composer also did not provide an explicit way to target a model without turning on a tool. Users could tag participants, but they could not tag an available model or agent as a first-class AI target in the same shared conversation.
 
@@ -13,6 +16,8 @@ The shared composer also did not provide an explicit way to target a model witho
 The collaboration composer only posted to the shared message endpoint with message text, reply metadata, and participant mentions. The single-user orchestration path lives behind `/api/chat/stream`, so the shared flow never carried model selection, agent selection, workspace scope, document selections, web search, image generation, or reasoning settings into the AI workflow.
 
 On the frontend, the `@` suggestion menu was limited to human participants and invite suggestions. Because explicit `@model` and `@agent` tags were never parsed into `ai_invocation_target` metadata, a no-tool shared send still fell back to a plain collaborative message instead of the AI streaming path.
+
+The follow-up defect was in the routing predicate: it only selected the AI stream when `buildCollaborativeInvocationTarget()` found a tool, workspace, prompt, agent, image, or explicit AI target. A normal non-empty message produced no invocation target and was sent to the human-only endpoint.
 
 ## What Changed
 
@@ -23,6 +28,7 @@ On the frontend, the `@` suggestion menu was limited to human participants and i
 - Added collaboration-side rendering support for mirrored image responses.
 - Extended the collaboration `@` suggestion menu so it now surfaces available agents and available models alongside participant tags and invite suggestions.
 - Added explicit `@agent` and `@model` parsing so shared sends can target AI without selecting a toolbar tool, and the raw `@target` text is stripped from the final message body in favor of a structured chip.
+- Routed every non-empty collaborative prompt through the AI stream by default, while retaining invocation metadata for tool, agent, model, and workspace-targeted requests.
 - Split shared chip styling so participant mentions, agent targets, and model targets render with different background colors.
 - Updated the streaming chat bridge so explicit tagged-agent requests stamp `agent_selection` and the actual resolved model onto the hidden source user message metadata, which keeps shared user-message detail panels aligned with the assistant response.
 - Synced source conversation tags and context metadata back into the collaborative conversation record after streaming completes so shared conversation details reflect the resolved agent and actual model used.
@@ -36,6 +42,7 @@ On the frontend, the `@` suggestion menu was limited to human participants and i
 - `application/single_app/static/js/chat/chat-streaming.js`
 - `application/single_app/static/css/chats.css`
 - `application/single_app/config.py`
+- `functional_tests/test_collaboration_shared_ai_workflow.py`
 
 ## Validation
 
@@ -46,6 +53,7 @@ On the frontend, the `@` suggestion menu was limited to human participants and i
 ## User Impact
 
 - Shared workspace and web requests now enter the same model or agent workflow as single-user chat.
+- Ordinary prompts sent after inviting participants now receive model responses instead of becoming human-only shared messages.
 - Shared image requests now route to image generation and mirror the resulting image back into the collaboration conversation.
 - Shared AI requests now display an explicit target chip instead of silently acting like a plain participant message.
 - Shared conversation authors can now type `@Default Agent` or `@gpt-5.4` to direct a message to an agent or model without selecting a tool first.
