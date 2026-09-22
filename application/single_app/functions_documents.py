@@ -4693,10 +4693,15 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
 
 def delete_from_blob_storage(
     document_item, user_id=None, group_id=None, public_workspace_id=None, *, strict=False, operation_guard=None,
+    persisted_sources_only=False,
 ):
     """Delete a document from Azure Blob Storage."""
 
     try:
+        if persisted_sources_only and not (
+            document_item.get("blob_path") or document_item.get("archived_blob_path")
+        ):
+            return
         delete_targets = get_document_blob_delete_targets(
             document_item,
             user_id=user_id,
@@ -4767,7 +4772,7 @@ def delete_from_blob_storage(
 
 def delete_document(
     user_id, document_id, group_id=None, public_workspace_id=None, *,
-    strict=False, expected_etag=None, operation_guard=None,
+    strict=False, expected_etag=None, operation_guard=None, persisted_sources_only=False,
 ):
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     from functions_debug import debug_print
@@ -4849,7 +4854,7 @@ def delete_document(
             if strict:
                 delete_from_blob_storage(
                     document_item, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
-                    strict=True, operation_guard=operation_guard,
+                    strict=True, operation_guard=operation_guard, persisted_sources_only=persisted_sources_only,
                 )
             else:
                 delete_from_blob_storage(
@@ -4917,7 +4922,7 @@ def delete_document(
 
 def delete_document_revision(
     user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None, *,
-    family_documents=None, strict=False, operation_guard=None,
+    family_documents=None, strict=False, operation_guard=None, persisted_sources_only=False,
 ):
     if delete_mode not in {"all_versions", "current_only"}:
         raise ValueError("Unsupported delete mode")
@@ -4963,6 +4968,7 @@ def delete_document_revision(
                     delete_document(
                         user_id, family_document["id"], group_id=group_id, public_workspace_id=public_workspace_id,
                         strict=True, expected_etag=family_document.get("_etag"), operation_guard=operation_guard,
+                        persisted_sources_only=persisted_sources_only,
                     )
                 else:
                     delete_document(
@@ -4993,6 +4999,7 @@ def delete_document_revision(
         delete_document(
             user_id, document_id, group_id=group_id, public_workspace_id=public_workspace_id,
             strict=True, expected_etag=target_document.get("_etag"), operation_guard=operation_guard,
+            persisted_sources_only=persisted_sources_only,
         )
     else:
         delete_document(
