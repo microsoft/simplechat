@@ -772,14 +772,22 @@ def guard_model_callable(invoke, evidence, user_id=None):
     return guarded
 
 
+def is_public_document_field(key):
+    """Redaction is a property of the field, never of the screening toggle."""
+    return (
+        key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
+        and not key.startswith("_") and not key.startswith("screening_")
+    )
+
+
 def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return {key: deepcopy(value) for key, value in document.items() if key not in {
-            "generated_artifact_publication_binding", "generated_artifact_publication_processing",
-            "group_document_projection_writer",
-        }}
+        return {
+            key: deepcopy(value) for key, value in document.items()
+            if is_public_document_field(key)
+        }
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -795,9 +803,7 @@ def public_document_payload(document):
         }
     payload = {
         key: deepcopy(value) for key, value in document.items()
-        if (available or key in public_fields)
-        and key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
-        and not key.startswith("_") and not key.startswith("screening_")
+        if (available or key in public_fields) and is_public_document_field(key)
     }
     marker = document.get(SCREENING_FIELD)
     summary_source = document
