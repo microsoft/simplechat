@@ -14,7 +14,7 @@
 
 import { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
-import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsUpDown, Users } from 'lucide-react';
 import { groupDocumentOrigin, type DocumentReadScope } from '../../lib/documentReadAdapter';
 import type {
     DocumentQuery,
@@ -103,6 +103,8 @@ export function DocumentTable({
     scope,
     sortFields,
     canDrag,
+    canReview,
+    onReview,
 }: {
     documents: WorkspaceDocument[];
     columns: string[];
@@ -119,6 +121,8 @@ export function DocumentTable({
     scope: DocumentReadScope;
     sortFields: readonly DocumentSortField[];
     canDrag: (document: WorkspaceDocument) => boolean;
+    canReview?: (document: WorkspaceDocument) => boolean;
+    onReview?: (document: WorkspaceDocument) => void;
 }) {
     const activeColumns = DOCUMENT_COLUMNS.filter((column) => columns.includes(column.id));
     const selectedIds = new Set(selection.ids);
@@ -277,6 +281,13 @@ export function DocumentTable({
                                                             <div className="text-[11px] text-text-3">
                                                                 {groupDocumentOrigin(document, scope.id)}
                                                             </div>
+                                                        ) : null}
+                                                        {onReview && canReview?.(document) ? (
+                                                            <button type="button" aria-label={`Review ${primary}`}
+                                                                onClick={(event) => { event.stopPropagation(); onReview(document); }}
+                                                                className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                                                                <Users size={12} />Sharing and review
+                                                            </button>
                                                         ) : null}
                                                     </div>
                                                 </div>

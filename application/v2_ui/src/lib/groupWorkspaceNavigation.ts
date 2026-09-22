@@ -2,7 +2,7 @@
 
 import type { WorkspaceAvailability } from './types';
 import {
-    GROUP_WORKSPACE_SECTION_IDS, workspaceBasePath,
+    GROUP_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
     type GroupWorkspaceContext, type GroupWorkspaceSectionId,
 } from './workspaceContext';
 
@@ -31,6 +31,26 @@ export function isGroupWorkspaceSection(value: string | undefined): value is Gro
 export function groupWorkspacePath(groupId: string, section?: string): string {
     const base = workspaceBasePath({ kind: 'group', id: groupId });
     return isGroupWorkspaceSection(section) ? `${base}/${section}` : base;
+}
+
+export function groupWorkspaceDocumentPath(groupId: string, documentId: string): string {
+    const params = new URLSearchParams({ document_id: requireWorkspaceId(documentId) });
+    return `${groupWorkspacePath(groupId, 'documents')}?${params}`;
+}
+
+export function readGroupDocumentTarget(search: string): { id: string | null; error: string | null } {
+    const params = new URLSearchParams(search);
+    const values = params.getAll('document_id');
+    if (!values.length) return { id: null, error: null };
+    if (params.has('group_id') || params.has('group_ids')) {
+        return { id: null, error: 'This document link contains conflicting workspace arguments. Use the group named in its path.' };
+    }
+    if (values.length !== 1) return { id: null, error: 'This document link has more than one target. Open a link to one document.' };
+    try {
+        return { id: requireWorkspaceId(values[0]), error: null };
+    } catch {
+        return { id: null, error: 'This document link has an invalid target. Open a valid document link or return to the list.' };
+    }
 }
 
 export function groupWorkspaceNavigationAvailability(context: GroupWorkspaceContext): WorkspaceAvailability {

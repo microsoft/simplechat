@@ -95,6 +95,7 @@ export interface DocumentActionAvailability {
      * option is disabled with a reason rather than offered and refused.
      */
     enhancedExtraction: boolean;
+    canReview?: (document: WorkspaceDocument) => boolean;
 }
 
 export interface DocumentPaneActions {
@@ -108,6 +109,7 @@ export interface DocumentPaneActions {
     onDelete: (documents: WorkspaceDocument[]) => void;
     onSelectTag: (tag: string) => void;
     onRemoveTag: (documents: WorkspaceDocument[], tag: string) => void;
+    onReview?: (document: WorkspaceDocument) => void;
 }
 
 function ActionButtons({
@@ -127,6 +129,11 @@ function ActionButtons({
         <>
         {blockedReason ? <p className="px-3 py-2.5 text-xs text-text-3">{blockedReason}</p> : null}
         <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
+            {single && actions.onReview && availability.canReview?.(single) ? (
+                <GlassButton variant="subtle" size="sm" onClick={() => actions.onReview?.(single)}>
+                    <Share2 size={14} />Sharing and review
+                </GlassButton>
+            ) : null}
             <GlassButton variant="primary" size="sm" disabled={!availability.chat || Boolean(blockedReason)} onClick={() => actions.onChat(documents)}>
                 <MessageSquare size={14} />
                 Chat
