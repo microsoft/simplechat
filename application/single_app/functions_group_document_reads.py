@@ -40,6 +40,12 @@ from functions_group_document_access import (
 )
 from functions_settings import get_settings
 from functions_group_document_policy import group_document_approval_pending
+from functions_group_document_policy import GROUP_DOCUMENT_MANAGER_ROLES
+from functions_group_document_collaboration import (
+    COLLABORATION_OPERATION,
+    get_group_document_collaboration_actions,
+)
+from functions_group_document_projection_fence import GROUP_DOCUMENT_PROJECTION_WRITER
 
 
 def explicit_group_document_read_id(args, *, required=False):
@@ -110,6 +116,21 @@ def _project_group_document(
     payload["owner_group_id"] = owner_group_id
     payload["shared_approval_status"] = approval
     payload.pop("document_actions", None)
+    payload.pop("document_collaboration_actions", None)
+    payload.pop(COLLABORATION_OPERATION, None)
+    payload.pop(GROUP_DOCUMENT_PROJECTION_WRITER, None)
+    payload.pop("document_share_details", None)
+    for private_field in (
+        "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
+        "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
+        "generated_artifact_publication_receipt_id",
+    ):
+        payload.pop(private_field, None)
+    owner_manager = approval == "owner" and context is not None and context[1] in GROUP_DOCUMENT_MANAGER_ROLES
+    if not owner_manager:
+        payload["shared_group_ids"] = (
+            [f"{group_id},{approval}"] if approval in {"approved", "not_approved"} else []
+        )
     payload.pop("owner_group_name", None)
     if approval != "owner":
         payload["shared_group_active_id"] = group_id
@@ -125,6 +146,10 @@ def _project_group_document(
             document, user_id, group_id, context=context, settings=settings,
             public_payload=payload, source_groups=source_groups,
             current_revision=current_revision,
+        )
+        payload["document_collaboration_actions"] = get_group_document_collaboration_actions(
+            document, user_id, group_id, context=context, settings=settings,
+            public_payload=payload, source_groups=source_groups, current_revision=current_revision,
         )
     # Retain a server-only sort/recent key while calculating queries. The final
     # response projection applies the screening allow-list again without it.

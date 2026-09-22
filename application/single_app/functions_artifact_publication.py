@@ -78,7 +78,7 @@ def _authorize_artifact(user_id, conversation_id, message_id):
     return artifact
 
 
-def _authorize_destination(user_id, destination):
+def _authorize_destination(user_id, destination, *, operation="upload"):
     if not isinstance(destination, dict):
         raise ValueError("Choose an explicit publication destination.")
     scope = _text(destination.get("workspace_scope"), "Publication destination").lower()
@@ -97,7 +97,7 @@ def _authorize_destination(user_id, destination):
         workspace = find_group_by_id(target_id)
         if not workspace:
             raise LookupError("Publication workspace is unavailable.")
-        allowed, _ = check_group_status_allows_operation(workspace, "upload")
+        allowed, _ = check_group_status_allows_operation(workspace, operation)
         container = cosmos_group_documents_container
     else:
         workspace = find_public_workspace_by_id(target_id)
@@ -105,10 +105,13 @@ def _authorize_destination(user_id, destination):
             "Owner", "Admin", "DocumentManager",
         }:
             raise PermissionError("You cannot publish to this public workspace.")
-        allowed, _ = check_public_workspace_status_allows_operation(workspace, "upload")
+        allowed, _ = check_public_workspace_status_allows_operation(workspace, operation)
         container = cosmos_public_documents_container
     if not allowed:
-        raise PermissionError("This workspace does not currently allow uploads.")
+        raise PermissionError(
+            "This workspace does not currently allow uploads." if operation == "upload"
+            else "This workspace does not currently allow publication cleanup."
+        )
     return normalized, str(workspace.get("name") or f"{scope} workspace"), container
 
 
@@ -800,10 +803,107 @@ def authorize_publication_status_read(user_id, status, *, actor_user_id):
         raise PermissionError("Publication destination access could not be confirmed.")
 
 
-def decide_artifact_publication(user_id, document, choice):
+def read_artifact_publication_request(document):
+    """Resolve an existing request without granting source-content access."""
+    binding = document.get(PUBLICATION_BINDING) or {}
+    if not isinstance(binding, dict):
+        raise ValueError("The publication binding could not be confirmed.")
+    conversation_id = binding.get("conversation_id") or document.get("generated_artifact_source_conversation_id")
+    message_id = binding.get("artifact_message_id") or document.get("generated_artifact_source_message_id")
+    receipt_id = binding.get("receipt_id") or document.get("generated_artifact_publication_receipt_id")
+    try:
+        artifact = cosmos_messages_container.read_item(
+            item=_text(message_id, "Artifact reference"), partition_key=_text(conversation_id, "Artifact reference"),
+        )
+    except CosmosResourceNotFoundError as error:
+        raise ValueError("The original publication artifact could not be confirmed.") from error
+    receipt = (artifact.get("metadata") or {}).get(RECEIPTS_FIELD, {}).get(_text(receipt_id, "Publication request"))
+    if not isinstance(receipt, dict) or receipt.get("id") != receipt_id:
+        raise ValueError("The existing publication request could not be confirmed.")
+    destination = receipt.get("destination") or {}
+    scope = destination.get("workspace_scope")
+    field = {"group": "group_id", "public": "public_workspace_id"}.get(scope)
+    if (
+        not field or destination.get(field) != document.get(field)
+        or receipt.get("document_id") != document.get("id")
+        or receipt.get("file_name") != document.get("file_name")
+        or document.get("generated_artifact_publication_receipt_id") != receipt_id
+        or artifact.get("conversation_id") != conversation_id or artifact.get("id") != message_id
+    ):
+        raise PermissionError("The publication request belongs to a different source or destination.")
+    identity = {
+        "source": _artifact_identity(artifact), "content_sha256": receipt.get("content_sha256"),
+        "destination": destination, "actor_user_id": receipt.get("actor_user_id"), "request_id": receipt.get("request_id"),
+    }
+    expected_key = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if (
+        expected_key != receipt_id
+        or document.get("id") != str(uuid.uuid5(uuid.NAMESPACE_URL, f"simplechat-publication:{receipt_id}"))
+        or document.get("generated_artifact_requested_by_user_id") != receipt.get("actor_user_id")
+        or document.get("generated_artifact_source_blob_container") != artifact.get("blob_container")
+        or document.get("generated_artifact_source_blob_path") != artifact.get("blob_path")
+        or type(document.get("version")) is not int or document["version"] < 1
+    ):
+        raise ValueError("The publication request needs source reconciliation.")
+    if binding:
+        if not publication_binding_matches(receipt, document):
+            raise ValueError("The publication destination revision changed.")
+        return artifact, deepcopy(receipt), True
+    return artifact, deepcopy(receipt), False
+
+
+def enroll_legacy_artifact_publication(document, *, operation_guard, cleanup_only=False):
+    """Conditionally bind a verifiable old request; never create another receipt."""
+    artifact, receipt, bound = read_artifact_publication_request(document)
+    if bound:
+        return document
+    if receipt.get("decision") or document.get("generated_artifact_promotion_status") != "pending_approval":
+        raise ValueError("Only an undecided pending legacy request may be enrolled.")
+    operation_guard()
+    source = _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
+    _authorize_destination(
+        receipt["actor_user_id"], receipt["destination"], operation="delete" if cleanup_only else "upload",
+    )
+    if _artifact_identity(source) != _artifact_identity(artifact):
+        raise ValueError("The original publication source changed.")
+    with ExitStack() as resources:
+        _read_publication_artifact_content(source, resources, receipt["content_sha256"], check=operation_guard)
+        operation_guard()
+    reference = {"conversation_id": artifact["conversation_id"], "artifact_message_id": artifact["id"]}
+    updates = {
+        "document_version": document["version"], "artifact_reference": reference,
+        "source_identity": _artifact_identity(artifact),
+    }
+
+    def bind(current):
+        if current.get("decision") or any(
+            key in current and current[key] != value for key, value in updates.items()
+        ):
+            raise ValueError("The legacy request changed before enrollment.")
+        return {**current, **updates}
+
+    receipt, _ = _receipt_change(artifact, receipt["id"], bind)
+    operation_guard()
+    binding = {
+        "version": 1, "receipt_id": receipt["id"], "document_version": document["version"],
+        "content_sha256": receipt["content_sha256"], **reference,
+    }
+    container = cosmos_group_documents_container if document.get("group_id") else cosmos_public_documents_container
+    return container.replace_item(
+        item=document["id"], body={**document, PUBLICATION_BINDING: binding},
+        etag=document["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+
+
+def decide_artifact_publication(
+    user_id, document, choice, *, operation_guard=None, delete_destination=None, decision_link_url=None,
+):
     """Use the destination's existing review role, while retaining a durable receipt outcome."""
     try:
-        return _decide_artifact_publication(user_id, document, choice)
+        return _decide_artifact_publication(
+            user_id, document, choice, operation_guard=operation_guard,
+            delete_destination=delete_destination, decision_link_url=decision_link_url,
+        )
     except PermissionError as exc:
         _log_uncertain("destination_authorization", exc)
         raise PermissionError("Current publication source or destination access could not be confirmed.") from exc
@@ -812,12 +912,19 @@ def decide_artifact_publication(user_id, document, choice):
         raise RuntimeError("The publication decision could not be fully confirmed. Refresh the existing request.") from exc
 
 
-def _decide_artifact_publication(user_id, document, choice):
+def _decide_artifact_publication(
+    user_id, document, choice, *, operation_guard=None, delete_destination=None, decision_link_url=None,
+):
     with ExitStack() as resources:
-        return _decide_artifact_publication_with_content(user_id, document, choice, resources=resources)
+        return _decide_artifact_publication_with_content(
+            user_id, document, choice, resources=resources, operation_guard=operation_guard,
+            delete_destination=delete_destination, decision_link_url=decision_link_url,
+        )
 
 
-def _decide_artifact_publication_with_content(user_id, document, choice, *, resources):
+def _decide_artifact_publication_with_content(
+    user_id, document, choice, *, resources, operation_guard=None, delete_destination=None, decision_link_url=None,
+):
     if choice not in {"approved", "rejected", "cancelled"}:
         raise ValueError("Invalid publication decision.")
     roles = ("Owner", "Admin", "DocumentManager", "User") if choice == "cancelled" else ("Owner", "Admin", "DocumentManager")
@@ -846,7 +953,15 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
         or receipt["document_id"] != document["id"]
     ):
         raise PermissionError("The publication belongs to a different workspace.")
+    container = cosmos_group_documents_container if scope == "group" else cosmos_public_documents_container
+    recorded_negative = (
+        choice in {"rejected", "cancelled"} and (receipt.get("decision") or {}).get("choice") == choice
+    )
+    destination_deleted = False
+
     def authorize_decision():
+        if operation_guard is not None:
+            operation_guard()
         if scope == "group":
             assert_group_role(user_id, destination["group_id"], allowed_roles=roles)
         else:
@@ -855,6 +970,12 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
                 raise PermissionError("You cannot decide this publication request.")
         if choice == "cancelled" and receipt["actor_user_id"] != user_id:
             raise PermissionError("Only the publication requester can cancel this request.")
+        current = _destination_document(container, receipt)
+        if current is None:
+            if not (recorded_negative or destination_deleted):
+                raise ValueError("The publication destination is unavailable.")
+        elif not publication_binding_matches(receipt, current):
+            raise ValueError("The publication destination revision changed.")
 
     authorize_decision()
     source_bytes = None
@@ -863,12 +984,15 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
             raise ValueError("The original publication artifact changed.")
         _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
         _authorize_destination(receipt["actor_user_id"], destination)
-        source_bytes = _read_publication_artifact_content(artifact, resources, receipt["content_sha256"])
+        source_bytes = _read_publication_artifact_content(
+            artifact, resources, receipt["content_sha256"], check=operation_guard,
+        )
         _authorize_artifact(receipt["actor_user_id"], artifact["conversation_id"], artifact["id"])
         _authorize_destination(receipt["actor_user_id"], destination)
     authorize_decision()
 
     def record_decision(current):
+        authorize_decision()
         previous = current.get("decision")
         if previous:
             if previous.get("choice") != choice:
@@ -880,7 +1004,6 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
         return current
 
     receipt, _ = _receipt_change(artifact, receipt["id"], record_decision)
-    container = cosmos_group_documents_container if scope == "group" else cosmos_public_documents_container
     scope_args = {key: destination[key] for key in ("group_id", "public_workspace_id") if key in destination}
     if choice == "approved":
         if has_generated_artifact_source(artifact.get("metadata") or {}):
@@ -910,15 +1033,23 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
                 raise RuntimeError("Approval was recorded, but its existing processing handoff needs reconciliation.") from exc
         elif publication_handoff_observed(receipt, _destination_document(container, receipt)):
             _stage(artifact, receipt, "approval_queue", complete=True)
+        elif operation_guard is not None and receipt.get("stages", {}).get("approval_queue") == "started":
+            _replace_publication_destination(container, receipt, {
+                "generated_artifact_promotion_status": "approval_failed",
+            })
     else:
         # The durable decision survives removal of the pending destination shell.
         from functions_documents import delete_document_revision
 
         authorize_decision()
         if _destination_document(container, receipt):
-            delete_document_revision(
-                user_id=user_id, document_id=receipt["document_id"], delete_mode="current_only", **scope_args,
-            )
+            if delete_destination is not None:
+                delete_destination(_destination_document(container, receipt))
+            else:
+                delete_document_revision(
+                    user_id=user_id, document_id=receipt["document_id"], delete_mode="current_only", **scope_args,
+                )
+            destination_deleted = True
     if choice != "cancelled":
         notification_type = "approval_request_approved" if choice == "approved" else "approval_request_denied"
         _notify_once(
@@ -928,11 +1059,12 @@ def _decide_artifact_publication_with_content(user_id, document, choice, *, reso
                 title="Generated artifact approved" if choice == "approved" else "Generated artifact denied",
                 message="The destination approved your generated artifact." if choice == "approved" else
                 "The destination rejected your generated artifact.",
-                link_url="/group_workspaces" if scope == "group" else "/public_workspaces",
+                link_url=decision_link_url or ("/group_workspaces" if scope == "group" else "/public_workspaces"),
                 link_context={"workspace_type": scope, **scope_args, "document_id": receipt["document_id"]},
                 metadata={**scope_args, "document_id": receipt["document_id"], "publication_receipt_id": receipt["id"],
                           "request_type": "generated_artifact_promotion"},
                 idempotency_key=f"publication:{receipt['id']}:decision",
             ),
+            before=authorize_decision,
         )
     return {"message": f"Publication {choice}.", "document_id": receipt["document_id"]}

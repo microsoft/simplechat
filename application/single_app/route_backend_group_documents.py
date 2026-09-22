@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from functools import wraps
+import json
 import logging
 
 from content_screening.access import (
@@ -44,6 +45,13 @@ from functions_group_document_management import (
     validate_group_download_response,
     validate_metadata_changes,
 )
+from functions_group_document_collaboration import (
+    change_group_document_share,
+    collaboration_error_response,
+    group_document_sharing_state,
+    group_document_sharing_targets,
+)
+from functions_group_document_publication import decide_group_document_publication
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
@@ -164,6 +172,34 @@ def _group_management_body(allowed, required=()):
     return require_payload(request.get_json(silent=True), allowed, required)
 
 
+def _group_document_collaboration_boundary(function):
+    @wraps(function)
+    def guarded(group_id, document_id, *args, **kwargs):
+        try:
+            return function(group_id, document_id, *args, **kwargs)
+        except Exception as error:
+            payload, status = collaboration_error_response(error, group_id=group_id, document_id=document_id)
+            return jsonify(payload), status
+    return guarded
+
+
+def _group_document_collaboration_body():
+    def unique_fields(pairs):
+        payload = {}
+        for key, value in pairs:
+            if key in payload:
+                raise ValueError("Duplicate collaboration fields are not supported.")
+            payload[key] = value
+        return payload
+
+    if not request.is_json:
+        raise GroupDocumentOperationError("A JSON object is required for this action.", 400)
+    try:
+        return json.loads(request.get_data(), object_pairs_hook=unique_fields)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise GroupDocumentOperationError("Provide valid JSON with no duplicate fields.", 400) from error
+
+
 def _cleanup_group_generated_artifact_notifications(document_id, group_id):
     delete_notifications_by_metadata(
         metadata_filters={
@@ -257,19 +293,7 @@ def _get_group_name(group_doc, fallback='Unknown Group'):
 
 
 def _get_group_share_reviewer_user_ids(group_doc):
-    reviewer_ids = []
-
-    owner_id = str((group_doc or {}).get('owner', {}).get('id') or '').strip()
-    if owner_id:
-        reviewer_ids.append(owner_id)
-
-    for role_key in ('admins', 'documentManagers'):
-        for user_id in (group_doc or {}).get(role_key, []) or []:
-            normalized_user_id = str(user_id or '').strip()
-            if normalized_user_id and normalized_user_id not in reviewer_ids:
-                reviewer_ids.append(normalized_user_id)
-
-    return reviewer_ids
+    return get_group_document_reviewer_ids(group_doc)
 
 
 def _get_group_share_details(document_item):
@@ -416,6 +440,122 @@ def register_route_backend_group_documents(bp):
         bp, document_projector=_project_group_document_read_response,
         source_validator=_validate_group_document_response_sources,
     )
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/sharing', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_sharing(group_id, document_id):
+        _group_management_query()
+        if request.get_data():
+            raise GroupDocumentOperationError("This read does not accept a request body.", 400)
+        return jsonify(group_document_sharing_state(get_current_user_id(), group_id, document_id)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/sharing/targets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_sharing_targets(group_id, document_id):
+        args = _group_management_query({"search", "page", "page_size"})
+        if request.get_data():
+            raise GroupDocumentOperationError("This read does not accept a request body.", 400)
+        return jsonify(group_document_sharing_targets(get_current_user_id(), group_id, document_id, args)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/share/<target_group_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_unshare(group_id, document_id, target_group_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "unshare", _group_document_collaboration_body(),
+            target_group_id=target_group_id,
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/approve-share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_approve_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "approve_share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/received-share', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_remove_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "remove_share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_approve_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "approve_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/reject', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_reject_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "reject_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_cancel_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "cancel_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
 
     @bp.route('/api/groups/<group_id>/documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())

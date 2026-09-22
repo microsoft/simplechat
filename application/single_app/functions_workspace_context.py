@@ -17,7 +17,10 @@ from functions_group import (
     find_group_by_id,
     get_user_role_in_group,
 )
-from functions_group_document_policy import group_document_management_operations
+from functions_group_document_policy import (
+    group_document_collaboration_operations,
+    group_document_management_operations,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -194,5 +197,9 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
                 group, role, settings,
                 download_enabled=is_group_workspace_file_download_enabled(settings, group),
             ),
+        },
+        "document_collaboration": {
+            "schema_version": 1,
+            "operations": group_document_collaboration_operations(group, role, settings),
         },
     }
