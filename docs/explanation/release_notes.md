@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.132)**
+
+#### New Features
+
+*   **Native Public Workspace Document Browsing**
+    *   Public workspace documents can be browsed in the same native explorer used for My Workspace and group workspaces, instead of only on the classic page. Filtering, sorting, pagination, facets, tags, document details, and version history all behave the way they already do elsewhere.
+    *   Selecting a public workspace navigates by its identifier, and every document request names that workspace directly rather than depending on the account's stored selection. Returned documents are checked against the workspace that was asked for, so a late or misrouted response cannot populate the wrong workspace.
+    *   The workspace is still recorded as the active selection, because chat document scoping and the classic page both read it. That step is deliberately non-blocking: if it fails, browsing still works, because nothing on the page depends on it.
+    *   This release covers browsing only. Upload, metadata editing, tags, downloads, extraction, reprocessing, deletion, and approval remain on the classic page and arrive natively in later releases.
+    *   (Ref: `functions_public_document_reads.py`, `functions_public_document_access.py`, `route_backend_public_document_reads.py`, `documentReadAdapter.ts`, `PublicWorkspacePage.tsx`, [V2 Public Document Browsing](features/V2_PUBLIC_DOCUMENT_BROWSING.md), [Public Document Read APIs](features/PUBLIC_DOCUMENT_READ_APIS.md))
+
 ### **(v0.261.131)**
 
 #### New Features
