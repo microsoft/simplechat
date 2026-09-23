@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
 
-from flask import jsonify, request
+from flask import has_request_context, jsonify, request, session
 from functions_ai_connections import filter_model_endpoints_by_capability
 
 
@@ -1450,10 +1450,9 @@ def build_group_agent_editor_options(user_id, group_id, settings, model_endpoint
     # The V2 group templates panel needs the submit affordance to obey the exact
     # gate the submit route enforces, so it never shows a button that then 403s.
     # This mirrors the classic canSubmitTemplate() check (M4C §11).
-    from flask import session as _session, has_request_context as _has_request_context
     templates_module = import_module("functions_agent_templates")
     is_admin = bool(
-        _has_request_context() and "Admin" in ((_session.get("user") or {}).get("roles") or [])
+        has_request_context() and "Admin" in ((session.get("user") or {}).get("roles") or [])
     )
     safe["agent_template_submission_allowed"] = templates_module.agent_template_submission_decision(
         settings, is_admin,
