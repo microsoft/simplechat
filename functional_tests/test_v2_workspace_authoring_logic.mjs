@@ -1,5 +1,5 @@
 // test_v2_workspace_authoring_logic.mjs
-// Version: 0.261.096
+// Version: 0.261.137
 // Implemented in: 0.261.096
 // Executes the real draft-diff, scoped chat launch, and one-shot URL helpers.
 
@@ -8,9 +8,9 @@ import './test_support/tsResolve.mjs';
 
 const { buildEditorWrite, sameEditorValue, editorName, agentEditorReturnPath, EDITOR_SECRET_MASK } =
     await import('../application/v2_ui/src/lib/workspaceAuthoring.ts');
-const { readWorkspaceAgentLaunch, workspaceAgentForLaunch } =
+const { readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage } =
     await import('../application/v2_ui/src/lib/workspaceAgentLaunch.ts');
-const { syncedConversationParams } = await import('../application/v2_ui/src/lib/conversationUrl.ts');
+const { syncedConversationParams, chatHrefForAgent } = await import('../application/v2_ui/src/lib/conversationUrl.ts');
 const { agentSelectionKey, findAgent, buildAgentInfo } = await import('../application/v2_ui/src/lib/agents.ts');
 const {
     fetchAuthoringActions, fetchActionEditor, saveActionConfiguration, saveAgentConfiguration,
@@ -168,6 +168,59 @@ check('consumed launch parameters do not start new chats on reload', () => {
     assert.equal(syncedConversationParams(params, null).toString(), 'keep=value');
     assert.equal(syncedConversationParams(params, 'conversation-1').toString(), 'keep=value&conversationId=conversation-1');
     assert.equal(syncedConversationParams(new URLSearchParams('conversationId=conversation-1'), 'conversation-1'), null);
+});
+check('group launches name their group and nothing else is accepted', () => {
+    assert.deepEqual(
+        readWorkspaceAgentLaunch(new URLSearchParams('agent_id=a&new=1&agent_scope=group&agent_scope_id=g1')),
+        { id: 'a', scope: 'group', groupId: 'g1' },
+    );
+    for (const query of [
+        'agent_id=a&new=1&agent_scope=group&agent_scope_id=',
+        'agent_id=a&new=1&agent_scope=group&agent_scope_id=%20',
+        'agent_id=a&new=1&agent_scope=group&agent_scope_id=g%2F1',
+        'agent_id=a&new=1&agent_scope=personal&agent_scope_id=g1',
+        'agent_id=a&new=1&agent_scope=global&agent_scope_id=g1',
+        'agent_id=a&new=1&agent_scope_id=g1',
+        'agent_id=a&agent_scope=group&agent_scope_id=g1',
+    ]) {
+        assert.equal(readWorkspaceAgentLaunch(new URLSearchParams(query)), null, query);
+    }
+});
+check('a group launch resolves only the agent in the named group', () => {
+    const research = { id: 'same-id', scope_type: 'group', group_id: 'research', group_name: 'Research', catalog_key: 'group:research:same-id' };
+    const finance = { id: 'same-id', scope_type: 'group', group_id: 'finance', group_name: 'Finance', catalog_key: 'group:finance:same-id' };
+    const personal = { id: 'same-id', scope_type: 'personal', catalog_key: 'personal:same-id' };
+    const catalogue = [finance, personal, research];
+    assert.equal(workspaceAgentForLaunch(catalogue, { id: 'same-id', scope: 'group', groupId: 'research' }), research);
+    assert.equal(workspaceAgentForLaunch(catalogue, { id: 'same-id', scope: 'group', groupId: 'finance' }), finance);
+    assert.equal(workspaceAgentForLaunch(catalogue, { id: 'same-id', scope: 'group', groupId: 'other' }), undefined);
+    assert.equal(workspaceAgentForLaunch(catalogue, { id: 'same-id', scope: 'personal' }), personal);
+    assert.equal(workspaceAgentForLaunch([{ ...research, is_enabled: false }], { id: 'same-id', scope: 'group', groupId: 'research' }), undefined);
+    assert.equal(buildAgentInfo(findAgent(catalogue, agentSelectionKey(research))).group_id, 'research');
+});
+check('agent links keep personal and provided spellings and add the group for group agents', () => {
+    assert.equal(chatHrefForAgent('a/b', { kind: 'personal' }), '/chat?agent_id=a%2Fb&agent_scope=personal&new=1');
+    assert.equal(chatHrefForAgent('a', { kind: 'global' }), '/chat?agent_id=a&agent_scope=global&new=1');
+    assert.equal(chatHrefForAgent('a', { kind: 'group', id: 'g 1' }), '/chat?agent_id=a&agent_scope=group&agent_scope_id=g%201&new=1');
+    const params = new URLSearchParams('agent_id=a&agent_scope=group&agent_scope_id=g1&new=1&keep=value');
+    assert.equal(syncedConversationParams(params, null).toString(), 'keep=value');
+    assert.equal(syncedConversationParams(new URLSearchParams('agent_scope_id=g1'), null).toString(), '');
+});
+check('an unavailable launch names the group it asked for', () => {
+    const groups = [{ id: 'research', name: 'Research' }];
+    const agents = [{ id: 'x', scope_type: 'group', group_id: 'finance', group_name: 'Finance' }];
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'personal' }, groups, agents),
+        'That agent is no longer available in this workspace.');
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'global' }, groups, agents),
+        'That agent is no longer available in this workspace.');
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'group', groupId: 'research' }, groups, agents),
+        'That agent is no longer available in Research.');
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'group', groupId: 'finance' }, [], agents),
+        'That agent is no longer available in Finance.');
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'group', groupId: 'gone' }, groups, agents),
+        'That agent is no longer available in that group.');
+    assert.equal(workspaceAgentLaunchUnavailableMessage({ id: 'a', scope: 'group', groupId: 'gone' }, undefined, undefined),
+        'That agent is no longer available in that group.');
 });
 
 const actualFetch = globalThis.fetch;

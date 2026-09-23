@@ -1,7 +1,7 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.096
+Version: 0.261.137
 Implemented in: 0.261.096
 
 The browser loads the real built application and CSS. Only HTTP responses and
@@ -414,6 +414,11 @@ class WorkspaceAuthoringFixture:
         self.deferred_paths = set()
         self.pending_responses = []
         self.created_counts = {"agents": 0, "plugins": 0}
+        # Group chat catalogue entries and the groups the bootstrap lists. Kept apart from
+        # `self.agents` so a group agent never appears in the personal collection. Both default to
+        # empty, so existing tests see the bootstrap they always did.
+        self.group_catalogue_agents = []
+        self.groups = []
         self.loaded_assets = set()
         self.knowledge_catalog = {
             "sources": [
@@ -623,9 +628,9 @@ class WorkspaceAuthoringFixture:
                         "scope_label": "Provided" if record.get("is_global") else "Personal",
                     }
                     for record in self.agents.values()
-                ],
+                ] + copy.deepcopy(self.group_catalogue_agents),
             },
-            "scope": {"groups": [], "public_workspaces": []},
+            "scope": {"groups": copy.deepcopy(self.groups), "public_workspaces": []},
             "navigation": {
                 "custom_pages": {"enabled": False, "items": []},
                 "external_links": {"enabled": False, "items": []},
@@ -763,6 +768,17 @@ class WorkspaceAuthoringFixture:
             identifier = path.rsplit("/", 1)[-1]
             assert identifier in self.messages, entry
             self._json(route, {"active": False, "pending": False, "reattachable": False})
+        elif path == "/api/v2/orchestration/runs" and method == "GET":
+            # Mirrors route_backend_orchestration.py: a conversation id is required (400), an
+            # unknown conversation is 404, and a known one answers {"runs": [...]}. The chat page
+            # hydrates run history this way since base-branch commit 0f52e9bf.
+            identifier = (entry.query.get("conversation_id") or [""])[0].strip()
+            if not identifier:
+                self._json(route, {"error": "A conversation id is required."}, 400)
+            elif identifier not in self.messages:
+                self._json(route, {"error": "Conversation not found."}, 404)
+            else:
+                self._json(route, {"runs": []})
         elif path == "/api/create_conversation" and method == "POST":
             assert set(entry.body) == {"initial_message"}
             identifier = f"created-workspace-chat-{len(self.conversations)}"

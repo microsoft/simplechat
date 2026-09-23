@@ -31,6 +31,13 @@ export const PROMPT_SCOPE_PARAM = 'prompt_scope';
 export const PROMPT_SCOPE_ID_PARAM = 'prompt_scope_id';
 export const WORKSPACE_AGENT_PARAM = 'agent_id';
 export const AGENT_SCOPE_PARAM = 'agent_scope';
+/**
+ * The group a group agent link names (M4C). Agent ids are only unique within their scope, and a
+ * user can belong to several groups, so a group launch resolves by id, scope *and* this group.
+ * Personal and provided (global) links never carry it, so links already in circulation keep their
+ * exact spelling. One-shot, and stripped with the other launch parameters.
+ */
+export const AGENT_SCOPE_ID_PARAM = 'agent_scope_id';
 export const NEW_CHAT_PARAM = 'new';
 
 /**
@@ -78,6 +85,26 @@ export function chatHrefForPrompt(promptId: string, scope?: PromptLinkScope | nu
     }
     return `${base}&${PROMPT_SCOPE_PARAM}=${encodeURIComponent(scope.kind)}`
         + `&${PROMPT_SCOPE_ID_PARAM}=${encodeURIComponent(scope.id)}`;
+}
+
+/** The workspace an agent link names. A group scope must say which group. */
+export type AgentLinkScope =
+    | { kind: 'personal' }
+    | { kind: 'global' }
+    | { kind: 'group'; id: string };
+
+/**
+ * A link that starts a new chat with a workspace agent selected.
+ *
+ * Personal and provided links keep their exact `/chat?agent_id=<id>&agent_scope=<scope>&new=1`
+ * spelling. A group link adds `agent_scope_id` before `new`, so the chat page can pick the agent
+ * from the right group rather than from whichever group the account last selected.
+ */
+export function chatHrefForAgent(agentId: string, scope: AgentLinkScope): string {
+    const base = `/chat?${WORKSPACE_AGENT_PARAM}=${encodeURIComponent(agentId)}`
+        + `&${AGENT_SCOPE_PARAM}=${scope.kind}`;
+    const group = scope.kind === 'group' ? `&${AGENT_SCOPE_ID_PARAM}=${encodeURIComponent(scope.id)}` : '';
+    return `${base}${group}&${NEW_CHAT_PARAM}=1`;
 }
 
 /**
@@ -129,7 +156,8 @@ export function syncedConversationParams(
     const hasLegacy = params.has(LEGACY_CONVERSATION_PARAM);
     const hasPrompt = params.has(PROMPT_PARAM);
     const hasPromptScope = params.has(PROMPT_SCOPE_PARAM) || params.has(PROMPT_SCOPE_ID_PARAM);
-    const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM);
+    const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM)
+        || params.has(AGENT_SCOPE_ID_PARAM);
 
     if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch
         && (current ?? null) === conversationId) {
@@ -144,6 +172,7 @@ export function syncedConversationParams(
     if (hasAgentLaunch) {
         next.delete(WORKSPACE_AGENT_PARAM);
         next.delete(AGENT_SCOPE_PARAM);
+        next.delete(AGENT_SCOPE_ID_PARAM);
         next.delete(NEW_CHAT_PARAM);
     }
     if (conversationId) {

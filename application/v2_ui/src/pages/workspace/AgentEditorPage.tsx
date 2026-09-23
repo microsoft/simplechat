@@ -14,6 +14,7 @@ import { AgentAdvancedFields, agentAdvancedError } from '../../components/worksp
 import { AgentTemplatesPanel } from '../../components/workspaceAgents/AgentTemplatesPanel';
 import { AgentNotice } from '../../components/workspaceAgents/AgentFields';
 import { ApiError } from '../../lib/apiClient';
+import { chatHrefForAgent } from '../../lib/conversationUrl';
 import { fetchAgentTargets, PERSONAL_DELEGATION_SCOPE, type AgentTargetCatalog } from '../../lib/agentDelegation';
 import {
     fetchAuthoringActions, fetchAgentEditor, fetchAgentEditorOptions, saveAgentConfiguration,
@@ -215,7 +216,7 @@ function AgentEditorSession({ resourceId, scope }: { resourceId: string; scope: 
                         className="rounded-lg px-3 py-2 text-sm text-accent hover:bg-accent-soft">Open latest in a new tab</Link>
                 ) : null}
                 {!isNew && !dirty && draft.is_enabled !== false ? (
-                <Link to={`/chat?agent_id=${encodeURIComponent(draft.id)}&agent_scope=${draft.is_global ? 'global' : 'personal'}&new=1`}
+                <Link to={chatHrefForAgent(draft.id, { kind: draft.is_global ? 'global' : 'personal' })}
                     className="rounded-lg px-3 py-2 text-sm text-accent hover:bg-accent-soft">Use in chat</Link>
                 ) : null}
             </>}

@@ -9,6 +9,7 @@ import { errorMessage, useSectionResource } from '../../components/workspace/use
 import { AgentIcon } from '../../components/workspaceAgents/AgentIdentityFields';
 import { AgentNotice } from '../../components/workspaceAgents/AgentFields';
 import { deleteAuthoringAgent, fetchAuthoringAgents } from '../../lib/workspaceAuthoringApi';
+import { chatHrefForAgent } from '../../lib/conversationUrl';
 import type { AgentConfiguration } from '../../lib/workspaceAuthoring';
 import { AGENT_INPUT_CLASS, AGENT_TYPE_LABELS, agentText } from '../../lib/workspaceAgentAuthoring';
 import { readAgentKnowledge } from '../../lib/workspaceAgentKnowledge';
@@ -128,7 +129,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         <GlassButton type="button" size="sm" onClick={() => navigate(path)}>{provided ? 'View details' : 'Edit'}</GlassButton>
-                                        {agent.is_enabled !== false ? <Link to={`/chat?agent_id=${encodeURIComponent(agent.id)}&agent_scope=${provided ? 'global' : 'personal'}&new=1`} className="rounded-lg px-2 py-1.5 text-xs font-medium text-accent hover:bg-accent-soft">Use in chat</Link> : null}
+                                        {agent.is_enabled !== false ? <Link to={chatHrefForAgent(agent.id, { kind: provided ? 'global' : 'personal' })} className="rounded-lg px-2 py-1.5 text-xs font-medium text-accent hover:bg-accent-soft">Use in chat</Link> : null}
                                         {!provided ? <ConfirmAction icon={<Trash2 size={15} />} label={`Delete ${label}`} confirmLabel="Delete agent"
                                             busy={busyId === agent.id} disabled={busyId !== null} onConfirm={() => void remove(agent)} /> : null}
                                     </div>
