@@ -28,6 +28,7 @@ from functions_group_action_access import (
     create_group_action,
     delete_group_action,
     get_group_action,
+    get_group_action_options,
     group_action_error_response,
     list_group_actions,
     require_group_action_types_context,
@@ -92,6 +93,7 @@ def register_route_backend_group_actions_scoped(bp):
     - GET    /api/groups/<group_id>/actions
     - POST   /api/groups/<group_id>/actions
     - GET    /api/groups/<group_id>/actions/types
+    - GET    /api/groups/<group_id>/action-options
     - GET    /api/groups/<group_id>/actions/<action_id>
     - PATCH  /api/groups/<group_id>/actions/<action_id>
     - DELETE /api/groups/<group_id>/actions/<action_id>
@@ -144,6 +146,23 @@ def register_route_backend_group_actions_scoped(bp):
         response = jsonify({"types": build_action_editor_types(discovered.get_json())})
         response.headers['Cache-Control'] = 'no-store'
         return response
+
+    @bp.route('/api/groups/<group_id>/action-options', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_action_boundary
+    def api_scoped_group_action_options(group_id):
+        # Its own path segment so it can never collide with /actions/<action_id>.
+        # A read capability: the group editor reads only the tenant Key Vault
+        # reminder defaults here rather than the personal agent-settings editor.
+        _reject_query_parameters()
+        _reject_request_body()
+        payload, status = get_group_action_options(get_current_user_id(), group_id)
+        response = jsonify(payload)
+        response.headers['Cache-Control'] = 'no-store'
+        return response, status
 
     @bp.route('/api/groups/<group_id>/actions/<action_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

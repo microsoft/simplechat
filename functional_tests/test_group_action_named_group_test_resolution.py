@@ -49,9 +49,11 @@ class Model:
     """A tiny group/action world the real resolvers run against."""
 
     def __init__(self):
-        # editor is an Admin in A, only a User in B; owner owns both.
+        # editor is an Admin in A, only a User in B; owner owns both. group-a also
+        # carries a plain User (member) and a DocumentManager for the §9.1 transient
+        # legacy-branch role matrix, which resolves the active group (A).
         self.groups = {
-            "group-a": _group(owner="Owner", editor="Admin"),
+            "group-a": _group(owner="Owner", editor="Admin", member="User", docmgr="DocumentManager"),
             "group-b": _group(owner="Owner", editor="User"),
             "locked-b": _group(status="locked", owner="Owner"),
         }
@@ -248,6 +250,44 @@ def test_unsaved_group_test_without_group_id_uses_the_active_group(resolvers):
     scope_type, scope_id = resolve({"action_scope": "group"}, None, "owner")
     assert (scope_type, scope_id) == ("group", "group-a")
     resolvers.model.require_active_group.assert_called_once_with("owner")
+
+
+# --------------------------------------------------------------------------
+# §9.1: the legacy transient branch (no saved action, no group_id) now requires
+# the edit roles, because its callers hydrate a group identity's stored secrets.
+# --------------------------------------------------------------------------
+
+def test_legacy_transient_group_test_refuses_user(resolvers):
+    resolve = resolvers.ns["_resolve_action_identity_context"]
+    with pytest.raises(PermissionError):
+        resolve({"action_scope": "group"}, None, "member")
+
+
+def test_legacy_transient_group_test_refuses_document_manager(resolvers):
+    resolve = resolvers.ns["_resolve_action_identity_context"]
+    with pytest.raises(PermissionError):
+        resolve({"action_scope": "group"}, None, "docmgr")
+
+
+def test_legacy_transient_group_test_allows_admin(resolvers):
+    resolve = resolvers.ns["_resolve_action_identity_context"]
+    scope_type, scope_id = resolve({"action_scope": "group"}, None, "editor")
+    assert (scope_type, scope_id) == ("group", "group-a")
+    resolvers.model.require_active_group.assert_called_once_with("editor")
+
+
+def test_legacy_transient_group_test_refuses_admin_under_owner_only(resolvers):
+    resolvers.model.settings["require_owner_for_group_agent_management"] = True
+    resolve = resolvers.ns["_resolve_action_identity_context"]
+    with pytest.raises(PermissionError):
+        resolve({"action_scope": "group"}, None, "editor")
+
+
+def test_legacy_transient_group_test_allows_owner_under_owner_only(resolvers):
+    resolvers.model.settings["require_owner_for_group_agent_management"] = True
+    resolve = resolvers.ns["_resolve_action_identity_context"]
+    scope_type, scope_id = resolve({"action_scope": "group"}, None, "owner")
+    assert (scope_type, scope_id) == ("group", "group-a")
 
 
 if __name__ == "__main__":

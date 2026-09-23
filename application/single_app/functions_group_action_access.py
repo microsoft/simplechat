@@ -36,6 +36,7 @@ from functions_group_action_policy import (
 from functions_settings import get_settings
 from functions_workspace_authoring import (
     apply_group_action_write,
+    build_secret_reminder_defaults,
     delete_group_editor_record,
     editor_error_response,
     editor_resource,
@@ -130,6 +131,19 @@ def require_group_action_types_context(user_id, group_id):
     """
     group, role = require_group_action_read_context(user_id, group_id)
     return group, role, get_settings()
+
+
+def get_group_action_options(user_id, group_id):
+    """The group editor's tenant-level Key Vault reminder defaults.
+
+    A *read* capability, gated on the same context as the list, so a group editor
+    no longer reaches into the personal ``/api/user/agent/settings?view=editor``
+    (which also carries personal flags and endpoints) just for these five
+    reminder defaults. The values come from the one shared reminder helper both
+    editor option builders use, so the group and personal surfaces cannot drift.
+    """
+    require_group_action_read_context(user_id, group_id)
+    return {"secret_reminders": build_secret_reminder_defaults(get_settings())}, 200
 
 
 def group_action_error_response(exc):

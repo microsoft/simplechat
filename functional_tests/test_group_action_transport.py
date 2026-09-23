@@ -20,11 +20,12 @@ from werkzeug.routing import Map, Rule
 from route_tests.test_route_blueprint_policy_inventory import iter_route_functions
 
 
-GROUP_ACTION_PREFIX = re.compile(r"^/api/groups/<[^>]+>/actions(?:/|$)")
+GROUP_ACTION_PREFIX = re.compile(r"^/api/groups/<[^>]+>/action(?:s|-options)(?:/|$)")
 OPERATION_REQUESTS = [
     ("GET", "/api/groups/requested-group/actions"),
     ("POST", "/api/groups/requested-group/actions"),
     ("GET", "/api/groups/requested-group/actions/types"),
+    ("GET", "/api/groups/requested-group/action-options"),
     ("GET", "/api/groups/requested-group/actions/action-id"),
     ("PATCH", "/api/groups/requested-group/actions/action-id"),
     ("DELETE", "/api/groups/requested-group/actions/action-id"),
