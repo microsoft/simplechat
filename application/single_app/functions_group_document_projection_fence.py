@@ -1,8 +1,14 @@
 # functions_group_document_projection_fence.py
-"""Per-source coordination for group ACL projections and collaboration changes.
+"""Per-source coordination for scoped ACL projections and collaboration changes.
 
 Storage is supplied by callers. Unknown remote outcomes retain their claim;
 time passing is not evidence that an old publisher can no longer finish.
+
+The fence is scope-aware rather than group-only: a group hold can never act on a
+public document and a public hold can never act on a group document, because
+each scope matches its own identity exactly and rejects the other scope's field.
+The group entry points keep their original names and behaviour; the public
+entry points are thin wrappers over the same implementation.
 """
 
 import copy
@@ -18,8 +24,8 @@ from azure.core.exceptions import HttpResponseError
 
 GROUP_DOCUMENT_PROJECTION_WRITER = "group_document_projection_writer"
 GROUP_DOCUMENT_COLLABORATION_OPERATION = "group_document_collaboration_operation"
-_collaboration_context = ContextVar("group_collaboration_projection_context", default=None)
-_writer_context = ContextVar("group_document_projection_writer_context", default=None)
+PUBLIC_DOCUMENT_PROJECTION_WRITER = "public_document_projection_writer"
+PUBLIC_DOCUMENT_COLLABORATION_OPERATION = "public_document_collaboration_operation"
 
 
 class GroupDocumentProjectionConflict(RuntimeError):
@@ -28,61 +34,112 @@ class GroupDocumentProjectionConflict(RuntimeError):
     status_code = 409
 
 
-def _identity(document):
-    return document.get("id"), document.get("group_id"), str(document.get("version") or 1)
+class _ProjectionScope:
+    """Scope-specific field names so one implementation fences both scopes.
+
+    ``id_field`` is the document field naming the owning scope; ``other_id_field``
+    is the field that, when present, proves the document belongs to the *other*
+    scope and must therefore be rejected. Per-scope context vars guarantee a
+    collaboration or writer context established in one scope can never be read as
+    if it belonged to the other.
+    """
+
+    __slots__ = (
+        "kind", "id_field", "other_id_field", "writer_field",
+        "operation_field", "source_key", "collaboration_var", "writer_var",
+    )
+
+    def __init__(self, kind, id_field, other_id_field, writer_field, operation_field, source_key):
+        self.kind = kind
+        self.id_field = id_field
+        self.other_id_field = other_id_field
+        self.writer_field = writer_field
+        self.operation_field = operation_field
+        self.source_key = source_key
+        self.collaboration_var = ContextVar(f"{kind}_collaboration_projection_context", default=None)
+        self.writer_var = ContextVar(f"{kind}_document_projection_writer_context", default=None)
 
 
-def _owns_collaboration(document):
-    context = _collaboration_context.get()
-    operation = document.get(GROUP_DOCUMENT_COLLABORATION_OPERATION)
+_GROUP_SCOPE = _ProjectionScope(
+    kind="group",
+    id_field="group_id",
+    other_id_field="public_workspace_id",
+    writer_field=GROUP_DOCUMENT_PROJECTION_WRITER,
+    operation_field=GROUP_DOCUMENT_COLLABORATION_OPERATION,
+    source_key="source_group_id",
+)
+_PUBLIC_SCOPE = _ProjectionScope(
+    kind="public",
+    id_field="public_workspace_id",
+    other_id_field="group_id",
+    writer_field=PUBLIC_DOCUMENT_PROJECTION_WRITER,
+    operation_field=PUBLIC_DOCUMENT_COLLABORATION_OPERATION,
+    source_key="source_public_workspace_id",
+)
+
+# Backward-compatible module-level aliases for the group scope's context vars.
+# These names predate the scope-aware refactor; they resolve to the exact same
+# ContextVar objects the group entry points use, so existing callers and tests
+# that introspect the active group collaboration/writer context keep working.
+_collaboration_context = _GROUP_SCOPE.collaboration_var
+_writer_context = _GROUP_SCOPE.writer_var
+
+
+def _identity(scope, document):
+    return document.get("id"), document.get(scope.id_field), str(document.get("version") or 1)
+
+
+def _owns_collaboration(scope, document):
+    context = scope.collaboration_var.get()
+    operation = document.get(scope.operation_field)
     return bool(
         context and isinstance(operation, dict) and operation.get("schema_version") == 1
         and operation.get("document_id") == document.get("id")
-        and operation.get("source_group_id") == document.get("group_id")
-        and str(operation.get("document_version") or 1) == _identity(document)[2]
+        and operation.get(scope.source_key) == document.get(scope.id_field)
+        and str(operation.get("document_version") or 1) == _identity(scope, document)[2]
         and operation.get("phase") == "executing"
         and context == (document.get("id"), operation.get("id"), operation.get("execution_token"))
         and all(context)
     )
 
 
-def assert_no_group_document_projection_writer(document):
-    if GROUP_DOCUMENT_PROJECTION_WRITER in document:
+def _assert_no_projection_writer(scope, document):
+    if scope.writer_field in document:
         raise GroupDocumentProjectionConflict(
             "A document projection is active or unconfirmed. Refresh before changing access."
         )
 
 
-def assert_group_document_source_writable(document):
-    writer = document.get(GROUP_DOCUMENT_PROJECTION_WRITER)
-    if GROUP_DOCUMENT_PROJECTION_WRITER in document:
-        context = _writer_context.get()
+def _assert_source_writable(scope, document):
+    writer = document.get(scope.writer_field)
+    if scope.writer_field in document:
+        context = scope.writer_var.get()
         if not (
             isinstance(writer, dict) and context
-            and context == (*_identity(document), writer.get("token"))
+            and context == (*_identity(scope, document), writer.get("token"))
             and writer.get("state") == "executing"
         ):
             raise GroupDocumentProjectionConflict("A document projection must finish or be reconciled first.")
-    operation = document.get(GROUP_DOCUMENT_COLLABORATION_OPERATION)
-    if GROUP_DOCUMENT_COLLABORATION_OPERATION in document and not (
+    operation = document.get(scope.operation_field)
+    if scope.operation_field in document and not (
         isinstance(operation, dict) and operation.get("schema_version") == 1
         and operation.get("phase") == "complete"
-    ) and not _owns_collaboration(document):
+    ) and not _owns_collaboration(scope, document):
         raise GroupDocumentProjectionConflict("A collaboration operation must finish or be reconciled first.")
 
 
 @contextmanager
-def group_collaboration_projection_context(document_id, operation_id, execution_token):
+def _collaboration_projection_context(scope, document_id, operation_id, execution_token):
     if not all(isinstance(value, str) and value for value in (document_id, operation_id, execution_token)):
         raise GroupDocumentProjectionConflict("The collaboration execution identity is unavailable.")
-    marker = _collaboration_context.set((document_id, operation_id, execution_token))
+    marker = scope.collaboration_var.set((document_id, operation_id, execution_token))
     try:
         yield
     finally:
-        _collaboration_context.reset(marker)
+        scope.collaboration_var.reset(marker)
 
 
-def _read_source(container, document_id, group_id, expected_version=None, *, allow_missing=False):
+def _read_source(scope, container, document_id, scope_id, expected_version=None, *, allow_missing=False):
     try:
         document = container.read_item(item=document_id, partition_key=document_id)
     except HttpResponseError as error:
@@ -93,15 +150,15 @@ def _read_source(container, document_id, group_id, expected_version=None, *, all
         raise
     if (
         not isinstance(document, dict) or document.get("id") != document_id
-        or document.get("group_id") != group_id or document.get("public_workspace_id")
+        or document.get(scope.id_field) != scope_id or document.get(scope.other_id_field)
         or not document.get("_etag")
-        or (expected_version is not None and _identity(document)[2] != str(expected_version))
+        or (expected_version is not None and _identity(scope, document)[2] != str(expected_version))
     ):
         raise GroupDocumentProjectionConflict("The document identity or revision changed.")
     return document
 
 
-def _replace_source(container, document, body):
+def _replace_source(scope, container, document, body):
     try:
         result = container.replace_item(
             item=document["id"], body=body,
@@ -111,27 +168,27 @@ def _replace_source(container, document, body):
         if error.status_code in {404, 409, 412}:
             raise GroupDocumentProjectionConflict("The document changed before its projection could be coordinated.") from error
         raise
-    if not isinstance(result, dict) or not result.get("_etag") or _identity(result) != _identity(document):
+    if not isinstance(result, dict) or not result.get("_etag") or _identity(scope, result) != _identity(scope, document):
         raise GroupDocumentProjectionConflict("The conditional document write could not be confirmed.")
     return result
 
 
-def _finish_writer(container, identity, token, *, uncertain):
-    document_id, group_id, version = identity
+def _finish_writer(scope, container, identity, token, *, uncertain):
+    document_id, scope_id, version = identity
     for _attempt in range(3):
-        current = _read_source(container, document_id, group_id, version, allow_missing=True)
+        current = _read_source(scope, container, document_id, scope_id, version, allow_missing=True)
         if current is None:
             return
-        writer = current.get(GROUP_DOCUMENT_PROJECTION_WRITER)
+        writer = current.get(scope.writer_field)
         if not isinstance(writer, dict) or writer.get("token") != token:
             raise GroupDocumentProjectionConflict("The document projection claim changed.")
         body = copy.deepcopy(current)
         if uncertain:
-            body[GROUP_DOCUMENT_PROJECTION_WRITER] = {**writer, "state": "uncertain"}
+            body[scope.writer_field] = {**writer, "state": "uncertain"}
         else:
-            body.pop(GROUP_DOCUMENT_PROJECTION_WRITER)
+            body.pop(scope.writer_field)
         try:
-            _replace_source(container, current, body)
+            _replace_source(scope, container, current, body)
             return
         except GroupDocumentProjectionConflict:
             continue
@@ -139,43 +196,97 @@ def _finish_writer(container, identity, token, *, uncertain):
 
 
 @contextmanager
-def hold_group_document_projection(
-    container, document_id, group_id, *, expected_version=None, allow_missing=False, log=None,
+def _hold_document_projection(
+    scope, container, document_id, scope_id, *, expected_version=None, allow_missing=False, log=None,
 ):
-    document = _read_source(container, document_id, group_id, expected_version, allow_missing=allow_missing)
+    document = _read_source(scope, container, document_id, scope_id, expected_version, allow_missing=allow_missing)
     if document is None:
         yield None
         return
-    assert_group_document_source_writable(document)
-    identity = _identity(document)
-    if _owns_collaboration(document) or (
-        _writer_context.get() and GROUP_DOCUMENT_PROJECTION_WRITER in document
-        and _writer_context.get() == (*identity, document[GROUP_DOCUMENT_PROJECTION_WRITER].get("token"))
+    _assert_source_writable(scope, document)
+    identity = _identity(scope, document)
+    if _owns_collaboration(scope, document) or (
+        scope.writer_var.get() and scope.writer_field in document
+        and scope.writer_var.get() == (*identity, document[scope.writer_field].get("token"))
     ):
         yield document
         return
     token = str(uuid.uuid4())
     writer = {
         "schema_version": 1, "token": token, "document_id": document_id,
-        "group_id": group_id, "document_version": document.get("version") or 1,
+        scope.id_field: scope_id, "document_version": document.get("version") or 1,
         "state": "executing", "started_at": datetime.now(timezone.utc).isoformat(),
     }
-    claimed = _replace_source(container, document, {**copy.deepcopy(document), GROUP_DOCUMENT_PROJECTION_WRITER: writer})
-    marker = _writer_context.set((*identity, token))
+    claimed = _replace_source(scope, container, document, {**copy.deepcopy(document), scope.writer_field: writer})
+    marker = scope.writer_var.set((*identity, token))
     try:
         yield claimed
     except BaseException as error:
         known_refusal = isinstance(error, HttpResponseError) and error.status_code in {400, 401, 403, 404, 409, 412, 422}
         if log:
             log(
-                "[DOCUMENTS] Group document projection stopped.",
-                extra={"document_id": document_id, "group_id": group_id, "uncertain": not known_refusal,
+                f"[DOCUMENTS] {scope.kind.capitalize()} document projection stopped.",
+                extra={"document_id": document_id, scope.id_field: scope_id, "uncertain": not known_refusal,
                        "exception_type": type(error).__name__},
                 level=logging.ERROR,
             )
-        _finish_writer(container, identity, token, uncertain=not known_refusal)
+        _finish_writer(scope, container, identity, token, uncertain=not known_refusal)
         raise
     else:
-        _finish_writer(container, identity, token, uncertain=False)
+        _finish_writer(scope, container, identity, token, uncertain=False)
     finally:
-        _writer_context.reset(marker)
+        scope.writer_var.reset(marker)
+
+
+# --- Group entry points (names and behaviour preserved) --------------------
+
+def assert_no_group_document_projection_writer(document):
+    _assert_no_projection_writer(_GROUP_SCOPE, document)
+
+
+def assert_group_document_source_writable(document):
+    _assert_source_writable(_GROUP_SCOPE, document)
+
+
+@contextmanager
+def group_collaboration_projection_context(document_id, operation_id, execution_token):
+    with _collaboration_projection_context(_GROUP_SCOPE, document_id, operation_id, execution_token):
+        yield
+
+
+@contextmanager
+def hold_group_document_projection(
+    container, document_id, group_id, *, expected_version=None, allow_missing=False, log=None,
+):
+    with _hold_document_projection(
+        _GROUP_SCOPE, container, document_id, group_id,
+        expected_version=expected_version, allow_missing=allow_missing, log=log,
+    ) as document:
+        yield document
+
+
+# --- Public entry points (same implementation, public scope) ---------------
+
+def assert_no_public_document_projection_writer(document):
+    _assert_no_projection_writer(_PUBLIC_SCOPE, document)
+
+
+def assert_public_document_source_writable(document):
+    _assert_source_writable(_PUBLIC_SCOPE, document)
+
+
+@contextmanager
+def public_collaboration_projection_context(document_id, operation_id, execution_token):
+    with _collaboration_projection_context(_PUBLIC_SCOPE, document_id, operation_id, execution_token):
+        yield
+
+
+@contextmanager
+def hold_public_document_projection(
+    container, document_id, public_workspace_id, *, expected_version=None, allow_missing=False, log=None,
+):
+    with _hold_document_projection(
+        _PUBLIC_SCOPE, container, document_id, public_workspace_id,
+        expected_version=expected_version, allow_missing=allow_missing, log=log,
+    ) as document:
+        yield document

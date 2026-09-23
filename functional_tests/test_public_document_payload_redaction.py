@@ -45,6 +45,8 @@ SECRET_FIELDS = {
     "screening_provenance": {"scan_id": "internal-scan"},
     "group_document_projection_writer": {"operation_id": "op-1"},
     "group_document_collaboration_operation": {"operation_id": "op-1"},
+    "public_document_projection_writer": {"operation_id": "op-1"},
+    "public_document_collaboration_operation": {"operation_id": "op-1"},
     "generated_artifact_publication_binding": {"source": "conversation-1"},
     "generated_artifact_publication_receipt_id": "receipt-1",
     "generated_artifact_source_conversation_id": "conversation-1",
@@ -125,6 +127,7 @@ def test_collaboration_state_is_never_serialized_into_a_document_payload():
     """
     collaboration_fields = {
         "document_share_details", "group_document_collaboration_operation",
+        "public_document_collaboration_operation",
         "generated_artifact_publication_receipt_id",
         "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
         "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
@@ -195,6 +198,7 @@ DOCUMENT_ROUTE_FILES = [
     "route_backend_public_documents.py",
     "route_backend_public_document_reads.py",
     "route_backend_public_document_management.py",
+    "route_backend_public_document_collaboration.py",
     "route_external_public_documents.py",
 ]
 

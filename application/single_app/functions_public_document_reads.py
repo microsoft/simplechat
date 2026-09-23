@@ -24,10 +24,18 @@ from functions_documents import (
 )
 from functions_public_document_access import (
     PublicDocumentReadError,
+    get_public_document_actions,
     is_current_public_document,
     public_document_family_records,
     require_public_document_read_context,
 )
+from functions_public_document_collaboration import (
+    get_public_document_collaboration_actions,
+)
+from functions_public_document_policy import (
+    public_document_collaboration_operations,
+)
+from functions_settings import get_settings
 
 
 # Public workspaces have no cross-workspace share relationship in M3A, so there
@@ -71,16 +79,31 @@ def _query_public_document_records(workspace_id, *, document_ids=None):
     return [record for record in records if str(record["public_workspace_id"]) == str(workspace_id)]
 
 
-def _project_public_document(document, workspace_id, *, query_timestamp=False, include_actions=False):
+def _project_public_document(
+    document, workspace_id, *, query_timestamp=False, include_actions=False,
+    user_id=None, context=None, settings=None, collaboration_supported=None,
+    current_revision=None,
+):
     if str(document.get("public_workspace_id")) != str(workspace_id):
         raise PublicDocumentReadError("Document not found or access denied.", 404)
     normalized = select_current_documents([dict(document)])[0]
     payload = public_document_payload(normalized)
     payload["public_workspace_id"] = document["public_workspace_id"]
     if include_actions:
-        # Read-only slice: no management verbs are advertised yet, but the key
-        # is present so the client always reads a concrete action list.
-        payload["document_actions"] = []
+        # Compute both action-hint arrays fresh from current authorization on
+        # every response, never from storage. They are in PRIVATE_DOCUMENT_FIELDS
+        # precisely so a stale stored copy cannot leak, and the v2 explorer gates
+        # every per-document operation on these inline arrays. Mirrors the group
+        # projector; the dedicated management-authorize and publication-state
+        # endpoints remain the authoritative per-document detail reads.
+        payload["document_actions"] = get_public_document_actions(
+            document, user_id, workspace_id, context=context, settings=settings,
+            public_payload=payload, current_revision=current_revision,
+        )
+        payload["document_collaboration_actions"] = get_public_document_collaboration_actions(
+            document, user_id, workspace_id, context=context, settings=settings,
+            supported=collaboration_supported,
+        )
     # Retain a server-only sort/recent key while calculating queries. The final
     # response projection applies the screening allow-list again without it.
     if query_timestamp and "_ts" in document:
@@ -207,7 +230,11 @@ def get_public_document_read_versions(user_id, workspace_id, document_id):
 
 def refresh_public_document_read_payloads(documents, user_id, workspace_id):
     """Batch-revalidate final responses in the explicit target workspace scope."""
-    require_public_document_read_context(user_id, workspace_id)
+    context = require_public_document_read_context(user_id, workspace_id)
+    settings = get_settings()
+    collaboration_supported = public_document_collaboration_operations(
+        context[0], context[1], settings,
+    )
     records = _query_public_document_records(
         workspace_id, document_ids=[document["id"] for document in documents],
     )
@@ -224,7 +251,12 @@ def refresh_public_document_read_payloads(documents, user_id, workspace_id):
         )
         if str(fresh.get("public_workspace_id")) != str(workspace_id) or version_changed:
             raise PublicDocumentReadError("Document changed while reading. Refresh and try again.", 409)
-        payload = _project_public_document(fresh, workspace_id, include_actions=True)
+        payload = _project_public_document(
+            fresh, workspace_id, include_actions=True, user_id=user_id,
+            context=context, settings=settings,
+            collaboration_supported=collaboration_supported,
+            current_revision=previous.get("is_current_version"),
+        )
         for field in ("revision_family_id", "is_current_version"):
             if field in previous:
                 payload[field] = False if field == "is_current_version" and fresh.get(field) is False else previous[field]
