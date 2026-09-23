@@ -84,6 +84,7 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_group_prompts_scoped import *
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
@@ -1476,6 +1477,7 @@ register_route_blueprint('backend_prompts', register_route_backend_prompts, user
 
 # ------------------- API Group Prompts Routes ----------
 register_route_blueprint('backend_group_prompts', register_route_backend_group_prompts, user_required_blueprint)
+register_route_blueprint('backend_group_prompts_scoped', register_route_backend_group_prompts_scoped, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
