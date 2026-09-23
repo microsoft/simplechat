@@ -99,6 +99,11 @@ A successful approval always returns `queued` rather than `applied`, because
 approving hands the document to screening and processing rather than finishing
 synchronously.
 
+Only one decision can ever commit for a given request. Repeating the decision
+that was already recorded returns `unchanged`. A *different* decision — for
+example approving a request that was already rejected — is refused with 409
+`decision_conflict`.
+
 **Treat 207 as success, not failure.** A `partial` receipt means the decision
 itself **was** recorded; only a follow-up effect needs reconciliation. It
 carries an `errors` entry such as

@@ -111,6 +111,57 @@ populated `errors` list means the decision was recorded but one or more
 downstream effects did not complete; the recorded decision stands and the
 remaining effects are repaired rather than replayed as a new decision.
 
+### Decision outcomes and HTTP status
+
+The `status` and HTTP code depend on the kind of decision and its outcome.
+
+**Sharing decisions** — `share`, `unshare`, `approve_share`, `remove_share`:
+
+| Outcome | `status` | HTTP |
+|---|---|---|
+| A new decision was recorded | `applied` | 200 |
+| The request resumed an unfinished operation for the same target and action | `unchanged` | 200 |
+| Decision recorded, but a follow-up effect did not complete | `partial` | 207 |
+| Stored state changed, but the outcome could not be confirmed | — | 503, `effect_outcome_uncertain` |
+
+Sharing decisions never return `queued`.
+
+`unchanged` does **not** mean the relationship was already in the requested
+state. Repeating a share on an already-shared document records a new decision
+and returns `applied`. `unchanged` means this request found an unfinished
+operation for the same target and action and resumed its remaining effects
+rather than starting a new one. A request whose target or action differs from an
+unfinished operation is refused with 409 `operation_busy` until that operation
+is finished or reconciled.
+
+**Artifact decisions** — `approve_artifact`, `reject_artifact`, `cancel_artifact`:
+
+| Outcome | `status` | HTTP |
+|---|---|---|
+| Approval recorded and processing queued | `queued` | 202 |
+| Rejection or cancellation recorded | `applied` | 200 |
+| The same decision was already recorded | `unchanged` | 200 |
+| Decision recorded, but cleanup did not complete | `partial` | 207 |
+
+A successful approval always returns `queued`, because approving hands the
+document to screening and processing rather than finishing synchronously.
+
+Only one decision can ever commit for a given request. Repeating the decision
+that was already recorded returns `unchanged`. A *different* decision — for
+example approving a request that was already rejected — is refused with 409
+`decision_conflict`.
+
+**Treat 207 as success.** A `partial` receipt means the decision **was**
+recorded; only a follow-up effect needs reconciliation. A client that treats
+every non-200 response as a failed decision would misreport a recorded decision
+as having failed and could prompt the reviewer to decide again.
+
+**Do not treat 503 `effect_outcome_uncertain` as a clean failure.** It means the
+operation changed stored state and its effects could not be confirmed, so the
+decision may have taken effect. Re-read the state with `GET /sharing` before
+deciding whether to act again. The fresh `etag` that read returns is required
+for any retry in any case.
+
 ## Authorization is re-established per request
 
 The selected-group context advertises a `document_collaboration` block with
