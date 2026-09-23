@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.129
+Version: 0.261.130
 """
 
 import logging
@@ -1496,8 +1496,8 @@ def _render_dependency_step(
     step, context, *, settings, user_id, emit=None, cancel_requested=None, saved_result=None,
 ):
     # Rendering and its read-only resumer share the actual output service, not adapter tables.
+    import functions_orchestration_rendering as rendering
     from functions_orchestration_execution_policy import orchestration_file_policy
-    from functions_orchestration_rendering import execute_render_file, resume_render_file
 
     catalog = getattr(context, 'export_catalog', None)
     if catalog is not None and (
@@ -1511,12 +1511,15 @@ def _render_dependency_step(
     }
     with orchestration_file_policy(allow_generated_files=saved_result is None):
         if saved_result is None:
-            result = execute_render_file(step, context, **arguments)
+            result = rendering.execute_render_file(step, context, **arguments)
         else:
-            result = resume_render_file(step, context, saved_result, **arguments)
+            result = rendering.resume_render_file(step, context, saved_result, **arguments)
     result = _validate_render_step_result(step, result)
     if result['status'] == STEP_STATUS_WAITING:
-        result['wait'] = {'kind': 'orchestration_output', 'output_id': result['wait']['output_id']}
+        wait = result['wait']
+        result['wait'] = {'kind': 'orchestration_output', 'output_id': wait['output_id']}
+        if wait.get('error_code') is not None:
+            result['wait']['error_code'] = wait['error_code']
     return result
 
 
@@ -1564,6 +1567,7 @@ def resume_native_dependency_step(
 
 def resume_waiting_dependency_step(
     step, context, *, settings, user_id, input_fingerprint, emit=None, cancel_requested=None,
+    saved_result=None,
 ):
     """Refresh one authorized saved wait; never enter the ordinary producer resolver."""
     wait = context.pending_results.get(step['step_id'])
@@ -1582,9 +1586,16 @@ def resume_waiting_dependency_step(
             or input_fingerprint != step_input_fingerprint(step, context, None, settings=settings)
         ):
             raise ResultContractError('result_input_changed')
+        if (
+            type(saved_result) is not dict or saved_result.get('status') != STEP_STATUS_WAITING
+            or type(saved_result.get('wait')) is not dict
+            or saved_result['wait'].get('kind') != 'orchestration_output'
+            or saved_result['wait'].get('output_id') != wait.get('output_id')
+        ):
+            raise ResultContractError('result_wait_invalid')
         return _render_dependency_step(
             step, context, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
-            saved_result=build_step_result(status=STEP_STATUS_WAITING, wait=deepcopy(wait)),
+            saved_result=saved_result,
         )
     if (
         context.plan_contract_version != 2 or user_id != context.user_id
@@ -1730,6 +1741,7 @@ def _execute_dependency_plan(
                     result = resume_waiting_dependency_step(
                         step, context, settings=settings, user_id=user_id,
                         input_fingerprint=reused['input_fingerprint'], emit=emit, cancel_requested=cancel_probe,
+                        saved_result=reused['result'],
                     )
                 except (
                     ResultContractError, ResultUnavailableError, PermissionError, ScreeningError,

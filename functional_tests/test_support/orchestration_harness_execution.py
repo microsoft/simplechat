@@ -1,9 +1,10 @@
 # orchestration_harness_execution.py
 """Initialized headless harness fixtures; only external storage/model I/O is doubled.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.127
 Publication-only admission guard updated in: 0.261.129
+Direct result-store binding guard updated in: 0.261.130
 
 Bootstrap keeps its real strict source callbacks. Source-specific fixtures replace
 underlying document/blob I/O, not the authority wrappers or their model fence.
@@ -400,6 +401,7 @@ class HarnessEnvironment:
             for name in ("resolve_orchestration_model", "load_orchestration_memory", "execute_plan"):
                 guarded.setattr(self.execution, name, forbidden_execution)
             guarded.setattr(continuation, "bind_orchestration_result_store", forbidden_execution)
+            guarded.setattr(type(services.results.store), "bind_orchestration_execution", forbidden_execution)
             guarded.setattr(type(services), "export_catalog", forbidden_execution)
             guarded.setattr(self.planner, "AzureOpenAI", forbidden_execution)
             guarded.setattr(native, "build_native_tabular_compute_callback", forbidden_execution)

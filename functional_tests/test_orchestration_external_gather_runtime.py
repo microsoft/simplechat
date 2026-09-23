@@ -1,9 +1,10 @@
 # test_orchestration_external_gather_runtime.py
 """External Gather content retains real authorization lineage through composition.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.127
 Empty-result lineage coverage added in: 0.261.129
+Authorization/capture gating and fingerprint coverage extended in: 0.261.130
 Provider identity, configuration and storage I/O are isolated; runtime and facade are real.
 """
 
@@ -33,18 +34,22 @@ def test_external_discovery_requires_all_server_callbacks_not_boolean_flags(runt
         settings, request_context=callbacks, contract_version=2,
     )
     assert 'web_search' in available
+    descriptor = runtime.registry.get_capability('web_search', contract_version=2)
+    assert descriptor['runtime_bindings'] == names
 
 
 @pytest.mark.parametrize('capability_id', [
     'web_search', 'url_fetch', 'deep_research', 'agent_invoke', 'action_invoke',
 ])
-@pytest.mark.parametrize('preflight', [None, True, False, {}, 'browser-provided-hook'])
-def test_every_external_capability_requires_callable_preflight(runtime, capability_id, preflight):
+@pytest.mark.parametrize('name', ['external_source_preflight', 'capture_external_source_configuration'])
+@pytest.mark.parametrize('callback', [None, True, False, {}, 'browser-provided-hook'])
+def test_every_external_capability_requires_callable_acquisition_guards(runtime, capability_id, name, callback):
     context = {
         'external_source_admission': lambda **kwargs: None,
-        'capture_external_source_configuration': lambda **kwargs: None,
+        'external_source_preflight': lambda **kwargs: None,
+        'capture_external_source_configuration': lambda *args, **kwargs: None,
         'external_source_authorizer': lambda **kwargs: None,
-        'external_source_preflight': preflight,
+        name: callback,
     }
     unavailable = {}
     available = runtime.registry.resolve_available_capabilities(
@@ -57,18 +62,20 @@ def test_every_external_capability_requires_callable_preflight(runtime, capabili
     assert 'runtime_bindings' not in legacy and 'runtime_binding' not in legacy
 
 
-@pytest.mark.parametrize('preflight', [True, False, {}, 'browser-provided-hook'])
-def test_context_rejects_noncallable_external_preflight(runtime, preflight):
+@pytest.mark.parametrize('name', ['external_source_preflight', 'capture_external_source_configuration'])
+@pytest.mark.parametrize('callback', [True, False, {}, 'browser-provided-hook'])
+def test_context_rejects_noncallable_external_acquisition_guards(runtime, name, callback):
     with pytest.raises(runtime.contracts.ResultContractError) as caught:
         runtime.executor.RunContext(
             run_id='run-1', plan_id='plan-1', conversation_id='conversation-1', user_id='owner',
-            user_message='', plan_contract_version=2, external_source_preflight=preflight,
+            user_message='', plan_contract_version=2, **{name: callback},
         )
     assert caught.value.code == 'result_external_reader_required'
 
 
 @pytest.mark.parametrize('version', [1, 2])
-def test_external_preflight_is_ephemeral_and_preserves_checkpoint_fingerprints(runtime, version):
+@pytest.mark.parametrize('name', ['external_source_preflight', 'capture_external_source_configuration'])
+def test_external_acquisition_guards_are_ephemeral_and_preserve_checkpoint_fingerprints(runtime, version, name):
     context = runtime.executor.RunContext(
         run_id='run-1', plan_id='plan-1', conversation_id='conversation-1', user_id='owner',
         user_message='', plan_contract_version=version,
@@ -85,20 +92,47 @@ def test_external_preflight_is_ephemeral_and_preserves_checkpoint_fingerprints(r
     fingerprint_before = runtime.checkpoints.step_input_fingerprint(
         plan['steps'][0], context, binding_before, settings={},
     )
-    assert context.external_source_preflight is None
-    context.external_source_preflight = lambda **kwargs: None
+    assert getattr(context, name) is None
+    callback = lambda *args, **kwargs: None
+    setattr(context, name, callback)
     request = runtime.executor._dependency_request_context(context)
     state_after = runtime.checkpoints.context_state(context)
     binding_after = runtime.checkpoints.context_binding(context, plan, {})
     fingerprint_after = runtime.checkpoints.step_input_fingerprint(
         plan['steps'][0], context, binding_after, settings={},
     )
-    assert request['external_source_preflight'] is context.external_source_preflight
-    assert state_after == state_before and 'external_source_preflight' not in state_after
+    assert request[name] is callback
+    assert state_after == state_before and name not in state_after
     assert binding_after == binding_before and fingerprint_after == fingerprint_before
 
 
-def test_missing_external_preflight_blocks_execution_before_any_adapter(runtime):
+def test_external_runtime_bindings_do_not_change_saved_step_fingerprints(runtime, monkeypatch):
+    case = runtime.make([compose()])
+    settings = {**case.settings, 'enable_web_search': True}
+    plan = runtime.schema.normalize_plan({
+        'steps': [{'step_id': 'gather', 'capability_id': 'web_search', 'arguments': {'query': 'approved query'}}],
+    }, 'conversation-1', 'owner', settings=settings, contract_version=2,
+        available_capability_ids=['web_search'])
+    context_binding = runtime.checkpoints.context_binding(case.context, plan, settings)
+    current_fingerprint = runtime.checkpoints.step_input_fingerprint(
+        plan['steps'][0], case.context, context_binding, settings=settings,
+    )
+    previous_descriptor = runtime.registry.get_capability('web_search', contract_version=2)
+    previous_descriptor['runtime_bindings'] = (
+        'external_source_admission', 'capture_external_source_configuration', 'external_source_authorizer',
+    )
+    monkeypatch.setattr(
+        runtime.checkpoints, 'get_capability',
+        lambda capability_id, *, contract_version: deepcopy(previous_descriptor),
+    )
+    previous_fingerprint = runtime.checkpoints.step_input_fingerprint(
+        plan['steps'][0], case.context, context_binding, settings=settings,
+    )
+    assert previous_fingerprint == current_fingerprint
+
+
+@pytest.mark.parametrize('missing', ['external_source_preflight', 'capture_external_source_configuration'])
+def test_missing_external_acquisition_guard_blocks_execution_before_any_adapter(runtime, missing):
     case = runtime.make([compose()])
     settings = {**case.settings, 'enable_web_search': True}
     plan = runtime.schema.normalize_plan({
@@ -107,13 +141,15 @@ def test_missing_external_preflight_blocks_execution_before_any_adapter(runtime)
     }, 'conversation-1', 'owner', settings=settings, contract_version=2,
         available_capability_ids=['web_search'])
     case.context.external_source_admission = lambda **kwargs: None
-    case.context.capture_external_source_configuration = lambda **kwargs: None
+    case.context.external_source_preflight = lambda **kwargs: None
+    case.context.capture_external_source_configuration = lambda *args, **kwargs: None
+    setattr(case.context, missing, None)
     case.context.result_service.access.external_source_authorizer = lambda *args, **kwargs: None
     resolved = []
 
     def forbidden_adapter(capability_id):
         resolved.append(capability_id)
-        raise AssertionError('Missing preflight must prevent selecting an acquisition adapter.')
+        raise AssertionError('Missing acquisition guards must prevent selecting an acquisition adapter.')
 
     with pytest.raises(runtime.schema.PlanValidationError) as caught:
         runtime.executor.execute_plan(

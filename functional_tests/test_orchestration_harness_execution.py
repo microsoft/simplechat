@@ -1,9 +1,10 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
+Direct initial-binding scope coverage implemented in: 0.261.130
 
 Production context, models, runtime, services, result store, checkpoint/lease and
 artifact adapters execute with external Azure/model I/O doubled. Cold imports run
@@ -13,15 +14,28 @@ operation, without leaking the fence into another operation or worker.
 Named-data availability stays internal; published outputs are renderer file DTOs.
 Current external-configuration failures are exercised through the real metadata
 reader and SDK metadata GET, never through an acquisition or capability override.
+Their exact durable-state baseline is captured at metadata-read entry, after any
+legitimate step-start/input-checkpoint writes, without normalizing missing fields.
 Selected-answer citations retain their exact lineage during initial publication
 and model-free delivery, without adopting ambient or stale citation metadata.
+CSV/JSON delivery reopens authorized committed bytes and checks complete records,
+including the final row, rather than relying only on file-card counts.
+The four private external bindings include the actual invocation preflight.
+Preflight/capture/admission keep immutable claim identity across real continuation
+and store-view rollover, preserving typed control failures from current readers.
+Headless control capture reconstructs only safe codes, without retaining private
+diagnostics or publication state; actual lifecycle and input-budget checks remain.
 """
 
 import builtins
+import csv
+import gc
 import importlib
+import io
 import json
 import subprocess
 import sys
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import copy, deepcopy
@@ -37,6 +51,7 @@ import pytest
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import Agent
+from azure.core import MatchConditions
 from azure.core.exceptions import ServiceRequestError
 from agent_execution_context import ExecutionIdentity
 from content_screening import access as screening_access
@@ -57,6 +72,7 @@ from functions_orchestration_models import (
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import PlanValidationError
+from test_orchestration_export_catalog_admission import _catalog as admitted_export_catalog
 from test_support import offline_bootstrap
 from test_support.orchestration_harness_execution import (
     HarnessEnvironment, compose_step, decoded_frames, input_binding, native_step,
@@ -204,12 +220,8 @@ def external_callback_execution(harness, monkeypatch):
     def admit(*, producer, prepared):
         return effect("external_source_admission", {"producer": producer, "prepared": prepared})
 
-    def preflight(*, producer, selector=None):
-        effect("external_source_preflight", {"producer": producer, "selector": selector})
-
     state.callbacks = {
         "capture_external_source_configuration": capture, "external_source_admission": admit,
-        "external_source_preflight": preflight,
     }
     build_services = harness.bootstrap.build_orchestration_services
 
@@ -217,7 +229,6 @@ def external_callback_execution(harness, monkeypatch):
         services = build_services(*args, **kwargs)
         services.capture_external_source_configuration = capture
         services.external_source_admission = admit
-        services.external_source_preflight = preflight
         return services
 
     monkeypatch.setattr(harness.bootstrap, "build_orchestration_services", services_with_callbacks)
@@ -231,7 +242,6 @@ def external_callback_execution(harness, monkeypatch):
             "source": {"private": "configuration"}, "selector": None,
         },
         "external_source_admission": {"producer": producer, "prepared": {"private": "prepared"}},
-        "external_source_preflight": {"producer": producer, "selector": None},
     }
 
     def invoke(name):
@@ -257,6 +267,60 @@ def external_callback_execution(harness, monkeypatch):
         state.execution.close()
         for replacement in state.replacements:
             replacement.close(release=True)
+
+
+@pytest.fixture
+def real_external_callback_execution(harness, monkeypatch):
+    """Use the default Root provider/attestor with directory I/O isolated."""
+    sources = importlib.import_module("functions_orchestration_external_sources")
+    state = SimpleNamespace(error=None, identity_reads=[])
+    url = "https://example.com/original-source"
+    harness.settings.update({
+        "enable_url_access": True, "require_member_of_url_access_user": False,
+        "source_review_allow_js_rendering": False, "source_review_enable_llm_planning": False,
+    })
+    harness.turn["content"] = f"Review {url}."
+    stored_turn = harness.messages.read_item(harness.turn["id"], "conversation-1")
+    stored_turn["content"] = harness.turn["content"]
+    harness.messages.replace_item(
+        stored_turn["id"], stored_turn,
+        etag=stored_turn["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+
+    def read_identity(*, user_id, conversation_id):
+        state.identity_reads.append((user_id, conversation_id))
+        if (user_id, conversation_id) != ("owner", "conversation-1"):
+            raise AssertionError("Directory reads must retain the original callback actor.")
+        if state.error is not None:
+            raise state.error
+        return sources.CurrentExternalSourceIdentity(user_id, ("User",), True, "owner@example.test")
+
+    def identity_factory(user_id, conversation_id):
+        if (user_id, conversation_id) != ("owner", "conversation-1"):
+            raise AssertionError("The Root factory must retain its original actor.")
+        return read_identity
+
+    monkeypatch.setattr(harness.bootstrap, "build_external_identity_reader", identity_factory)
+    harness.create([{
+        "step_id": "gather", "capability_id": "url_fetch", "arguments": {"urls": [url]},
+    }])
+    state.execution = harness.prepare()
+    state.producer = state.execution.context.result_producer(state.execution.record["plan"]["steps"][0])
+    state.prepared = {
+        "version": "orchestration-gathered-content-v1", "capability_id": "url_fetch",
+        "content_scope": "reported_external_content", "notes": ["Original retained findings."],
+        "citations": [], "evidence": [],
+    }
+    try:
+        state.execution.context.capture_external_source_configuration(
+            "url", producer=state.producer, settings=harness.settings,
+        )
+        state.admitted = state.execution.context.external_source_admission(
+            producer=state.producer, prepared=state.prepared,
+        )
+        yield state
+    finally:
+        state.execution.close()
 
 
 @pytest.fixture
@@ -309,8 +373,9 @@ def citation_execution(harness, monkeypatch):
 
 @pytest.fixture
 def admitted_exports(harness, monkeypatch):
-    catalog = importlib.import_module("test_orchestration_export_catalog_admission")._catalog
-    state = SimpleNamespace(value=catalog(("md", "prepared_text_v1")), calls=0, select=catalog)
+    state = SimpleNamespace(
+        value=admitted_export_catalog(("md", "prepared_text_v1")), calls=0, select=admitted_export_catalog,
+    )
 
     def current_catalog(services):
         state.calls += 1
@@ -320,7 +385,7 @@ def admitted_exports(harness, monkeypatch):
     return state
 
 
-def _claim_external_callback_replacement(harness, lease):
+def _claim_external_callback_replacement(harness, lease, *, mode="outputs"):
     continuation = importlib.import_module("functions_orchestration_continuation")
     with lease.lock:
         current = lease.read()
@@ -331,7 +396,7 @@ def _claim_external_callback_replacement(harness, lease):
         claimed = continuation.claim_run_continuation(
             "run-1", "owner", "conversation-1",
             authorize=lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1"),
-            message_container=harness.messages, mode="outputs",
+            message_container=harness.messages, mode=mode,
         )
         if claimed is None:
             raise AssertionError("The real expired parent claim was not acquired.")
@@ -749,9 +814,12 @@ def test_preparation_binds_result_claim_before_capability_discovery(harness, mon
     harness.create([compose_step(), compose_step("later")])
     service_type = harness.service_bindings.OrchestrationServices
     build_bindings = service_type.capability_request_bindings
-    continuation = importlib.import_module("functions_orchestration_continuation")
-    bind_store = Mock(wraps=continuation.bind_orchestration_result_store)
+    store_module = importlib.import_module("functions_workflow_result_store")
+    bind_store = Mock(wraps=store_module.WorkflowResultStore.bind_orchestration_execution)
     observed = []
+
+    def bind_execution(store, *args, **kwargs):
+        return bind_store(store, *args, **kwargs)
 
     def observe_bindings(services):
         bind_store.assert_called_once()
@@ -765,14 +833,22 @@ def test_preparation_binds_result_claim_before_capability_discovery(harness, mon
         assert harness.clients == [] and harness.model_calls == [] and harness.blobs.file_uploads == 0
         return build_bindings(services)
 
-    monkeypatch.setattr(continuation, "bind_orchestration_result_store", bind_store)
+    monkeypatch.setattr(store_module.WorkflowResultStore, "bind_orchestration_execution", bind_execution)
     monkeypatch.setattr(service_type, "capability_request_bindings", observe_bindings)
-    execution = harness.prepare()
+    original_import = builtins.__import__
+
+    def without_continuation_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level == 0 and name == "functions_orchestration_continuation":
+            raise AssertionError("Initial preparation must bind its store without the continuation module.")
+        return original_import(name, globals, locals, fromlist, level)
+
+    with monkeypatch.context() as direct:
+        direct.setattr(builtins, "__import__", without_continuation_import)
+        execution = harness.prepare()
     try:
         assert len(observed) == 1
         services, scoped, binding, current = observed[0]
         unbound = harness.services().results.store
-        store_module = importlib.import_module("functions_workflow_result_store")
         before = deepcopy(harness.results.container.items)
         for step in execution.record["plan"]["steps"]:
             identity = store_module._orchestration_identity(
@@ -787,9 +863,11 @@ def test_preparation_binds_result_claim_before_capability_discovery(harness, mon
                 )
         assert services is execution.services
         assert scoped is execution.context.result_service.store
-        assert bind_store.call_args.args == (execution.record,)
-        assert bind_store.call_args.kwargs["lease"] is execution.lease
-        original_store = bind_store.call_args.kwargs["store"]
+        assert bind_store.call_args.args[1:] == ("owner", "conversation-1", "run-1")
+        assert bind_store.call_args.kwargs == {
+            "guard_token": execution.lease.token, "check_execution": execution.lease.read,
+        }
+        original_store = bind_store.call_args.args[0]
         assert original_store is not scoped and original_store._orchestration_execution is None
         assert binding.read == execution.lease.read
         assert binding.token == execution.lease.token and binding.claim_id is None
@@ -800,6 +878,34 @@ def test_preparation_binds_result_claim_before_capability_discovery(harness, mon
     finally:
         execution.close()
     assert execution.lease.stopped.is_set() and all(client.closed for client in harness.clients)
+
+
+def test_preparation_preserves_the_claimed_attempt_before_binding_results(harness, monkeypatch):
+    harness.create()
+    record, lease = harness.claim()
+    build_services = harness.bootstrap.build_orchestration_services
+
+    def change_attempt_after_services(*args, **kwargs):
+        services = build_services(*args, **kwargs)
+        current = harness.read()
+        harness.runs.replace_item(
+            item=current["id"], body={**current, "attempt_index": current["attempt_index"] + 1},
+            etag=current["_etag"], match_condition=MatchConditions.IfNotModified,
+        )
+        return services
+
+    monkeypatch.setattr(harness.bootstrap, "build_orchestration_services", change_attempt_after_services)
+    execution = None
+    try:
+        with pytest.raises(HarnessExecutionError):
+            execution = prepare_harness_execution(record, settings=harness.settings, lease=lease)
+        assert harness.results.container.items == {}
+        assert harness.clients == [] and harness.model_calls == [] and harness.blobs.file_uploads == 0
+    finally:
+        if execution is not None:
+            execution.close()
+        else:
+            lease.close()
 
 
 @pytest.mark.parametrize("outage", [ServiceRequestError, ConnectionError, TimeoutError])
@@ -1288,27 +1394,34 @@ def test_native_preparation_uses_the_actual_service_binding_before_model_setup(h
     assert lease.stopped.is_set() and all(client.closed for client in harness.clients)
 
 
-@pytest.mark.parametrize("has_preflight", [True, False], ids=["preflight", "no_preflight"])
 @pytest.mark.parametrize(
-    ("has_admission", "has_authorizer", "has_capture"),
+    ("has_preflight", "has_admission", "has_authorizer", "has_capture"),
     [
-        (True, True, True), (False, True, False), (True, True, False), (False, True, True),
-        (True, False, True), (True, False, False), (False, False, True), (False, False, False),
+        (True, True, True, True), (True, False, True, False),
+        (True, True, True, False), (True, False, True, True),
+        (True, True, False, True), (True, True, False, False),
+        (True, False, False, True), (True, False, False, False),
+        (False, True, True, True), (False, False, True, False),
+        (False, True, True, False), (False, False, True, True),
+        (False, True, False, True), (False, True, False, False),
+        (False, False, False, True), (False, False, False, False),
     ],
     ids=[
         "complete", "read_only", "uncaptured", "unadmitted",
-        "unauthorized", "admission_only", "capture_only", "missing",
+        "unauthorized", "admission_only", "capture_only", "preflight_only",
+        "no_preflight", "no_preflight_read_only", "no_preflight_uncaptured", "no_preflight_unadmitted",
+        "no_preflight_unauthorized", "no_preflight_admission_only", "no_preflight_capture_only", "missing",
     ],
 )
 def test_external_preparation_uses_complete_initialized_service_bindings(
-    harness, monkeypatch, has_admission, has_authorizer, has_capture, has_preflight,
+    harness, monkeypatch, has_preflight, has_admission, has_authorizer, has_capture,
 ):
+    sources = importlib.import_module("functions_orchestration_external_sources")
     harness.settings.update({"enable_web_search": True, "enable_chat_orchestration_harness": False})
     callbacks = {
         name: Mock(side_effect=AssertionError("Discovery must not acquire or authorize an external source."))
         for name in (
-            "external_source_preflight",
-            "external_source_admission", "external_source_authorizer",
+            "external_source_preflight", "external_source_admission", "external_source_authorizer",
             "capture_external_source_configuration",
         )
     }
@@ -1323,9 +1436,10 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
 
     def initialized_services(*args, **kwargs):
         services = build_services(*args, **kwargs)
-        services.external_source_preflight = (
-            callbacks["external_source_preflight"] if has_preflight else None
-        )
+        preflight = services.external_source_preflight
+        assert preflight.__func__ is sources.OrchestrationExternalSourceProvider.preflight_gather_invocation
+        callbacks["external_source_preflight"] = Mock(wraps=preflight)
+        services.external_source_preflight = callbacks["external_source_preflight"] if has_preflight else None
         services.external_source_admission = (
             callbacks["external_source_admission"] if has_admission else None
         )
@@ -1357,8 +1471,8 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
             context = execution.context
             for name, callback in callbacks.items():
                 assert execution._capability_context[name] is bindings[name] is callback
-            assert context.external_source_admission.__wrapped__ is callbacks["external_source_admission"]
             assert context.external_source_preflight.__wrapped__ is callbacks["external_source_preflight"]
+            assert context.external_source_admission.__wrapped__ is callbacks["external_source_admission"]
             assert (
                 context.capture_external_source_configuration.__wrapped__
                 is callbacks["capture_external_source_configuration"]
@@ -1385,7 +1499,7 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
 
 
 @pytest.mark.parametrize("name", [
-    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+    "external_source_admission", "capture_external_source_configuration",
 ])
 def test_external_runtime_callbacks_keep_signature_return_and_shared_service_identity(
     harness, monkeypatch, external_callback_execution, name,
@@ -1406,8 +1520,7 @@ def test_external_runtime_callbacks_keep_signature_return_and_shared_service_ide
     monkeypatch.setattr(harness.runs, "read_item", observed_read)
     with state.lease.lock:
         result = state.invoke(name)
-    expected = None if name == "external_source_preflight" else state.value
-    assert result is expected
+    assert result is state.value
     assert order == ["lease_read", "effect", "lease_read"]
     assert state.calls == [(name, state.arguments[name])]
     assert signature(context_callback) == signature(raw_callback)
@@ -1484,7 +1597,7 @@ def test_real_capture_preserves_the_headless_lease_fence_initial_and_sticky_fail
 
 
 @pytest.mark.parametrize("name", [
-    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+    "external_source_admission", "capture_external_source_configuration",
 ])
 @pytest.mark.parametrize("loss", ["stopped", "stolen"])
 def test_external_runtime_callbacks_reject_the_original_stopped_or_stolen_lease(
@@ -1513,7 +1626,7 @@ def test_external_runtime_callbacks_reject_the_original_stopped_or_stolen_lease(
 
 
 @pytest.mark.parametrize("name", [
-    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+    "external_source_admission", "capture_external_source_configuration",
 ])
 @pytest.mark.parametrize("loss", ["stopped", "stolen"])
 @pytest.mark.parametrize("callback_failed", [False, True])
@@ -1545,13 +1658,71 @@ def test_external_runtime_callbacks_recheck_the_original_lease_after_effects(
     assert harness.blobs.file_uploads == 0
 
 
+@pytest.mark.parametrize("name", ["external_source_admission", "capture_external_source_configuration"])
+@pytest.mark.parametrize("boundary", ["before", "after"])
+@pytest.mark.parametrize("origin", ["initial", "continuation"])
+def test_external_callbacks_pin_the_original_claim_if_its_lease_is_retagged(
+    harness, external_callback_execution, name, boundary, origin,
+):
+    state = external_callback_execution
+    harness.run_engine(state.execution)
+    if origin == "continuation":
+        continuation = importlib.import_module("functions_orchestration_continuation")
+        first_execution = state.execution
+        record, lease, _ = state.take_over()
+        first_execution.lease = state.lease
+        first_execution.close()
+        resumed = prepare_harness_execution(
+            record, settings=harness.settings, lease=lease,
+            checkpoint_factory=continuation.ContinuationCheckpoints,
+        )
+        state.replacements.remove(lease)
+        state.execution, state.lease = resumed, lease
+        harness.run_engine(resumed)
+    original_claim = state.lease.claim_id
+    original_store = state.execution.services.results.store
+    replacements = []
+
+    def take_over_and_retag():
+        record, replacement, services = state.take_over()
+        replacements.append((record, replacement, services))
+        state.lease.claim_id = replacement.claim_id
+
+    try:
+        with state.lease.lock:
+            if boundary == "before":
+                take_over_and_retag()
+            else:
+                state.on_call = take_over_and_retag
+            with pytest.raises(CheckpointError) as failure:
+                state.invoke(name)
+    finally:
+        state.lease.claim_id = original_claim
+    record, replacement, services = replacements[0]
+    current = replacement.read()
+    store_module = importlib.import_module("functions_workflow_result_store")
+    identity = store_module._orchestration_identity("owner", "conversation-1", "run-1", "prepare")
+    current_guard = services.results.store._analysis_guard(identity)
+    with pytest.raises(CheckpointError) as stale:
+        original_store._analysis_guard(identity)
+    assert failure.value.code == stale.value.code == "ownership_lost"
+    assert len(state.calls) == (0 if boundary == "before" else 1)
+    assert current["id"] == record["id"] == "run-1" and current["attempt_index"] == 1
+    assert replacement.token == state.lease.token and replacement.claim_id != original_claim
+    assert current_guard["token"] == replacement.token
+    assert current_guard["execution_claim_id"] == replacement.claim_id
+    assert getattr(state.execution.services, name) is state.callbacks[name]
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
+
+
 @pytest.mark.parametrize("name", [
-    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+    "external_source_admission", "capture_external_source_configuration",
 ])
 @pytest.mark.parametrize("error_kind", [
     "external_configuration_service_unavailable", "external_configuration_timeout",
     "external_configuration_throttled", "external_configuration_metadata_invalid",
-    "external_configuration_limit_exceeded", "cancelled", "denied", "held",
+    "external_configuration_limit_exceeded", "cancelled", "identity_cancelled", "denied", "held",
+    "checkpoint_user_cancelled", "checkpoint_run_timeout", "checkpoint_ownership_lost",
 ])
 def test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live_lease(
     harness, monkeypatch, external_callback_execution, name, error_kind,
@@ -1560,6 +1731,11 @@ def test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live
     configuration = importlib.import_module("functions_orchestration_external_configuration")
     if error_kind == "cancelled":
         error = configuration.ExternalConfigurationCancelledError()
+    elif error_kind == "identity_cancelled":
+        identity = importlib.import_module("functions_orchestration_external_identity")
+        error = identity.ExternalIdentityCancelledError()
+    elif error_kind.startswith("checkpoint_"):
+        error = CheckpointError(error_kind.removeprefix("checkpoint_"))
     elif error_kind == "denied":
         error = ResultUnavailableError("result_source_unavailable")
     elif error_kind == "held":
@@ -1586,14 +1762,194 @@ def test_external_runtime_callbacks_preserve_typed_failures_and_recheck_the_live
     assert not state.lease.stopped.is_set() and harness.model_calls == [] and harness.blobs.file_uploads == 0
 
 
+@pytest.mark.parametrize("code", ["user_cancelled", "run_timeout", "ownership_lost"])
+@pytest.mark.parametrize("sticky", [False, True])
+def test_real_capture_keeps_typed_owning_control_after_the_lease_recheck(
+    harness, external_callback_execution, code, sticky,
+):
+    state = external_callback_execution
+    original = CheckpointError(code)
+    original.private_detail = "PRIVATE_CONTROL_DIAGNOSTIC"
+    original.__cause__ = RuntimeError("PRIVATE_CAUSE")
+    state.error = original
+    module = importlib.import_module("functions_orchestration_invocation_capture")
+    producer = state.arguments["capture_external_source_configuration"]["producer"]
+    callback = state.execution.context.capture_external_source_configuration
+    capture = module.OrchestrationInvocationCapture(
+        lambda source_type, **kwargs: callback(source_type, producer=producer, **kwargs),
+    )
+    observed = []
+
+    def invoke():
+        try:
+            capture("web", settings=state.execution.settings)
+        except CheckpointError as error:
+            observed.append(error)
+            if not sticky:
+                raise
+        capture.require_valid(captured=True)
+
+    with pytest.raises(CheckpointError) as failure:
+        invoke()
+    current = state.lease.read()
+    assert failure.value.code == code and failure.value is not original
+    assert len(state.calls) == len(observed) == 1 and observed[0].code == code
+    assert failure.value.__cause__ is failure.value.__context__ is None
+    assert not hasattr(failure.value, "private_detail")
+    assert "PRIVATE_" not in str(failure.value)
+    assert current["status"] == "running" and not current.get("failure")
+    assert not current.get("cancellation_requested_at")
+    assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+
+
+@pytest.mark.parametrize("entrypoint", ["callback", "engine_failure"])
+@pytest.mark.parametrize("code", [
+    "ownership_lost", "user_cancelled", "run_timeout", "step_timeout",
+    "step_budget", "analysis_input_too_large", "context_unavailable", "model_failed",
+])
+def test_headless_control_capture_reconstructs_only_the_safe_code(entrypoint, code):
+    module = importlib.import_module("functions_orchestration_invocation_capture")
+
+    class PrivateState:
+        pass
+
+    private = PrivateState()
+    original = HarnessExecutionError(
+        code, final_frames=["data: PRIVATE_FINAL_FRAME\n\n"],
+        durable_status="PRIVATE_DURABLE_STATUS", retryable=True,
+    )
+    original.private_detail = private
+    original.failure["private_detail"] = private
+    original.__cause__ = RuntimeError(private)
+    original.__context__ = RuntimeError("PRIVATE_CONTEXT")
+    original.args = ("PRIVATE_DIAGNOSTIC",)
+    original_ref, private_ref = weakref.ref(original), weakref.ref(private)
+    pending, calls = [original], []
+    del original, private
+
+    def current_owner(source_type, **kwargs):
+        calls.append(source_type)
+        raise pending.pop()
+
+    capture = module.OrchestrationInvocationCapture(current_owner)
+    with pytest.raises(HarnessExecutionError) as first:
+        if entrypoint == "callback":
+            capture("web", settings={})
+        else:
+            try:
+                current_owner("web", settings={})
+            except HarnessExecutionError as error:
+                capture.fail(error)
+    with pytest.raises(HarnessExecutionError) as sticky:
+        capture.require_valid(captured=True)
+    with pytest.raises(HarnessExecutionError) as repeated:
+        capture("web", settings={})
+    gc.collect()
+    original_after, private_after = original_ref(), private_ref()
+    expected = HarnessExecutionError(code)
+    for failure in (first.value, sticky.value, repeated.value):
+        assert type(failure) is HarnessExecutionError
+        assert isinstance(failure, module.OrchestrationInvocationControlError)
+        assert failure.failure == expected.failure and failure.code == code
+        assert failure.message == expected.message and failure.args == expected.args
+        assert failure.final_frames == [] and failure.durable_status is None
+        assert failure.retryable is False and not hasattr(failure, "private_detail")
+        assert failure.__cause__ is failure.__context__ is None
+    assert first.value is not sticky.value and sticky.value is not repeated.value
+    assert original_after is private_after is None
+    assert calls == ["web"] and pending == []
+
+
+@pytest.mark.parametrize("boundary,code,model_calls", [
+    ("capability", "context_unavailable", 0),
+    ("deadline", "result_not_ready", 0),
+    ("model", "model_failed", 1),
+])
+def test_real_headless_callsite_control_survives_initial_and_sticky_capture(
+    harness, external_callback_execution, boundary, code, model_calls,
+):
+    state = external_callback_execution
+    execution = state.execution
+    if boundary == "capability":
+        harness.settings["chat_orchestration_enabled_capabilities"] = ["document_search"]
+        state.on_call = lambda: execution.context.invoke_prompt("Must not reach the model.")
+    elif boundary == "deadline":
+        state.on_call = lambda: execution._finalize_delivery_failure("run_timeout")
+    else:
+        harness.replies = [""]
+        state.on_call = lambda: execution.context.invoke_prompt("A response is required.")
+    module = importlib.import_module("functions_orchestration_invocation_capture")
+    producer = state.arguments["capture_external_source_configuration"]["producer"]
+    callback = execution.context.capture_external_source_configuration
+    capture = module.OrchestrationInvocationCapture(
+        lambda source_type, **kwargs: callback(source_type, producer=producer, **kwargs),
+    )
+    original = state.lease.read()
+    with pytest.raises(HarnessExecutionError) as first:
+        capture("web", settings=execution.settings)
+    with pytest.raises(HarnessExecutionError) as sticky:
+        capture.require_valid(captured=True)
+    current = state.lease.read()
+    messages = harness.assistant_messages()
+    for failure in (first.value, sticky.value):
+        assert type(failure) is HarnessExecutionError and failure.code == code
+        assert failure.__cause__ is failure.__context__ is None
+        assert failure.final_frames == [] and failure.durable_status is None
+    assert len(state.calls) == 1 and first.value is not sticky.value
+    assert current["status"] == original["status"] == "running" and not current.get("failure")
+    assert current["execution_deadline_at"] == original["execution_deadline_at"]
+    assert current.get("task_results") == original.get("task_results")
+    assert current.get("pending_results") == original.get("pending_results")
+    assert len(harness.model_calls) == model_calls and harness.blobs.file_uploads == 0
+    assert messages == [] and not state.lease.stopped.is_set()
+
+
+@pytest.mark.parametrize("accounting", ["total_generation", "unknown"])
+def test_headless_input_budget_keeps_its_actual_owner_error(harness, accounting):
+    workflow = importlib.import_module("functions_workflow_context")
+    capabilities = importlib.import_module("functions_model_capabilities")
+    harness.settings["gpt_model"]["selected"][0].update({
+        "contextWindow": 2048, "outputTokenLimit": 1024, "responseLength": 256,
+        "outputTokenAccounting": accounting,
+    })
+    harness.create(replies=["Must not fit without truncating the complete input."])
+    execution = harness.prepare()
+    error_type = (
+        workflow.WorkflowContextBudgetError
+        if accounting == "total_generation" else capabilities.ModelTokenBudgetError
+    )
+    try:
+        with pytest.raises(error_type) as failure:
+            execution.context.invoke_prompt(
+                "Complete retained evidence. " * 4096,
+                metadata={"complete_saved_analysis_input": True},
+            )
+        saved = execution.lease.read()
+        if accounting == "total_generation":
+            audit = execution.context.invoke_prompt.context_budget
+            assert failure.value.audit is audit and audit["decision"] == "blocked"
+            assert audit["input_tokens"] > audit["input_budget_tokens"]
+            assert audit["truncated"] is False
+        else:
+            assert failure.value.code == "model_generation_unbounded"
+            assert not hasattr(execution.context.invoke_prompt, "context_budget")
+        assert type(failure.value) is error_type and not isinstance(failure.value, HarnessExecutionError)
+        assert saved["status"] == "running" and not saved.get("failure")
+        assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+    finally:
+        execution.close()
+    assert all(client.closed for client in harness.clients) and execution.lease.stopped.is_set()
+
+
 @pytest.mark.parametrize("name", [
     "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
 ])
-@pytest.mark.parametrize("loss", ["stopped", "stolen"])
+@pytest.mark.parametrize("loss", ["stopped", "stolen", "retagged"])
 def test_actual_root_external_callbacks_cannot_borrow_a_replacement_owner(harness, monkeypatch, name, loss):
     harness.create(replies=["Retained before the real root callback race."])
     execution = harness.prepare()
     original_lease, replacement = execution.lease, None
+    original_claim = original_lease.claim_id
     raw_callback = getattr(execution.services, name)
     callback = getattr(execution.context, name)
     producer = execution.context.result_producer(execution.record["plan"]["steps"][0])
@@ -1602,13 +1958,12 @@ def test_actual_root_external_callbacks_cannot_borrow_a_replacement_owner(harnes
     effect = Mock(side_effect=AssertionError("A stale worker reached actual root preflight or admission."))
     try:
         if name == "external_source_preflight":
-            assert type(raw_callback.__self__) is sources.OrchestrationExternalSourceProvider
             assert raw_callback.__func__ is sources.OrchestrationExternalSourceProvider.preflight_gather_invocation
         else:
             assert raw_callback.__module__ == harness.bootstrap.__name__
         assert callback.__wrapped__ is raw_callback
         assert signature(callback) == signature(raw_callback)
-        if loss == "stolen":
+        if loss != "stopped":
             harness.run_engine(execution)
             record, replacement = _claim_external_callback_replacement(harness, original_lease)
             replacement.start()
@@ -1616,6 +1971,8 @@ def test_actual_root_external_callbacks_cannot_borrow_a_replacement_owner(harnes
             current = replacement.read()
             assert current["attempt_index"] == record["attempt_index"] == 1
             assert replacement.token == original_lease.token and replacement.claim_id != original_lease.claim_id
+            if loss == "retagged":
+                original_lease.claim_id = replacement.claim_id
         else:
             original_lease.close()
             current = original_lease.read()
@@ -1627,14 +1984,387 @@ def test_actual_root_external_callbacks_cannot_borrow_a_replacement_owner(harnes
             if name == "capture_external_source_configuration":
                 callback("web", producer=producer, settings=harness.settings)
             elif name == "external_source_preflight":
-                callback(producer=producer, selector=None)
+                callback(producer=producer)
             else:
                 callback(producer=producer, prepared={"private": "unadmitted"})
         assert failure.value.code == "ownership_lost"
         effect.assert_not_called()
         assert getattr(execution.services, name) is raw_callback
-        assert len(harness.model_calls) == (1 if loss == "stolen" else 0) and harness.blobs.file_uploads == 0
+        assert len(harness.model_calls) == (0 if loss == "stopped" else 1) and harness.blobs.file_uploads == 0
     finally:
+        original_lease.claim_id = original_claim
+        execution.lease = original_lease
+        execution.close()
+        if replacement is not None:
+            replacement.close(release=True)
+
+
+@pytest.mark.parametrize("name", [
+    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+])
+@pytest.mark.parametrize("code", [
+    "user_cancelled", "run_timeout", "ownership_lost", "identity_cancelled", "configuration_cancelled",
+])
+def test_actual_root_callbacks_preserve_typed_control_from_the_current_reader(
+    harness, real_external_callback_execution, name, code,
+):
+    state = real_external_callback_execution
+    execution = state.execution
+    if code == "identity_cancelled":
+        owner = importlib.import_module("functions_orchestration_external_identity")
+        error = owner.ExternalIdentityCancelledError()
+    elif code == "configuration_cancelled":
+        owner = importlib.import_module("functions_orchestration_external_configuration")
+        error = owner.ExternalConfigurationCancelledError()
+    else:
+        error = CheckpointError(code)
+    state.error = error
+    callback = getattr(execution.context, name)
+    shared_callback = getattr(execution.services, name)
+    before = deepcopy(harness.results.container.items)
+    reads_before = len(state.identity_reads)
+    with pytest.raises(type(error)) as failure:
+        if name == "capture_external_source_configuration":
+            callback("url", producer=state.producer, settings=harness.settings)
+        elif name == "external_source_preflight":
+            callback(producer=state.producer)
+        else:
+            callback(producer=state.producer, prepared=state.prepared)
+    current = execution.lease.read()
+    assert failure.value is error and len(state.identity_reads) == reads_before + 1
+    assert callback.__wrapped__ is shared_callback
+    if name == "external_source_preflight":
+        sources = importlib.import_module("functions_orchestration_external_sources")
+        assert shared_callback.__func__ is sources.OrchestrationExternalSourceProvider.preflight_gather_invocation
+    else:
+        assert shared_callback.__module__ == harness.bootstrap.__name__
+    assert getattr(execution.services, name) is shared_callback
+    assert current["status"] == "running" and not current.get("cancellation_requested_at")
+    assert not current.get("failure") and harness.results.container.items == before
+    assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+
+    state.error = None
+    fresh_services = harness.services()
+    reference = next(iter(state.admitted.values()))
+    current_reference = fresh_services.results.access.external_source_authorizer(
+        reference, producer=state.producer, user_id="owner", conversation_id="conversation-1",
+    )
+    assert current_reference == reference
+    assert fresh_services.results.store._orchestration_execution is None
+    assert len(state.admitted) == 1 and execution.services.results.access.external_source_catalog == {}
+
+
+def test_headless_preflight_executes_actual_current_authority_without_acquisition(
+    harness, real_external_callback_execution, monkeypatch,
+):
+    state = real_external_callback_execution
+    execution = state.execution
+    sources = importlib.import_module("functions_orchestration_external_sources")
+    configuration = importlib.import_module("functions_orchestration_external_configuration")
+    raw = execution.services.external_source_preflight
+    callback = execution.context.external_source_preflight
+    acquisition = Mock(side_effect=AssertionError("Invocation preflight must not attest or acquire content."))
+    monkeypatch.setattr(configuration.OrchestrationExternalConfigurationAttestor, "capture", acquisition)
+    monkeypatch.setattr(raw.__self__, "acquisition_validator", acquisition)
+    before = deepcopy(harness.results.container.items)
+    reads_before = len(state.identity_reads)
+    result = callback(producer=state.producer, selector=None)
+    with pytest.raises(ResultContractError) as selector_failure:
+        callback(producer=state.producer, selector="personal:owner:unapproved")
+    harness.settings["enable_url_access"] = False
+    with pytest.raises(ResultUnavailableError) as revoked:
+        callback(producer=state.producer, selector=None)
+    current = execution.lease.read()
+    fresh_services = harness.services()
+    assert result is None and len(state.identity_reads) == reads_before + 3
+    assert raw.__func__ is sources.OrchestrationExternalSourceProvider.preflight_gather_invocation
+    assert callback.__wrapped__ is raw and signature(callback) == signature(raw)
+    assert execution._capability_context["external_source_preflight"] is raw
+    assert execution.services.external_source_preflight is raw
+    assert fresh_services.external_source_preflight.__func__ is raw.__func__
+    assert fresh_services.external_source_preflight.__self__ is not raw.__self__
+    assert fresh_services.results.store._orchestration_execution is None
+    assert selector_failure.value.code == "result_external_selection_invalid"
+    assert revoked.value.code == "result_external_capability_unavailable"
+    assert current["status"] == "running" and not current.get("failure")
+    assert harness.results.container.items == before and execution.services.results.access.external_source_catalog == {}
+    assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+    acquisition.assert_not_called()
+
+
+@pytest.mark.parametrize("family,code", [
+    ("configuration", "external_configuration_service_unavailable"),
+    ("configuration", "external_configuration_timeout"),
+    ("configuration", "external_configuration_throttled"),
+    ("configuration", "external_configuration_metadata_invalid"),
+    ("configuration", "external_configuration_limit_exceeded"),
+    ("identity", "external_identity_service_unavailable"),
+    ("identity", "external_identity_response_invalid"),
+])
+def test_actual_preflight_preserves_current_metadata_failure_identity(
+    harness, real_external_callback_execution, monkeypatch, family, code,
+):
+    state = real_external_callback_execution
+    execution = state.execution
+    module = importlib.import_module(f"functions_orchestration_external_{family}")
+    error_type = (
+        module.ExternalConfigurationServiceError if family == "configuration"
+        else module.ExternalIdentityServiceError
+    )
+    error = error_type(code)
+    state.error = error
+    raw = execution.services.external_source_preflight
+    order = []
+    read_run = harness.runs.read_item
+
+    def observed_read(*args, **kwargs):
+        result = read_run(*args, **kwargs)
+        order.append(len(state.identity_reads))
+        return result
+
+    monkeypatch.setattr(harness.runs, "read_item", observed_read)
+    reads_before = len(state.identity_reads)
+    with execution.lease.lock, pytest.raises(error_type) as failure:
+        execution.context.external_source_preflight(producer=state.producer)
+    observed_reads = list(order)
+    current = execution.lease.read()
+    messages = harness.assistant_messages()
+    assert failure.value is error and failure.value.code == code
+    assert failure.value.retryable is error.retryable
+    assert len(state.identity_reads) == reads_before + 1
+    assert observed_reads[0] == reads_before and observed_reads[-1] == reads_before + 1
+    assert observed_reads.count(reads_before + 1) == 1
+    assert execution.services.external_source_preflight is raw
+    assert current["status"] == "running" and not current.get("failure")
+    assert messages == [] and harness.model_calls == [] and harness.blobs.file_uploads == 0
+
+
+@pytest.mark.parametrize("origin", ["initial", "continuation"])
+@pytest.mark.parametrize("boundary", ["before", "after"])
+@pytest.mark.parametrize("callback_failed", [False, True])
+def test_actual_preflight_pins_original_claim_across_store_view_rollover(
+    harness, real_external_callback_execution, monkeypatch, origin, boundary, callback_failed,
+):
+    state = real_external_callback_execution
+    continuation = importlib.import_module("functions_orchestration_continuation")
+    sources = importlib.import_module("functions_orchestration_external_sources")
+    configuration = importlib.import_module("functions_orchestration_external_configuration")
+    store_module = importlib.import_module("functions_workflow_result_store")
+    execution, resumed, replacement = state.execution, None, None
+    if origin == "continuation":
+        record, lease = _claim_external_callback_replacement(harness, execution.lease, mode="execute")
+        try:
+            resumed = prepare_harness_execution(
+                record, settings=harness.settings, lease=lease,
+                checkpoint_factory=continuation.ContinuationCheckpoints,
+            )
+            checkpoints = resumed.checkpoint_factory(record, resumed.context, resumed.settings, lease)
+            checkpoints.initialize()
+        except BaseException:
+            if resumed is not None:
+                resumed.close()
+            else:
+                lease.close(release=True)
+            raise
+        execution = resumed
+    original_lease = execution.lease
+    original_claim = original_lease.claim_id
+    original = original_lease.read()
+    old_view = execution.services.results.store
+    raw = execution.services.external_source_preflight
+    callback = execution.context.external_source_preflight
+    producer = execution.context.result_producer(execution.record["plan"]["steps"][0])
+    verify = sources.OrchestrationExternalSourceProvider._gather_invocation_state
+    reads_before = len(state.identity_reads)
+    fresh_services = None
+
+    def take_over_and_retag():
+        nonlocal replacement, fresh_services
+        record, replacement = _claim_external_callback_replacement(harness, original_lease, mode="execute")
+        replacement.start()
+        fresh_services = harness.services()
+        fresh_services.results.store = continuation.bind_orchestration_result_store(
+            record, store=fresh_services.results.store, lease=replacement,
+        )
+        execution.lease = replacement
+        original_lease.claim_id = replacement.claim_id
+
+    def verify_then_take_over(*args, **kwargs):
+        try:
+            return verify(*args, **kwargs)
+        finally:
+            take_over_and_retag()
+
+    if callback_failed:
+        state.error = configuration.ExternalConfigurationServiceError("external_configuration_timeout")
+    try:
+        with original_lease.lock, monkeypatch.context() as race:
+            if boundary == "before":
+                take_over_and_retag()
+            else:
+                race.setattr(sources.OrchestrationExternalSourceProvider, "_gather_invocation_state", verify_then_take_over)
+            with pytest.raises(CheckpointError) as failure:
+                callback(producer=producer)
+            identity = store_module._orchestration_identity("owner", "conversation-1", "run-1", producer.step_id)
+            live_scope = fresh_services.results.store._check_orchestration_execution(identity)
+            stale_type = CheckpointError if origin == "continuation" else store_module.AnalysisWorkUnitConflictError
+            with pytest.raises(stale_type) as stale:
+                old_view._analysis_guard(identity)
+            current = replacement.read()
+        assert failure.value.code == "ownership_lost"
+        assert stale.value.code == (
+            "ownership_lost" if origin == "continuation" else "analysis_work_ownership_lost"
+        )
+        assert len(state.identity_reads) == reads_before + (0 if boundary == "before" else 1)
+        assert live_scope.claim_id == replacement.claim_id and live_scope.token == original_lease.token
+        assert replacement.claim_id != original_claim and replacement.token == original_lease.token
+        assert execution.services.external_source_preflight is raw and callback.__wrapped__ is raw
+        assert fresh_services.external_source_preflight.__func__ is raw.__func__
+        assert current["id"] == original["id"] and current["attempt_index"] == original["attempt_index"]
+        assert current["execution_deadline_at"] == original["execution_deadline_at"]
+        assert current.get("task_results") == original.get("task_results")
+        assert current.get("pending_results") == original.get("pending_results")
+        assert current["status"] == "running" and not current.get("failure")
+        assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+    finally:
+        state.error = None
+        original_lease.claim_id = original_claim
+        execution.lease = original_lease
+        if resumed is not None:
+            resumed.close()
+        if replacement is not None:
+            replacement.close(release=True)
+
+
+@pytest.mark.parametrize("name", [
+    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+])
+@pytest.mark.parametrize("loss", ["stopped", "retagged"])
+def test_successful_real_root_callbacks_cannot_return_after_losing_their_original_claim(
+    harness, real_external_callback_execution, monkeypatch, name, loss,
+):
+    state = real_external_callback_execution
+    execution = state.execution
+    original_lease, replacement = execution.lease, None
+    original_claim = original_lease.claim_id
+    sources = importlib.import_module("functions_orchestration_external_sources")
+    configuration = importlib.import_module("functions_orchestration_external_configuration")
+    owner, operation = {
+        "external_source_preflight": (sources.OrchestrationExternalSourceProvider, "_gather_invocation_state"),
+        "capture_external_source_configuration": (configuration.OrchestrationExternalConfigurationAttestor, "capture"),
+        "external_source_admission": (sources.OrchestrationExternalSourceProvider, "admit_gather_result"),
+    }[name]
+    complete = getattr(owner, operation)
+    completed = []
+    shared_callback = getattr(execution.services, name)
+
+    def complete_then_lose_claim(*args, **kwargs):
+        nonlocal replacement
+        result = complete(*args, **kwargs)
+        completed.append(result)
+        if loss == "stopped":
+            original_lease.close()
+        else:
+            _, replacement = _claim_external_callback_replacement(harness, original_lease, mode="execute")
+            replacement.start()
+            execution.lease = replacement
+            original_lease.claim_id = replacement.claim_id
+        return result
+
+    try:
+        with original_lease.lock, monkeypatch.context() as boundary:
+            boundary.setattr(owner, operation, complete_then_lose_claim)
+            with pytest.raises(CheckpointError) as failure:
+                if name == "capture_external_source_configuration":
+                    execution.context.capture_external_source_configuration(
+                        "url", producer=state.producer, settings=harness.settings,
+                    )
+                elif name == "external_source_preflight":
+                    execution.context.external_source_preflight(producer=state.producer)
+                else:
+                    execution.context.external_source_admission(
+                        producer=state.producer, prepared=state.prepared,
+                    )
+        assert failure.value.code == "ownership_lost" and len(completed) == 1
+        if name == "capture_external_source_configuration":
+            assert completed == [None]
+        elif name == "external_source_admission":
+            assert completed == [state.admitted]
+        assert getattr(execution.services, name) is shared_callback
+        assert execution.services.results.access.external_source_catalog == {}
+        assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+        if replacement is not None:
+            current = replacement.read()
+            assert current["status"] == "running" and not current.get("failure")
+            assert replacement.token == original_lease.token and current["attempt_index"] == 1
+    finally:
+        original_lease.claim_id = original_claim
+        execution.lease = original_lease
+        if replacement is not None:
+            replacement.close(release=True)
+
+
+@pytest.mark.parametrize("name", [
+    "external_source_preflight", "external_source_admission", "capture_external_source_configuration",
+])
+@pytest.mark.parametrize("loss", ["stopped", "stolen", "retagged"])
+def test_actual_root_callback_failure_rechecks_its_original_claim(harness, monkeypatch, name, loss):
+    """Delegate real Root verification and lose ownership as it rejects missing proof."""
+    harness.create(replies=["Retained before the actual Root verification race."])
+    execution = harness.prepare()
+    original_lease, replacement = execution.lease, None
+    original_claim = original_lease.claim_id
+    sources = importlib.import_module("functions_orchestration_external_sources")
+    configuration = importlib.import_module("functions_orchestration_external_configuration")
+    owner, operation = {
+        "external_source_preflight": (sources.OrchestrationExternalSourceProvider, "_gather_invocation_state"),
+        "capture_external_source_configuration": (sources.OrchestrationExternalSourceProvider, "preflight_gather_acquisition"),
+        "external_source_admission": (configuration.OrchestrationExternalConfigurationAttestor, "selector_for"),
+    }[name]
+    verify = getattr(owner, operation)
+    calls = []
+    callback = getattr(execution.context, name)
+    shared_callback = getattr(execution.services, name)
+    producer = execution.context.result_producer(execution.record["plan"]["steps"][0])
+
+    def verify_then_lose_claim(*args, **kwargs):
+        nonlocal replacement
+        calls.append(operation)
+        try:
+            return verify(*args, **kwargs)
+        finally:
+            if loss == "stopped":
+                original_lease.close()
+            else:
+                _, replacement = _claim_external_callback_replacement(harness, original_lease)
+                replacement.start()
+                execution.lease = replacement
+                if loss == "retagged":
+                    original_lease.claim_id = replacement.claim_id
+
+    try:
+        if loss != "stopped":
+            harness.run_engine(execution)
+        with original_lease.lock, monkeypatch.context() as boundary:
+            boundary.setattr(owner, operation, verify_then_lose_claim)
+            with pytest.raises(CheckpointError) as failure:
+                if name == "capture_external_source_configuration":
+                    callback("web", producer=producer, settings=harness.settings)
+                elif name == "external_source_preflight":
+                    callback(producer=producer)
+                else:
+                    callback(producer=producer, prepared={"private": "unadmitted"})
+        assert failure.value.code == "ownership_lost" and calls == [operation]
+        assert callback.__wrapped__ is shared_callback
+        assert getattr(execution.services, name) is shared_callback
+        if replacement is not None:
+            current = replacement.read()
+            assert current["status"] == "running" and not current.get("failure")
+            assert current["attempt_index"] == 1 and replacement.token == original_lease.token
+        assert len(harness.model_calls) == (0 if loss == "stopped" else 1)
+        assert harness.blobs.file_uploads == 0
+    finally:
+        original_lease.claim_id = original_claim
         execution.lease = original_lease
         execution.close()
         if replacement is not None:
@@ -1663,6 +2393,23 @@ def test_csv_render_requires_an_explicit_projection_from_the_shared_catalog(harn
     assert harness.clients == [] and harness.model_calls == [] and harness.blobs.file_uploads == 0
 
 
+def _read_record_exports(services, outputs):
+    exports = {}
+    for output in outputs:
+        with services.rendering.open_download(output["output_id"]) as stream:
+            payload = stream.read()
+        text = payload.decode("utf-8-sig")
+        if output["output_format"] == "csv":
+            records = list(csv.DictReader(io.StringIO(text)))
+        elif output["output_format"] == "json":
+            records = json.loads(text)
+        else:
+            raise AssertionError("The record export regressions require CSV or JSON.")
+        exports[output["output_format"]] = records
+        assert len(payload) == output["size_bytes"]
+    return exports
+
+
 def test_explicit_multiple_renders_share_complete_prepared_content(harness):
     columns = [{"name": "id", "value_type": "string", "nullable": False}]
     rows = [{"id": "001"}, {"id": "final-row"}]
@@ -1685,7 +2432,11 @@ def test_explicit_multiple_renders_share_complete_prepared_content(harness):
     outputs = restart.rendering.list_public_outputs("run-1")
     artifacts = restart.rendering.committed_artifacts("run-1")
     messages = harness.assistant_messages()
+    with harness.publication_only(restart):
+        exported_rows = _read_record_exports(restart, outputs)
     assert done["status"] == "completed"
+    assert exported_rows == {"csv": rows, "json": rows}
+    assert all(records[-1] == {"id": "final-row"} for records in exported_rows.values())
     assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 2
     assert len(outputs) == len(artifacts) == 2
     assert all(output["state"] == "completed" and output["row_count"] == 2 for output in outputs)
@@ -2743,7 +3494,11 @@ def test_delivery_refresh_uses_real_committed_files_without_execution(harness):
     done = decoded_frames(frames)[-1]
     saved = harness.read()
     messages = harness.assistant_messages()
+    with harness.publication_only(services):
+        exported_rows = _read_record_exports(services, expected_outputs)
     assert done["status"] == saved["status"] == "completed"
+    assert exported_rows == {"csv": rows, "json": rows}
+    assert all(records[-1] == {"id": "final-row"} for records in exported_rows.values())
     assert done["outputs"] == expected_outputs == saved["outputs"]
     assert done["generated_artifacts"] == expected_artifacts == saved["artifacts"]
     assert len(expected_outputs) == len(expected_artifacts) == 2
@@ -3088,10 +3843,13 @@ def test_actual_current_metadata_errors_survive_headless_boundaries(
     source = current_metadata
     configuration = source.configuration
     harness.settings["enable_chat_orchestration_harness"] = False
-    fault_entry_tasks = []
+    fault_entry_states = []
 
     def read_current_metadata():
-        fault_entry_tasks.append(deepcopy(harness.read().get("task_results")))
+        fault_entry_states.append({
+            "run": deepcopy(harness.read()),
+            "checkpoints": deepcopy(harness.steps.items),
+        })
         source.read()
 
     def answer_after_current_metadata():
@@ -3160,12 +3918,27 @@ def test_actual_current_metadata_errors_survive_headless_boundaries(
 
     saved = harness.read()
     messages = harness.assistant_messages()
-    assert len(source.observed) == len(fault_entry_tasks) == 1
+    assert len(source.observed) == len(fault_entry_states) == 1
+    before = fault_entry_states[0]["run"]
     observed = source.observed[0]
     if fault not in {"cancelled", "denied"}:
         assert type(observed) is configuration.ExternalConfigurationServiceError
         assert observed.code == code and observed.retryable is retryable
-        assert saved["status"] == record["status"] and saved.get("task_results") == fault_entry_tasks[0]
+        for field in (
+            "status", "outcome", "task_results", "pending_results", "execution_steps",
+            "attempt_index", "started_at", "execution_deadline_at", "checkpoint_version",
+            "execution_binding", "harness_step_token_usage", "harness_prompt_token_usage",
+            "message_saved", "finalization_status",
+        ):
+            assert (field in saved, saved.get(field)) == (field in before, before.get(field)), field
+        assert harness.steps.items == fault_entry_states[0]["checkpoints"]
+        if boundary == "model":
+            assert before["task_results"] == {}
+            assert before["execution_steps"][-1]["status"] == "running"
+            assert any(
+                item["id"].startswith("checkpoint-input:")
+                for item in fault_entry_states[0]["checkpoints"].values()
+            )
         assert not saved.get("failure") and messages == []
     elif fault == "cancelled":
         assert type(observed) is configuration.ExternalConfigurationCancelledError
@@ -3335,6 +4108,249 @@ def test_authority_infrastructure_never_becomes_a_headless_denial(
     assert len(harness.model_calls) == (0 if entrypoint == "prepare" else 1)
     assert all(client.closed for client in harness.clients)
     assert "PRIVATE_" not in failure.value.message
+
+
+@pytest.mark.parametrize("error_name", [
+    "source_reader", "external_authorizer", "output_configuration", "storage",
+])
+@pytest.mark.parametrize("wrapper", ["direct", "result", "checkpoint", "harness"])
+def test_initial_file_publication_preserves_source_read_uncertainty(
+    harness, monkeypatch, error_name, wrapper,
+):
+    harness.create(
+        [compose_step(), render_step("report", "md")],
+        replies=["The complete retained report."],
+    )
+    execution = harness.prepare()
+    result = harness.run_engine(execution)
+    original = execution.lease.read()
+    services = harness.services()
+    outputs = services.rendering.list_public_outputs("run-1")
+    artifacts = services.rendering.committed_artifacts("run-1")
+    retained = deepcopy(harness.results.container.items)
+    output_store = importlib.import_module("functions_orchestration_output_store")
+    errors = {
+        "source_reader": ResultUnavailableError("result_source_reader_required"),
+        "external_authorizer": ResultUnavailableError("result_external_authorizer_required"),
+        "output_configuration": output_store.OutputError("output_source_configuration_invalid"),
+        "storage": output_store.OutputStorageError(),
+    }
+    error = errors[error_name]
+    read = execution.services.rendering._authorize_read_record
+    failed_reads = []
+
+    def unavailable_read(record):
+        failed_reads.append(record["id"])
+        if len(failed_reads) == 1:
+            if wrapper == "result":
+                raise ResultUnavailableError("result_source_unavailable") from error
+            if wrapper == "checkpoint":
+                raise CheckpointError("checkpoint_unavailable") from error
+            if wrapper == "harness":
+                raise HarnessExecutionError("context_unavailable") from error
+            raise error
+        return read(record)
+
+    try:
+        with monkeypatch.context() as unavailable:
+            unavailable.setattr(execution.services.rendering, "_authorize_read_record", unavailable_read)
+            with pytest.raises(HarnessExecutionError) as failure:
+                execution._finish(result, None)
+    finally:
+        execution.close()
+    saved = harness.read()
+    current_outputs = services.rendering.list_public_outputs("run-1")
+    current_artifacts = services.rendering.committed_artifacts("run-1")
+    messages = harness.assistant_messages()
+    assert len(failed_reads) == 1 and failure.value.code == "message_not_saved"
+    assert failure.value.retryable is (error_name == "storage")
+    assert failure.value.final_frames == [] and failure.value.durable_status is None
+    for name in (
+        "status", "outcome", "failure", "completed_at", "task_results", "pending_results",
+        "execution_steps", "started_at", "execution_deadline_at", "harness_step_token_usage",
+        "harness_prompt_token_usage", "message_saved", "finalization_status",
+    ):
+        assert saved.get(name) == original.get(name), name
+    assert saved["status"] == "completed" and saved["execution_lease"] is None
+    assert current_outputs == outputs and current_artifacts == artifacts
+    assert harness.results.container.items == retained and messages == []
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 1
+    assert all(client.closed for client in harness.clients) and execution.lease.stopped.is_set()
+
+    continuation = importlib.import_module("functions_orchestration_continuation")
+    claimed = continuation.claim_run_continuation(
+        "run-1", "owner", "conversation-1",
+        authorize=lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1"),
+        message_container=harness.messages, mode="delivery",
+    )
+    assert claimed is not None
+    record, lease = claimed
+    services = harness.services()
+    producer_writes = harness.results.container.sequence
+    with harness.publication_only(services):
+        frames = refresh_harness_delivery(
+            record, services=services, settings=harness.settings, lease=lease,
+        )
+    recovered = harness.read()
+    messages = harness.assistant_messages()
+    final = decoded_frames(frames)[-1]
+    assert final["status"] == recovered["status"] == "completed"
+    assert final["message_saved"] is recovered["message_saved"] is True
+    assert recovered["finalization_status"] == "saved" and len(messages) == 1
+    for name in (
+        "id", "attempt_index", "started_at", "execution_deadline_at",
+        "task_results", "pending_results", "harness_step_token_usage", "harness_prompt_token_usage",
+    ):
+        assert recovered.get(name) == original.get(name), name
+    assert recovered["outputs"] == outputs and recovered["artifacts"] == artifacts
+    assert harness.results.container.sequence == producer_writes
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 1
+    assert recovered["execution_lease"] is None and lease.stopped.is_set()
+
+
+@pytest.mark.parametrize("status", ["completed", "waiting"])
+@pytest.mark.parametrize("observation", ["list_public_outputs", "committed_artifacts"])
+@pytest.mark.parametrize("entrypoint", ["initial", "refresh"])
+def test_opaque_file_observation_permission_preserves_saved_work(
+    harness, monkeypatch, status, observation, entrypoint,
+):
+    harness.create(
+        [compose_step(), render_step("report", "md")],
+        replies=["Retained content must not be regenerated."],
+    )
+    if status == "waiting":
+        def unavailable_upload():
+            raise TimeoutError("PRIVATE_FIRST_UPLOAD")
+        harness.blobs.before_file_upload = unavailable_upload
+    execution = harness.prepare()
+    result = harness.run_engine(execution)
+    original = execution.lease.read()
+    services = execution.services if entrypoint == "initial" else harness.services()
+    observer = harness.services()
+    outputs = observer.rendering.list_public_outputs("run-1")
+    artifacts = observer.rendering.committed_artifacts("run-1")
+    retained = deepcopy(harness.results.container.items)
+    read = getattr(services.rendering, observation)
+    reads = []
+
+    def unavailable_observation(run_id):
+        current = read(run_id)
+        reads.append(run_id)
+        if len(reads) == 1:
+            raise PermissionError("PRIVATE_FILE_OBSERVATION_PERMISSION")
+        return current
+
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(services.rendering, observation, unavailable_observation)
+            with pytest.raises(HarnessExecutionError) as failure:
+                if entrypoint == "initial":
+                    execution._finish(result, None)
+                else:
+                    with harness.publication_only(services):
+                        refresh_harness_delivery(
+                            original, services=services, settings=harness.settings, lease=execution.lease,
+                        )
+    finally:
+        execution.close()
+    saved = harness.read()
+    current_outputs = observer.rendering.list_public_outputs("run-1")
+    current_artifacts = observer.rendering.committed_artifacts("run-1")
+    messages = harness.assistant_messages()
+    assert original["status"] == status
+    assert failure.value.code == "message_not_saved" and failure.value.retryable is True
+    assert failure.value.final_frames == [] and failure.value.durable_status is None
+    assert "PRIVATE_" not in failure.value.message and reads == ["run-1"]
+    for field in (
+        "status", "outcome", "failure", "completed_at", "task_results", "pending_results",
+        "execution_steps", "started_at", "execution_deadline_at", "harness_step_token_usage",
+        "harness_prompt_token_usage", "message_saved", "finalization_status",
+    ):
+        assert saved.get(field) == original.get(field), field
+    assert current_outputs == outputs and current_artifacts == artifacts
+    assert harness.results.container.items == retained and messages == []
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == (1 if status == "completed" else 0)
+    assert saved["execution_lease"] is None and execution.lease.stopped.is_set()
+    assert all(client.closed for client in harness.clients)
+
+
+@pytest.mark.parametrize("observation", ["list_public_outputs", "committed_artifacts"])
+@pytest.mark.parametrize("error_kind", ["denied", "held", "control", "cancelled", "explicit_cause"])
+def test_file_observation_does_not_reclassify_declared_errors(
+    harness, monkeypatch, observation, error_kind,
+):
+    harness.create([compose_step(), render_step("report", "md")], replies=["Retained report."])
+    execution = harness.prepare()
+    harness.run_engine(execution)
+    original = execution.lease.read()
+    configuration = importlib.import_module("functions_orchestration_external_configuration")
+    errors = {
+        "denied": ResultUnavailableError("result_source_unavailable"),
+        "held": DocumentHeldError(), "control": CheckpointError("user_cancelled"),
+        "cancelled": configuration.ExternalConfigurationCancelledError(),
+        "explicit_cause": PermissionError("PRIVATE_DECLARED_CAUSE"),
+    }
+    error = errors[error_kind]
+    if error_kind == "explicit_cause":
+        error.__cause__ = CheckpointError("ownership_lost")
+
+    def refused_observation(run_id):
+        raise error
+
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(execution.services.rendering, observation, refused_observation)
+            with pytest.raises(type(error)) as failure:
+                execution._file_state()
+        current = execution.lease.read()
+        assert failure.value is error
+        assert current["status"] == original["status"] and current.get("failure") == original.get("failure")
+    finally:
+        execution.close()
+
+
+@pytest.mark.parametrize("denial", ["access", "raw_access", "hold"])
+def test_initial_file_publication_keeps_verified_source_denials(harness, monkeypatch, denial):
+    harness.create(
+        [compose_step(), render_step("report", "md")],
+        replies=["The complete retained report."],
+    )
+    execution = harness.prepare()
+    result = harness.run_engine(execution)
+    original = execution.lease.read()
+    services = harness.services()
+    outputs = services.rendering.list_public_outputs("run-1")
+    artifacts = services.rendering.committed_artifacts("run-1")
+    output_store = importlib.import_module("functions_orchestration_output_store")
+    error = {
+        "hold": DocumentHeldError(), "access": output_store.OutputUnavailableError(),
+        "raw_access": PermissionError("PRIVATE_ACTUAL_SOURCE_DENIAL"),
+    }[denial]
+
+    def unavailable_read(record):
+        raise error
+
+    try:
+        with monkeypatch.context() as denied:
+            denied.setattr(execution.services.rendering, "_authorize_read_record", unavailable_read)
+            frames = execution._finish(result, None)
+    finally:
+        execution.close()
+    saved = harness.read()
+    messages = harness.assistant_messages()
+    current_outputs = services.rendering.list_public_outputs("run-1")
+    current_artifacts = services.rendering.committed_artifacts("run-1")
+    final = decoded_frames(frames)[-1]
+    assert final["status"] == saved["status"] == "failed"
+    assert final["message_saved"] is saved["message_saved"] is True
+    assert saved["failure"]["code"] == "result_unavailable" and saved["finalization_status"] == "saved"
+    assert len(saved["outputs"]) == 1 and saved["outputs"][0]["available"] is False
+    assert saved["artifacts"] == [] and len(messages) == 1
+    assert saved["task_results"] == original["task_results"]
+    assert current_outputs == outputs and current_artifacts == artifacts
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 1
+    assert saved["execution_lease"] is None and execution.lease.stopped.is_set()
+    assert all(client.closed for client in harness.clients)
 
 
 def test_checkpoint_read_outage_preserves_the_committed_file_before_publication(harness, monkeypatch):
@@ -3783,5 +4799,30 @@ def test_real_web_scheduler_bootstrap_import_boundaries(order, optimized):
 @pytest.mark.parametrize("optimized", [False, True])
 def test_real_headless_execution_keeps_required_operations_under_optimization(optimized):
     process = run_probe(EXECUTION_PROBE, (), optimized)
+    assert process.returncode == 0, process.stdout[-6000:] + process.stderr[-6000:]
+    assert "PASS:" in process.stdout
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_catalog_and_scheduler_fixtures_share_current_transport_types(optimized):
+    probe = r'''
+import sys
+from pathlib import Path
+import pytest
+
+sys.path[:0] = sys.argv[1:3]
+tests = Path(sys.argv[2])
+result = pytest.main([
+    str(tests / "test_orchestration_harness_execution.py")
+    + "::test_headless_discovery_uses_only_current_admitted_export_metadata",
+    str(tests / "test_orchestration_harness_scheduler.py")
+    + "::test_file_ticks_bound_automatic_attempts_and_manual_retry_never_replays_producers",
+    "-q", "--tb=short", "--disable-warnings",
+])
+if result != 0:
+    raise AssertionError("Offline bootstrap left stale transport classes in a later fixture.")
+print("PASS: catalog and scheduler share initialized transport classes")
+'''
+    process = run_probe(probe, (), optimized)
     assert process.returncode == 0, process.stdout[-6000:] + process.stderr[-6000:]
     assert "PASS:" in process.stdout

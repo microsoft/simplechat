@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.129
+Version: 0.261.130
 """
 
 from copy import deepcopy
@@ -10,7 +10,7 @@ from dataclasses import replace
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_analysis_access import analysis_source_snapshot
 from functions_orchestration_invocation_capture import (
-    OrchestrationInvocationCancelledError, OrchestrationInvocationServiceError,
+    OrchestrationInvocationCancelledError, OrchestrationInvocationControlError, OrchestrationInvocationServiceError,
 )
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
@@ -24,8 +24,10 @@ from functions_orchestration_schema import step_input_specs
 
 
 def raise_source_service_failure(error):
-    """Preserve typed authority failures and cancellation, not a definite hold."""
-    if isinstance(error, (OrchestrationInvocationServiceError, OrchestrationInvocationCancelledError)):
+    """Preserve typed authority, cancellation and lifecycle controls, not a definite hold."""
+    if isinstance(error, (
+        OrchestrationInvocationServiceError, OrchestrationInvocationCancelledError, OrchestrationInvocationControlError,
+    )):
         raise error
     if isinstance(error, ScreeningError) and not isinstance(error, DocumentHeldError):
         raise error

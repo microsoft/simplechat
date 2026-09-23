@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved V2 harness attempts.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.127
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
@@ -33,7 +33,7 @@ factory never falls back to another owner.
 With a same-attempt or injected continuation owner, uncertain checkpoint/storage
 I/O propagates without terminalizing retained work, including lease-start failures.
 Initial and resumed execution bind the shared result store to the actual owning
-lease through ``bind_orchestration_result_store`` before capability or
+lease through ``WorkflowResultStore.bind_orchestration_execution`` before capability or
 retained-result access. Its canonical binding keeps native producer tokens
 unchanged while fencing generic result access with the current parent claim;
 older store views are never rebound. Model-free delivery does not claim results.
@@ -42,21 +42,30 @@ calling worker. Nested source failures remain fenced even when caught; answer
 and research calls check that fence before and after provider invocation. The
 scope is released with the operation, never retained on a lease or shared between
 independent runs. Uncertain authority cannot publish a terminal aggregate outcome.
+Recognized output-read configuration failures preserve retained work during both
+initial finalization and model-free refresh, including nonretryable wrapped errors.
+An opaque permission fault escaping current-file observation also blocks publication;
+the output facade still owns verified source-denial and hold projections.
 Capability discovery uses the initialized services' shared request bindings;
-``external_source_preflight``, ``external_source_admission``, ``external_source_authorizer`` and
-``capture_external_source_configuration`` stay runtime-only and must all be present
-before their saved V2 capabilities can be prepared. The authorizer comes from
-``services.results.access``. Discovery neither invokes these callbacks nor
-applies a new-plan readiness check to saved V2 work.
-Runtime preflight/capture/admission callbacks check their original lease before and after
-each invocation, including failure. Their closures also reject a stopped worker;
-shared service callbacks and model-free history readers remain unmodified.
+``external_source_preflight``, ``external_source_admission``,
+``external_source_authorizer`` and ``capture_external_source_configuration`` stay
+runtime-only and must all be present before their saved V2 capabilities can be
+prepared. Preflight is the real synchronous invocation guard; configuration capture
+separately validates current/actual acquisition support. The authorizer comes from
+``services.results.access``. Discovery neither invokes these callbacks nor applies
+a new-plan readiness check to saved V2 work.
+Runtime preflight/capture/admission callbacks check their original claim before
+and after each invocation, including failure. The captured actor/run/token/claim
+identity cannot be replaced by retagging the lease. Their closures reject a stopped
+worker; shared service callbacks and model-free history readers remain unmodified.
 Active discovery and revalidation use the services' current admitted export
 catalog through the shared canonical resolver. Empty selections stay empty;
 format/profile narrowing lives only on the runtime context, not saved permission
 snapshots. Model-free delivery does not require admission for new Render work.
 Typed invocation cancellation remains cancellation, including through known
 application wrappers; ordinary owner interruptions are not inferred to be stops.
+Headless lifecycle failures opt in to typed invocation control. Capture may
+reconstruct their safe code, but never their diagnostics or publication state.
 
 Application-owner imports are deliberately deferred until preparation. Importing
 this module neither imports a route nor discovers configuration or Azure clients.
@@ -110,7 +119,9 @@ from functions_orchestration_events import (
     serialize_sse,
 )
 from functions_orchestration_executor import RunContext, execute_plan
-from functions_orchestration_invocation_capture import OrchestrationInvocationCancelledError
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationCancelledError, OrchestrationInvocationControlError,
+)
 from functions_orchestration_memory import (
     OrchestrationMemoryError,
     load_orchestration_memory,
@@ -153,7 +164,7 @@ _REASONING_METADATA_FIELDS = ("reasoning_effort", "requested_reasoning_effort", 
 _DELIVERY_FAILURE_CODES = frozenset({"run_timeout", "user_cancelled", "context_unavailable"})
 
 
-class HarnessExecutionError(RuntimeError):
+class HarnessExecutionError(OrchestrationInvocationControlError):
     """Application-owned failure text, never a provider diagnostic."""
 
     def __init__(
@@ -235,12 +246,20 @@ def _execution_bound_external_callback(callback, lease):
     if not callable(callback):
         raise ResultContractError("result_external_reader_required")
     read_execution, is_stopped = lease.read, lease.stopped.is_set
+    original_owner = (
+        lease.run_id, lease.user_id, lease.conversation_id, lease.token, lease.claim_id,
+    )
 
     def check_execution():
         if is_stopped():
             raise CheckpointError("ownership_lost")
-        read_execution()
-        if is_stopped():
+        record = read_execution()
+        claim = record.get("execution_lease") or {}
+        current_owner = (
+            record.get("id"), record.get("user_id"), record.get("conversation_id"),
+            claim.get("token"), claim.get("claim_id"),
+        )
+        if is_stopped() or current_owner != original_owner:
             raise CheckpointError("ownership_lost")
 
     @wraps(callback)
@@ -526,7 +545,6 @@ class HarnessExecution:
         # They must never run merely because a scheduler imports this module.
         import functions_orchestration_bootstrap as bootstrap
         from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
-        from functions_orchestration_continuation import bind_orchestration_result_store
 
         self._bootstrap = bootstrap
         self.settings = deepcopy(bootstrap.get_settings() if settings is None else settings)
@@ -588,8 +606,15 @@ class HarnessExecution:
             user_id, conversation_id, settings=self.settings,
         )
         try:
-            self.services.results.store = bind_orchestration_result_store(
-                self.record, store=self.services.results.store, lease=self.lease,
+            current = self.lease.read()
+            if any(
+                current.get(key) != self.record.get(key)
+                for key in ("id", "user_id", "conversation_id", "attempt_index")
+            ):
+                raise CheckpointError("ownership_lost")
+            self.services.results.store = self.services.results.store.bind_orchestration_execution(
+                user_id, conversation_id, self.record["id"],
+                guard_token=self.lease.token, check_execution=self.lease.read,
             )
         except Exception as exc:
             self._raise_delivery_infrastructure_failure(exc, storage_required=True)
@@ -758,7 +783,7 @@ class HarnessExecution:
         # denied source and unavailable storage, screening, or configuration.
         from functions_orchestration_external_configuration import ExternalConfigurationServiceError
         from functions_orchestration_external_identity import ExternalIdentityServiceError
-        from functions_orchestration_output_store import OutputStorageError
+        from functions_orchestration_output_store import OutputError, OutputStorageError
         from functions_orchestration_rendering import (
             output_failure, raise_output_read_infrastructure_failure,
         )
@@ -784,7 +809,9 @@ class HarnessExecution:
                 not self._delivery_only
                 and self.checkpoint_factory is None
                 and not continuing and not storage_required
-                and not isinstance(infrastructure_error, (*external_service_errors, ScreeningError))
+                and not isinstance(infrastructure_error, (
+                    *external_service_errors, ScreeningError, ResultUnavailableError, OutputError,
+                ))
                 and not isinstance(error, PermissionError)
             ):
                 return
@@ -986,10 +1013,16 @@ class HarnessExecution:
             for step in self.record["plan"]["steps"]
         ):
             return [], []
-        return (
-            self.services.rendering.list_public_outputs(self.record["id"]),
-            self.services.rendering.committed_artifacts(self.record["id"]),
-        )
+        try:
+            return (
+                self.services.rendering.list_public_outputs(self.record["id"]),
+                self.services.rendering.committed_artifacts(self.record["id"]),
+            )
+        except PermissionError as exc:
+            if type(exc) is not PermissionError or exc.__cause__ is not None:
+                raise
+            # A failed observation is not the facade's verified unavailable-file projection.
+            raise HarnessExecutionError("message_not_saved", retryable=True) from exc
 
     def _validate_citations(self, citations):
         document_ids = sorted({

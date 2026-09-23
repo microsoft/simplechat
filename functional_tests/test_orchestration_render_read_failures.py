@@ -1,8 +1,10 @@
 # test_orchestration_render_read_failures.py
 """Saved Render reads preserve service uncertainty and independent file visibility.
 
-Version: 0.261.127
+Version: 0.261.130
 Implemented in: 0.261.127
+Shared-resumer operational-error coverage added in: 0.261.130
+Cause-free and wrapped checkpoint-storage coverage added in: 0.261.130
 Real runtime, checkpoint, retained-result and rendering services are used.
 Only provider I/O and the specific current read failure are isolated.
 """
@@ -14,13 +16,33 @@ import pytest
 
 from functions_orchestration_executor import _render_dependency_step
 from test_orchestration_output_lifecycle import lifecycle, production_modules
-from test_orchestration_render_waiting_runtime import render_runtime
+from test_orchestration_render_waiting_runtime import _restart_completed, render_runtime
 
 
 def _read_failure(name):
+    if name.startswith('configuration_'):
+        configuration = importlib.import_module('functions_orchestration_external_configuration')
+        error = configuration.ExternalConfigurationServiceError(f'external_{name}')
+        return error, type(error)
     output_store = importlib.import_module('functions_orchestration_output_store')
     screening = importlib.import_module('content_screening.contracts')
     results = importlib.import_module('functions_orchestration_results')
+    if name in (
+        'checkpoint_storage', 'wrapped_checkpoint_storage',
+        'translated_checkpoint_storage', 'source_wrapped_checkpoint_storage',
+    ):
+        checkpoints = importlib.import_module('functions_orchestration_checkpoints')
+        storage = checkpoints.CheckpointError('checkpoint_storage_unavailable')
+        if name == 'checkpoint_storage':
+            return storage, output_store.OutputStorageError
+        error = (
+            results.ResultUnavailableError() if name == 'source_wrapped_checkpoint_storage'
+            else checkpoints.CheckpointError('checkpoint_unavailable')
+        )
+        error.__cause__ = (
+            output_store.OutputStorageError() if name == 'translated_checkpoint_storage' else storage
+        )
+        return error, output_store.OutputStorageError
     errors = {
         'storage': output_store.OutputStorageError(),
         'screening_service': screening.ScreeningError(),
@@ -45,22 +67,15 @@ def _read_failure(name):
     return error, type(error)
 
 
-def _restart_completed(case):
-    record = case.current()
-    return case.recovery._replace(record, {
-        'status': 'running',
-        'execution_lease': {
-            **case.recovery.lease_fields(),
-            'token': case.initial['execution_lease']['token'],
-        },
-    })
-
-
 @pytest.mark.parametrize('saved_status', ['waiting', 'completed'])
 @pytest.mark.parametrize('error_name', [
     'storage', 'screening_service', 'authority_service', 'authority_configuration',
     'source_configuration', 'reader_configuration', 'external_reader_configuration',
     'raw_storage_permission', 'wrapped_storage', 'wrapped_screening',
+    'configuration_service_unavailable', 'configuration_timeout', 'configuration_throttled',
+    'configuration_metadata_invalid', 'configuration_limit_exceeded',
+    'checkpoint_storage', 'wrapped_checkpoint_storage', 'translated_checkpoint_storage',
+    'source_wrapped_checkpoint_storage',
 ])
 def test_saved_render_uncertainty_is_not_persisted_as_source_denial(
     render_runtime, monkeypatch, saved_status, error_name,
@@ -73,9 +88,19 @@ def test_saved_render_uncertainty_is_not_persisted_as_source_denial(
     output_id = first['outputs'][0]['output_id']
     original_output = deepcopy(case.lifecycle.raw(output_id))
     original_record = case.current()
+    original_checkpoint = case.recovery.checkpoint_store(original_record, lambda: True).load(
+        'file', waiting=saved_status == 'waiting',
+    )
     error, expected_type = _read_failure(error_name)
     claimed = case.claim(f'{error_name}-read') if saved_status == 'waiting' else _restart_completed(case)
-    reads = []
+    rendering = importlib.import_module('functions_orchestration_rendering')
+    resume = rendering.resume_render_file
+    reads, resumed = [], []
+
+    def observe(step, context, pending_result, **kwargs):
+        resumed.append((deepcopy(step), deepcopy(pending_result)))
+        return resume(step, context, pending_result, **kwargs)
+
     if error_name == 'raw_storage_permission':
         target, method = case.lifecycle.service.store, 'get'
     else:
@@ -90,16 +115,29 @@ def test_saved_render_uncertainty_is_not_persisted_as_source_denial(
 
     with monkeypatch.context() as failing_read:
         failing_read.setattr(target, method, fail_once)
-        with pytest.raises(expected_type):
+        failing_read.setattr(rendering, 'resume_render_file', observe)
+        with pytest.raises(expected_type) as raised:
             case.execute(claimed)
 
+    assert resumed == [(case.plan['steps'][1], original_checkpoint['result'])]
+    if error_name.startswith('configuration_'):
+        assert raised.value is error
+        assert raised.value.code == error.code and raised.value.retryable == error.retryable
+    if error_name.endswith('checkpoint_storage'):
+        classification = rendering.output_failure(raised.value)
+        assert raised.value.code == 'output_storage_unavailable'
+        assert classification == ('output_storage_unavailable', True)
     current = case.current()
     current_output = case.lifecycle.raw(output_id)
+    current_checkpoint = case.recovery.checkpoint_store(current, lambda: True).load(
+        'file', waiting=saved_status == 'waiting',
+    )
     assert len(reads) == 1
     assert current['status'] == 'running'
     assert current.get('pending_results', {}) == original_record.get('pending_results', {})
     assert current.get('task_results', {}) == original_record.get('task_results', {})
     assert current_output == original_output
+    assert current_checkpoint == original_checkpoint
     assert len(case.calls) == len(case.lifecycle.render_calls) == 1
     assert case.lifecycle.blobs.uploads == (1 if saved_status == 'completed' else 0)
 
@@ -131,7 +169,7 @@ def test_saved_render_uses_public_sibling_visibility_without_rewriting_commits(
         return authorize_read(record)
 
     def forbidden_raw_projection(*args, **kwargs):
-        raise AssertionError('Saved Render visibility must use list_public_outputs, not raw read.')
+        raise AssertionError('Saved Render must use the public resumer, not an ordinary mutating read.')
 
     with monkeypatch.context() as unavailable:
         unavailable.setattr(case.lifecycle.service, '_authorize_read_record', deny_second)

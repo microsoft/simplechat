@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.129**
+**Version: 0.261.130**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -392,10 +392,18 @@ It accompanies the original empty pending `TaskResult` and queries the exact
 foundation completion receipt once. An absent receipt remains pending;
 unreadable or invalid retained content fails safely.
 
-Output waits contain only `{"kind":"orchestration_output","output_id":"..."}`,
-not a typed data task or a cached delivery claim. The central read-only bridge
-uses the initialized `context.rendering_service` and its existing
-`list_public_outputs`, `store.get` and `committed_artifacts` APIs. It verifies the original producer,
+Output waits contain `{"kind":"orchestration_output","output_id":"..."}` and
+an optional server `error_code`, not a typed data task or a cached delivery
+claim. Render continuation supplies the verified checkpoint's original
+`saved_result` to `resume_waiting_dependency_step`; missing or mismatched saved
+waits fail before the output reader. The core forwards that entire StepResult,
+including its last-known `outputs` and `output_error`, to the shared public
+`functions_orchestration_rendering.resume_render_file` once. Saved DTOs remain
+historical diagnostics, not proof of current availability.
+
+The read-only bridge uses the initialized `context.rendering_service` through
+the shared pinned-output resumer, not the potentially mutating run-wide
+`list_public_outputs` or `committed_artifacts` projections. It verifies the original producer,
 retained source, approved work, normalized filename, explicit render request
 and unchanged deadline before accepting the current file outcome. Completed
 file checkpoints use the same bridge, rather than trusting saved artifact
@@ -571,6 +579,35 @@ cancellation, rather than recording an access denial or generic model failure.
 Ordinary model timeouts, invalid content and definite access denials keep their
 existing safe step-failure codes.
 
+Version **0.261.130** also preserves lifecycle controls through the pure
+`OrchestrationInvocationControlError` base used by `CheckpointError`. Capture
+reconstructs the safe exception from its stable code after an initial failure
+or a sticky SDK recheck. Composition and dependency dispatch propagate that
+control before generic model/step-error mapping: `ownership_lost`, `run_timeout`
+and `step_timeout` cannot become ordinary failed steps that permit independent
+model work to continue. The owning execution boundary still handles the stop;
+the failure does not create terminal checkpoint facts or grant a fresh budget.
+`test_orchestration_source_authority_runtime.py` covers both capture paths and
+the composition boundary without changing the control exception's constructor.
+
+V2 checkpoint reads distinguish `checkpoint_storage_unavailable` from a
+missing or invalid checkpoint. Composition and initial/sticky capture preserve
+that operational code without recording a terminal producer result. Saved
+Render reads also preserve retryable storage uncertainty for actual cause-free
+`CheckpointError` instances, known explicit wrappers, and parent-translated
+`OutputStorageError` instances. They do not infer storage failures from an
+arbitrary provider's code string or turn a read outage into source denial.
+The storage cases in `test_orchestration_render_read_failures.py` cover both
+waiting and completed checkpoints without another model call, render or upload.
+
+`ExternalConfigurationServiceError` is covered through the shared service-error
+base, not an identity or screening subclass. Its `external_configuration_*`
+codes `service_unavailable`, `timeout` and `throttled` remain retryable;
+`metadata_invalid` and `limit_exceeded` remain non-retryable.
+`ExternalConfigurationCancelledError` stays cancellation. Recovery admission
+and completion-receipt reads preserve these typed failures without classifying
+them as changed inputs, revoked access or permission to replay retained work.
+
 Headless preparation, normal finalization and model-free refresh translate
 authority uncertainty into `HarnessExecutionError(code="message_not_saved",
 retryable=...)`, with `final_frames=[]` and `durable_status=None`. Supported
@@ -620,9 +657,29 @@ completion claim. Later reads reauthorize the original output, and a committed
 file resumes without another model call, render or upload. An empty output list
 without a valid retryable wait still fails validation.
 
-Saved Render reads use `list_public_outputs(run_id)` after verifying the original
-producer, source binding, approved arguments and deadline. A completed file can
-be currently unavailable without changing its immutable commit. Genuine source
+Saved waiting and completed Render checkpoints dispatch exactly once through
+`functions_orchestration_rendering.resume_render_file`, passing the full original
+saved StepResult as its third positional argument. The thin core adapter supplies
+the existing service, input-reader and StepResult builders; it does not duplicate
+producer, source, request, signature, deadline or visibility policy. The public
+resumer reauthorizes only the pinned output and never calls the ordinary
+`read`, `list_public_outputs` or `committed_artifacts` methods, whose deadline
+observation can change stored state. It performs no admission, retry, rendering,
+upload, result persistence or delivery, including when a deadline has elapsed.
+
+Core preserves the shared resumer's verified `outputs` unchanged. Operational
+read uncertainty raises before a replacement StepResult is accepted; it does
+not rebuild a cached card or uncertainty projection from the saved checkpoint.
+The complete waiting or completed checkpoint remains unchanged for a later
+authorized read. For an observed pending output, core only compacts its wait to
+the kind, output ID and optional error code, preserving `output_error`.
+Actual read-failure regressions verify the unchanged checkpoint and the full
+saved StepResult passed to the single shared helper.
+
+Run-wide file aggregation retains the owning service's current public
+file-visibility contract; it is separate from the saved-step resumer.
+A completed file can be currently unavailable without changing its immutable
+commit. Genuine source
 denial or a screening hold retains its safe requested-file metadata, clears
 links and counts, and leaves accessible siblings visible. Restoring access
 reopens the same committed file without rendering or generating content again.
@@ -630,7 +687,9 @@ Storage/network failures, screening-service or authority-configuration failures,
 and missing required source readers propagate instead of becoming denied-file
 placeholders. The saved-step checkpoint and pending wait remain recoverable;
 observing a read failure does not spend another output attempt. Coverage is in
-`test_orchestration_render_read_failures.py`, implemented in **0.261.127**.
+`test_orchestration_render_read_failures.py`, implemented in **0.261.127** and
+extended in **0.261.130** with exact shared-helper invocation and all five
+configuration service-error codes, including nonretryable invalid metadata.
 
 Focused coverage is in `test_orchestration_waiting_continuation.py` and
 `test_orchestration_native_waiting_continuation.py`: duplicate and racing claims,
@@ -641,7 +700,10 @@ native pending-to-complete resumption without another job or model request.
 services to cover pending reads, scheduler-owned retry, unchanged retained
 content, completed-checkpoint reopening, changed-identity rejection and
 multiple file waits. A later sibling checkpoint cannot resurrect an already
-completed file.
+completed file. Its **0.261.130** dispatch regressions wrap the real public helper
+inside actual waiting/completed checkpoint execution, assert one call with the
+unchanged step and saved result, and check the helper's zero-effect boundary
+across durable stores, file transport and model/render counters.
 
 Since **0.261.127**, the continuation owner can call
 `resume_native_dependency_step(step, context, settings=..., user_id=...,

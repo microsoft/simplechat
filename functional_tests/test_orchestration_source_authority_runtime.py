@@ -1,8 +1,9 @@
 # test_orchestration_source_authority_runtime.py
 """V2 runtime/recovery must not turn uncertain source authority into a denial.
 
-Version: 0.261.127
+Version: 0.261.130
 Implemented in: 0.261.127
+Configuration, recovery and invocation-control coverage added in: 0.261.130
 
 Real dispatch, composition, leases, checkpoints and retained-result recovery
 preserve typed screening, directory and configuration errors. Caller-owned
@@ -39,7 +40,10 @@ def authority_failure(request):
     ("identity", "ExternalIdentityServiceError", None),
     ("identity", "ExternalIdentityCancelledError", None),
     ("configuration", "ExternalConfigurationServiceError", None),
+    ("configuration", "ExternalConfigurationServiceError", "external_configuration_timeout"),
+    ("configuration", "ExternalConfigurationServiceError", "external_configuration_throttled"),
     ("configuration", "ExternalConfigurationServiceError", "external_configuration_metadata_invalid"),
+    ("configuration", "ExternalConfigurationServiceError", "external_configuration_limit_exceeded"),
     ("configuration", "ExternalConfigurationCancelledError", None),
 ])
 def metadata_failure(runtime, request):
@@ -83,6 +87,13 @@ def test_composition_preserves_typed_metadata_service_and_cancellation(runtime, 
     _check_composition_service_failure(runtime, metadata_failure)
 
 
+@pytest.mark.parametrize("code", [
+    "ownership_lost", "run_timeout", "step_timeout", "checkpoint_storage_unavailable",
+])
+def test_composition_preserves_checkpoint_control(runtime, code):
+    _check_composition_service_failure(runtime, runtime.checkpoints.CheckpointError(code))
+
+
 @pytest.mark.parametrize("error_type,code", [
     (PermissionError, "result_unavailable"),
     (ValueError, "result_invalid"),
@@ -121,6 +132,47 @@ def test_producer_authority_failure_does_not_terminalize_or_run_independent_mode
     assert case.context.failures == []
     assert not any(record.get("status") == "failed" for _, record in writes)
     assert "source" not in case.context._failed_result_step_ids
+
+
+@pytest.mark.parametrize("code", [
+    "ownership_lost", "run_timeout", "step_timeout", "checkpoint_storage_unavailable",
+])
+@pytest.mark.parametrize("sticky", [False, True])
+def test_checkpoint_control_capture_stops_dispatch_without_terminalizing(runtime, code, sticky):
+    case = runtime.make([compose("source"), compose("independent")], ["Must not generate."])
+    original = runtime.checkpoints.CheckpointError(code)
+    original.private_detail = "PRIVATE_EXECUTION_CONTROL"
+    capture_module = importlib.import_module("functions_orchestration_invocation_capture")
+    capture = capture_module.OrchestrationInvocationCapture(unavailable(original))
+    calls, writes = [], []
+
+    def adapter(step, context, **kwargs):
+        calls.append(step["step_id"])
+        if step["step_id"] != "source":
+            return runtime.composition.adapter_compose(step, context, **kwargs)
+        try:
+            capture("web", settings=case.settings)
+        except runtime.checkpoints.CheckpointError:
+            if not sticky:
+                raise
+        capture.require_valid(captured=True)
+        raise AssertionError("The failed invocation must not continue.")
+
+    with pytest.raises(runtime.checkpoints.CheckpointError) as raised:
+        execute(
+            runtime, case, get_adapter=lambda capability: adapter,
+            persist=lambda kind, record: writes.append((kind, deepcopy(record))),
+        )
+
+    assert raised.value is not original
+    assert raised.value.code == code and raised.value.failure == original.failure
+    assert not hasattr(raised.value, "private_detail")
+    assert calls == ["source"] and case.model.calls == []
+    assert case.context.task_results == {} and case.context.failures == []
+    assert not case.context._failed_result_step_ids
+    assert not any(
+        record.get("status") in {"failed", "cancelled", "completed"} for _, record in writes
+    )
 
 
 def test_caught_authority_failure_is_checked_before_accepting_adapter_result(
@@ -289,17 +341,14 @@ def test_saved_wait_metadata_failure_preserves_original_work(waiting, monkeypatc
     assert context.failures == [] and len(waiting.case.model.calls) == 1
 
 
-@pytest.mark.parametrize("boundary", ["reference", "receipt"])
-def test_recovery_preserves_typed_authority_error_instead_of_checkpoint_denial(
-    durable, monkeypatch, authority_failure, boundary,
-):
+def _check_recovery_service_failure(durable, monkeypatch, failure, boundary):
     fail_first(durable)
     record = durable.read_run("run-1")
     context = durable.fresh_context(record)
     original_records = deepcopy(durable.case.fixture.container.items)
     method = "open_result" if boundary == "reference" else "recover_task_result"
-    monkeypatch.setattr(context.result_service, method, unavailable(authority_failure))
-    with pytest.raises(type(authority_failure)) as raised:
+    monkeypatch.setattr(context.result_service, method, unavailable(failure))
+    with pytest.raises(type(failure)) as raised:
         if boundary == "reference":
             durable.recovery.validate_resume(
                 record, context, durable.case.settings, lambda: True, source_run_id=record["id"],
@@ -308,9 +357,23 @@ def test_recovery_preserves_typed_authority_error_instead_of_checkpoint_denial(
             durable.recovery._receipt_checkpoint(
                 record, "retained", lambda: True, context.result_service,
             )
-    assert raised.value is authority_failure
+    assert raised.value is failure
     assert durable.case.fixture.container.items == original_records
     assert len(durable.case.model.calls) == 1
+
+
+@pytest.mark.parametrize("boundary", ["reference", "receipt"])
+def test_recovery_preserves_typed_authority_error_instead_of_checkpoint_denial(
+    durable, monkeypatch, authority_failure, boundary,
+):
+    _check_recovery_service_failure(durable, monkeypatch, authority_failure, boundary)
+
+
+@pytest.mark.parametrize("boundary", ["reference", "receipt"])
+def test_recovery_preserves_typed_metadata_service_and_cancellation(
+    durable, monkeypatch, metadata_failure, boundary,
+):
+    _check_recovery_service_failure(durable, monkeypatch, metadata_failure, boundary)
 
 
 @pytest.mark.parametrize("failure_type", [DocumentHeldError, PermissionError])

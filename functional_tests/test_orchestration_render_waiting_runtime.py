@@ -1,9 +1,11 @@
 # test_orchestration_render_waiting_runtime.py
 """Real Render delivery resumes under the original orchestration attempt without producer replay.
 
-Version: 0.261.129
+Version: 0.261.130
 Implemented in: 0.261.127
 Uncertain output-acknowledgement regression implemented in: 0.261.129
+Saved Render payload and diagnostic preservation implemented in: 0.261.130
+Shared-resumer dispatch and effect-boundary coverage added in: 0.261.130
 The compiler, executor, leases, checkpoints, result store, renderer and artifact transport are real.
 Only model and external Azure I/O are isolated.
 """
@@ -18,7 +20,9 @@ from azure.core.exceptions import ServiceResponseError
 from functions_model_capabilities import ModelTokenBudget
 from functions_orchestration_executor import (
     RunContext, _render_dependency_step, _validate_render_step_result, execute_plan,
+    resume_waiting_dependency_step,
 )
+from functions_orchestration_output_store import OutputStorageError
 from functions_orchestration_registry import resolve_available_capability_ids
 from functions_orchestration_result_contracts import ResultContractError
 from functions_orchestration_schema import build_step_result, normalize_plan
@@ -131,6 +135,91 @@ def render_runtime(lifecycle, monkeypatch, request):
     assert all(lease.stopped.is_set() for lease in leases)
 
 
+def _restart_completed(case):
+    record = case.current()
+    return case.recovery._replace(record, {
+        'status': 'running',
+        'execution_lease': {
+            **case.recovery.lease_fields(),
+            'token': case.initial['execution_lease']['token'],
+        },
+    })
+
+
+def _render_effects(case):
+    lifecycle = case.lifecycle
+    return deepcopy({
+        'runs': lifecycle.runs.items,
+        'messages': lifecycle.messages.items,
+        'conversations': lifecycle.conversations.items,
+        'results': lifecycle.results.container.items,
+        'blobs': lifecycle.blobs.data,
+        'uploads': lifecycle.blobs.uploads,
+        'deletes': lifecycle.blobs.deletes,
+        'model_calls': len(case.calls),
+        'render_calls': len(lifecycle.render_calls),
+    })
+
+
+@pytest.mark.parametrize('saved_status', ['waiting', 'completed'])
+def test_saved_render_dispatches_once_to_shared_resumer(render_runtime, monkeypatch, saved_status):
+    case = render_runtime
+    if saved_status == 'waiting':
+        case.lifecycle.failures['md'] = [TimeoutError('Isolated initial-render transport failure.')]
+    first = case.execute(case.initial)
+    assert first['status'] == saved_status
+    checkpoint = case.recovery.checkpoint_store(case.current(), lambda: True)
+    saved = checkpoint.load('file', waiting=saved_status == 'waiting')
+    rendering = importlib.import_module('functions_orchestration_rendering')
+    executor = importlib.import_module('functions_orchestration_executor')
+    policy = importlib.import_module('functions_orchestration_execution_policy')
+    resume = rendering.resume_render_file
+    received, forbidden_calls = [], []
+
+    def forbidden(*args, **kwargs):
+        forbidden_calls.append(True)
+        raise AssertionError('A saved Render reader must not execute or use a mutating run-wide projection.')
+
+    def observe(step, context, pending_result, **kwargs):
+        received.append((deepcopy(step), deepcopy(pending_result)))
+        assert kwargs['service_factory'] is executor._context_rendering_service
+        assert kwargs['resolve_inputs'] is executor.resolve_step_inputs
+        assert kwargs['build_step_result'] is executor.build_step_result
+        assert kwargs['build_failure'] is executor.build_failure
+        assert context.rendering_service is case.lifecycle.service
+        assert kwargs['settings'] == case.settings and kwargs['user_id'] == 'owner'
+        with pytest.raises(policy.OrchestrationFilePolicyError):
+            policy.require_generated_file_publication_allowed()
+        before = _render_effects(case)
+        # Run/checkpoint bookkeeping is outside the shared reader's zero-effect boundary.
+        with monkeypatch.context() as reader_only:
+            for method in (
+                'read', 'list_public_outputs', 'committed_artifacts',
+                'ensure_output', 'render_attempt', 'reconcile', 'claim_due', 'manual_retry',
+            ):
+                reader_only.setattr(case.lifecycle.service, method, forbidden)
+            for method in ('fail', 'cancel'):
+                reader_only.setattr(case.lifecycle.service.store, method, forbidden)
+            reader_only.setattr(case.lifecycle.service.results, 'persist_task_result', forbidden)
+            result = resume(step, context, pending_result, **kwargs)
+        after = _render_effects(case)
+        assert after == before
+        return result
+
+    monkeypatch.setattr(rendering, 'resume_render_file', observe)
+    claimed = case.claim('shared-reader') if saved_status == 'waiting' else _restart_completed(case)
+    result = case.execute(claimed)
+
+    assert received == [(case.plan['steps'][1], saved['result'])]
+    assert forbidden_calls == []
+    assert result['status'] == saved_status
+    assert result['outputs'] == first['outputs'] and result['artifacts'] == first['artifacts']
+    assert result['task_results'] == first['task_results']
+    assert result['pending_results'] == first['pending_results']
+    assert len(case.calls) == len(case.lifecycle.render_calls) == 1
+    assert case.lifecycle.blobs.uploads == (1 if saved_status == 'completed' else 0)
+
+
 def test_real_render_retry_consumes_same_result_and_wait_refresh_never_renders(render_runtime, monkeypatch):
     case = render_runtime
     case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
@@ -141,7 +230,8 @@ def test_real_render_retry_consumes_same_result_and_wait_refresh_never_renders(r
     assert first['outputs'][0]['file_name'] == 'Prepared_report.md'
     assert first['result_outputs'][0]['kind'] == 'markdown-v1'
     wait = first['pending_results']['file']
-    assert set(wait) == {'kind', 'output_id'}
+    assert set(wait) == {'kind', 'output_id', 'error_code'}
+    assert wait['error_code'] == first['outputs'][0]['error_code']
     original = case.lifecycle.raw(wait['output_id'])
     original_task = first['task_results']['draft']
     original_guard = case.initial['execution_lease']['token']
@@ -190,31 +280,149 @@ def test_real_render_retry_consumes_same_result_and_wait_refresh_never_renders(r
     assert content.decode('utf-8').endswith('The authoritative final paragraph.')
 
 
+@pytest.mark.parametrize('read_outage', [False, True])
+def test_waiting_render_passes_full_checkpoint_to_public_resumer(
+    render_runtime, monkeypatch, read_outage,
+):
+    case = render_runtime
+    case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
+    first = case.execute(case.initial)
+    output_id = first['pending_results']['file']['output_id']
+    checkpoint = case.recovery.checkpoint_store(case.current(), lambda: True)
+    saved = checkpoint.load('file', waiting=True)
+    rendering = importlib.import_module('functions_orchestration_rendering')
+    resume = rendering.resume_render_file
+    read = case.lifecycle.runs.read_item
+    received = []
+
+    def unavailable(item, partition_key, **kwargs):
+        if item == output_id:
+            raise ServiceResponseError('Isolated saved-output metadata outage.')
+        return read(item=item, partition_key=partition_key, **kwargs)
+
+    def observe(step, context, pending_result, **kwargs):
+        received.append(deepcopy(pending_result))
+        if read_outage and len(received) == 1:
+            with monkeypatch.context() as outage:
+                outage.setattr(case.lifecycle.runs, 'read_item', unavailable)
+                return resume(step, context, pending_result, **kwargs)
+        return resume(step, context, pending_result, **kwargs)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Saved-output observation cannot admit, render or schedule another attempt.')
+
+    monkeypatch.setattr(rendering, 'resume_render_file', observe)
+    with monkeypatch.context() as reads_only:
+        for method in ('ensure_output', 'render_attempt', 'reconcile', 'claim_due', 'manual_retry'):
+            reads_only.setattr(case.lifecycle.service, method, forbidden)
+        claimed = case.claim('full-render-checkpoint')
+        if read_outage:
+            with pytest.raises(OutputStorageError):
+                case.execute(claimed)
+            current = case.current()
+            remaining = case.recovery.checkpoint_store(current, lambda: True).load('file', waiting=True)
+            file_step = next(step for step in current['execution_steps'] if step['step_id'] == 'file')
+            assert remaining == saved
+            assert file_step['status'] == 'waiting'
+            assert file_step['failure'] is None
+            assert current['pending_results']['file'] == first['pending_results']['file']
+            pending = case.execute(case.claim('full-render-checkpoint-recheck'))
+        else:
+            pending = case.execute(claimed)
+
+    assert received == [saved['result']] * (2 if read_outage else 1)
+    assert received[0]['outputs'] == first['steps'][1]['outputs']
+    assert pending['status'] == 'waiting'
+    assert pending['task_results'] == first['task_results']
+    assert 'file' not in pending['task_results']
+    assert pending['pending_results']['file'] == first['pending_results']['file']
+    assert len(case.calls) == len(case.lifecycle.render_calls) == 1
+    assert case.lifecycle.blobs.uploads == 0
+
+
+@pytest.mark.parametrize('defect', ['missing', 'status', 'wait', 'kind', 'output'])
+def test_render_wait_resume_requires_original_matching_checkpoint(
+    render_runtime, monkeypatch, defect,
+):
+    case = render_runtime
+    case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
+    case.execute(case.initial)
+    payload = case.recovery.checkpoint_store(case.current(), lambda: True).load('file', waiting=True)
+    saved = deepcopy(payload['result'])
+    if defect == 'missing':
+        saved = None
+    elif defect == 'status':
+        saved['status'] = 'completed'
+    elif defect == 'wait':
+        saved.pop('wait')
+    elif defect == 'kind':
+        saved['wait']['kind'] = 'native_tabular_compute'
+    else:
+        saved['wait']['output_id'] = 'orender_' + '0' * 64
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('A missing or mismatched saved wait must not enter the output reader.')
+
+    rendering = importlib.import_module('functions_orchestration_rendering')
+    monkeypatch.setattr(rendering, 'resume_render_file', forbidden)
+    with pytest.raises(ResultContractError) as raised:
+        resume_waiting_dependency_step(
+            case.plan['steps'][1], case.state['context'], settings=case.settings, user_id='owner',
+            input_fingerprint=payload['input_fingerprint'], saved_result=saved,
+        )
+    assert raised.value.code == 'result_wait_invalid'
+    assert len(case.calls) == len(case.lifecycle.render_calls) == 1
+    assert case.lifecycle.blobs.uploads == 0
+
+
+def test_render_wait_resume_accepts_legacy_two_field_wait(render_runtime):
+    case = render_runtime
+    case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
+    first = case.execute(case.initial)
+    payload = case.recovery.checkpoint_store(case.current(), lambda: True).load('file', waiting=True)
+    saved = deepcopy(payload['result'])
+    saved['wait'].pop('error_code', None)
+    case.state['context'].pending_results['file'] = deepcopy(saved['wait'])
+
+    result = resume_waiting_dependency_step(
+        case.plan['steps'][1], case.state['context'], settings=case.settings, user_id='owner',
+        input_fingerprint=payload['input_fingerprint'], saved_result=saved,
+    )
+    assert set(saved['wait']) == {'kind', 'output_id'}
+    assert result['status'] == 'waiting' and result['outputs'] == first['outputs']
+    assert result['wait']['error_code'] == first['outputs'][0]['error_code']
+    assert result.get('task_result') is None
+    assert len(case.calls) == len(case.lifecycle.render_calls) == 1
+    assert case.lifecycle.blobs.uploads == 0
+
+
 def test_completed_render_checkpoint_is_reopened_without_render_or_model_replay(render_runtime):
     case = render_runtime
     first = case.execute(case.initial)
     assert first['status'] == 'completed', first
-    record = case.current()
-    record = case.recovery._replace(record, {
-        'status': 'running',
-        'execution_lease': {**case.recovery.lease_fields(), 'token': case.initial['execution_lease']['token']},
-    })
-    result = case.execute(record)
+    result = case.execute(_restart_completed(case))
     assert result['status'] == 'completed', result
     assert result['outputs'] == first['outputs'] and result['artifacts'] == first['artifacts']
     assert len(case.calls) == len(case.lifecycle.render_calls) == case.lifecycle.blobs.uploads == 1
 
 
+@pytest.mark.parametrize('saved_status', ['waiting', 'completed'])
 @pytest.mark.parametrize('change', ['output_id', 'file_name', 'profile', 'attempt', 'approved_work', 'deadline'])
-def test_saved_output_cannot_change_its_identity_or_approved_inputs(render_runtime, change):
+def test_saved_output_cannot_change_its_identity_or_approved_inputs(
+    render_runtime, monkeypatch, change, saved_status,
+):
     case = render_runtime
-    case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
+    if saved_status == 'waiting':
+        case.lifecycle.failures['md'] = [TimeoutError('Isolated renderer transport failure.')]
     first = case.execute(case.initial)
     context = case.state['context']
     step = deepcopy(case.plan['steps'][1])
     saved = deepcopy(first['steps'][1])
     if change == 'output_id':
-        saved['wait']['output_id'] = 'orender_' + '0' * 64
+        if saved_status == 'waiting':
+            saved['wait']['output_id'] = 'orender_' + '0' * 64
+        else:
+            saved['outputs'][0]['output_id'] = 'orender_' + '0' * 64
     elif change == 'file_name':
         step['arguments']['file_name'] = 'A different report.md'
     elif change == 'profile':
@@ -225,13 +433,25 @@ def test_saved_output_cannot_change_its_identity_or_approved_inputs(render_runti
         context.approved_work_id = 'different-approved-work'
     else:
         context.execution_deadline_at = case.lifecycle.now.isoformat()
+    rendering = importlib.import_module('functions_orchestration_rendering')
+    resume = rendering.resume_render_file
+    received = []
+
+    def observe(step, context, pending_result, **kwargs):
+        received.append(deepcopy(pending_result))
+        return resume(step, context, pending_result, **kwargs)
+
+    monkeypatch.setattr(rendering, 'resume_render_file', observe)
+    before = _render_effects(case)
     result = _render_dependency_step(
         step, context, settings=case.settings, user_id='owner', saved_result=saved,
     )
+    after = _render_effects(case)
+    assert received == [saved] and after == before
     assert result['status'] == 'failed', result
     assert result['artifacts'] == [] and result.get('task_result') is None
     assert len(case.calls) == len(case.lifecycle.render_calls) == 1
-    assert case.lifecycle.blobs.uploads == 0
+    assert case.lifecycle.blobs.uploads == (1 if saved_status == 'completed' else 0)
 
 
 def test_saved_preview_state_cannot_promote_a_pending_output(render_runtime):
@@ -247,7 +467,8 @@ def test_saved_preview_state_cannot_promote_a_pending_output(render_runtime):
     )
     assert result['status'] == 'waiting' and result['artifacts'] == []
     assert result['outputs'][0]['state'] == 'retry_scheduled'
-    assert set(result['wait']) == {'kind', 'output_id'}
+    assert set(result['wait']) == {'kind', 'output_id', 'error_code'}
+    assert result['wait']['error_code'] == result['outputs'][0]['error_code']
     assert len(case.calls) == len(case.lifecycle.render_calls) == 1
 
 
@@ -327,10 +548,14 @@ def test_initial_render_read_outage_preserves_admitted_wait_without_a_task(
     assert bool(step['outputs']) == (boundary == 'before_attempt')
     assert set(first['task_results']) == {'draft'}
     wait = first['pending_results']['file']
-    assert wait == {'kind': 'orchestration_output', 'output_id': faults[0]}
+    assert wait == {
+        'kind': 'orchestration_output', 'output_id': faults[0], 'error_code': 'output_storage_unavailable',
+    }
     checkpoint = case.recovery.checkpoint_store(case.current(), lambda: True)
     saved_wait = checkpoint.load('file', waiting=True)
     assert saved_wait['result']['wait'] == wait
+    assert saved_wait['result']['output_error'] == step['output_error']
+    assert saved_wait['result']['outputs'] == step['outputs']
     assert saved_wait['result']['artifacts'] == [] and saved_wait['result'].get('task_result') is None
 
     if boundary == 'before_attempt':

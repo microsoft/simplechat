@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.129** (tracked in `application/single_app/config.py`)
+**Version: 0.261.130** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -264,25 +264,52 @@ consent or an identity-service failure is not permission to fall back to saved
 roles. This runtime boundary does not grant directory permissions or change
 application scopes.
 
-The adapter must call
-`context.external_source_preflight(producer=..., selector=...)` after validating
-the original server selection but before any provider, model, HTTP or action
-effect. The parent must bind `provider.preflight_gather_invocation` to this hook
-only with the matching pre-invocation adapter integration.
-It returns `None` only on success and raises for denied or unverifiable current
-identity, capability or selected-source access. Agent and action selectors are
-the original server `catalog_key` and `action_ref`; other Gather operations use
-`None`. Preflight does not grant a URL, attest configuration, produce an alias
-or replace conversation, transport, budget and publication guards. Admission
-after content is produced remains mandatory, but is too late to authorize the
-acquisition itself.
+The adapter calls `context.external_source_preflight(producer=..., selector=...)`
+after validating the original server selection and before provider, model, HTTP,
+or action effects. The initialized root binds the real synchronous
+`provider.preflight_gather_invocation` operation; success must return exactly
+`None`. A missing or noncallable hook withholds every external capability. The
+hook is authorization-only: it does not attest configuration or replace the
+separate acquisition-support check.
 
-The callback is ephemeral: it is not added to checkpoint state or fingerprints.
-Factories must overwrite an inherited preflight hook with `None` when the
-current service has no binding. Missing or noncallable preflight withholds every
-v2 external capability, even if the other callbacks are present. Legacy v1
-descriptors are unchanged. The core gate and reference-only state are covered
-by `test_orchestration_external_gather_runtime.py`.
+The adapter also invokes its capture preparation/event boundary before
+acquisition effects.
+Inside `capture_external_source_configuration`, the root must first call
+`provider.preflight_gather_acquisition(source_type, producer=producer,
+settings=settings, source=source, selector=selector)`, configured with
+`acquisition_validator=attestor.validate_acquisition`. This single shared
+operation performs fresh authorization and current/actual support checks
+described in [external source access](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md#pre-invocation-authorization-and-support).
+Agent/action selectors remain the original server `catalog_key`/`action_ref`;
+other Gather operations use `None`. Unverifiable support withholds acquisition.
+The separate invocation preflight cannot replace the combined check.
+Neither operation grants a URL, creates a retained
+alias, or replaces conversation, transport, budget and publication guards.
+Retention-time admission remains mandatory but is too late to authorize acquisition.
+
+The four callbacks are ephemeral and never enter checkpoint state or
+fingerprints. Factories must clear inherited preflight/capture/admission bindings when
+the current service has none, and discovery reads the authorizer from that
+current result service. Missing or noncallable bindings withhold v2 external
+capabilities; merely supplying four callables is not proof of supported
+acquisition. Legacy v1 descriptors remain unchanged.
+`test_orchestration_external_gather_runtime.py` covers the four-callback gate,
+separate authorization/capture requirements, and unchanged checkpoint fingerprints.
+
+Bind `capture_external_source_configuration` to the
+[verified root wrapper](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md#verified-root-injection-boundary),
+**not directly to `attestor.capture`**. The wrapper refreshes provider authority
+and the separate support checks before processing each engine event. For
+`source=None` with exactly `("agent", "agent_invoke")` or
+`("action", "action_invoke")` as `(source_type, producer.capability_id)`, it
+returns without calling `attestor.capture`. This preparation runs before
+manifest hydration and downstream credential/model construction; it is not
+configuration evidence and must not satisfy the capture-completeness check.
+Actual engine events repeat the provider checks before reaching
+`attestor.capture` with their original producer, settings, source and selector.
+Do not skip every `source=None` event: other acquisition types have their own
+capture requirements. The linked wrapper is the authoritative composition;
+do not replace it with a direct attestor binding or a readiness-only callback.
 
 `context.external_source_admission(producer=..., prepared=...)` receives the
 exact complete structured value that Gather retention will store. It returns
@@ -306,9 +333,9 @@ partial empty-result lineage survives restart in
 `test_orchestration_external_gather_runtime.py`.
 
 The existing `OrchestrationExternalConfigurationAttestor.selector_for(producer)`
-returns the original selector only after a trusted invocation capture. The
-parent can bind the two-keyword runtime hook without adding a selector to the
-plan or changing the retained content:
+returns the original selector only after a complete, non-poisoned invocation
+capture. The parent can bind the two-keyword runtime hook without adding a
+selector to the plan or changing the retained content:
 
 ```python
 def admit_external_result(*, producer, prepared):
@@ -333,6 +360,8 @@ binding `provider.admit_gather_result` does not supply agent/action selectors;
 use the original-capture closure for those operations. This bridge is exercised
 with real acquisition, attestation, retention and restart reads in
 `test_orchestration_external_capture_integration.py`.
+Retained reads after restart use `provider.authorize` and independently refreshed
+`attestor.current` metadata, never `selector_for` or a live capture map as authority.
 
 Returned notes, evidence and display citations are retained without truncation.
 External URLs and citation identifiers are not converted into document IDs or

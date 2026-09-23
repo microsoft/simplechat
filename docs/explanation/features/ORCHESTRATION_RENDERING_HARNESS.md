@@ -1,6 +1,6 @@
 # Gather / Reason / Render orchestration harness
 
-**Version: 0.261.129**
+**Version: 0.261.130**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; harness integration implemented in
@@ -9,6 +9,12 @@ version: **0.261.127**, recorded in
 
 Runtime boundary hardening implemented in version: **0.261.129**. See
 [the invocation, retained-state, recovery, and delivery fixes](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
+
+Direct initial result-store binding implemented in version: **0.261.130**.
+Initial preparation uses the initialized store owner without importing the
+continuation module, while retaining a fresh check of the approved run, actor,
+conversation, and attempt. See
+[the initial binding fix](../fixes/ORCHESTRATION_INITIAL_RESULT_BINDING_FIX.md).
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 This documents the retained-result contracts, shared ten-format exports,
