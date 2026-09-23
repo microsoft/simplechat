@@ -100,6 +100,7 @@ export function PromptEditorDialog({
     onChange,
     onSave,
     onCancel,
+    onRefresh,
 }: {
     draft: PromptDraft;
     saving: boolean;
@@ -107,6 +108,11 @@ export function PromptEditorDialog({
     onChange: (next: PromptDraft) => void;
     onSave: () => void;
     onCancel: () => void;
+    /**
+     * Present only after a conditional-write conflict on a shared group prompt. Reloads the list
+     * so the editor's next save carries the latest etag, without discarding the open draft.
+     */
+    onRefresh?: () => void;
 }) {
     const [tab, setTab] = useState<EditorTab>('write');
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -245,6 +251,11 @@ export function PromptEditorDialog({
                         <GlassButton size="sm" onClick={requestClose} disabled={saving}>
                             Cancel
                         </GlassButton>
+                        {onRefresh ? (
+                            <GlassButton size="sm" onClick={onRefresh} disabled={saving}>
+                                Refresh
+                            </GlassButton>
+                        ) : null}
                         <GlassButton
                             variant="primary"
                             size="sm"

@@ -15,11 +15,10 @@ import { clsx } from 'clsx';
 import { MessageSquareQuote, Plus, Search, X } from 'lucide-react';
 import type { WorkspacePrompt } from '../../lib/types';
 import {
-    createPrompt,
-    deletePrompt,
-    fetchPrompts,
-    updatePrompt,
-} from '../../lib/workspaceApi';
+    PERSONAL_PROMPT_WORKBENCH,
+    PromptConflictError,
+    type PromptWorkbenchAdapter,
+} from '../../lib/promptWorkbench';
 import {
     duplicatePromptName,
     isFavoritePrompt,
@@ -35,12 +34,12 @@ import { PromptList } from './PromptList';
 import { PromptDetailsPane } from './PromptDetailsPane';
 import { EMPTY_PROMPT_DRAFT, PromptEditorDialog, type PromptDraft } from './PromptEditorDialog';
 
-export function PromptWorkbench() {
+export function PromptWorkbench({
+    adapter = PERSONAL_PROMPT_WORKBENCH,
+}: { adapter?: PromptWorkbenchAdapter } = {}) {
+    const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, refresh, setItems, setError } =
-        useSectionResource<WorkspacePrompt>(
-            (signal) => fetchPrompts({}, signal),
-            'Failed to load prompts.',
-        );
+        useSectionResource<WorkspacePrompt>(load, 'Failed to load prompts.');
 
     const [query, setQuery] = useState('');
     const [sort] = useState<PromptSort>('recent');
@@ -48,7 +47,12 @@ export function PromptWorkbench() {
     const [draft, setDraft] = useState<PromptDraft | null>(null);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
+    // A conditional-write conflict on a shared group prompt: the draft stays open and a refresh
+    // is offered rather than the edit being lost. Never set in personal scope, which has no etag.
+    const [saveConflict, setSaveConflict] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
+
+    const canCreate = adapter.allows('create');
 
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
 
@@ -59,7 +63,10 @@ export function PromptWorkbench() {
         void refreshBootstrap();
     }, [refreshBootstrap]);
 
-    const visible = useMemo(() => visiblePrompts(items, query, sort), [items, query, sort]);
+    const visible = useMemo(
+        () => visiblePrompts(items, query, sort, adapter.favoritesEnabled),
+        [items, query, sort, adapter.favoritesEnabled],
+    );
 
     const selected = useMemo(
         () => items.find((prompt) => prompt.id === selectedId) ?? null,
@@ -88,6 +95,7 @@ export function PromptWorkbench() {
 
     const openEditor = (prompt: WorkspacePrompt | null) => {
         setSaveError(null);
+        setSaveConflict(false);
         setDraft(
             prompt
                 ? {
@@ -106,6 +114,7 @@ export function PromptWorkbench() {
         }
         setSaving(true);
         setSaveError(null);
+        setSaveConflict(false);
         try {
             const payload = {
                 name: draft.name.trim(),
@@ -113,11 +122,17 @@ export function PromptWorkbench() {
                 description: draft.description.trim(),
             };
             if (draft.id) {
-                await updatePrompt(draft.id, payload);
+                // The etag rides on the current list row, so a save retried after a refresh
+                // picks up the fresh marker without the draft having to carry it.
+                const current = items.find((prompt) => prompt.id === draft.id);
+                if (!current) {
+                    throw new Error('This prompt is no longer available. Refresh and try again.');
+                }
+                await adapter.update(current, payload);
                 setDraft(null);
                 await refresh();
             } else {
-                const created = await createPrompt(payload.name, payload.content, {
+                const created = await adapter.create(payload.name, payload.content, {
                     description: payload.description,
                 });
                 setDraft(null);
@@ -134,13 +149,29 @@ export function PromptWorkbench() {
             syncCatalog();
             toast.success(draft.id ? 'Prompt saved' : 'Prompt created');
         } catch (writeError) {
-            setSaveError(errorMessage(writeError, 'Could not save the prompt.'));
+            if (writeError instanceof PromptConflictError) {
+                // Keep the draft open. The refresh button in the dialog reloads the list, which
+                // brings the new etag, and saving again applies the edit on top of it.
+                setSaveConflict(true);
+                setSaveError(writeError.message);
+            } else {
+                setSaveError(errorMessage(writeError, 'Could not save the prompt.'));
+            }
         } finally {
             setSaving(false);
         }
     };
 
+    const onConflictRefresh = async () => {
+        setSaveConflict(false);
+        setSaveError(null);
+        await refresh();
+    };
+
     const onToggleFavorite = async (prompt: WorkspacePrompt) => {
+        if (!adapter.favoritesEnabled) {
+            return;
+        }
         const next = !isFavoritePrompt(prompt);
         const previous = items;
         // Applied locally first: the star is a one-click control and waiting for a round trip
@@ -151,7 +182,7 @@ export function PromptWorkbench() {
             ),
         );
         try {
-            await updatePrompt(prompt.id, { is_favorite: next });
+            await adapter.update(prompt, { is_favorite: next });
             syncCatalog();
         } catch (favoriteError) {
             setItems(previous);
@@ -162,7 +193,7 @@ export function PromptWorkbench() {
     const onDuplicate = async (prompt: WorkspacePrompt) => {
         setBusyId(prompt.id);
         try {
-            const created = await createPrompt(
+            const created = await adapter.create(
                 duplicatePromptName(
                     promptName(prompt),
                     items.map((item) => String(item.name ?? '')),
@@ -188,7 +219,7 @@ export function PromptWorkbench() {
         setBusyId(prompt.id);
         setItems(items.filter((item) => item.id !== prompt.id));
         try {
-            await deletePrompt(prompt.id);
+            await adapter.remove(prompt);
             syncCatalog();
             toast.success('Prompt deleted');
         } catch (deleteError) {
@@ -233,15 +264,17 @@ export function PromptWorkbench() {
                         : `${visible.length} of ${items.length}`}
                 </p>
 
-                <GlassButton
-                    variant="primary"
-                    size="sm"
-                    className="ml-auto"
-                    onClick={() => openEditor(null)}
-                >
-                    <Plus size={14} />
-                    New prompt
-                </GlassButton>
+                {canCreate ? (
+                    <GlassButton
+                        variant="primary"
+                        size="sm"
+                        className="ml-auto"
+                        onClick={() => openEditor(null)}
+                    >
+                        <Plus size={14} />
+                        New prompt
+                    </GlassButton>
+                ) : null}
             </div>
 
             {error ? (
@@ -274,12 +307,14 @@ export function PromptWorkbench() {
                                     : 'Nothing matches your search'
                             }
                             description={
-                                items.length === 0
-                                    ? 'Save wording you have refined once and reuse it from the chat composer.'
-                                    : undefined
+                                items.length !== 0
+                                    ? undefined
+                                    : canCreate
+                                      ? 'Save wording you have refined once and reuse it from the chat composer.'
+                                      : 'This group has no shared prompts yet. A workspace manager can add one.'
                             }
                             action={
-                                items.length === 0 ? (
+                                items.length === 0 && canCreate ? (
                                     <GlassButton
                                         variant="primary"
                                         size="sm"
@@ -296,6 +331,7 @@ export function PromptWorkbench() {
                             prompts={visible}
                             selectedId={selectedId}
                             busyId={busyId}
+                            showFavorite={adapter.favoritesEnabled}
                             onSelect={(prompt) => setSelectedId(prompt.id)}
                             onToggleFavorite={(prompt) => void onToggleFavorite(prompt)}
                         />
@@ -313,6 +349,11 @@ export function PromptWorkbench() {
                             key={selected.id}
                             prompt={selected}
                             busy={busyId === selected.id}
+                            canEdit={adapter.allows('edit', selected)}
+                            canDuplicate={adapter.allows('create')}
+                            canDelete={adapter.allows('delete', selected)}
+                            showFavorite={adapter.favoritesEnabled}
+                            scope={adapter.scope}
                             onBack={() => setSelectedId(null)}
                             onEdit={() => openEditor(selected)}
                             onDuplicate={() => void onDuplicate(selected)}
@@ -323,7 +364,11 @@ export function PromptWorkbench() {
                         <EmptyState
                             icon={<MessageSquareQuote size={28} />}
                             title="Nothing selected"
-                            description="Choose a prompt to read it, or create one to reuse in chat."
+                            description={
+                                canCreate
+                                    ? 'Choose a prompt to read it, or create one to reuse in chat.'
+                                    : 'Choose a prompt to read it and use it in chat.'
+                            }
                         />
                     )}
                 </div>
@@ -336,9 +381,11 @@ export function PromptWorkbench() {
                     error={saveError}
                     onChange={setDraft}
                     onSave={() => void onSave()}
+                    onRefresh={saveConflict ? () => void onConflictRefresh() : undefined}
                     onCancel={() => {
                         setDraft(null);
                         setSaveError(null);
+                        setSaveConflict(false);
                     }}
                 />
             ) : null}

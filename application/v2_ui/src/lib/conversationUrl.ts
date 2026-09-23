@@ -20,6 +20,15 @@ export const CONVERSATION_PARAM = 'conversationId';
  * so the later writer restores whatever the earlier one deleted.
  */
 export const PROMPT_PARAM = 'prompt';
+/**
+ * Optional companions to `prompt`, added for group prompts (M3). A group prompt id is unique,
+ * but resolving one by id alone would silently attach a personal prompt that happened to match;
+ * these name the scope so the composer resolves by id *and* scope. Personal links never carry
+ * them, so a `?prompt=<id>` link already in circulation keeps resolving by id exactly as before.
+ * Stripped by `syncedConversationParams` for the same one-shot reason `prompt` is.
+ */
+export const PROMPT_SCOPE_PARAM = 'prompt_scope';
+export const PROMPT_SCOPE_ID_PARAM = 'prompt_scope_id';
 export const WORKSPACE_AGENT_PARAM = 'agent_id';
 export const AGENT_SCOPE_PARAM = 'agent_scope';
 export const NEW_CHAT_PARAM = 'new';
@@ -35,9 +44,40 @@ export function readPromptParam(params: URLSearchParams): string | null {
     return value.trim() || null;
 }
 
-/** A link that opens the chat page with a saved prompt ready to insert. */
-export function chatHrefForPrompt(promptId: string): string {
-    return `/chat?${PROMPT_PARAM}=${encodeURIComponent(promptId)}`;
+/**
+ * The scope a prompt link names, or null for a scopeless (personal) link.
+ *
+ * Both parts are required together: a link with a kind but no id, or the reverse, names no
+ * usable scope and is treated as absent so resolution falls back to id-only.
+ */
+export interface PromptLinkScope {
+    kind: string;
+    id: string;
+}
+
+export function readPromptScope(params: URLSearchParams): PromptLinkScope | null {
+    const kind = (params.get(PROMPT_SCOPE_PARAM) ?? '').trim();
+    const id = (params.get(PROMPT_SCOPE_ID_PARAM) ?? '').trim();
+    if (!kind || !id) {
+        return null;
+    }
+    return { kind, id };
+}
+
+/**
+ * A link that opens the chat page with a saved prompt ready to insert.
+ *
+ * A group scope adds `prompt_scope` and `prompt_scope_id` so the composer can tell a group
+ * prompt from a personal one with the same id. Personal links pass no scope and keep their
+ * exact `/chat?prompt=<id>` spelling, so links already shared stay byte-identical.
+ */
+export function chatHrefForPrompt(promptId: string, scope?: PromptLinkScope | null): string {
+    const base = `/chat?${PROMPT_PARAM}=${encodeURIComponent(promptId)}`;
+    if (!scope || scope.kind === 'personal') {
+        return base;
+    }
+    return `${base}&${PROMPT_SCOPE_PARAM}=${encodeURIComponent(scope.kind)}`
+        + `&${PROMPT_SCOPE_ID_PARAM}=${encodeURIComponent(scope.id)}`;
 }
 
 /**
@@ -88,15 +128,19 @@ export function syncedConversationParams(
     const current = params.get(CONVERSATION_PARAM);
     const hasLegacy = params.has(LEGACY_CONVERSATION_PARAM);
     const hasPrompt = params.has(PROMPT_PARAM);
+    const hasPromptScope = params.has(PROMPT_SCOPE_PARAM) || params.has(PROMPT_SCOPE_ID_PARAM);
     const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM);
 
-    if (!hasLegacy && !hasPrompt && !hasAgentLaunch && (current ?? null) === conversationId) {
+    if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch
+        && (current ?? null) === conversationId) {
         return null;
     }
 
     const next = new URLSearchParams(params);
     next.delete(LEGACY_CONVERSATION_PARAM);
     next.delete(PROMPT_PARAM);
+    next.delete(PROMPT_SCOPE_PARAM);
+    next.delete(PROMPT_SCOPE_ID_PARAM);
     if (hasAgentLaunch) {
         next.delete(WORKSPACE_AGENT_PARAM);
         next.delete(AGENT_SCOPE_PARAM);

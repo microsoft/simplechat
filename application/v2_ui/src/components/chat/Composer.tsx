@@ -91,7 +91,7 @@ import {
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
 import { suggestPromptName } from '../../lib/promptSlash';
-import { readPromptParam } from '../../lib/conversationUrl';
+import { readPromptParam, readPromptScope } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
 import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
@@ -520,6 +520,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const [searchParams, setSearchParams] = useSearchParams();
     const location = useLocation();
     const [linkedPromptId] = useState(() => readPromptParam(searchParams));
+    // A group prompt link carries its scope so it resolves by id *and* scope. A legacy
+    // `?prompt=<id>` link carries none and keeps resolving by id alone, exactly as before.
+    const [linkedPromptScope] = useState(() => readPromptScope(searchParams));
     const promptLinkConsumed = useRef(false);
     useEffect(() => {
         if (promptLinkConsumed.current || !linkedPromptId || !bootstrap) {
@@ -527,14 +530,34 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         promptLinkConsumed.current = true;
 
-        const prompt = promptCatalog.find((item) => item.id === linkedPromptId);
+        const prompt = linkedPromptScope
+            ? promptCatalog.find(
+                  (item) =>
+                      item.id === linkedPromptId
+                      && String(item.scope_type ?? 'personal') === linkedPromptScope.kind
+                      && String(item.scope_id ?? '') === linkedPromptScope.id,
+              )
+            : promptCatalog.find((item) => item.id === linkedPromptId);
         if (!prompt) {
-            toast.error('That prompt is no longer available.');
+            // A scoped link names its workspace so the reason is legible: a member who lost
+            // access, or a deleted prompt, should not read as "some prompt, somewhere, is gone".
+            const groupName = linkedPromptScope
+                ? promptCatalog.find(
+                      (item) =>
+                          String(item.scope_id ?? '') === linkedPromptScope.id
+                          && typeof item.scope_name === 'string' && item.scope_name,
+                  )?.scope_name
+                : undefined;
+            toast.error(
+                linkedPromptScope && linkedPromptScope.kind === 'group'
+                    ? `That prompt is no longer available in ${groupName || 'that group'}.`
+                    : 'That prompt is no longer available.',
+            );
             return;
         }
         attachPrompt(prompt);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [bootstrap, promptCatalog, linkedPromptId]);
+    }, [bootstrap, promptCatalog, linkedPromptId, linkedPromptScope]);
 
     // A model is identified by endpoint + id + provider + deployment together, so the
     // option is keyed on `selection_key` (unique per endpoint) rather than the deployment

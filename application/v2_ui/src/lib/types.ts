@@ -367,6 +367,23 @@ export interface WorkspacePrompt {
     is_favorite?: boolean;
     created_at?: string;
     updated_at?: string;
+    /**
+     * Group scope only. The owning group's id, echoed on every group prompt response so the
+     * client can prove a returned prompt belongs to the workspace it asked for -- the same
+     * identity check the group document reader makes. Absent on personal prompts.
+     */
+    group_id?: string;
+    /**
+     * Group scope only. The concurrency marker a conditional write sends back as
+     * `expected_etag`; a mismatch is the 409 that keeps a failed-save draft open.
+     */
+    etag?: string;
+    /**
+     * Group scope only. The per-prompt operation hint (`edit`, `delete`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    prompt_actions?: string[];
     [key: string]: unknown;
 }
 

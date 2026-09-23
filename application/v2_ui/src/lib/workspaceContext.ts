@@ -61,6 +61,15 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group prompt management hint (M3). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit or delete group prompts, computed from role and status
+     * exactly like document_management. Absence means "read-only", never an empty grant.
+     */
+    prompt_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

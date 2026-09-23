@@ -21,6 +21,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import type { WorkspacePrompt } from '../../lib/types';
+import type { PromptScope } from '../../lib/promptWorkbench';
 import {
     chatHrefForPrompt,
     isFavoritePrompt,
@@ -42,6 +43,11 @@ export function PromptDetailsPane({
     onToggleFavorite,
     onBack,
     busy,
+    canEdit = true,
+    canDuplicate = true,
+    canDelete = true,
+    showFavorite = true,
+    scope,
 }: {
     prompt: WorkspacePrompt;
     onEdit: () => void;
@@ -51,6 +57,13 @@ export function PromptDetailsPane({
     /** Returns to the list on a narrow screen, where the two panes take turns. */
     onBack?: () => void;
     busy: boolean;
+    /** Write affordances, gated by the adapter. Read-only members see only preview and use in chat. */
+    canEdit?: boolean;
+    canDuplicate?: boolean;
+    canDelete?: boolean;
+    showFavorite?: boolean;
+    /** Carried into the chat link so a group prompt resolves by id and scope, not id alone. */
+    scope?: PromptScope;
 }) {
     const [confirmingDelete, setConfirmingDelete] = useState(false);
     // The memory lives in localStorage, which React cannot subscribe to. The tick is an
@@ -98,11 +111,13 @@ export function PromptDetailsPane({
                         </p>
                     </div>
                 </div>
-                <FavoriteButton
-                    active={isFavoritePrompt(prompt)}
-                    label={name}
-                    onToggle={onToggleFavorite}
-                />
+                {showFavorite ? (
+                    <FavoriteButton
+                        active={isFavoritePrompt(prompt)}
+                        label={name}
+                        onToggle={onToggleFavorite}
+                    />
+                ) : null}
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
@@ -156,13 +171,18 @@ export function PromptDetailsPane({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 border-t border-edge px-4 py-3">
-                <GlassButton variant="primary" size="sm" onClick={onEdit} disabled={busy}>
-                    <Pencil size={14} />
-                    Edit
-                </GlassButton>
+                {canEdit ? (
+                    <GlassButton variant="primary" size="sm" onClick={onEdit} disabled={busy}>
+                        <Pencil size={14} />
+                        Edit
+                    </GlassButton>
+                ) : null}
 
                 <Link
-                    to={chatHrefForPrompt(prompt.id)}
+                    to={chatHrefForPrompt(
+                        prompt.id,
+                        scope && scope.kind === 'group' ? { kind: scope.kind, id: scope.id } : undefined,
+                    )}
                     className="inline-flex h-8 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1"
                 >
                     <MessageSquarePlus size={14} />
@@ -174,46 +194,50 @@ export function PromptDetailsPane({
                     Copy
                 </GlassButton>
 
-                <GlassButton size="sm" onClick={onDuplicate} disabled={busy}>
-                    <CopyPlus size={14} />
-                    Duplicate
-                </GlassButton>
+                {canDuplicate ? (
+                    <GlassButton size="sm" onClick={onDuplicate} disabled={busy}>
+                        <CopyPlus size={14} />
+                        Duplicate
+                    </GlassButton>
+                ) : null}
 
-                <div className="ml-auto">
-                    {confirmingDelete ? (
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-text-3">Delete this prompt?</span>
+                {canDelete ? (
+                    <div className="ml-auto">
+                        {confirmingDelete ? (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-text-3">Delete this prompt?</span>
+                                <GlassButton
+                                    size="sm"
+                                    onClick={() => setConfirmingDelete(false)}
+                                    disabled={busy}
+                                >
+                                    Cancel
+                                </GlassButton>
+                                <GlassButton
+                                    variant="danger"
+                                    size="sm"
+                                    onClick={() => {
+                                        setConfirmingDelete(false);
+                                        onDelete();
+                                    }}
+                                    disabled={busy}
+                                >
+                                    Delete
+                                </GlassButton>
+                            </div>
+                        ) : (
                             <GlassButton
                                 size="sm"
-                                onClick={() => setConfirmingDelete(false)}
+                                onClick={() => setConfirmingDelete(true)}
                                 disabled={busy}
+                                className="text-danger hover:bg-danger-soft"
                             >
-                                Cancel
-                            </GlassButton>
-                            <GlassButton
-                                variant="danger"
-                                size="sm"
-                                onClick={() => {
-                                    setConfirmingDelete(false);
-                                    onDelete();
-                                }}
-                                disabled={busy}
-                            >
+                                <Trash2 size={14} />
                                 Delete
                             </GlassButton>
-                        </div>
-                    ) : (
-                        <GlassButton
-                            size="sm"
-                            onClick={() => setConfirmingDelete(true)}
-                            disabled={busy}
-                            className="text-danger hover:bg-danger-soft"
-                        >
-                            <Trash2 size={14} />
-                            Delete
-                        </GlassButton>
-                    )}
-                </div>
+                        )}
+                    </div>
+                ) : null}
             </div>
         </div>
     );

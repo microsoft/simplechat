@@ -24,12 +24,15 @@ export function PromptList({
     onSelect,
     onToggleFavorite,
     busyId,
+    showFavorite = true,
 }: {
     prompts: WorkspacePrompt[];
     selectedId: string | null;
     onSelect: (prompt: WorkspacePrompt) => void;
     onToggleFavorite: (prompt: WorkspacePrompt) => void;
     busyId: string | null;
+    /** Group prompts have no per-user favourite, so the star is hidden in that scope. */
+    showFavorite?: boolean;
 }) {
     return (
         <ul className="space-y-1" role="list">
@@ -82,17 +85,19 @@ export function PromptList({
                                 </span>
                             </button>
 
-                            <FavoriteButton
-                                active={isFavoritePrompt(prompt)}
-                                label={name}
-                                onToggle={() => onToggleFavorite(prompt)}
-                                className={clsx(
-                                    // Always visible once set, so the list still reads as
-                                    // ordered by favourite without hovering every row.
-                                    !isFavoritePrompt(prompt) &&
-                                        'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
-                                )}
-                            />
+                            {showFavorite ? (
+                                <FavoriteButton
+                                    active={isFavoritePrompt(prompt)}
+                                    label={name}
+                                    onToggle={() => onToggleFavorite(prompt)}
+                                    className={clsx(
+                                        // Always visible once set, so the list still reads as
+                                        // ordered by favourite without hovering every row.
+                                        !isFavoritePrompt(prompt) &&
+                                            'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+                                    )}
+                                />
+                            ) : null}
                         </div>
                     </li>
                 );
