@@ -1,13 +1,15 @@
 # test_workspace_supported_file_types_modal.py
 """
 UI contract test for workspace supported file type modals.
-Version: 0.250.014
+Version: 0.261.045
 Implemented in: 0.250.014
+OneNote coverage implemented in: 0.261.045
 
 This test ensures personal, group, and public workspace document upload areas
 stay compact and expose categorized supported file types through Bootstrap modals.
 """
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -92,3 +94,34 @@ def test_supported_file_type_modal_styles_exist() -> None:
     assert "min-height: 6.5rem" in css
     assert ".workspace-upload-supported-types-trigger" in css
     assert ".supported-file-type-list" in css
+
+
+def _allowed_categories():
+    """Read the actual format configuration without initializing Azure clients."""
+    path = ROOT_DIR / "application" / "single_app" / "config.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    namespace = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Set):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id.endswith("EXTENSIONS"):
+                    namespace[target.id] = ast.literal_eval(node.value)
+        elif isinstance(node, ast.FunctionDef) and node.name == "get_allowed_extension_categories":
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+    categories = namespace["get_allowed_extension_categories"]()
+    return categories
+
+
+def test_onenote_formats_render_in_every_workspace_modal():
+    """The shared modal advertises both native formats and their text-only scope."""
+    environment = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(TEMPLATES_DIR),
+        autoescape=jinja2.select_autoescape(["html"]),
+    )
+    macro = environment.get_template("_supported_file_types_modal.html").module.supported_file_types_modal
+    categories = _allowed_categories()
+    for modal_id in WORKSPACE_TEMPLATES.values():
+        markup = str(macro(modal_id, "Supported file types", categories))
+        assert "OneNote (typed text and tables)" in markup
+        assert '>.one</span>' in markup
+        assert '>.onepkg</span>' in markup

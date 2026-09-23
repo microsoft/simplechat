@@ -62,7 +62,7 @@ XML_SCHEMA_SOURCE_EXTENSIONS = frozenset({".xsd"})
 NARRATIVE_SOURCE_EXTENSIONS = frozenset({
     ".txt", ".doc", ".docm", ".docx", ".html", ".htm", ".md", ".markdown",
     ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx",
-    ".msg", ".vsdx", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
+    ".msg", ".vsdx", ".one", ".onepkg", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
     ".heif", ".heic", ".3ga", ".aac", ".ac3", ".aif", ".aifc", ".aiff",
     ".amr", ".ape", ".au", ".caf", ".dts", ".f4a", ".flac", ".m4a",
     ".m4b", ".m4r", ".mka", ".mp2", ".mp3", ".mpa", ".oga", ".ogg",
