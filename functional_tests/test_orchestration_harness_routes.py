@@ -1,8 +1,9 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Initial-claim timing coverage added in: 0.261.129
 
 Only external settings/storage I/O is replaced. The production Flask routes,
 Blueprint guards, result services and shared format registry run unchanged.
@@ -15,6 +16,7 @@ import sys
 import threading
 import unicodedata
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -684,10 +686,24 @@ def real_http_harness(modules, monkeypatch):
     return runtime
 
 
-def test_real_http_plans_then_executes_the_opted_in_harness_without_readiness_override(real_http_harness):
+def test_real_http_plans_then_executes_the_opted_in_harness_without_readiness_override(
+    real_http_harness, monkeypatch,
+):
     runtime = real_http_harness
     harness = runtime.harness
-    harness.settings.update(enable_chat_orchestration_harness=True, enable_user_workspace=False)
+    harness.settings.update(
+        enable_chat_orchestration_harness=True, enable_user_workspace=False,
+        chat_orchestration_total_timeout_seconds=173,
+    )
+    initial_claims = []
+    prepare_execution = harness.execution.prepare_harness_execution
+
+    def observe_claim(record, **kwargs):
+        saved = harness.runs.read_item(record["id"], record["conversation_id"])
+        initial_claims.append(deepcopy(saved))
+        return prepare_execution(record, **kwargs)
+
+    monkeypatch.setattr(harness.execution, "prepare_harness_execution", observe_claim)
     request = "Write an original short note and save the same note as Markdown and PDF."
     content = "One complete draft for the two approved files."
     harness.replies = [
@@ -733,6 +749,13 @@ def test_real_http_plans_then_executes_the_opted_in_harness_without_readiness_ov
     ]
     saved = harness.runs.read_item(plan["run_id"], "conversation-1")
     assert executed.status_code == 200 and frames[-1]["status"] == saved["status"] == "completed", frames
+    assert len(initial_claims) == 1
+    claimed = initial_claims[0]
+    started = datetime.fromisoformat(claimed["started_at"])
+    deadline = datetime.fromisoformat(claimed["execution_deadline_at"])
+    assert (deadline - started).total_seconds() == 173
+    assert saved["started_at"] == claimed["started_at"]
+    assert saved["execution_deadline_at"] == claimed["execution_deadline_at"]
     assert len(harness.model_calls) == 3 and harness.blobs.file_uploads == 2
     assert frames[-1]["full_content"].startswith(content) and len(harness.assistant_messages()) == 1
     services = harness.services()

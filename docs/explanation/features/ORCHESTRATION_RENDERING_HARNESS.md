@@ -1,11 +1,14 @@
 # Gather / Reason / Render orchestration harness
 
-**Version: 0.261.127**
+**Version: 0.261.129**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; harness integration implemented in
 version: **0.261.127**, recorded in
 `application/single_app/config.py`.
+
+Runtime boundary hardening implemented in version: **0.261.129**. See
+[the invocation, retained-state, recovery, and delivery fixes](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 This documents the retained-result contracts, shared ten-format exports,
@@ -51,6 +54,7 @@ Existing native tool artifact behavior remains compatible outside this contract.
 | `functions_workflow_results.py` | Existing bounded section readers, including collection previews. |
 | `functions_saved_analysis.py` | Existing native Analyze owner and authorized `SavedAnalysisInput`; no weakened `analyze-final-v1` validation. |
 | `functions_analysis_access.py` and `content_screening.access` | Current source authorization, revision checks, and screening holds. |
+| `functions_orchestration_timing.py` | Bootstrap-independent timeout policy shared by claims and executors; same-attempt recovery retains the original durable deadline. |
 
 Runtime owners supply initialized storage and access readers. The result facade
 and contract modules do

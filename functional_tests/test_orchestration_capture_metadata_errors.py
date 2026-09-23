@@ -1,8 +1,9 @@
 # test_orchestration_capture_metadata_errors.py
 """Current-metadata failures and pre-effect gates through actual acquisition.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Acquisition-boundary coverage updated in: 0.261.129
 
 Real provider preflight, attestor current reads, adapters and owned SDK observers
 run with metadata/provider transport doubled. No grants or live model calls.
@@ -55,7 +56,6 @@ def test_actual_unsupported_definition_preserves_early_policy_denial(
 ):
     world = pre_effect_world
     runtime = world.runtime
-    runtime.context.external_source_preflight = world.provider.preflight_gather_invocation
     world.definition = Agent({**world.definition.as_dict(), "tools": [_bing_tool()]})
     runtime.state.definition = Agent({**world.definition.as_dict(), **changes})
     with pytest.raises(PermissionError) as refused:
@@ -101,7 +101,6 @@ def test_unsupported_foundry_tools_stop_before_run_and_admission(
         {**runtime.state.definition.as_dict(), "tools": deepcopy(tools)},
     )
     with bound_acquisition(runtime, "web_search") as bound:
-        bound.context.external_source_preflight = bound.provider.preflight_gather_invocation
         error_type = (
             PermissionError if expected == "denied"
             else runtime.modules.configuration.ExternalConfigurationServiceError
@@ -130,7 +129,6 @@ def test_supported_foundry_tools_keep_observed_run_binding_and_retention(capture
         {**runtime.state.definition.as_dict(), "tools": tools},
     )
     with bound_acquisition(runtime, "web_search") as bound:
-        bound.context.external_source_preflight = bound.provider.preflight_gather_invocation
         _, result = run_gather(runtime)
         assert result["status"] == "completed", result
         assert len(runtime.state.web) == 1
@@ -178,7 +176,6 @@ def test_current_metadata_taxonomy_survives_initial_and_sticky_sdk_failure(
     configuration = runtime.modules.configuration
     held_error = importlib.import_module("content_screening.contracts").DocumentHeldError
     with bound_acquisition(runtime, "web_search") as bound:
-        bound.context.external_source_preflight = bound.provider.preflight_gather_invocation
         fault_reads = []
         run_observations = []
         fault_enabled = phase == "preflight"
@@ -277,7 +274,6 @@ def test_sdk_snapshot_failure_before_callback_preserves_verification_error(
         runtime.state.run_mutation = lambda run: run.update({field: value})
     error_type = runtime.modules.configuration.ExternalConfigurationServiceError
     with bound_acquisition(runtime, "web_search") as bound:
-        bound.context.external_source_preflight = bound.provider.preflight_gather_invocation
         with pytest.raises(error_type) as immediate:
             run_gather(runtime)
         assert immediate.value.code == "external_configuration_metadata_invalid"

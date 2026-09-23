@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.127** (tracked in `application/single_app/config.py`)
+**Version: 0.261.129** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -17,6 +17,7 @@
 **Opt-in dependency runtime and composition implemented in version: 0.261.127**
 **Selected composition profile definitions supplied in version: 0.261.127**
 **Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
+**Runtime boundary hardening implemented in version: 0.261.129**
 
 ## Overview
 
@@ -39,10 +40,13 @@ This is a V2 interface feature. The classic interface is unchanged.
 Version **0.261.125** adds the internal
 [Gather / Reason / Render result foundation](ORCHESTRATION_RENDERING_HARNESS.md)
 (Refs #1509), plus an explicitly admitted plan-contract v2 runtime. This internal
-contract is separate from the **V2 chat interface**, which continues to use the
-legacy plan contract by default. The dependency runtime supplies explicit
-continuation and service-injection APIs; it does not activate routes, scheduling
-or new settings. Its remaining integration boundaries are described below.
+contract is separate from the **V2 chat interface**. The integrated runtime,
+introduced in **0.261.127**, admits new v2 plans only when both **Enable Chat
+Orchestration** and **Gather / Reason / Render harness (preview)** are enabled.
+Both settings remain off by default; saved legacy plans keep their original
+contract. [Runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md)
+in **0.261.129** preserves pending results and strengthens invocation, catalog,
+and delivery checks without changing those admission settings.
 
 ## Dependencies
 
@@ -287,6 +291,19 @@ alias identity and catalog limits, installs those bindings in the result access
 catalog, and persists their aliases with grounded origin. Integration selectors
 must come from the original server configuration capture, not model-authored
 agent names or display labels. The parent factory supplies that closure.
+
+Retention accepts an untyped adapter envelope only after a `completed` or
+`partial` invocation. A `pending` or `waiting` Gather must supply its typed
+pending `TaskResult` and wait identity; a preview cannot become a completed
+result or reach a downstream content-generation step. This distinction is
+covered by `test_orchestration_dependency_runtime.py`.
+
+A genuinely successful external invocation with empty notes, citations and
+evidence still retains its authorized external binding and grounded origin.
+Empty content does not bypass capture or become source-free success, and its
+container completeness does not claim whole-source coverage. Complete and
+partial empty-result lineage survives restart in
+`test_orchestration_external_gather_runtime.py`.
 
 The existing `OrchestrationExternalConfigurationAttestor.selector_for(producer)`
 returns the original selector only after a trusted invocation capture. The

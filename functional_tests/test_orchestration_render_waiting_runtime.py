@@ -1,8 +1,9 @@
 # test_orchestration_render_waiting_runtime.py
 """Real Render delivery resumes under the original orchestration attempt without producer replay.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Uncertain output-acknowledgement regression implemented in: 0.261.129
 The compiler, executor, leases, checkpoints, result store, renderer and artifact transport are real.
 Only model and external Azure I/O are isolated.
 """
@@ -12,11 +13,15 @@ import importlib
 from types import SimpleNamespace
 
 import pytest
+from azure.core.exceptions import ServiceResponseError
 
 from functions_model_capabilities import ModelTokenBudget
-from functions_orchestration_executor import RunContext, _render_dependency_step, execute_plan
+from functions_orchestration_executor import (
+    RunContext, _render_dependency_step, _validate_render_step_result, execute_plan,
+)
 from functions_orchestration_registry import resolve_available_capability_ids
-from functions_orchestration_schema import normalize_plan
+from functions_orchestration_result_contracts import ResultContractError
+from functions_orchestration_schema import build_step_result, normalize_plan
 from test_orchestration_dependency_runtime import binding, compose, source_input
 from test_orchestration_output_lifecycle import lifecycle, production_modules
 
@@ -281,3 +286,108 @@ def test_sibling_wait_checkpoint_cannot_resurrect_a_completed_file(render_runtim
     assert complete['task_results']['draft'] == original_task
     assert len(case.calls) == 1 and len(case.lifecycle.render_calls) == 4
     assert case.lifecycle.blobs.uploads == 2
+
+
+@pytest.mark.parametrize('boundary', ['before_attempt', 'after_commit'])
+def test_initial_render_read_outage_preserves_admitted_wait_without_a_task(
+    render_runtime, monkeypatch, boundary,
+):
+    case = render_runtime
+    read = case.lifecycle.runs.read_item
+    render = case.lifecycle.service.render_attempt
+    faults = []
+    armed = {}
+
+    def read_with_outage(item, partition_key, **kwargs):
+        if armed.get('output_id') == item:
+            armed.clear()
+            faults.append(item)
+            raise ServiceResponseError('Isolated output acknowledgement read failure.')
+        return read(item=item, partition_key=partition_key, **kwargs)
+
+    def render_with_outage(output_id):
+        if boundary == 'before_attempt':
+            armed['output_id'] = output_id
+        output = render(output_id)
+        if boundary == 'after_commit':
+            armed['output_id'] = output_id
+        return output
+
+    with monkeypatch.context() as outage:
+        outage.setattr(case.lifecycle.runs, 'read_item', read_with_outage)
+        outage.setattr(case.lifecycle.service, 'render_attempt', render_with_outage)
+        first = case.execute(case.initial)
+
+    assert len(faults) == 1
+    assert first['status'] == 'waiting', first
+    step = first['steps'][1]
+    assert step['status'] == 'waiting' and step['failure'] is None
+    assert step.get('task_result') is None
+    assert step['output_error'] == {'code': 'output_storage_unavailable', 'retryable': True}
+    assert bool(step['outputs']) == (boundary == 'before_attempt')
+    assert set(first['task_results']) == {'draft'}
+    wait = first['pending_results']['file']
+    assert wait == {'kind': 'orchestration_output', 'output_id': faults[0]}
+    checkpoint = case.recovery.checkpoint_store(case.current(), lambda: True)
+    saved_wait = checkpoint.load('file', waiting=True)
+    assert saved_wait['result']['wait'] == wait
+    assert saved_wait['result']['artifacts'] == [] and saved_wait['result'].get('task_result') is None
+
+    if boundary == 'before_attempt':
+        output = case.lifecycle.run(first['outputs'][0])
+        assert output['state'] == 'completed'
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Admitted output recovery repeated work instead of reading its commit.')
+
+    with monkeypatch.context() as reads_only:
+        for method in ('ensure_output', 'render_attempt', 'reconcile', 'claim_due', 'manual_retry'):
+            reads_only.setattr(case.lifecycle.service, method, forbidden)
+        complete = case.execute(case.claim(f'{boundary}-acknowledged'))
+    assert complete['status'] == 'completed'
+    assert complete['pending_results'] == {}
+    assert complete['task_results'] == first['task_results']
+    assert complete['outputs'][0]['output_id'] == wait['output_id']
+    assert len(complete['artifacts']) == len(case.calls) == 1
+    assert len(case.lifecycle.render_calls) == case.lifecycle.blobs.uploads == 1
+
+
+@pytest.mark.parametrize('defect', [
+    'missing_error', 'false_retryable', 'invalid_retryable', 'missing_code', 'empty_code',
+    'missing_wait', 'wrong_kind', 'invalid_id', 'mismatched_code',
+    'failure', 'artifact', 'task_result', 'completed',
+])
+def test_empty_render_outputs_require_an_admitted_retryable_wait(defect):
+    result = build_step_result(
+        status='waiting', wait={
+            'kind': 'orchestration_output', 'output_id': 'orender_' + 'a' * 64,
+            'error_code': 'output_storage_unavailable',
+        },
+    )
+    result.update(outputs=[], output_error={'code': 'output_storage_unavailable', 'retryable': True})
+    if defect == 'missing_error':
+        result.pop('output_error')
+    elif defect in ('false_retryable', 'invalid_retryable'):
+        result['output_error']['retryable'] = False if defect == 'false_retryable' else 'true'
+    elif defect == 'missing_code':
+        result['output_error'].pop('code')
+    elif defect == 'empty_code':
+        result['output_error']['code'] = ''
+    elif defect == 'missing_wait':
+        result.pop('wait')
+    elif defect == 'wrong_kind':
+        result['wait']['kind'] = 'native_tabular_compute'
+    elif defect == 'invalid_id':
+        result['wait']['output_id'] = 'foreign-output'
+    elif defect == 'mismatched_code':
+        result['wait']['error_code'] = 'different-error'
+    elif defect == 'failure':
+        result['failure'] = {'code': 'step_failed'}
+    elif defect == 'artifact':
+        result['artifacts'] = [{'artifact_message_id': 'unverified-file'}]
+    elif defect == 'task_result':
+        result['task_result'] = {}
+    else:
+        result['status'] = 'completed'
+    with pytest.raises(ResultContractError):
+        _validate_render_step_result({'step_id': 'file', 'arguments': {}}, result)

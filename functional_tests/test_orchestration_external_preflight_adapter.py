@@ -1,12 +1,14 @@
 # test_orchestration_external_preflight_adapter.py
-"""Fresh authorization before all five v2 acquisition adapter boundaries.
+"""Strict invocation authorization and acquisition support for all five v2 adapters.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Early acquisition-support regressions implemented in: 0.261.129
 
-Real adapters, producer validation, current source authorization and scoped
-resolvers run against isolated storage/directory I/O. Configuration capture
-deliberately stops execution so authorization cannot hide later engine effects.
+The auth-only runtime hook invokes the real provider before capture or engine
+setup. Capture separately invokes the real combined acquisition guard. The
+current-resource cases use the real metadata reader and attestor with only
+external/storage I/O doubled; neither authorization nor preparation is proof.
 """
 
 from contextlib import nullcontext
@@ -20,10 +22,16 @@ from unittest.mock import Mock
 import pytest
 
 from test_orchestration_external_configuration_capture import capture_runtime, gather_modules, run_gather
+from test_orchestration_external_metadata import metadata_world
+from test_orchestration_external_pre_effect import pre_effect_world
 from test_orchestration_external_sources import ExternalSourceWorld
 
 
 CAPABILITIES = ("web_search", "url_fetch", "deep_research", "agent_invoke", "action_invoke")
+SOURCE_TYPES = {
+    "web_search": "web", "url_fetch": "url", "deep_research": "deep_research",
+    "agent_invoke": "agent", "action_invoke": "action",
+}
 
 
 @pytest.fixture(params=CAPABILITIES)
@@ -62,17 +70,76 @@ def authorized_runtime(request, capture_runtime):
         world.run["memory_audience"] = {
             "kind": "personal", "owner_id": "owner", "collaboration_id": "",
         }
-        provider = world.provider()
-        preflight = Mock(wraps=provider.preflight_gather_invocation)
-        capture = Mock(side_effect=runtime.modules.configuration.ExternalConfigurationServiceError(
+        validator = Mock(side_effect=runtime.modules.configuration.ExternalConfigurationServiceError(
             "external_configuration_metadata_invalid",
         ))
+        provider = world.provider(acquisition_validator=validator)
+        preflight = Mock(wraps=provider.preflight_gather_invocation)
+        acquisition = Mock(wraps=provider.preflight_gather_acquisition)
+        capture = Mock()
+
+        def root_capture(source_type, *, producer, settings, source=None, selector=None):
+            acquisition(source_type, producer=producer, settings=settings, source=source, selector=selector)
+            if source is None and source_type in ("agent", "action"):
+                return
+            capture(source_type, producer=producer, settings=settings, source=source, selector=selector)
+
         runtime.context.external_source_preflight = preflight
-        runtime.context.capture_external_source_configuration = capture
+        runtime.context.capture_external_source_configuration = root_capture
         yield SimpleNamespace(
             runtime=runtime, world=world, provider=provider, preflight=preflight, capture=capture,
-            step=step, capability=capability, selector=world.selected_integration(),
+            acquisition=acquisition, validator=validator, step=step, capability=capability,
+            selector=world.selected_integration(),
         )
+
+
+@pytest.fixture(params=CAPABILITIES)
+def current_acquisition_runtime(request, pre_effect_world):
+    world = pre_effect_world
+    capability = request.param
+    world.configure(capability)
+    runtime = world.runtime
+    context = runtime.context
+    step = world.run_store.items["run"]["plan"]["steps"][0]
+    selector = None
+    if capability == "agent_invoke":
+        context.agent_catalog = world.provider.agent_catalog_reader("owner", settings=runtime.settings)
+        selector = "personal:owner:agent-one"
+    elif capability == "action_invoke":
+        context.action_catalog = world.provider.action_catalog_reader("owner", settings=runtime.settings)
+        selector = step["arguments"]["action_ref"]
+    contexts = importlib.import_module("agent_execution_context")
+    context.agent_execution_identity = contexts.ExecutionIdentity(
+        "owner", "conversation", bridge=lambda _reference: nullcontext(),
+    )
+    binding = None
+    if capability == "deep_research":
+        binding = world.modules.models.resolve_orchestration_model(
+            runtime.settings, user_id="owner",
+            seeds=deepcopy(world.run_store.items["run"]["seeds"]), planner=True,
+        )
+        context.planner_client = binding.as_planner_client()
+        context.planner_deployment = binding.deployment
+    state = SimpleNamespace(
+        runtime=runtime, world=world, step=step, capability=capability, selector=selector,
+        prepared=[], stop_after_preparation=True,
+    )
+
+    def root_capture(source_type, *, producer, settings, source=None, selector=None):
+        world.capture(source_type, producer=producer, settings=settings, source=source, selector=selector)
+        state.prepared.append((source_type, producer, source, selector))
+        if state.stop_after_preparation:
+            raise world.modules.configuration.ExternalConfigurationServiceError(
+                "external_configuration_metadata_invalid",
+            )
+
+    context.external_source_preflight = world.provider.preflight_gather_invocation
+    context.capture_external_source_configuration = root_capture
+    try:
+        yield state
+    finally:
+        if binding is not None:
+            binding.close()
 
 
 def execute(state):
@@ -89,19 +156,24 @@ def assert_no_effects(state):
     assert state.runtime.context.result_aliases == {}
 
 
-def test_real_preflight_is_required_before_the_first_capture(authorized_runtime):
+def test_combined_guard_authorizes_before_configuration_verification(authorized_runtime):
     state = authorized_runtime
     expected = state.runtime.context.result_producer(state.step)
     with pytest.raises(state.runtime.modules.configuration.ExternalConfigurationServiceError) as caught:
         execute(state)
     assert caught.value.code == "external_configuration_metadata_invalid"
     state.preflight.assert_called_once_with(producer=expected, selector=state.selector)
-    state.capture.assert_called_once()
-    assert state.world.identity_reads == 1
+    state.acquisition.assert_called_once_with(
+        SOURCE_TYPES[state.capability], producer=expected, settings=state.runtime.settings,
+        source=None, selector=state.selector,
+    )
+    state.validator.assert_called_once()
+    state.capture.assert_not_called()
+    assert state.world.identity_reads == 2
     assert_no_effects(state)
 
 
-def test_authorization_does_not_create_acquisition_proof(authorized_runtime):
+def test_preflight_authorization_does_not_create_acquisition_proof(authorized_runtime):
     state = authorized_runtime
     capture = state.runtime.modules.adapters._external_invocation_capture(
         state.step, state.runtime.context, state.runtime.settings, user_id="owner",
@@ -111,30 +183,88 @@ def test_authorization_does_not_create_acquisition_proof(authorized_runtime):
     with pytest.raises(errors.OrchestrationInvocationCaptureError):
         capture.require_valid(captured=True)
     assert state.world.identity_reads == 1
+    producer = state.runtime.context.result_producer(state.step)
+    state.preflight.assert_called_once_with(producer=producer, selector=state.selector)
+    state.acquisition.assert_not_called()
+    state.validator.assert_not_called()
     state.capture.assert_not_called()
     assert_no_effects(state)
 
 
 @pytest.mark.parametrize("fault", [
-    "missing", "noncallable", "true", "false", "mapping", "async_function", "awaitable",
+    "missing", "noncallable", "true", "false", "payload", "zero",
+    "async_function", "async_callable", "awaitable",
 ])
-def test_absent_or_invalid_preflight_never_issues_capture_or_starts_an_engine(authorized_runtime, fault):
+def test_preflight_requires_a_synchronous_none_before_capture(authorized_runtime, fault):
     state = authorized_runtime
 
-    async def asynchronous():
+    async def asynchronous(*_args, **_kwargs):
         pytest.fail("An asynchronous authorization callback must not execute")
+
+    class AsynchronousGuard:
+        async def __call__(self, **_kwargs):
+            pytest.fail("An asynchronous authorization object must not execute")
 
     callbacks = {
         "missing": None, "noncallable": True,
         "true": lambda **_kwargs: True, "false": lambda **_kwargs: False,
-        "mapping": lambda **_kwargs: {"authorized": True},
-        "async_function": asynchronous, "awaitable": lambda **_kwargs: asynchronous(),
+        "payload": lambda **_kwargs: {"authorized": True}, "zero": lambda **_kwargs: 0,
+        "async_function": asynchronous, "async_callable": AsynchronousGuard(),
+        "awaitable": lambda **_kwargs: asynchronous(),
     }
     state.runtime.context.external_source_preflight = callbacks[fault]
     result = execute(state)
     assert result["status"] == "failed"
     assert result["artifacts"] == []
+    assert state.world.identity_reads == 0
+    state.acquisition.assert_not_called()
+    state.validator.assert_not_called()
     state.capture.assert_not_called()
+    assert_no_effects(state)
+
+
+@pytest.mark.parametrize("fault", [
+    "missing", "noncallable", "refused", "async_function", "awaitable",
+])
+def test_absent_or_refused_capture_never_starts_an_engine(authorized_runtime, fault):
+    state = authorized_runtime
+
+    async def asynchronous(*_args, **_kwargs):
+        pytest.fail("An asynchronous authorization callback must not execute")
+
+    callbacks = {
+        "missing": None, "noncallable": True,
+        "refused": lambda *_args, **_kwargs: False,
+        "async_function": asynchronous, "awaitable": lambda *_args, **_kwargs: asynchronous(),
+    }
+    state.runtime.context.capture_external_source_configuration = callbacks[fault]
+    result = execute(state)
+    assert result["status"] == "failed"
+    assert result["artifacts"] == []
+    state.capture.assert_not_called()
+    assert_no_effects(state)
+
+
+@pytest.mark.parametrize("returned", [True, False, {"authorized": True}])
+def test_combined_guard_requires_none_from_its_validator(authorized_runtime, returned):
+    state = authorized_runtime
+    state.provider.acquisition_validator = Mock(return_value=returned)
+    result = execute(state)
+    assert result["status"] == "failed"
+    assert state.world.identity_reads == 2
+    state.provider.acquisition_validator.assert_called_once()
+    state.capture.assert_not_called()
+    assert_no_effects(state)
+
+
+def test_auth_only_preflight_does_not_replace_acquisition_validation(authorized_runtime):
+    state = authorized_runtime
+    with pytest.raises(state.runtime.modules.configuration.ExternalConfigurationServiceError):
+        execute(state)
+    assert state.world.identity_reads == 2
+    state.preflight.assert_called_once()
+    state.acquisition.assert_called_once()
+    state.validator.assert_called_once()
     assert_no_effects(state)
 
 
@@ -158,6 +288,9 @@ def test_real_current_authority_overrides_stale_context_before_effects(authorize
     with pytest.raises(PermissionError) as caught:
         execute(state)
     assert caught.value.code == "result_unavailable" and caught.value.retryable is False
+    state.preflight.assert_called_once()
+    state.acquisition.assert_not_called()
+    state.validator.assert_not_called()
     state.capture.assert_not_called()
     assert_no_effects(state)
 
@@ -185,6 +318,7 @@ def test_current_scoped_selection_is_authorized_before_acquisition(authorized_ru
     assert caught.value.code == "result_unavailable"
     expected = state.runtime.context.result_producer(state.step)
     state.preflight.assert_called_once_with(producer=expected, selector=state.selector)
+    state.acquisition.assert_not_called()
     state.capture.assert_not_called()
     assert_no_effects(state)
 
@@ -250,6 +384,23 @@ def test_preflight_preserves_typed_uncertainty_and_cancellation(authorized_runti
     assert_no_effects(state)
 
 
+def test_preflight_preserves_owning_checkpoint_control(authorized_runtime):
+    state = authorized_runtime
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    failure = checkpoints.CheckpointError("ownership_lost")
+    failure.private_detail = "PRIVATE_CLAIM_DETAILS"
+    state.provider.read_identity = Mock(side_effect=failure)
+    with pytest.raises(checkpoints.CheckpointError) as caught:
+        execute(state)
+    assert caught.value.code == "ownership_lost"
+    assert caught.value is not failure and not hasattr(caught.value, "private_detail")
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
+    state.acquisition.assert_not_called()
+    state.validator.assert_not_called()
+    state.capture.assert_not_called()
+    assert_no_effects(state)
+
+
 @pytest.mark.parametrize("field,value", [
     ("user_id", "other-owner"), ("conversation_id", "other-conversation"),
     ("run_id", "other-run"), ("attempt_index", 2), ("step_id", "other-step"),
@@ -288,6 +439,97 @@ def test_cancellation_precedes_preflight(authorized_runtime):
     state.preflight.assert_not_called()
     state.capture.assert_not_called()
     assert_no_effects(state)
+
+
+def assert_no_current_effects(state):
+    runtime = state.runtime
+    assert runtime.state.web == runtime.state.pages == runtime.state.invocations == []
+    assert runtime.state.clients == runtime.state.credentials == []
+    assert runtime.context.task_results == runtime.context.result_aliases == {}
+    assert state.world.provider.access.external_source_catalog == {}
+
+
+def test_real_root_authorization_and_support_precede_engine_setup(current_acquisition_runtime):
+    state = current_acquisition_runtime
+    owner = state.runtime.context.result_producer(state.step)
+    with pytest.raises(state.world.modules.configuration.ExternalConfigurationServiceError) as caught:
+        execute(state)
+    assert caught.value.code == "external_configuration_metadata_invalid"
+    assert state.prepared == [(SOURCE_TYPES[state.capability], owner, None, state.selector)]
+    assert state.world.identity_reads == [("owner", "conversation")] * 2
+    assert state.world.guard_returns == [None]
+    assert_no_current_effects(state)
+
+
+def test_real_preparation_keeps_model_and_run_proof_incomplete(current_acquisition_runtime):
+    state = current_acquisition_runtime
+    state.stop_after_preparation = False
+    capture = state.runtime.modules.adapters._external_invocation_capture(
+        state.step, state.runtime.context, state.runtime.settings, user_id="owner",
+        capability_id=state.capability, selector=state.selector,
+    )
+    capture(SOURCE_TYPES[state.capability], settings=state.runtime.settings, selector=state.selector)
+    errors = importlib.import_module("functions_orchestration_invocation_capture")
+    if state.capability == "url_fetch":
+        capture.require_valid(captured=True)
+    else:
+        with pytest.raises(errors.OrchestrationInvocationCaptureError):
+            capture.require_valid(captured=True)
+        owner = state.runtime.context.result_producer(state.step)
+        with pytest.raises(state.world.modules.configuration.ResultUnavailableError):
+            state.world.attestor.selector_for(owner)
+    if state.capability in ("agent_invoke", "action_invoke"):
+        assert state.world.attestor._captures == {}
+    assert_no_current_effects(state)
+
+
+def test_real_current_or_actual_unsupported_configuration_stops_before_effects(current_acquisition_runtime):
+    state = current_acquisition_runtime
+    world = state.world
+    if state.capability == "web_search":
+        world.definition = type(world.definition)({
+            **world.definition.as_dict(), "tools": [{"type": "file_search"}],
+        })
+    elif state.capability == "url_fetch":
+        state.runtime.settings["source_review_timeout_seconds"] = 3
+    elif state.capability == "deep_research":
+        world.settings.update(deep_research_enable_query_planning=True,
+                              deep_research_max_search_queries_per_turn=2)
+    elif state.capability == "agent_invoke":
+        world.agent_store.items["agent-one"]["agent_type"] = "local"
+    else:
+        world.action_store.items["action-one"]["type"] = "mcp"
+    with pytest.raises(PermissionError) as caught:
+        execute(state)
+    assert caught.value.code == "result_unavailable"
+    assert state.prepared == []
+    assert world.attestor._captures == {}
+    assert_no_current_effects(state)
+
+
+@pytest.mark.parametrize("current_acquisition_runtime", ["agent_invoke", "action_invoke"], indirect=True)
+def test_preparation_only_engine_result_cannot_be_accepted(current_acquisition_runtime, monkeypatch):
+    state = current_acquisition_runtime
+    state.stop_after_preparation = False
+    engine_name = (
+        "agent_delegation_runtime" if state.capability == "agent_invoke" else "functions_orchestration_actions"
+    )
+    engine = importlib.import_module(engine_name)
+
+    async def unobserved_engine(*_args, **_kwargs):
+        return {"findings": "Unattested content", "calls": 0, "invocations": [], "artifacts": []}
+
+    invocation = Mock(side_effect=unobserved_engine)
+    monkeypatch.setattr(
+        engine, "invoke_scoped_agent" if state.capability == "agent_invoke" else "invoke_action", invocation,
+    )
+    result = execute(state)
+    invocation.assert_called_once()
+    assert result["status"] == "failed"
+    assert result["notes"] == result["artifacts"] == []
+    assert len(state.prepared) == 1
+    assert state.world.attestor._captures == {}
+    assert_no_current_effects(state)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.127
+Version: 0.261.129
 """
 
 import logging
@@ -40,7 +40,7 @@ import re
 import time
 from copy import copy, deepcopy
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from werkzeug.utils import secure_filename
 
 from content_screening.access import assert_current_request_sources_available
@@ -101,6 +101,9 @@ from functions_orchestration_schema import (
 from functions_orchestration_checkpoints import (
     CheckpointError, restore_context, step_input_fingerprint,
 )
+from functions_orchestration_timing import (
+    execution_timeout_seconds, initial_execution_deadline, positive_setting_int as _setting_int,
+)
 
 _LOG_PREFIX = '[ORCHESTRATION_EXECUTOR]'
 
@@ -109,7 +112,6 @@ _LOG_PREFIX = '[ORCHESTRATION_EXECUTOR]'
 # rather than like an unbounded run.
 _DEFAULT_MAX_STEPS = 8
 _DEFAULT_STEP_TIMEOUT_SECONDS = 120
-_DEFAULT_TOTAL_TIMEOUT_SECONDS = 600
 _DEFAULT_MAX_REPLANS = 2
 
 
@@ -141,14 +143,6 @@ def _string_list(value):
             seen.add(text)
             out.append(text)
     return out
-
-
-def _setting_int(settings, key, default):
-    try:
-        value = int((settings or {}).get(key))
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
 
 
 def _emit(emit, event):
@@ -804,7 +798,7 @@ def execute_plan(
 
     max_steps = _setting_int(settings, 'chat_orchestration_max_steps', _DEFAULT_MAX_STEPS)
     step_timeout = _setting_int(settings, 'chat_orchestration_step_timeout_seconds', _DEFAULT_STEP_TIMEOUT_SECONDS)
-    total_timeout = _setting_int(settings, 'chat_orchestration_total_timeout_seconds', _DEFAULT_TOTAL_TIMEOUT_SECONDS)
+    total_timeout = execution_timeout_seconds(settings)
     max_replans = _setting_int(settings, 'chat_orchestration_max_replans', _DEFAULT_MAX_REPLANS)
 
     run_started_monotonic = time.monotonic()
@@ -1431,6 +1425,23 @@ def _validate_render_step_result(step, result):
             raise ResultContractError('result_contract_invalid')
         return result
     outputs = result.get('outputs')
+    if status == STEP_STATUS_WAITING and type(outputs) is list and not outputs:
+        # A committed file's DTO can be withheld after an uncertain read. Keep
+        # only the admitted identity; load the output contract outside legacy startup.
+        from functions_orchestration_output_store import _OUTPUT_ID
+
+        wait = result.get('wait')
+        error = result.get('output_error')
+        if (
+            result.get('artifacts') or result.get('failure') is not None
+            or type(wait) is not dict or wait.get('kind') != 'orchestration_output'
+            or type(wait.get('output_id')) is not str or _OUTPUT_ID.fullmatch(wait['output_id']) is None
+            or type(error) is not dict or error.get('retryable') is not True
+            or type(error.get('code')) is not str or not error['code']
+            or ('error_code' in wait and wait['error_code'] != error['code'])
+        ):
+            raise ResultContractError('result_wait_required')
+        return result
     if (
         type(outputs) is not list or len(outputs) != 1 or type(outputs[0]) is not dict
         or outputs[0].get('step_id') != step['step_id']
@@ -1645,11 +1656,10 @@ def _execute_dependency_plan(
         for step in steps
     ):
         planned_ids = list(dict.fromkeys([*planned_ids, *context.selected_document_ids]))
-    context.execution_manifest = _dependency_source_manifest(context, planned_ids, settings, cancel_probe)
-    total_timeout = _setting_int(settings, 'chat_orchestration_total_timeout_seconds', _DEFAULT_TOTAL_TIMEOUT_SECONDS)
     step_timeout = _setting_int(settings, 'chat_orchestration_step_timeout_seconds', _DEFAULT_STEP_TIMEOUT_SECONDS)
     if context.execution_deadline_at is None:
-        context.execution_deadline_at = (datetime.now(timezone.utc) + timedelta(seconds=total_timeout)).isoformat()
+        context.execution_deadline_at = initial_execution_deadline(datetime.now(timezone.utc), settings)
+    context.execution_manifest = _dependency_source_manifest(context, planned_ids, settings, cancel_probe)
     if checkpoints is not None:
         context.durable_checkpoints = True
         checkpoints = checkpoints(context) if callable(checkpoints) else checkpoints

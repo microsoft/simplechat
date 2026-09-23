@@ -1,12 +1,15 @@
 # Saved Analyze results
 
-**Version: 0.261.127**
+**Version: 0.261.129**
 
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
 
 Planning, download, and responsive stabilization updated in version:
 **0.261.115**. See [Analyze stabilization](../fixes/ANALYZE_STABILIZATION_FIX.md).
+
+Early orchestration acquisition-support checks were hardened in
+**0.261.129**. See [runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
 
 ## Overview
 
@@ -147,34 +150,50 @@ preserve the owning checkpoint's existing `resume_from` binding. Re-preparing
 that same token as a fresh attempt is rejected by the shared lifecycle store;
 the adapter does not bypass this fence or substitute another token.
 
+The v2 native adapter uses the shared native infrastructure classifier before
+returning a failed step. Recognized source, configuration and storage uncertainty
+remains a typed operational exception rather than a terminal result. Ordinary
+validation, genuine missing/denied/held outcomes and v1 behavior are unchanged.
+
 ### Private external configuration capture
 
-Before engine setup or acquisition capture, all five v2 external adapters call
-`context.external_source_preflight(producer=producer, selector=selector)`.
-The producer is the owning server step; the selector is the original scoped
-agent catalog key or action reference, and is `None` for web, URL and research.
-This fourth private runtime binding uses
-`provider.preflight_gather_invocation` to check fresh account/app-role authority,
-the current enabled saved step/capability, scoped integration access and
-user-authored URL provenance. Cached context roles or an old catalog cannot
-override that decision. Only a synchronous return of exactly `None` permits
-execution; missing hooks, asynchronous hooks and returned authorization payloads
-are refused before engine work.
-The call precedes loading action/delegation engine modules and initializing
-their invocation loggers or budgets; it is not merely a discovery-readiness flag.
+The v2 external contract uses four server-owned callbacks:
+`external_source_preflight`, `capture_external_source_configuration`,
+`external_source_admission`, and `external_source_authorizer`.
+After validating the exact owning producer and original selector, all five
+adapters call `external_source_preflight(producer=producer, selector=selector)`,
+bound to the real `provider.preflight_gather_invocation`. Only a synchronous
+return of exactly `None` permits execution. Missing, asynchronous or
+success-shaped payload bindings fail closed before configuration capture,
+engine imports, logger initialization or delegation budget setup. This fresh
+authorization creates no acquisition proof, configuration attestation or alias.
 
-This preflight creates no acquisition proof, content alias or configuration
-attestation. It does not replace the subsequent supported-configuration checks,
-actual engine capture, retention-time admission or current-read authorization.
-Operational failures and cancellation keep their typed meaning rather than
-becoming source-access denial. V1 adapters do not call this hook.
-
-The v2 external adapters also require the server callback
+The adapters then invoke
 `context.capture_external_source_configuration(source_type, *, producer, settings, source=None, selector=None)`
-at the actual acquisition boundary. They validate the complete owning producer
-identity and preserve the original selector. Engines receive a private,
-producer-bound `OrchestrationInvocationCapture`, not callback arguments supplied
-by a model. Callback settings and source records are independent copies; callback
+through a producer-bound `OrchestrationInvocationCapture`. The producer is the
+owning server step; the selector is the original scoped agent catalog key or
+action reference, and is `None` for web, URL and research. Settings are a private
+snapshot, not model-supplied authorization. Agent/action preparation precedes
+loading their engine modules and initializing invocation loggers or budgets.
+
+The root callback first calls
+`provider.preflight_gather_acquisition(source_type, producer=producer, settings=settings, source=source, selector=selector)`,
+with `acquisition_validator=attestor.validate_acquisition`. This combines fresh
+account/app-role authority, the current enabled saved step/capability, exact
+scoped integration access, user-authored URL provenance, and independent
+current/actual configuration support. The validator must return exactly `None`;
+cached context roles or an old catalog cannot override it. The earlier
+auth-only guard does not replace this acquisition check.
+
+Only after that check may the root return for agent/action `source=None`
+preparation, or call `attestor.capture` for other preparation and actual engine
+events. Preparation does not stand in for a model constructor or observed run.
+Retention-time admission and current-read authorization remain mandatory.
+Operational failures and cancellation keep their typed meaning rather than
+becoming source-access denial. V1 callers do not acquire these hooks.
+
+Engines receive the private capture object, not callback arguments supplied by a
+model. Callback settings and source records are independent copies; callback
 return values never enter a model prompt, `StepResult`, or persisted settings.
 
 Optional engine hooks were implemented in **0.261.127**, recorded in
@@ -195,13 +214,10 @@ required before accepting any response. A proxy observes only the freshly owned
 client's existing run operations, then restores them during cleanup. No global
 SDK changes or extra provider/model requests manufacture execution proof.
 
-Agent/action engines emit an authorization-only preparation before resolving
-configuration, hydrating secrets, loading plugins or constructing model clients.
-The root callback first calls `provider.preflight_gather_acquisition` with the
-owning producer, exact original selector and actual preparation/configuration
-event. This checks current access and supported configuration without creating
-content authority. For agent/action preparation it does not call
-`attestor.capture`; actual resolved engine evidence follows separately.
+Agent/action engines repeat preparation before resolving fresh configuration,
+hydrating secrets, loading plugins or constructing model clients. Their
+preparation does not call `attestor.capture`; actual resolved engine evidence
+follows separately through the same authorization/support boundary.
 Preparation does not count as completed capture and invalidates earlier
 per-invocation readiness. URL capture is different: its effective fetch policy
 is the complete configuration, with no model-construction evidence required.

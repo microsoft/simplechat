@@ -1,7 +1,7 @@
 # functions_orchestration_scheduler.py
 """One bounded saved-V2 scheduler tick; no thread, admission gate or client startup.
 
-Version: 0.261.127
+Version: 0.261.129
 The application supplies initialized resources. Results contain private selectors
 and safe processing facts, never model output, credentials or artifact locators.
 Deletion enrollment has its own run budget and consumes only a persisted owner
@@ -292,7 +292,15 @@ class _Tick:
             return "user_cancelled"
         if record.get("status") in {"completed", "failed"}:
             return None
-        deadline = datetime.fromisoformat(record["execution_deadline_at"])
+        # Tick callers have initialized the application-owned checkpoint boundary.
+        from functions_orchestration_checkpoints import CheckpointError
+
+        if not record.get("execution_deadline_at"):
+            raise CheckpointError("checkpoint_unavailable")
+        try:
+            deadline = _aware_time(datetime.fromisoformat(record["execution_deadline_at"]))
+        except (TypeError, ValueError) as exc:
+            raise CheckpointError("checkpoint_invalid") from exc
         states = {step["step_id"]: step["status"] for step in record.get("execution_steps") or []}
         enabled = [step for step in record["plan"]["steps"] if step.get("enabled", True)]
         required = [step for step in enabled if not step.get("optional", False)] or enabled

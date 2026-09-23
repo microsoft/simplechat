@@ -1,8 +1,9 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Invocation, catalog, and citation regressions implemented in: 0.261.129
 
 Production context, models, runtime, services, result store, checkpoint/lease and
 artifact adapters execute with external Azure/model I/O doubled. Cold imports run
@@ -12,6 +13,8 @@ operation, without leaking the fence into another operation or worker.
 Named-data availability stays internal; published outputs are renderer file DTOs.
 Current external-configuration failures are exercised through the real metadata
 reader and SDK metadata GET, never through an acquisition or capability override.
+Selected-answer citations retain their exact lineage during initial publication
+and model-free delivery, without adopting ambient or stale citation metadata.
 """
 
 import builtins
@@ -49,7 +52,7 @@ from functions_orchestration_execution import (
 from functions_orchestration_external_identity import ExternalIdentityServiceError
 from functions_orchestration_models import (
     OrchestrationModel, OrchestrationModelError, get_planner_acquisition_configuration,
-    planner_client_construction_source,
+    planner_client_construction_source, resolve_orchestration_model,
 )
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError
 from functions_orchestration_results import ResultUnavailableError
@@ -254,6 +257,67 @@ def external_callback_execution(harness, monkeypatch):
         state.execution.close()
         for replacement in state.replacements:
             replacement.close(release=True)
+
+
+@pytest.fixture
+def citation_execution(harness, monkeypatch):
+    search = importlib.import_module("functions_search")
+    selected_hits = [{
+        "document_id": "document-1", "id": chunk_id, "chunk_text": f"Selected excerpt on page {page}.",
+        "file_name": "Original source.pdf", "page_number": page, "score": 0.9,
+    } for chunk_id, page in (("first-selected-chunk", 2), ("last-selected-chunk", 4))]
+    queries, executions = [], []
+
+    def search_documents(query, user_id, **kwargs):
+        queries.append((query, user_id, kwargs))
+        if query == "incidental":
+            return [{
+                "document_id": "document-1", "id": "incidental-chunk",
+                "chunk_text": "An unrelated retained excerpt.", "file_name": "Original source.pdf",
+                "page_number": 90, "internal_endpoint": "PRIVATE_SEARCH_METADATA",
+            }]
+        return deepcopy(selected_hits)
+
+    def prepare(selected):
+        inputs = {} if selected in {"source_free", "no_response"} else {
+            "source": {"binding": input_binding("search", selected), "allow_partial": False},
+        }
+        harness.create(
+            [
+                {"step_id": "search", "capability_id": "document_search", "arguments": {"query": "selected"}},
+                {"step_id": "sibling", "capability_id": "document_search", "arguments": {"query": "incidental"}},
+                compose_step(inputs=inputs),
+            ],
+            replies=["Prepared from exactly the selected input."],
+            final_response=None if selected == "no_response" else input_binding("prepare"),
+            seeds={"document_ids": ["document-1"], "doc_scope": "personal"},
+            original_seeds={"document_ids": ["document-1"], "doc_scope": "personal"},
+        )
+        execution = harness.prepare()
+        executions.append(execution)
+        return execution
+
+    monkeypatch.setattr(search, "hybrid_search", search_documents)
+    with harness.native_io(row_count=2) as source:
+        source.document["file_name"] = "Original source.pdf"
+        try:
+            yield SimpleNamespace(prepare=prepare, queries=queries, source=source)
+        finally:
+            for execution in executions:
+                execution.close()
+
+
+@pytest.fixture
+def admitted_exports(harness, monkeypatch):
+    catalog = importlib.import_module("test_orchestration_export_catalog_admission")._catalog
+    state = SimpleNamespace(value=catalog(("md", "prepared_text_v1")), calls=0, select=catalog)
+
+    def current_catalog(services):
+        state.calls += 1
+        return deepcopy(state.value)
+
+    monkeypatch.setattr(harness.service_bindings.OrchestrationServices, "export_catalog", current_catalog)
+    return state
 
 
 def _claim_external_callback_replacement(harness, lease):
@@ -885,11 +949,14 @@ def test_planner_construction_proof_uses_the_actual_private_client_inputs(harnes
     "raw_client", "construction", "model", "copied_model", "closed",
 ])
 def test_planner_construction_proof_rejects_changed_bindings(harness, change):
-    harness.create()
+    """An earlier envelope cannot authorize a changed, previously bound callable."""
+    harness.create(replies=["PRIVATE_UNATTESTED_INVOCATION"])
     execution = harness.prepare()
     client, model = execution.context.planner_client, execution.research_model
     original_client = model.client
     try:
+        source = planner_client_construction_source(client, execution.context.planner_deployment)
+        invoke = client.chat.completions.create
         if change == "foreign_client":
             candidate = SimpleNamespace(chat=client.chat)
         else:
@@ -916,6 +983,12 @@ def test_planner_construction_proof_rejects_changed_bindings(harness, change):
             get_planner_acquisition_configuration(candidate)
         with pytest.raises(OrchestrationModelError):
             planner_client_construction_source(candidate, execution.context.planner_deployment)
+        if change != "foreign_client":
+            with pytest.raises(OrchestrationModelError):
+                invoke(
+                    model=source["model"]["deployment"],
+                    messages=[{"role": "user", "content": "Research using the captured configuration."}],
+                )
     finally:
         execution.close()
         if change == "raw_client":
@@ -947,6 +1020,62 @@ def test_planner_construction_envelope_keeps_exact_deployment_validation(harness
         assert harness.model_calls == [] and harness.blobs.file_uploads == 0
     finally:
         execution.close()
+
+
+def test_planner_construction_read_preserves_unchanged_cached_invocations(harness, monkeypatch):
+    harness.create(replies=["First research call.", "Second research call."])
+    execution = harness.prepare()
+    client = execution.context.planner_client
+
+    def forbidden_read(*args, **kwargs):
+        raise AssertionError("Invoking an attested binding must not reconstruct its client.")
+
+    try:
+        invoke = client.chat.completions.create
+        source = planner_client_construction_source(client, execution.context.planner_deployment)
+        descriptor = get_planner_acquisition_configuration(client)
+        source["model"]["endpoint"] = "https://changed-detached-envelope.invalid"
+        descriptor["parameters"]["response_length"] = 1
+        with monkeypatch.context() as pinned:
+            pinned.setattr(harness.planner, "resolve_planner_client", forbidden_read)
+            first = invoke(
+                model=execution.context.planner_deployment,
+                messages=[{"role": "user", "content": "First research request."}],
+            )
+            second = invoke(
+                model=execution.context.planner_deployment,
+                messages=[{"role": "user", "content": "Second research request."}],
+            )
+    finally:
+        execution.close()
+    assert first.choices[0].message.content == "First research call."
+    assert second.choices[0].message.content == "Second research call."
+    assert len(harness.model_calls) == 2
+    assert all(call["model"] == execution.context.planner_deployment for call in harness.model_calls)
+    assert all(client.closed for client in harness.clients)
+
+
+@pytest.mark.parametrize("construction", ["unrecorded", "implicit_endpoint", "implicit_api_version"])
+def test_unattested_legacy_planner_invocation_does_not_gain_construction_proof(harness, construction):
+    harness.replies = ["Legacy completion without acquisition proof."]
+    if construction == "unrecorded":
+        model = OrchestrationModel(harness.client(), "gpt-4o")
+    else:
+        settings = deepcopy(harness.settings)
+        key = "azure_openai_gpt_endpoint" if construction == "implicit_endpoint" else "azure_openai_gpt_api_version"
+        settings.pop(key)
+        model = resolve_orchestration_model(settings, user_id="owner")
+    client = model.as_planner_client()
+    try:
+        with pytest.raises(OrchestrationModelError):
+            get_planner_acquisition_configuration(client)
+        with pytest.raises(OrchestrationModelError):
+            planner_client_construction_source(client, "gpt-4o")
+        completion = client.chat.completions.create(model="gpt-4o", messages=[])
+    finally:
+        model.close()
+    assert completion.choices[0].message.content == "Legacy completion without acquisition proof."
+    assert len(harness.model_calls) == 1 and all(client.closed for client in harness.clients)
 
 
 @pytest.mark.parametrize("truthy_factory", [True, False])
@@ -1880,6 +2009,183 @@ def test_current_capability_revocation_prevents_a_model_call(harness):
     assert all(client.closed for client in harness.clients)
 
 
+@pytest.mark.parametrize("selection", ["empty", "no_profiles", "redefined"])
+def test_headless_discovery_uses_only_current_admitted_export_metadata(harness, admitted_exports, selection):
+    if selection == "empty":
+        admitted_exports.value = []
+    elif selection == "no_profiles":
+        admitted_exports.value[0]["profiles"] = []
+    else:
+        admitted_exports.value[0]["renderer_version"] = "PRIVATE_REDEFINED_RENDERER"
+    harness.create(
+        [compose_step(), render_step("report", "md")],
+        replies=["Must not be generated for unavailable exports."],
+    )
+    record, lease = harness.claim()
+    execution = None
+    try:
+        with pytest.raises(HarnessExecutionError) as failure:
+            execution = prepare_harness_execution(record, settings=harness.settings, lease=lease)
+    finally:
+        if execution is not None:
+            execution.close()
+    saved = harness.read()
+    assert failure.value.code == "context_unavailable" and saved["status"] == "failed"
+    assert [step["step_id"] for step in saved["plan"]["steps"]] == ["prepare", "report"]
+    assert admitted_exports.calls and harness.clients == [] and harness.model_calls == []
+    assert harness.blobs.file_uploads == 0 and saved["execution_lease"] is None
+    assert "PRIVATE_" not in json.dumps([saved, failure.value.final_frames])
+
+
+@pytest.mark.parametrize("selection", ["default", "subset"])
+def test_headless_render_uses_canonical_server_catalog_without_persisting_permissions(
+    harness, admitted_exports, selection,
+):
+    if selection == "default":
+        admitted_exports.value = None
+    harness.create([compose_step(), render_step("report", "md")], replies=["Exactly the prepared file content."])
+    execution = harness.prepare()
+    registry = importlib.import_module("functions_orchestration_registry")
+    expected = registry.resolve_admitted_export_catalog(admitted_exports.value)
+    assert execution.context.export_catalog == expected
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    assert done["status"] == saved["status"] == "completed" and done["message_saved"] is True
+    assert len(done["outputs"]) == len(done["generated_artifacts"]) == 1
+    assert done["outputs"][0]["file_name"] == "report.md" and harness.blobs.file_uploads == 1
+    assert len(harness.model_calls) == 1 and "export_catalog" not in json.dumps([saved, done])
+    assert execution.lease.stopped.is_set() and all(client.closed for client in harness.clients)
+
+
+@pytest.mark.parametrize("selection", ["empty", "different_format"])
+def test_headless_revalidation_refreshes_admitted_catalog_before_any_generation(
+    harness, admitted_exports, selection,
+):
+    harness.create(
+        [compose_step(), render_step("report", "md")], replies=["Must not be generated after revocation."],
+    )
+    execution = harness.prepare()
+    original = deepcopy(execution.record["plan"])
+    admitted_exports.value = [] if selection == "empty" else admitted_exports.select(("pdf", "prepared_report_v1"))
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    assert done["status"] == saved["status"] == "failed"
+    assert execution.context.export_catalog == admitted_exports.value
+    assert saved["plan"] == original and not saved.get("task_results")
+    assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+    assert saved["execution_lease"] is None and all(client.closed for client in harness.clients)
+
+
+def test_headless_catalog_revocation_during_compose_cannot_reach_render(harness, admitted_exports):
+    def approved_answer_then_revocation():
+        admitted_exports.value = admitted_exports.select(("pdf", "prepared_report_v1"))
+        return "Durable content without permission to render the originally requested file."
+
+    harness.create([compose_step(), render_step("report", "md")], replies=[approved_answer_then_revocation])
+    execution = harness.prepare()
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    assert done["status"] == saved["status"] == "failed"
+    assert execution.context.export_catalog == admitted_exports.value
+    assert saved["task_results"]["prepare"]["status"] == "complete"
+    assert done["outputs"] == done["generated_artifacts"] == []
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
+    assert saved["execution_lease"] is None and execution.lease.stopped.is_set()
+
+
+def test_headless_empty_export_catalog_does_not_disable_content_only_execution(harness, admitted_exports):
+    admitted_exports.value = []
+    harness.create(replies=["Content does not require a file grant."], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    assert done["status"] == "completed" and done["full_content"] == "Content does not require a file grant."
+    assert execution.context.export_catalog == [] and done["outputs"] == done["generated_artifacts"] == []
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
+
+
+def test_headless_catalog_checks_exact_profile_not_just_format(harness, admitted_exports):
+    admitted_exports.value = admitted_exports.select(("json", "structured_value_v1"))
+    harness.create(
+        [
+            compose_step(outputs=[{
+                "name": "rows", "kind": "records-v1",
+                "columns": [{"name": "id", "value_type": "string", "nullable": False}],
+            }]),
+            render_step("records", "json", output="rows"),
+        ],
+        replies=['{"rows":[{"id":"not-generated"}]}'],
+    )
+    execution = harness.prepare()
+    original_plan = deepcopy(execution.record["plan"])
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    saved = harness.read()
+    assert done["status"] == saved["status"] == "failed" and saved["plan"] == original_plan
+    assert execution.context.export_catalog == admitted_exports.value
+    assert harness.model_calls == [] and harness.blobs.file_uploads == 0
+    assert "exact_records_v1" == original_plan["steps"][1]["arguments"]["profile"]
+
+
+@pytest.mark.parametrize("selection", ["unchanged", "empty", "different_format"])
+def test_headless_continuation_rechecks_admitted_catalog_without_replaying_retained_work(
+    harness, admitted_exports, selection,
+):
+    continuation = importlib.import_module("functions_orchestration_continuation")
+
+    def interrupted_upload():
+        raise TimeoutError("PRIVATE_FILE_TRANSPORT")
+
+    harness.create([compose_step(), render_step("report", "md")], replies=["Complete retained report."])
+    harness.blobs.before_file_upload = interrupted_upload
+    initial = harness.prepare()
+    first_frames = initial.execute()
+    first_done = decoded_frames(first_frames)[-1]
+    original = harness.read()
+    assert first_done["status"] == original["status"] == "waiting"
+    original_outputs = initial.services.outputs.list_outputs("run-1")
+    if selection == "empty":
+        admitted_exports.value = []
+    elif selection == "different_format":
+        admitted_exports.value = admitted_exports.select(("pdf", "prepared_report_v1"))
+    record, lease = continuation.claim_run_continuation(
+        "run-1", "owner", "conversation-1",
+        authorize=lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1"),
+        message_container=harness.messages, mode="execute",
+    )
+    resumed = None
+    try:
+        if selection == "empty":
+            with pytest.raises(HarnessExecutionError) as failure:
+                prepare_harness_execution(record, settings=harness.settings, lease=lease)
+            frames = failure.value.final_frames
+        else:
+            resumed = prepare_harness_execution(record, settings=harness.settings, lease=lease)
+            frames = resumed.execute()
+    finally:
+        if resumed is not None:
+            resumed.close()
+        else:
+            lease.close()
+    saved = harness.read()
+    done = decoded_frames(frames)[-1]
+    outputs = harness.services().outputs.list_outputs("run-1")
+    assert done["status"] == saved["status"] == ("waiting" if selection == "unchanged" else "failed")
+    assert saved["task_results"] == original["task_results"]
+    assert saved["pending_results"] == original["pending_results"]
+    assert saved["plan"] == original["plan"] and outputs == original_outputs
+    assert saved["id"] == original["id"] and saved["attempt_index"] == original["attempt_index"]
+    assert saved["started_at"] == original["started_at"]
+    assert saved["execution_deadline_at"] == original["execution_deadline_at"]
+    assert lease.token == initial.lease.token and lease.claim_id != initial.lease.claim_id
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
+    assert saved["execution_lease"] is None and lease.stopped.is_set()
+    assert all(client.closed for client in harness.clients)
+
+
 def test_context_edit_after_composition_does_not_publish_stale_content(harness):
     harness.create(replies=["Do not disclose this now-stale content."], final_response=input_binding("prepare"))
     execution = harness.prepare()
@@ -2262,6 +2568,139 @@ def test_delivery_refresh_reuses_real_saved_results_without_any_execution(harnes
     assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
     assert saved["message_saved"] is True and saved["execution_lease"] is None
     assert all(client.closed for client in harness.clients)
+
+
+@pytest.mark.parametrize("phase", ["execute", "refresh_empty", "refresh_stale"])
+@pytest.mark.parametrize("selected", ["prepared", "evidence", "source_free", "no_response"])
+def test_selected_result_citations_reach_headless_message_cache_and_delivery(
+    harness, citation_execution, phase, selected,
+):
+    execution = citation_execution.prepare(selected)
+    if phase == "execute":
+        frames = execution.execute()
+    else:
+        result = harness.run_engine(execution)
+        assert result["status"] == "completed"
+        message_id = f"assistant_orchestration_{harness.execution.fingerprint('run-1')[:40]}"
+        original_timestamp = "2026-09-21T20:00:00+00:00"
+        execution.lease.publish_message({
+            "id": message_id, "conversation_id": "conversation-1", "role": "assistant",
+            "content": "Checking the saved answer's delivery.", "timestamp": original_timestamp,
+            "metadata": {"orchestration": {"run_id": "run-1", "status": "completed"}},
+            **execution.answer_model.metadata(),
+        })
+        stale = [] if phase == "refresh_empty" else [{
+            "source_type": "document", "document_id": "document-1", "citation_id": "incidental-chunk",
+            "file_name": "PRIVATE_STALE_CITATION", "page_number": 90,
+        }]
+        record = execution.lease.update({
+            "citations": stale, "assistant_message_id": message_id,
+            "assistant_message_created_at": original_timestamp,
+            "message_saved": True, "finalization_status": "saved",
+        })
+        rows_before = deepcopy(harness.results.container.items)
+        steps_before = deepcopy(harness.steps.items)
+        services = harness.services()
+        with harness.publication_only(services):
+            frames = refresh_harness_delivery(
+                record, services=services, settings=harness.settings, lease=execution.lease,
+            )
+        assert harness.results.container.items == rows_before and harness.steps.items == steps_before
+    execution.close()
+    saved = harness.read()
+    messages = harness.assistant_messages()
+    conversation = harness.conversations.read_item(item="conversation-1", partition_key="conversation-1")
+    done = decoded_frames(frames)[-1]
+    assert done["status"] == saved["status"] == "completed" and done["message_saved"] is True
+    assert len(messages) == 1
+    if phase != "execute":
+        assert messages[0]["id"] == message_id and messages[0]["timestamp"] == original_timestamp
+    citations = messages[0]["hybrid_citations"]
+    assert citations == done["hybrid_citations"] == saved["citations"]
+    used = conversation.get("used_documents") or []
+    if selected in {"source_free", "no_response"}:
+        assert citations == [] and used == [] and messages[0]["augmented"] is False
+    else:
+        assert all(citation["document_id"] == "document-1" for citation in citations)
+        assert all(citation["scope"] == {"type": "personal", "id": "owner"} for citation in citations)
+        assert len(used) == 1 and used[0]["document_id"] == "document-1"
+        if selected == "prepared":
+            assert [citation["citation_id"] for citation in citations] == [
+                "first-selected-chunk", "last-selected-chunk",
+            ]
+            assert [citation["page_number"] for citation in citations] == [2, 4]
+            assert used[0]["file_name"] == "Original source.pdf"
+            assert used[0]["citation_ids"] == ["first-selected-chunk", "last-selected-chunk"]
+        else:
+            assert len(citations) == 1
+            assert "citation_id" not in citations[0] and "page_number" not in citations[0]
+    assert all(value["role"] != "tool" for value in messages)
+    assert [query for query, _user, _kwargs in citation_execution.queries] == ["selected", "incidental"]
+    assert len(harness.model_calls) == 1 and harness.blobs.file_uploads == 0
+    assert "PRIVATE_" not in json.dumps([done, messages, used])
+    assert saved["execution_lease"] is None and execution.lease.stopped.is_set()
+
+
+@pytest.mark.parametrize("change", ["revoked", "held", "revision", "storage"])
+def test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertainty(
+    harness, monkeypatch, citation_execution, change,
+):
+    execution = citation_execution.prepare("prepared")
+    result = harness.run_engine(execution)
+    assert result["status"] == "completed"
+    record = execution.lease.read()
+    services = harness.services()
+    project = harness.execution.read_result_document_citations
+    references = []
+    rows_before = deepcopy(harness.results.container.items)
+    steps_before = deepcopy(harness.steps.items)
+
+    def unavailable_store(*args, **kwargs):
+        raise ServiceRequestError("PRIVATE_CITATION_STORAGE_DIAGNOSTIC")
+
+    def recheck_source(context, reference):
+        references.append(reference.to_dict())
+        if change == "revoked":
+            citation_execution.source.state["allowed"] = False
+        elif change == "held":
+            citation_execution.source.document["content_screening"] = {"state": "pending_review"}
+        elif change == "revision":
+            citation_execution.source.document["_etag"] = "changed-source-revision"
+        else:
+            monkeypatch.setattr(harness.results.container, "read_item", unavailable_store)
+        return project(context, reference)
+
+    monkeypatch.setattr(harness.execution, "read_result_document_citations", recheck_source)
+    with harness.publication_only(services):
+        if change == "storage":
+            with pytest.raises(HarnessExecutionError) as failure:
+                refresh_harness_delivery(
+                    record, services=services, settings=harness.settings, lease=execution.lease,
+                )
+            assert failure.value.code == "message_not_saved" and failure.value.retryable is True
+            assert failure.value.final_frames == [] and failure.value.durable_status is None
+            assert "PRIVATE_" not in failure.value.message
+        else:
+            frames = refresh_harness_delivery(
+                record, services=services, settings=harness.settings, lease=execution.lease,
+            )
+            done = decoded_frames(frames)[-1]
+            assert done["status"] == "failed" and done["failure"]["code"] == "context_unavailable"
+            assert done["hybrid_citations"] == [] and "Prepared from exactly" not in done["full_content"]
+    execution.close()
+    saved = harness.read()
+    messages = harness.assistant_messages()
+    conversation = harness.conversations.read_item(item="conversation-1", partition_key="conversation-1")
+    assert references == [record["final_response"]]
+    if change == "storage":
+        assert messages == [] and saved["status"] == record["status"] and not saved.get("failure")
+    else:
+        assert len(messages) == 1 and messages[0]["hybrid_citations"] == [] and saved["citations"] == []
+    assert not conversation.get("used_documents") and saved["task_results"] == record["task_results"]
+    assert harness.results.container.items == rows_before and harness.steps.items == steps_before
+    assert len(citation_execution.queries) == 2 and len(harness.model_calls) == 1
+    assert harness.blobs.file_uploads == 0 and saved["execution_lease"] is None
+    assert execution.lease.stopped.is_set() and all(client.closed for client in harness.clients)
 
 
 def test_delivery_refresh_uses_real_committed_files_without_execution(harness):

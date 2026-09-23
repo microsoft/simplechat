@@ -1,7 +1,7 @@
 # functions_orchestration_continuation.py
 """Same-attempt recovery for saved V2 work, using the existing owning lease.
 
-Version: 0.261.127
+Version: 0.261.129
 Initialized callers import this module after application bootstrap. It neither
 admits plans nor creates retry attempts, and never starts or cancels native jobs.
 Valid native waits use the existing recovery claim and native restore engine.
@@ -263,6 +263,19 @@ def claim_run_continuation(
     return lease.read(), lease
 
 
+def _require_initial_checkpoint_state(record):
+    if record.get("cancellation_requested_at"):
+        raise CheckpointError("user_cancelled")
+    if record.get("status") not in {"running", "waiting"} or record.get("execution_binding") is not None:
+        raise CheckpointError("recovery_changed")
+    if any(record.get(key) for key in (
+        "checkpoint_version", "execution_steps", "execution_initial_manifest",
+        "inherited_checkpoints", "task_results", "pending_results", "render_output_ids",
+        "outputs", "artifacts", "final_response", "harness_step_token_usage",
+    )):
+        raise CheckpointError("recovery_changed")
+
+
 class ContinuationExecutionLease(ExecutionLease):
     """The real run lease for states outside the native waiting-claim admission."""
 
@@ -288,6 +301,56 @@ class ContinuationExecutionLease(ExecutionLease):
         ):
             raise CheckpointError("ownership_lost")
         return record
+
+    def initialize_checkpoint_state(self, updates):
+        """Adopt only our first, confirmed binding without relaxing later reads."""
+        with self.lock:
+            record = self.read()
+            if type(updates) is not dict:
+                raise CheckpointError("recovery_changed")
+            binding = updates.get("execution_binding")
+            if (
+                set(updates) != {
+                    "checkpoint_version", "execution_binding", "execution_steps",
+                    "attempt_index", "execution_initial_manifest", "execution_deadline_at",
+                }
+                or type(updates["checkpoint_version"]) is not int
+                or updates["checkpoint_version"] != CHECKPOINT_VERSION
+                or type(binding) is not str or len(binding) != 64
+                or any(character not in "0123456789abcdef" for character in binding)
+                or type(updates["attempt_index"]) is not int
+                or updates["attempt_index"] != self.original["attempt_index"]
+                or type(updates["execution_deadline_at"]) is not str
+                or updates["execution_deadline_at"] != self.original["execution_deadline_at"]
+                or type(updates["execution_initial_manifest"]) is not list
+                or type(updates["execution_steps"]) is not list
+            ):
+                raise CheckpointError("recovery_changed")
+            initializing = self.original["execution_binding"] is None
+            if initializing:
+                _require_initial_checkpoint_state(record)
+                if (
+                    updates["execution_steps"] != []
+                    or (self.original["continuation"] or {}).get("mode") != "execute"
+                ):
+                    raise CheckpointError("recovery_changed")
+                store = checkpoint_store(record, self.read, token=self.token, claim_id=self.claim_id)
+                for step in record["plan"]["steps"]:
+                    if (
+                        store.has_manifest(step["step_id"])
+                        or store.has_manifest(step["step_id"], waiting=True)
+                        or store.has_manifest(step["step_id"], input_only=True)
+                    ):
+                        raise CheckpointError("recovery_changed")
+            elif binding != self.original["execution_binding"]:
+                raise CheckpointError("recovery_changed")
+            super().initialize_checkpoint_state(
+                updates, precondition=_require_initial_checkpoint_state if initializing else None,
+            )
+            if initializing:
+                # The owning CAS reconciles lost acknowledgements before this adoption.
+                self.original["execution_binding"] = binding
+            return self.read()
 
     def _roll_guard(self, container, expected, partition, *, allow_missing):
         for _ in range(8):
@@ -407,11 +470,14 @@ class ContinuationCheckpoints(ExecutionCheckpoints):
         self.record = lease.read()
         self.context, self.settings, self.lease = context, settings, lease
         self.binding = context_binding(context, self.record["plan"], settings)
-        if self.binding != self.record.get("execution_binding"):
+        self.initializing = self.record.get("execution_binding") is None
+        if self.initializing:
+            _require_initial_checkpoint_state(self.record)
+        elif self.binding != self.record.get("execution_binding"):
             raise CheckpointError("recovery_changed")
         context.execution_deadline_at = self.record["execution_deadline_at"]
         self.store = checkpoint_store(self.record, lease.read, token=lease.token, claim_id=lease.claim_id)
-        source = reconcile_checkpoints(self.record, lease.read)
+        source = self.record if self.initializing else reconcile_checkpoints(self.record, lease.read)
         self.records = _execution_steps(source)
         self.continuing = True
         self.reused, self.waiting = {}, {}
@@ -448,15 +514,22 @@ class ContinuationCheckpoints(ExecutionCheckpoints):
                 context.token_usage[name] = context.token_usage.get(name, 0) + value - persisted
 
     def initialize(self):
-        self.lease.read()
-        self.store.initialize()
+        initializing = self.initializing
+        if initializing:
+            super().initialize()
+            self.record = self.lease.read()
+            self.initializing = False
+        else:
+            self.lease.read()
+            self.store.initialize()
         self.context.result_service.store = bind_continuation_result_store(
             self.record, store=self.context.result_service.store, lease=self.lease,
         )
-        self.lease.update({
-            "checkpoint_version": CHECKPOINT_VERSION,
-            "execution_steps": deepcopy(self.records),
-        })
+        if not initializing:
+            self.lease.update({
+                "checkpoint_version": CHECKPOINT_VERSION,
+                "execution_steps": deepcopy(self.records),
+            })
 
     def _validate_payload(self, step, payload):
         self.lease.read()

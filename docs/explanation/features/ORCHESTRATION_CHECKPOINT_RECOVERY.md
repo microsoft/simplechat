@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.127**
+**Version: 0.261.129**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -8,7 +8,10 @@ Implemented in version: **0.261.105**, recorded in
 Plan-contract v2 retained-reference recovery implemented in version:
 **0.261.127** (Refs #1509). Same-attempt waiting claims and native/result
 continuation were added in **0.261.127**. These are explicitly admitted internal
-runtime APIs, not activation of routes, a scheduler or the UI path.
+runtime APIs used by the opt-in harness. Initial-claim recovery,
+output-acknowledgement handling, and default cleanup enrollment were hardened
+in **0.261.129**; see
+[runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
 
 ## Overview
 
@@ -21,10 +24,11 @@ uses the saved search result instead of searching again. The failed agent step
 runs again, its dependents can proceed, and the answering step uses the combined
 results.
 
-Recovery applies to the V2 orchestration interface. Its default saved plans
-still use plan contract 1; the internal plan-contract 2 additions below are a
-separate version boundary. Neither changes ordinary-agent chat, selects a
-replacement agent, or adds automatic retries.
+Recovery applies to the V2 orchestration interface. New plans use contract 2
+only when both administrator orchestration settings are enabled; saved plans
+retain their recorded contract. These additions do not change ordinary-agent
+chat or select a replacement agent. The harness's per-file automatic attempts
+are separate from retrying a failed orchestration plan.
 
 ## Dependencies and configuration
 
@@ -150,6 +154,29 @@ including bulk deletion and archive-and-remove. Existing archived messages keep
 their normal behavior, but archived conversations do not retain executable
 recovery state.
 
+### Initial claims and early interruptions
+
+Since **0.261.129**, approval of a v2 run saves its original `started_at`,
+`execution_deadline_at`, and lease in one conditional write. The budget comes
+from the server's `chat_orchestration_total_timeout_seconds` setting using the
+same policy as execution, including the existing 600-second fallback.
+Preparation and source acquisition consume that original budget. Changing
+settings or restarting the worker does not create a new same-attempt deadline.
+
+A scheduler continuation can also recover an interruption before the first
+execution checkpoint. Its current owning execution claim may establish the
+first context binding only when the run has no prior execution state or private
+input, waiting, or completion checkpoint manifest. The existing lease performs
+the conditional write and confirms uncertain acknowledgements before adopting
+that exact binding. Stop and other progress changes are checked again if the
+write races. Ownership, plan, attempt, and timing remain immutable; this is not
+permission to replace an existing binding or rerun completed work.
+
+An expired original budget prevents new work. A started record whose saved
+timing is missing or invalid is refused rather than assigned a fresh budget.
+Separately approved manual plan retries remain new attempts with their own
+initial claims; they are not same-attempt continuation.
+
 ### Durable retained-file cleanup
 
 Since **0.261.127** (Refs #1509), v2 conversation deletion also enrolls retained
@@ -158,11 +185,21 @@ cards or the set of outputs already marked `cleanup_pending`. This covers
 completed files whose ordinary output scan would otherwise have no cleanup
 work to discover.
 
-`cleanup_conversation_checkpoints` accepts a server callback
+`cleanup_conversation_checkpoints` accepts an optional server callback
 `output_cleanup(run_id)` and the explicit archive policy `retain_committed`.
-The single and bulk deletion routes supply a lazy callback to
+Since **0.261.129**, when the callback is omitted or `None`, recovery lazily binds
 `build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup(run_id)`.
-Legacy runs and empty admission indexes do not initialize this output service.
+Initialization occurs after every run's deletion fence and cleanup intent are
+durable, and one initialized service handles the conversation's admitted runs.
+The existing single and bulk route callbacks remain supported. Legacy runs and
+empty admission indexes do not initialize this output service.
+
+The shared enrollment method uses `prepare_cleanup(tombstone=True)` for the
+default deletion policy, verifying each output's exact run, frozen admission
+index and retained deletion proof. It schedules cleanup without Blob I/O and
+preserves committed intents; recovery does not duplicate that per-output logic.
+An initialization failure leaves the durable parent intent pending and prevents
+payload purge, so the existing deletion or scheduler path can retry safely.
 
 Before removing retained payloads, recovery writes the permanent checkpoint
 deletion guard, then conditionally saves `checkpoints_deleted` and the canonical
@@ -421,18 +458,43 @@ it does not recompute their already saved outcome. Claims preserve run/attempt,
 start time, deadline, approved arguments/bindings and assistant identity.
 They retain the lifecycle token and rotate only the server `claim_id`.
 
+For eligible native waits, `claim_run_continuation(..., mode="execute")`
+delegates to the existing `recovery.claim_waiting_continuation(...)` claim.
+That native API remains supported for direct headless consumers; the scheduler
+facade does not replace it or introduce another native restore engine. Call
+one claim entry point, not both. File-only, delivery and stopped-run handling
+belong to the continuation facade and do not submit a replacement native job.
+
 Start the returned lease once before output work. Continuation startup reuses
 the checkpoint and publication guards through CAS and starts the existing
 heartbeat. Output ownership compares both the parent token and claim epoch.
 A stale or released execution-scoped result-store view cannot be reused;
 ordinary committed-result reads use a fresh authorized service.
 
-For genuine DAG/native continuation, pass the claimed lease and
+Generic retained results have a separate claim fence: binding the current
+execution CAS-adopts each step lifecycle's `execution_claim_id`, even when the
+lifecycle token is unchanged. Store views capture their claim independently;
+rebinding a new view never retags an old producer. A cached token alone cannot
+write through an unbound store once that lifecycle has an execution-claim fence.
+Result and checkpoint writes include the lifecycle ETag in their transactional
+batch, so a batch prepared before takeover cannot commit after adoption of the
+new claim. This does not rotate a native child's lease, reconstruct its compute
+context, or change its producer, attempt, job handle or input fingerprint.
+
+`test_orchestration_result_claim_fencing.py` covers cached-token rejection and
+takeover between lifecycle read and batch submission for Cosmos and Blob result
+storage, preserving existing receipts and pending checkpoints. Blob payload bytes
+are not themselves a completion receipt; a rejected commit cannot make those
+bytes an authorized retained output.
+
+For scheduler-driven DAG/native continuation, pass the claimed lease and
 `checkpoint_factory=ContinuationCheckpoints` to
 `prepare_harness_execution(record, ..., lease=lease, checkpoint_factory=...)`.
 The runner starts an unstarted lease and owns its cleanup. Do not call
 `prepare_retry`, `claim_plan_run` or manual-recovery `validate_resume` merely
-because an existing attempt is waiting.
+because an existing attempt is waiting. Direct native-wait consumers may
+continue using the existing `ExecutionLease`/`ExecutionCheckpoints` path.
+Both paths use the same core-owned one-shot native resumer.
 
 For a file-only tick, claim with `mode="outputs"`, start/heartbeat the lease,
 perform one due output attempt or expired-output reconciliation, and call
@@ -536,6 +598,15 @@ V2 run `result_outputs` is an internal retained-data availability projection;
 both projections so an unstarted child cannot inherit a parent's delivery
 claims. File cards and current file states are read from the initialized
 rendering service, not reconstructed from a typed result reference.
+
+An initial Render invocation can admit or commit its output before an
+acknowledgement read fails. If the renderer returns a retryable wait with a
+canonical admitted output ID but withholds the public DTO, the executor retains
+that compact wait and `output_error`; it does not turn the missing DTO into
+`result_invalid` or fabricate a `TaskResult`. The wait contains no artifact or
+completion claim. Later reads reauthorize the original output, and a committed
+file resumes without another model call, render or upload. An empty output list
+without a valid retryable wait still fails validation.
 
 Saved Render reads use `list_public_outputs(run_id)` after verifying the original
 producer, source binding, approved arguments and deadline. A completed file can

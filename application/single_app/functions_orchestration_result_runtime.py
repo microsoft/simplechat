@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.127
+Version: 0.261.129
 """
 
 from copy import deepcopy
@@ -274,6 +274,8 @@ def _complete(count, limitations=(), *, partial=False):
 
 def retain_gather_result(step, context, result, *, source_manifest):
     """Retain exact returned excerpts/notes, never relabel them whole-document data."""
+    if type(result) is not dict or result.get('status') not in ('completed', 'partial'):
+        raise ResultContractError('result_not_ready')
     service = require_result_service(context)
     capability_id = step['capability_id']
     sources = analysis_source_snapshot(source_manifest)

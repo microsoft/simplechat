@@ -360,6 +360,7 @@ def _prepare_harness_stream(record, data, user_id, settings, snapshot, identity,
             conversation_context=snapshot,
             result_alias_resolver=lambda current: admitted_result_aliases(current, services.results),
             export_catalog=services.export_catalog(), composition_profiles=composition_profiles(),
+            settings=settings,
         )
     except (
         PlanRevisionError, AzureError, ResultContractError, PermissionError,

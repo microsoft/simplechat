@@ -1,8 +1,9 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Acquisition-boundary coverage updated in: 0.261.129
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed.
@@ -29,6 +30,7 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
 from semantic_kernel.functions import kernel_function
 
+from test_orchestration_external_sources import ExternalSourceWorld
 from test_support.offline_bootstrap import offline_app_imports
 
 
@@ -64,6 +66,7 @@ def gather_modules():
 @pytest.fixture
 def capture_runtime(gather_modules, monkeypatch):
     modules = gather_modules
+    authorization_world = ExternalSourceWorld()
     state = SimpleNamespace(
         calls=[], captured=[], sources=[], private={}, web=[], pages=[], fail_capture=False,
         credentials=[], clients=[], invocations=[], selected_settings=None,
@@ -84,14 +87,39 @@ def capture_runtime(gather_modules, monkeypatch):
         },
     }
     context = modules.runtime.RunContext(
-        user_id="owner", conversation_id="conversation-1", run_id="run-1", attempt_index=1,
+        user_id="owner", conversation_id="conversation-1",
+        run_id=authorization_world.fixture.producer.run_id, attempt_index=1,
         plan_contract_version=2, user_message="Review https://example.com/source",
         user_roles=["User"], allowed_user_urls=["https://example.com/source"],
         planner_client=object(), planner_deployment="original-planner",
-        external_source_preflight=Mock(return_value=None),
     )
     construction_client = context.planner_client
     construction_model = context.planner_deployment
+    authorization_producer = authorization_world.fixture.producer
+    authorization_provider = authorization_world.provider()
+
+    def preflight(*, producer, selector=None):
+        with authorization_world:
+            return authorization_provider.preflight_gather_invocation(producer=producer, selector=selector)
+
+    def prepare_authorization(step):
+        """Seed current server records before invocation, never from callback arguments."""
+        capability = modules.adapters.get_capability(step["capability_id"], contract_version=2)
+        authorization_world.fixture.producer = replace(
+            authorization_producer, step_id=step["step_id"], capability_id=step["capability_id"],
+            contract_version=capability["result_contract_version"],
+        )
+        authorization_world.settings.update(deepcopy(settings))
+        authorization_world.run["plan"]["steps"] = [deepcopy(step)]
+        authorization_world.run["user_message"] = context.user_message
+        authorization_world.run["memory_audience"] = {
+            "kind": "personal", "owner_id": "owner", "collaboration_id": "",
+        }
+        for kind, catalog in (("agents", context.agent_catalog), ("actions", context.action_catalog)):
+            for entry in catalog or ():
+                authorization_world.services.add(
+                    kind, entry["scope_type"], entry["scope_id"], dict(entry),
+                )
 
     def capture(source_type, *, producer, settings, source=None, selector=None):
         state.calls.append("capture")
@@ -212,6 +240,7 @@ def capture_runtime(gather_modules, monkeypatch):
             "excerpts": ["Full retained page evidence."], "links": [], "truncated": False,
         }
 
+    context.external_source_preflight = preflight
     context.capture_external_source_configuration = capture
     for module in (modules.adapters, modules.web, modules.review):
         monkeypatch.setattr(module, "log_event", Mock())
@@ -219,7 +248,11 @@ def capture_runtime(gather_modules, monkeypatch):
     monkeypatch.setattr(modules.foundry, "AzureAIAgent", AzureAIAgent)
     monkeypatch.setattr(modules.foundry, "_build_async_credential", credential)
     monkeypatch.setattr(modules.review, "_fetch_source_page", page_io)
-    return SimpleNamespace(modules=modules, context=context, settings=settings, state=state, capture=capture)
+    return SimpleNamespace(
+        modules=modules, context=context, settings=settings, state=state, capture=capture,
+        authorization_context=context, authorization_world=authorization_world,
+        prepare_authorization=prepare_authorization,
+    )
 
 
 def run_gather(runtime, capability="web_search", *, cancel_requested=None, arguments=None):
@@ -231,6 +264,8 @@ def run_gather(runtime, capability="web_search", *, cancel_requested=None, argum
         "action_invoke": {"action_ref": "original-action", "task": "Gather facts"},
     }
     step = {"step_id": "gather", "capability_id": capability, "arguments": arguments or defaults[capability]}
+    if runtime.context is runtime.authorization_context and runtime.context.plan_contract_version == 2:
+        runtime.prepare_authorization(step)
     result = getattr(runtime.modules.adapters, f"run_{capability}")(
         step, runtime.context, settings=runtime.settings, user_id="owner",
         emit=None, cancel_requested=cancel_requested,
@@ -253,6 +288,8 @@ def test_real_gather_captures_actual_settings_before_provider_work(capture_runti
     assert runtime.state.captured == [runtime.settings] * capture_count
     assert runtime.state.private[producer]["identity"] == hashlib.sha256(source_type.encode()).hexdigest()
     assert len(runtime.state.private[producer]["revision"]) == 64
+    assert runtime.authorization_world.identity_reads == 1
+    assert runtime.authorization_world.configuration_reads == []
     assert runtime.state.web or runtime.state.pages
     assert all(client.closed for client in runtime.state.clients)
     assert all(credential.closed for credential in runtime.state.credentials)
@@ -764,7 +801,7 @@ def test_real_action_configuration_captures_prepared_origin_and_constructed_mode
     with policy.orchestration_file_policy(allow_generated_files=False):
         step, result = run_gather(runtime, "action_invoke", arguments={"action_ref": selector, "task": "Read all rows."})
     assert result["status"] == "completed", result
-    assert calls == ["preflight", "capture", "load", "model", "capture", "tool", "model"]
+    assert calls == ["preflight", "preflight", "capture", "load", "model", "capture", "tool", "model"]
     assert len(captures) == 2
     assert captures[0]["source"] == captures[1]["source"]
     assert captures[0]["source"]["prepared_manifest"] == loaded[0]
@@ -907,22 +944,47 @@ def test_research_does_not_rediscover_planner_after_capture(capture_runtime, mon
 @pytest.mark.parametrize("capability", ["agent_invoke", "action_invoke"])
 def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(capture_runtime, monkeypatch, capability):
     runtime = capture_runtime
+    runtime.settings["allow_user_agents"] = True
+    contexts = importlib.import_module("agent_execution_context")
+    catalog = importlib.import_module("functions_action_catalog")
+    selector = catalog._action_ref("personal", "owner", "original-action-id")
     engine_name = "agent_delegation_runtime" if capability == "agent_invoke" else "functions_orchestration_actions"
     engine = importlib.import_module(engine_name)
+
     async def unobserved_engine(*args, **kwargs):
         return {"findings": "Unattested output", "calls": 1, "root_id": "root", "invocations": [], "artifacts": []}
 
+    preparations = []
+
+    def prepare(source_type, *, producer, settings, source=None, selector=None):
+        assert source is None
+        preparations.append((source_type, selector))
+
     invocation = Mock(side_effect=unobserved_engine)
     monkeypatch.setattr(engine, "invoke_scoped_agent" if capability == "agent_invoke" else "invoke_action", invocation)
-    runtime.context.agent_catalog = [{"name": "original-agent", "catalog_key": "original-scoped-agent"}]
-    runtime.context.action_catalog = [{"action_ref": "original-action", "id": "original-action-id"}]
-    _, result = run_gather(runtime, capability)
+    runtime.context.agent_catalog = [{
+        "id": "original-agent-id", "name": "original-agent",
+        "scope_type": "personal", "scope_id": "owner", "catalog_key": "personal:owner:original-agent-id",
+    }]
+    runtime.context.action_catalog = [{
+        "action_ref": selector, "id": "original-action-id", "name": "original-action",
+        "type": "openapi", "scope_type": "personal", "scope_id": "owner", "is_enabled": True,
+    }]
+    runtime.context.agent_execution_identity = contexts.ExecutionIdentity(
+        "owner", "conversation-1", bridge=lambda _reference: nullcontext(),
+    )
+    runtime.context.capture_external_source_configuration = prepare
+    arguments = {"action_ref": selector, "task": "Gather facts"} if capability == "action_invoke" else None
+    _, result = run_gather(runtime, capability, arguments=arguments)
     assert result["status"] == "failed"
+    assert result["notes"] == result["artifacts"] == []
     assert runtime.state.calls == []
-    if capability == "action_invoke":
-        invocation.assert_called_once()
-    else:
-        invocation.assert_not_called()
+    expected = (
+        ("agent", "personal:owner:original-agent-id") if capability == "agent_invoke"
+        else ("action", selector)
+    )
+    assert preparations == [expected]
+    invocation.assert_called_once()
 
 
 @pytest.mark.parametrize("capability", ["web_search", "url_fetch", "deep_research"])

@@ -1,8 +1,9 @@
 # test_orchestration_dependency_runtime.py
 """Real v2 compiler, executor, composition, retained readers and checkpoint contracts.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Pending-Gather regression implemented in: 0.261.129
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -335,6 +336,46 @@ def test_pending_work_is_waiting_not_a_successful_preview_or_synthesis(runtime):
     assert result['outputs'] == []
     assert all(output['status'] == 'pending' for output in result['result_outputs'])
     assert events[-1]['phase'] == 'waiting'
+
+
+@pytest.mark.parametrize('status', ['pending', 'waiting'])
+@pytest.mark.parametrize('typed_pending', [False, True])
+def test_pending_gather_requires_its_typed_wait_before_any_consumer(runtime, status, typed_pending):
+    case = runtime.make([
+        {'step_id': 'search', 'capability_id': 'document_search', 'arguments': {'query': 'approved query'}},
+        compose('answer', inputs={'sources': source_input('search')}),
+    ], ['A pending preview must never be consumed.'], final_response=binding('answer'))
+    calls = []
+
+    def gather(step, context, **kwargs):
+        calls.append(step['step_id'])
+        task = (
+            runtime.contracts.TaskResult(context.result_producer(step), 'gather', 'pending', ())
+            if typed_pending else None
+        )
+        return runtime.schema.build_step_result(
+            status=status, notes=['Only a pending preview.'], task_result=task,
+            wait={
+                'kind': 'orchestration_result',
+                'input_fingerprint': context.result_input_fingerprint_for_step(step['step_id']),
+            },
+        )
+
+    result = execute(
+        runtime, case, get_adapter=lambda capability: (
+            gather if capability == 'document_search' else runtime.composition.adapter_compose
+        ),
+    )
+    assert result['status'] == ('waiting' if typed_pending else 'failed')
+    assert result['steps'][0]['status'] == ('waiting' if typed_pending else 'failed')
+    assert calls == ['search'] and case.model.calls == []
+    assert case.fixture.container.items == {} and case.fixture.blobs.records == {}
+    if typed_pending:
+        assert case.context.task_results['search'].status == 'pending'
+        assert case.context.task_results['search'].outputs == ()
+    else:
+        assert case.context.task_results == {} and case.context.pending_results == {}
+        assert result['steps'][0]['failure']['code'] == 'result_invalid'
 
 
 @pytest.mark.parametrize('allow_partial', [False, True])

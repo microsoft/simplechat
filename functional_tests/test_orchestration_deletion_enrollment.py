@@ -1,8 +1,9 @@
 # test_orchestration_deletion_enrollment.py
 """Exercise checkpoint deletion and canonical output enrollment together.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Default initialized cleanup coverage added in: 0.261.129
 
 Real checkpoint/output stores, initialized cleanup composition and scheduler
 replay use deterministic storage I/O. The native source-cleanup callback is an
@@ -18,7 +19,7 @@ from unittest.mock import Mock
 import pytest
 
 from functions_generated_export_contracts import GeneratedFileExportRequest
-from functions_orchestration_output_store import OutputStorageError, OutputUnavailableError
+from functions_orchestration_output_store import OutputError, OutputStorageError, OutputUnavailableError
 from test_orchestration_cleanup_bootstrap import cleanup_root  # noqa: F401
 from test_orchestration_output_cleanup import (
     cleanup_lifecycle, interrupted_output, production_modules,  # noqa: F401
@@ -46,7 +47,6 @@ def deletion_api(deletion_runtime):
             "conversation_container": runtime.world.conversations,
             "analysis_cleanup": source_cleanup,
             "analysis_fence": source_fence,
-            "output_cleanup": enroll,
         }
         options.update(overrides)
         return recovery.cleanup_conversation_checkpoints(
@@ -129,14 +129,78 @@ def test_cleanup_fences_and_enrolls_before_any_payload_sweep(
         assert after["state"] == "cancelled" and after["deleted_at"] and after["cleanup_pending"]
 
 
+@pytest.mark.parametrize("explicit_none", [False, True])
+def test_default_cleanup_uses_one_initialized_service_after_all_run_fences(
+    deletion_api, monkeypatch, explicit_none,
+):
+    api, world = deletion_api, deletion_api.world
+    outputs = [world.run(world.prepare()), second_run_output(world)]
+    before = [world.raw(output) for output in outputs]
+    real_factory = api.runtime.root.build_orchestration_cleanup_service
+
+    def initialize(user_id, conversation_id):
+        for run_id in ("run-1", "run-2"):
+            parent = world.runs.read_item(run_id, "conversation-1")
+            guard = world.cleanup_guards.read_item("checkpoint:lifecycle", run_id)
+            assert parent["checkpoints_deleted"] is True
+            assert parent["output_cleanup"]["state"] == "pending"
+            assert guard["deleted"] is True and guard["token"] is None
+        return real_factory(user_id, conversation_id)
+
+    factory = Mock(side_effect=initialize)
+    no_blob_io = Mock(side_effect=AssertionError("Deletion enrollment must not access Blob storage."))
+    monkeypatch.setattr(api.runtime.root, "build_orchestration_cleanup_service", factory)
+    monkeypatch.setattr(world.blobs, "get_blob_client", no_blob_io)
+    options = {"output_cleanup": None} if explicit_none else {}
+    result = api.cleanup(**options)
+    parents = [world.runs.read_item(run_id, "conversation-1") for run_id in ("run-1", "run-2")]
+    saved = [world.runs.read_item(output["output_id"], "conversation-1") for output in outputs]
+    factory.assert_called_once_with("owner", "conversation-1")
+    assert result is None and no_blob_io.call_count == 0
+    assert api.source_cleanup.call_count == 2
+    assert all(parent["output_cleanup"]["state"] == "completed" for parent in parents)
+    for original, current in zip(before, saved):
+        assert original["state"] == "completed" and original["cleanup_pending"] is False
+        assert current["state"] == "cancelled" and current["deleted_at"] and current["cleanup_pending"]
+        assert current["committed_intent"] == original["committed_intent"]
+        assert current["attempt_count"] == original["attempt_count"]
+
+
+def test_default_cleanup_initialization_failure_keeps_durable_intent_for_retry(deletion_api, monkeypatch):
+    api, world = deletion_api, deletion_api.world
+    output = world.run(world.prepare())
+    before = world.raw(output)
+    with monkeypatch.context() as unavailable:
+        unavailable.setitem(api.runtime.root.config.CLIENTS, "storage_account_office_docs_client", None)
+        with pytest.raises(OutputError) as raised:
+            api.cleanup()
+    parent = world.runs.read_item("run-1", "conversation-1")
+    guard = world.cleanup_guards.read_item("checkpoint:lifecycle", "run-1")
+    saved = world.runs.read_item(output["output_id"], "conversation-1")
+    assert raised.value.code == "output_cleanup_service_required"
+    assert parent["checkpoints_deleted"] is True and parent["output_cleanup"]["state"] == "pending"
+    assert guard["deleted"] is True and guard["token"] is None
+    assert saved == before and api.source_cleanup.call_count == api.source_fence.call_count == 0
+    assert world.blobs.deletes == 0
+
+    result = api.cleanup()
+    parent = world.runs.read_item("run-1", "conversation-1")
+    saved = world.runs.read_item(output["output_id"], "conversation-1")
+    assert result is None and parent["output_cleanup"]["state"] == "completed"
+    assert saved["state"] == "cancelled" and saved["cleanup_pending"]
+    assert saved["committed_intent"] == before["committed_intent"]
+    assert api.source_cleanup.call_count == 1 and world.blobs.deletes == 0
+
+
 @pytest.mark.parametrize("version", [1, 2])
-def test_empty_admissions_do_not_initialize_output_cleanup(deletion_api, version):
+def test_empty_admissions_do_not_initialize_output_cleanup(deletion_api, monkeypatch, version):
     api, world = deletion_api, deletion_api.world
     run = world.runs.read_item("run-1", "conversation-1")
     run["plan"]["planner_contract_version"] = version
     world.runs.upsert_item(run)
     forbidden = Mock(side_effect=AssertionError("Empty/legacy cleanup initialized output storage."))
-    result = api.cleanup(output_cleanup=forbidden)
+    monkeypatch.setattr(api.runtime.root, "build_orchestration_cleanup_service", forbidden)
+    result = api.cleanup()
     saved = world.runs.read_item("run-1", "conversation-1")
     assert result is None and forbidden.call_count == 0
     assert saved["checkpoints_deleted"] is True
@@ -148,8 +212,8 @@ def test_empty_admissions_do_not_initialize_output_cleanup(deletion_api, version
         assert "output_cleanup" not in saved
 
 
-@pytest.mark.parametrize("dependency", [None, False])
-def test_nonempty_admissions_require_the_real_cleanup_dependency(deletion_api, dependency):
+@pytest.mark.parametrize("dependency", [False, True, {}, "uninitialized-cleanup"])
+def test_noncallable_cleanup_override_is_rejected(deletion_api, dependency):
     api, world = deletion_api, deletion_api.world
     output = world.run(world.prepare())
     with pytest.raises(api.recovery.RecoveryError) as raised:
@@ -159,6 +223,39 @@ def test_nonempty_admissions_require_the_real_cleanup_dependency(deletion_api, d
     assert saved["state"] == "completed" and not saved["deleted_at"]
     assert api.source_cleanup.call_count == api.source_fence.call_count == 0
     assert world.blobs.deletes == 0
+
+
+@pytest.mark.parametrize("fault", ["malformed", "missing", "foreign_run"])
+def test_default_cleanup_rejects_invalid_admission_proof_before_payload_sweep(
+    deletion_api, monkeypatch, fault,
+):
+    api, world = deletion_api, deletion_api.world
+    output = world.run(world.prepare())
+    surviving = [output]
+    run = world.runs.read_item("run-1", "conversation-1")
+    if fault == "malformed":
+        run["render_output_ids"] = ["not-an-output-id"]
+    elif fault == "missing":
+        current = world.raw(output)
+        world.runs.delete_item(output["output_id"], "conversation-1", etag=current["_etag"])
+        surviving = []
+    else:
+        foreign = second_run_output(world)
+        surviving.append(foreign)
+        run["render_output_ids"] = [foreign["output_id"]]
+    world.runs.upsert_item(run)
+    before = [world.raw(item) for item in surviving]
+    no_blob_io = Mock(side_effect=AssertionError("Invalid deletion proof must not reach Blob storage."))
+    monkeypatch.setattr(world.blobs, "get_blob_client", no_blob_io)
+
+    with pytest.raises((OutputError, OutputUnavailableError)):
+        api.cleanup()
+    conversation = world.conversations.read_item("conversation-1", "conversation-1")
+    after = [world.runs.read_item(item["output_id"], "conversation-1") for item in surviving]
+    assert conversation["orchestration_deleted"] is True
+    assert after == before
+    assert api.source_cleanup.call_count == api.source_fence.call_count == 0
+    assert no_blob_io.call_count == 0 and world.blobs.data
 
 
 @pytest.mark.parametrize("reply", [None, False, "unpersisted"])

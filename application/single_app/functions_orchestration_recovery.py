@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.127
+Version: 0.261.129
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 """
@@ -564,10 +564,12 @@ class ExecutionLease:
             raise CheckpointError('ownership_lost')
         return record
 
-    def update(self, updates):
+    def update(self, updates, *, precondition=None):
         with self.lock:
             for _ in range(8):
                 record = self.read()
+                if precondition is not None:
+                    precondition(record)
                 try:
                     return _replace(record, updates)
                 except exceptions.CosmosAccessConditionFailedError:
@@ -593,6 +595,10 @@ class ExecutionLease:
                         return saved
                     raise
             raise CheckpointError('ownership_lost')
+
+    def initialize_checkpoint_state(self, updates, *, precondition=None):
+        """Own the initial checkpoint CAS; continuation also freezes its first binding."""
+        return self.update(updates, precondition=precondition)
 
     def renew(self):
         self.update({'execution_lease': {
@@ -1250,7 +1256,7 @@ class ExecutionCheckpoints:
         }
 
     def initialize(self):
-        self.lease.update({
+        self.lease.initialize_checkpoint_state({
             'checkpoint_version': CHECKPOINT_VERSION, 'execution_binding': self.binding,
             'execution_steps': deepcopy(self.records), 'attempt_index': self.record.get('attempt_index') or 1,
             'execution_initial_manifest': (
@@ -1399,7 +1405,7 @@ def cleanup_conversation_checkpoints(
             intent = None
             if plan_contract_version(current.get('plan')) == 2:
                 intent = build_output_cleanup_intent(current, retain_committed=retain_committed)
-                if intent['output_ids'] and not callable(output_cleanup):
+                if intent['output_ids'] and output_cleanup is not None and not callable(output_cleanup):
                     raise RecoveryError(
                         'Generated-file cleanup is unavailable. The conversation was not deleted.',
                         code='output_cleanup_required', status_code=503,
@@ -1430,6 +1436,11 @@ def cleanup_conversation_checkpoints(
         intent = current.get('output_cleanup') if plan_contract_version(current.get('plan')) == 2 else None
         if intent is None or not intent['output_ids']:
             continue
+        if output_cleanup is None:
+            # Initialize output services only after every deletion fence and intent is durable.
+            from functions_orchestration_bootstrap import build_orchestration_cleanup_service
+
+            output_cleanup = build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup
         enrolled = output_cleanup(current['id'])
         expected = {
             'run_id': current['id'], 'enrollment_status': 'completed',

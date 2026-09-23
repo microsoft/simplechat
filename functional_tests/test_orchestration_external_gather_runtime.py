@@ -1,8 +1,9 @@
 # test_orchestration_external_gather_runtime.py
 """External Gather content retains real authorization lineage through composition.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
+Empty-result lineage coverage added in: 0.261.129
 Provider identity, configuration and storage I/O are isolated; runtime and facade are real.
 """
 
@@ -123,7 +124,8 @@ def test_missing_external_preflight_blocks_execution_before_any_adapter(runtime)
 
 
 @pytest.mark.parametrize('partial', [False, True])
-def test_external_gather_retains_full_content_and_composed_lineage_after_restart(runtime, partial):
+@pytest.mark.parametrize('empty', [False, True])
+def test_external_gather_retains_full_content_and_composed_lineage_after_restart(runtime, partial, empty):
     with ExternalSourceWorld() as world:
         case = runtime.make([compose('draft')], ['Prepared from the exact retained external content.'])
         case.model.model_metadata = replace(case.model.model_metadata, context_window=131072, input_limit=98304)
@@ -148,6 +150,10 @@ def test_external_gather_retains_full_content_and_composed_lineage_after_restart
         context.user_roles = list(world.roles)
         context.user_enable_agents = True
         body = 'Full retained integration content. ' * 1000 + 'AUTHORITATIVE-FINAL-LINE'
+        notes = [] if empty else [body]
+        citations = [] if empty else [
+            {'document_id': 'https://public.example/page', 'url': 'https://public.example/page'},
+        ]
         captured = []
 
         def gather(step, scoped, *, settings, **kwargs):
@@ -156,8 +162,7 @@ def test_external_gather_retains_full_content_and_composed_lineage_after_restart
                 'web', producer=scoped.result_producer(step), settings=settings, source=None,
             )
             result = runtime.schema.build_step_result(
-                status='partial' if partial else 'completed', notes=[body],
-                citations=[{'document_id': 'https://public.example/page', 'url': 'https://public.example/page'}],
+                status='partial' if partial else 'completed', notes=notes, citations=citations,
             )
             captured.append(deepcopy(result))
             return result
@@ -174,7 +179,7 @@ def test_external_gather_retains_full_content_and_composed_lineage_after_restart
         restarted = world.service(world.provider())
         prepared_reader = restarted.open_result(gathered.output('prepared'), allow_partial=partial)
         prepared = prepared_reader.read_value()
-        assert prepared['notes'] == [body]
+        assert prepared['notes'] == notes
         assert prepared['citations'] == captured[0]['citations']
         assert prepared['content_scope'] == 'reported_external_content'
         assert prepared_reader.metadata()['origin'] == 'grounded'
@@ -184,7 +189,10 @@ def test_external_gather_retains_full_content_and_composed_lineage_after_restart
         assert text == 'Prepared from the exact retained external content.'
         assert metadata['origin'] == 'grounded'
         assert metadata['external_source_count'] == 1
-        assert body in case.model.calls[0][0][-1]['content']
+        if empty:
+            assert prepared['notes'] == prepared['citations'] == prepared['evidence'] == []
+        else:
+            assert body in case.model.calls[0][0][-1]['content']
         assert context.documents_touched == [] and result['artifacts'] == []
         assert result['citations'] == []
         world.roles = ()

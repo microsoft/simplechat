@@ -5,7 +5,7 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.127
+Version: 0.261.129
 """
 
 import hashlib
@@ -29,6 +29,7 @@ from functions_orchestration_result_contracts import InputBinding, ResultContrac
 from functions_orchestration_schema import (
     PlanValidationError, apply_plan_edits, plan_contract_version, summarize_plan,
 )
+from functions_orchestration_timing import initial_execution_deadline
 
 
 EDIT_CLAIM_SECONDS = 900
@@ -851,12 +852,13 @@ def release_plan_revision(claim):
 def claim_plan_run(
     run_id, user_id, conversation_id, *, plan_id=None, expected_version=None,
     edits=None, conversation_context=None, result_alias_resolver=None,
-    export_catalog=None, composition_profiles=None,
+    export_catalog=None, composition_profiles=None, settings=None,
 ):
     """Atomically turn a current pre-execution plan into the one executable run.
 
     Optional catalogs and profiles describe current server admission, not saved
     permissions. They validate the frozen plan before any execution lease write.
+    V2 start and deadline use server settings and share that same conditional write.
     """
     record = read_revision_run(run_id, user_id, conversation_id)
     if record.get('checkpoints_deleted') or record.get('latest_attempt_run_id'):
@@ -884,7 +886,8 @@ def claim_plan_run(
         contract_version=contract_version, export_catalog=admitted_catalog,
         composition_profiles=composition_profiles if contract_version == 2 else None,
     )
-    now = _now().isoformat()
+    started_at = _now()
+    now = started_at.isoformat()
     plan['status'] = 'running'
     plan['approval'] = {
         **(plan.get('approval') or {}), 'state': 'approved',
@@ -904,6 +907,8 @@ def claim_plan_run(
         'execution_lease': lease_fields(), 'recovery_version': uuid.uuid4().hex,
         'attempt_index': record.get('attempt_index') or 1,
     })
+    if contract_version == 2:
+        updates['execution_deadline_at'] = initial_execution_deadline(started_at, settings)
     if conversation_context is not None:
         if not isinstance(conversation_context, dict):
             raise _invalid('Invalid conversation context.')

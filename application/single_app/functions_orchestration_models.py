@@ -1,7 +1,7 @@
 # functions_orchestration_models.py
 """Authorized model bindings for orchestration planning and execution.
 
-Version: 0.261.127
+Version: 0.261.129
 
 Planner construction evidence is private runtime metadata, captured from the
 client's actual construction inputs. It is not public model metadata, credentials,
@@ -9,6 +9,9 @@ or a reconstruction from settings read after the client was created.
 get_planner_acquisition_configuration returns only the eight-field descriptor for
 the exact owned planner adapter. Parameters describe its construction-bound
 controls, not arbitrary overrides supplied to a later completion call.
+Constructed planner adapters recheck their original binding before every invocation,
+including cached callables obtained before capture. Unsupported construction evidence
+or a changed binding raises OrchestrationModelError; neither accessor returns None.
 """
 
 from copy import deepcopy
@@ -56,7 +59,10 @@ class _PlannerCompletions:
         self._chat = None
 
     def create(self, **kwargs):
-        return self.model.create_completion(**kwargs)
+        model = self.model
+        if self._construction is not None:
+            model, _ = _planner_construction(self._planner_client, expected_completions=self)
+        return model.create_completion(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -82,14 +88,14 @@ def _record_construction(model, *, endpoint, api_version, protocol):
     return model
 
 
-def get_planner_acquisition_configuration(planner_client):
-    """Return a detached private descriptor for this unchanged constructed client."""
+def _planner_construction(planner_client, *, expected_completions=None):
     if type(planner_client) is not SimpleNamespace:
         raise OrchestrationModelError()
     chat = getattr(planner_client, 'chat', None)
     completions = getattr(chat, 'completions', None) if type(chat) is SimpleNamespace else None
     if (
         type(completions) is not _PlannerCompletions
+        or expected_completions is not None and completions is not expected_completions
         or completions._planner_client is not planner_client or completions._chat is not chat
     ):
         raise OrchestrationModelError()
@@ -98,7 +104,16 @@ def get_planner_acquisition_configuration(planner_client):
         type(model) is not OrchestrationModel or model is not completions._constructed_model or model._closed
         or type(construction) is not _ModelConstruction or model._construction is not construction
         or model.client is not construction.client or _binding_signature(model) != construction.binding
-        or any(type(value) is not str or not value.strip() for value in (
+    ):
+        raise OrchestrationModelError()
+    return model, construction
+
+
+def get_planner_acquisition_configuration(planner_client):
+    """Return a detached descriptor, or raise OrchestrationModelError for invalid proof."""
+    model, construction = _planner_construction(planner_client)
+    if (
+        any(type(value) is not str or not value.strip() for value in (
             construction.endpoint, construction.protocol, model.provider, model.deployment,
         ))
         or construction.api_version is not None and type(construction.api_version) is not str
@@ -123,7 +138,7 @@ def get_planner_acquisition_configuration(planner_client):
 
 
 def planner_client_construction_source(planner_client, planner_model):
-    """Wrap the same private descriptor for callers using the acquisition envelope."""
+    """Return the resolved envelope; unavailable proof or a wrong model raises OrchestrationModelError."""
     configuration = get_planner_acquisition_configuration(planner_client)
     if type(planner_model) is not str or planner_model != configuration['deployment']:
         raise OrchestrationModelError()

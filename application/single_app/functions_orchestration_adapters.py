@@ -44,7 +44,7 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.126
+Version: 0.261.129
 """
 
 import inspect
@@ -2282,6 +2282,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
                 capability_id=CAPABILITY_ACTION_INVOKE, selector=action_ref,
             )
             settings = deepcopy(settings)
+            invocation_kwargs['invocation_capture']('action', settings=settings, selector=action_ref)
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
 
@@ -2409,8 +2410,10 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
                     step, context, settings, user_id=user_id,
                     capability_id=CAPABILITY_AGENT_INVOKE, selector=selector,
                 )
+                invocation_settings = deepcopy(settings)
+                invocation_capture('agent', settings=invocation_settings, selector=selector)
                 invocation_kwargs = {
-                    'settings': deepcopy(settings),
+                    'settings': invocation_settings,
                     'invocation_capture': invocation_capture,
                 }
             from agent_delegation_runtime import delegation_citations, invoke_scoped_agent

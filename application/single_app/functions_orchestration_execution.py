@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved V2 harness attempts.
 
-Version: 0.261.127
+Version: 0.261.129
 Implemented in: 0.261.127
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
@@ -16,6 +16,8 @@ prevented confirmation. Rejected or foreign leases are never finalized.
 After a renderer-only tick and guarded runtime reconciliation, use
 ``refresh_harness_delivery`` to publish the saved outcome without preparing models,
 recalling memory, polling native computation, or executing any producer.
+Delivery reconstructs document citations from the selected final result's exact
+authorized lineage, never from ambient tasks or a stale saved citation list.
 ``finalize_harness_failure`` records a verified deadline, cancellation or access
 failure without execution. Delivery infrastructure failures raise a safe exception
 with ``retryable`` set when appropriate; they never masquerade as source denial.
@@ -49,6 +51,10 @@ applies a new-plan readiness check to saved V2 work.
 Runtime preflight/capture/admission callbacks check their original lease before and after
 each invocation, including failure. Their closures also reject a stopped worker;
 shared service callbacks and model-free history readers remain unmodified.
+Active discovery and revalidation use the services' current admitted export
+catalog through the shared canonical resolver. Empty selections stay empty;
+format/profile narrowing lives only on the runtime context, not saved permission
+snapshots. Model-free delivery does not require admission for new Render work.
 Typed invocation cancellation remains cancellation, including through known
 application wrappers; ordinary owner interruptions are not inferred to be stops.
 
@@ -117,9 +123,11 @@ from functions_orchestration_models import (
     has_planner_model_override,
     resolve_orchestration_model,
 )
-from functions_orchestration_registry import CapabilityResolutionError, resolve_available_capability_ids
+from functions_orchestration_registry import (
+    CapabilityResolutionError, resolve_admitted_export_catalog, resolve_available_capability_ids,
+)
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
-from functions_orchestration_result_runtime import read_complete_input
+from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
     build_failure,
@@ -488,10 +496,15 @@ class HarnessExecution:
         if self._required_capabilities is None:
             return
         current = self._bootstrap.get_settings()
+        export_catalog = None
+        if not self._delivery_only:
+            export_catalog = resolve_admitted_export_catalog(self.services.export_catalog())
+            if self.context is not None:
+                self.context.export_catalog = export_catalog
         available = resolve_available_capability_ids(
             current, allowed_ids=current.get("chat_orchestration_enabled_capabilities"),
             candidate_ids=self._required_capabilities,
-            request_context=self._capability_context, contract_version=2,
+            request_context=self._capability_context, contract_version=2, export_catalog=export_catalog,
         )
         if not current.get("enable_chat_orchestration") or self._required_capabilities - set(available):
             raise HarnessExecutionError("context_unavailable")
@@ -585,12 +598,14 @@ class HarnessExecution:
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
             **self.services.capability_request_bindings(),
         )
+        export_catalog = resolve_admitted_export_catalog(self.services.export_catalog())
         required = {
             step["capability_id"] for step in self.record["plan"]["steps"] if step.get("enabled", True)
         }
         available = resolve_available_capability_ids(
             self.settings, allowed_ids=self.settings.get("chat_orchestration_enabled_capabilities"),
             candidate_ids=required, request_context=request_context, contract_version=2,
+            export_catalog=export_catalog,
         )
         if required - set(available):
             raise HarnessExecutionError("context_unavailable")
@@ -664,6 +679,7 @@ class HarnessExecution:
             self.context, self.record, checkpoint_factory=checkpoint_factory,
             guard_token=self.lease.token, execution_check=self.lease.read,
         )
+        self.context.export_catalog = resolve_admitted_export_catalog(self.context.export_catalog)
         self.context.external_source_preflight = _execution_bound_external_callback(
             self.context.external_source_preflight, self.lease,
         )
@@ -1043,7 +1059,10 @@ class HarnessExecution:
                     if type(prepared) is not str:
                         raise HarnessExecutionError("result_invalid")
                     reader.recheck()
-                citations = result.get("citations") or []
+                    if self._delivery_only:
+                        citations = read_result_document_citations(self.context, reference)
+                if not self._delivery_only:
+                    citations = result.get("citations") or []
                 self._validate_citations(citations)
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
@@ -1114,23 +1133,23 @@ class HarnessExecution:
         )
         message_id = f"assistant_orchestration_{fingerprint(self.record['id'])[:40]}"
         timestamp = current.get("assistant_message_created_at") or _now_iso()
+        # Validation may fail before checkpoint restoration populates this context.
+        has_execution_state = self.context is not None and "task_results" in result
         updates = {
             "status": status, "outcome": outcome, "message": answer,
             "failure": failures[0] if failures else None, "failures": failures,
             "error": failures[0]["message"] if failures else None,
             "completed_at": None if status == "waiting" else _now_iso(),
-            "execution_deadline_at": (
-                self.context.execution_deadline_at if self.context is not None
-                else current.get("execution_deadline_at")
-            ),
+            "execution_deadline_at": current.get("execution_deadline_at"),
             "pending_results": deepcopy(
-                self.context.pending_results if self.context is not None else current.get("pending_results") or {},
+                self.context.pending_results if has_execution_state else current.get("pending_results") or {},
             ),
             "task_results": (
                 {name: task.to_dict() for name, task in self.context.task_results.items()}
-                if self.context is not None else deepcopy(current.get("task_results") or {})
+                if has_execution_state else deepcopy(current.get("task_results") or {})
             ),
-            "outputs": outputs, "artifacts": artifacts, "token_usage": combined_usage,
+            "outputs": outputs, "artifacts": artifacts, "citations": deepcopy(citations),
+            "token_usage": combined_usage,
             "harness_prompt_token_usage": _usage(self.prompt_token_usage),
             "reasoning_adjustments": reasoning["reasoning_adjustments"],
             "assistant_message_created_at": timestamp,
@@ -1283,6 +1302,7 @@ class HarnessExecution:
 
             result, error = None, None
             try:
+                self._validate_capabilities()
                 adjustments = self._reasoning()["reasoning_adjustments"]
                 if adjustments:
                     self._send(build_reasoning_adjustment_event(adjustments))
