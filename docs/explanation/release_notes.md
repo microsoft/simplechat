@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.138)**
+
+#### Bug Fixes
+
+*   **File Sync Runs Undid Changes Made While They Were Running**
+    *   Fixed a File Sync run overwriting a manager's changes made while it was running. When the run finished, an edit to the source was lost, a source or schedule that had been turned off was turned back on, a deleted source was recreated and kept syncing, and an ignored path was un-ignored.
+    *   Runs now record only their own results (last run status, counts and the next scheduled time) on the source as it is stored, and the next run follows the schedule as it is now. A deleted source stays deleted, and the run still reports how it went.
+    *   A path ignored while a run was processing it stays ignored, and still records the document the run produced.
+    *   The reverse race is closed too: saving a source no longer erases the result of a run that finished meanwhile, and ignoring a path no longer drops a file's new document, which could make the next run import it again as a duplicate.
+    *   Two managers editing the same source at once are still last-writer-wins. A save that keeps colliding with other writes is refused with a message to reload rather than applied from an outdated copy.
+    *   This affects every File Sync interface, including the classic pages.
+    *   (Ref: `functions_file_sync.py`, `route_backend_file_sync.py`, [File Sync Concurrent Write Fix](fixes/FILE_SYNC_CONCURRENT_WRITE_FIX.md))
+
 ### **(v0.261.137)**
 
 #### New Features

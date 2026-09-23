@@ -10,12 +10,17 @@ import requests
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlparse
 
+from azure.core import MatchConditions
 from azure.core.exceptions import ResourceNotFoundError as AzureResourceNotFoundError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.cosmos.exceptions import (
+    CosmosAccessConditionFailedError,
+    CosmosResourceExistsError,
+    CosmosResourceNotFoundError,
+)
 from azure.storage.blob import BlobServiceClient, ContainerClient
 from flask import current_app, has_app_context
 from msal import ConfidentialClientApplication
@@ -145,6 +150,10 @@ class FileSyncPublicValidationError(ValueError):
         super().__init__(self.public_message)
 
 
+class FileSyncWriteConflict(RuntimeError):
+    """A File Sync record kept changing while a write was being applied to it."""
+
+
 FILE_SYNC_DEFAULTS = {
     "enable_file_sync": False,
     "enable_file_sync_personal": True,
@@ -172,6 +181,10 @@ FILE_SYNC_DEFAULTS = {
 FILE_SYNC_REMOTE_DELETE_POLICIES = {"ignore", "hard_delete"}
 FILE_SYNC_FOLDER_TAG_MODES = {"none", "parent", "full_path"}
 FILE_SYNC_DELETE_ACTIONS = {"delete_only", "ignore_remote"}
+# Sources and items each have two writers: managers (editing a source, ignoring a
+# path) and the sync engine (recording a run). Every write re-reads the record and
+# is conditional on that copy; this bounds the re-reads after a concurrent write.
+FILE_SYNC_WRITE_ATTEMPTS = 3
 FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE = {
     FILE_SYNC_SOURCE_TYPE_SMB: {"username_password", "anonymous"},
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES: {"managed_identity", "client_secret", "connection_string"},
@@ -497,6 +510,48 @@ def _get_runs_container(scope_type: str):
     if scope_type == FILE_SYNC_SCOPE_PUBLIC:
         return cosmos_public_file_sync_runs_container
     return cosmos_personal_file_sync_runs_container
+
+
+def _write_with_etag_guard(
+    container,
+    item_id: str,
+    partition_key: str,
+    apply_changes: Callable[[Dict[str, Any]], Dict[str, Any]],
+    new_document: Optional[Callable[[], Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Apply ``apply_changes`` to the stored copy of a record and write it back.
+
+    The write is conditional on the copy just read. When another writer lands in
+    between, the record is read again and the changes are applied to the newer
+    copy, so a write never restores fields from an outdated copy. A missing record
+    is created from ``new_document`` when one is given; otherwise it stays missing
+    and the function returns ``None``, so a deleted source is never recreated.
+    """
+    for _attempt in range(FILE_SYNC_WRITE_ATTEMPTS):
+        try:
+            current = container.read_item(item=item_id, partition_key=partition_key)
+        except CosmosResourceNotFoundError:
+            if new_document is None:
+                return None
+            try:
+                return container.create_item(body=apply_changes(new_document()))
+            except CosmosResourceExistsError:
+                continue
+
+        etag = current.get("_etag")
+        try:
+            return container.replace_item(
+                item=item_id,
+                body=apply_changes(current),
+                etag=etag,
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except CosmosResourceNotFoundError:
+            if new_document is None:
+                return None
+        except CosmosAccessConditionFailedError:
+            pass
+    raise FileSyncWriteConflict("The File Sync record kept changing while it was being saved")
 
 
 def assert_public_workspace_role(user_id: str, public_workspace_id: str, allowed_roles: Iterable[str] = FILE_SYNC_MANAGER_ROLES) -> str:
@@ -1683,12 +1738,31 @@ def create_file_sync_source(scope_type: str, scope_id: str, payload: Dict[str, A
 def update_file_sync_source(scope_type: str, scope_id: str, source_id: str, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
     source = get_authorized_sync_source(scope_type, source_id, updated_by, scope_id=scope_id)
     normalized_payload = _normalize_source_payload(scope_type, scope_id, payload or {}, source_id, existing_source=source)
-    source.update(normalized_payload)
-    source["updated_by"] = updated_by
-    source["updated_at"] = _now_iso()
-    _get_sources_container(scope_type).upsert_item(source)
-    _log_file_sync_activity(source, updated_by, "source_updated", {"source_name": source["name"]})
-    return source
+    updated_at = _now_iso()
+
+    def apply_edit(current: Dict[str, Any]) -> Dict[str, Any]:
+        current_schedule = current.get("schedule") or {}
+        edited_schedule = dict(normalized_payload.get("schedule") or {})
+        if edited_schedule.get("enabled") and current_schedule.get("enabled") and current_schedule.get("next_run_at"):
+            # A run that finished while this edit was prepared has already moved the
+            # next run; keep its value rather than the one read before the run ended.
+            edited_schedule["next_run_at"] = current_schedule["next_run_at"]
+        current.update(normalized_payload)
+        current["schedule"] = edited_schedule
+        current["updated_by"] = updated_by
+        current["updated_at"] = updated_at
+        return current
+
+    written = _write_with_etag_guard(
+        _get_sources_container(scope_type),
+        source_id,
+        _source_scope_id(source),
+        apply_edit,
+    )
+    if written is None:
+        raise LookupError("File sync source not found")
+    _log_file_sync_activity(written, updated_by, "source_updated", {"source_name": written.get("name")})
+    return written
 
 
 def _prepare_connection_test_auth(
@@ -2141,10 +2215,9 @@ def set_file_sync_path_ignored(source: Dict[str, Any], remote_path: str, ignored
 
     container = _get_items_container(source["scope_type"])
     item_id = _item_id_for_path(source_id, normalized_remote_path)
-    try:
-        item = container.read_item(item=item_id, partition_key=source_id)
-    except CosmosResourceNotFoundError:
-        item = {
+
+    def new_item() -> Dict[str, Any]:
+        return {
             "id": item_id,
             "type": "file_sync_item",
             "source_id": source_id,
@@ -2155,12 +2228,14 @@ def set_file_sync_path_ignored(source: Dict[str, Any], remote_path: str, ignored
             "created_at": _now_iso(),
         }
 
-    item["ignored"] = bool(ignored)
-    item["status"] = "ignored" if ignored else item.get("status", "pending")
-    item["updated_by"] = updated_by
-    item["updated_at"] = _now_iso()
-    container.upsert_item(item)
-    return item
+    def apply_ignore(item: Dict[str, Any]) -> Dict[str, Any]:
+        item["ignored"] = bool(ignored)
+        item["status"] = "ignored" if ignored else item.get("status", "pending")
+        item["updated_by"] = updated_by
+        item["updated_at"] = _now_iso()
+        return item
+
+    return _write_with_etag_guard(container, item_id, source_id, apply_ignore, new_item)
 
 
 def list_file_sync_runs(scope_type: str, source_id: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -3568,15 +3643,61 @@ def _queue_document_processing(
     process_document_upload_background(**task_kwargs)
 
 
+def _record_item_run_result(
+    source: Dict[str, Any],
+    item_id: str,
+    run_fields: Dict[str, Any],
+    status: str,
+    create_if_missing: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Store a run's result on an item without undoing a manager's ignore.
+
+    A manager can ignore a path while a run is still processing it, so the flag is
+    read from the stored item rather than the copy loaded when the run started.
+    """
+    source_id = source["id"]
+
+    def new_item() -> Dict[str, Any]:
+        return {
+            "id": item_id,
+            "type": "file_sync_item",
+            "source_id": source_id,
+            "scope_type": source["scope_type"],
+            _scope_field(source["scope_type"]): _source_scope_id(source),
+            "ignored": False,
+            "created_at": _now_iso(),
+        }
+
+    def apply_run_result(item: Dict[str, Any]) -> Dict[str, Any]:
+        item.update(run_fields)
+        item.setdefault("ignored", False)
+        item["status"] = "ignored" if item.get("ignored") else status
+        return item
+
+    return _write_with_etag_guard(
+        _get_items_container(source["scope_type"]),
+        item_id,
+        source_id,
+        apply_run_result,
+        new_item if create_if_missing else None,
+    )
+
+
 def _touch_item(source: Dict[str, Any], existing_item: Dict[str, Any], remote_file: Dict[str, Any], status: str) -> None:
-    existing_item["status"] = status
-    existing_item["remote_modified_at"] = remote_file.get("modified_at")
-    existing_item["remote_size"] = remote_file.get("size")
-    existing_item["remote_change_token"] = remote_file.get("remote_change_token")
-    existing_item["remote_web_url"] = remote_file.get("web_url")
-    existing_item["last_seen_at"] = _now_iso()
-    existing_item["updated_at"] = _now_iso()
-    _get_items_container(source["scope_type"]).upsert_item(existing_item)
+    now_iso = _now_iso()
+    _record_item_run_result(
+        source,
+        existing_item["id"],
+        {
+            "remote_modified_at": remote_file.get("modified_at"),
+            "remote_size": remote_file.get("size"),
+            "remote_change_token": remote_file.get("remote_change_token"),
+            "remote_web_url": remote_file.get("web_url"),
+            "last_seen_at": now_iso,
+            "updated_at": now_iso,
+        },
+        status,
+    )
 
 
 def _upsert_synced_item(
@@ -3588,17 +3709,11 @@ def _upsert_synced_item(
     run_id: Optional[str] = None,
     sync_action: str = "synced",
 ) -> None:
-    source_id = source["id"]
     now_iso = _now_iso()
-    item = existing_item or {
-        "id": _item_id_for_path(source_id, remote_file["remote_path"]),
-        "type": "file_sync_item",
-        "source_id": source_id,
-        "scope_type": source["scope_type"],
-        _scope_field(source["scope_type"]): _source_scope_id(source),
-        "created_at": now_iso,
-    }
-    item.update(
+    item_id = (existing_item or {}).get("id") or _item_id_for_path(source["id"], remote_file["remote_path"])
+    _record_item_run_result(
+        source,
+        item_id,
         {
             "remote_path": remote_file.get("remote_path"),
             "relative_path": remote_file.get("relative_path"),
@@ -3609,16 +3724,15 @@ def _upsert_synced_item(
             "remote_web_url": remote_file.get("web_url"),
             "content_hash": remote_file.get("content_hash"),
             "document_id": document_id,
-            "status": status,
-            "ignored": False,
             "last_synced_at": now_iso,
             "last_sync_run_id": run_id,
             "last_sync_action": sync_action,
             "last_seen_at": now_iso,
             "updated_at": now_iso,
-        }
+        },
+        status,
+        create_if_missing=True,
     )
-    _get_items_container(source["scope_type"]).upsert_item(item)
 
 
 def _upsert_failed_item(
@@ -3628,17 +3742,11 @@ def _upsert_failed_item(
     error: Exception,
     run_id: Optional[str] = None,
 ) -> None:
-    source_id = source["id"]
     now_iso = _now_iso()
-    item = existing_item or {
-        "id": _item_id_for_path(source_id, remote_file["remote_path"]),
-        "type": "file_sync_item",
-        "source_id": source_id,
-        "scope_type": source["scope_type"],
-        _scope_field(source["scope_type"]): _source_scope_id(source),
-        "created_at": now_iso,
-    }
-    item.update(
+    item_id = (existing_item or {}).get("id") or _item_id_for_path(source["id"], remote_file["remote_path"])
+    _record_item_run_result(
+        source,
+        item_id,
         {
             "remote_path": remote_file.get("remote_path"),
             "relative_path": remote_file.get("relative_path"),
@@ -3647,15 +3755,15 @@ def _upsert_failed_item(
             "remote_size": remote_file.get("size"),
             "remote_change_token": remote_file.get("remote_change_token"),
             "remote_web_url": remote_file.get("web_url"),
-            "status": "failed",
             "error_message": FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE,
             "last_sync_run_id": run_id,
             "last_sync_action": "failed",
             "last_seen_at": now_iso,
             "updated_at": now_iso,
-        }
+        },
+        "failed",
+        create_if_missing=True,
     )
-    _get_items_container(source["scope_type"]).upsert_item(item)
 
 
 def _handle_remote_deletes(source: Dict[str, Any], existing_items: Dict[str, Dict[str, Any]], remote_item_ids: set, counts: Dict[str, int]) -> None:
@@ -3665,15 +3773,15 @@ def _handle_remote_deletes(source: Dict[str, Any], existing_items: Dict[str, Dic
     for item_id, item in existing_items.items():
         if item_id in remote_item_ids or item.get("ignored") or item.get("status") in {"remote_deleted", "ignored"}:
             continue
-        item["last_missing_at"] = now_iso
+        run_fields = {"last_missing_at": now_iso, "updated_at": now_iso}
         if source.get("remote_delete_policy") == "hard_delete" and item.get("document_id"):
             try:
                 _delete_synced_document(source, item["document_id"])
-                item["status"] = "remote_deleted"
+                status = "remote_deleted"
                 counts["deleted"] = counts.get("deleted", 0) + 1
             except Exception as delete_error:
-                item["status"] = "delete_failed"
-                item["error_message"] = FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE
+                status = "delete_failed"
+                run_fields["error_message"] = FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE
                 counts["failed"] = counts.get("failed", 0) + 1
                 log_event(
                     "[FILE_SYNC] Remote document deletion failed.",
@@ -3686,9 +3794,8 @@ def _handle_remote_deletes(source: Dict[str, Any], existing_items: Dict[str, Dic
                     exceptionTraceback=True,
                 )
         else:
-            item["status"] = "remote_missing"
-        item["updated_at"] = now_iso
-        _get_items_container(source["scope_type"]).upsert_item(item)
+            status = "remote_missing"
+        _record_item_run_result(source, item_id, run_fields, status)
 
 
 def _delete_synced_document(source: Dict[str, Any], document_id: str) -> None:
@@ -3705,18 +3812,51 @@ def _delete_synced_document(source: Dict[str, Any], document_id: str) -> None:
 
 
 def _update_source_after_run(source: Dict[str, Any], run: Dict[str, Any]) -> None:
-    now_iso = _now_iso()
-    source["last_run_at"] = run.get("completed_at") or now_iso
-    source["last_run_id"] = run.get("id")
-    source["last_run_status"] = run.get("status")
-    source["last_run_counts"] = run.get("counts", {})
-    source["updated_at"] = now_iso
-    schedule = source.get("schedule") or {}
-    if schedule.get("enabled"):
-        interval_minutes = _safe_int(schedule.get("interval_minutes"), 15, minimum=5, maximum=10080)
-        schedule["next_run_at"] = (_now() + timedelta(minutes=interval_minutes)).isoformat()
-        source["schedule"] = schedule
-    _get_sources_container(source["scope_type"]).upsert_item(source)
+    """Record a finished run on its source, leaving every manager-owned field alone.
+
+    The source may have been edited, disabled or deleted while the run was going.
+    Only the run's own fields are written, onto the stored copy, and the next run
+    is scheduled from the schedule as it is now. A deleted source stays deleted.
+    """
+
+    def apply_run_status(current: Dict[str, Any]) -> Dict[str, Any]:
+        now = _now()
+        now_iso = now.isoformat()
+        current["last_run_at"] = run.get("completed_at") or now_iso
+        current["last_run_id"] = run.get("id")
+        current["last_run_status"] = run.get("status")
+        current["last_run_counts"] = run.get("counts", {})
+        current["updated_at"] = now_iso
+        schedule = current.get("schedule") or {}
+        if schedule.get("enabled"):
+            interval_minutes = _safe_int(schedule.get("interval_minutes"), 15, minimum=5, maximum=10080)
+            current["schedule"] = {
+                **schedule,
+                "next_run_at": (now + timedelta(minutes=interval_minutes)).isoformat(),
+            }
+        return current
+
+    log_context = {"source_id": source.get("id"), "run_id": run.get("id")}
+    try:
+        written = _write_with_etag_guard(
+            _get_sources_container(source["scope_type"]),
+            source["id"],
+            _source_scope_id(source),
+            apply_run_status,
+        )
+    except FileSyncWriteConflict:
+        log_event(
+            "[FILE_SYNC] Run status was not recorded because the source kept changing.",
+            level=logging.WARNING,
+            extra=log_context,
+        )
+        return
+    if written is None:
+        log_event(
+            "[FILE_SYNC] Run finished after its source was deleted; the source was not recreated.",
+            level=logging.INFO,
+            extra=log_context,
+        )
 
 
 def _invalidate_scope_search_cache(source: Dict[str, Any]) -> None:

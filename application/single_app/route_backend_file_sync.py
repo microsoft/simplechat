@@ -13,6 +13,7 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PUBLIC,
     FILE_SYNC_SOURCE_TYPE_SMB,
     FileSyncPublicValidationError,
+    FileSyncWriteConflict,
     assert_public_workspace_role,
     browse_file_sync_source_path,
     create_file_sync_source,
@@ -120,7 +121,7 @@ def register_route_backend_file_sync(bp):
         }
 
     def _map_exception(error):
-        expected_error = isinstance(error, (PermissionError, LookupError, ValueError))
+        expected_error = isinstance(error, (PermissionError, LookupError, ValueError, FileSyncWriteConflict))
         log_event(
             "[FILE_SYNC] Request failed.",
             level=logging.WARNING if expected_error else logging.ERROR,
@@ -134,6 +135,8 @@ def register_route_backend_file_sync(bp):
         )
         if isinstance(error, FileSyncPublicValidationError):
             return _error(error.public_message, 400)
+        if isinstance(error, FileSyncWriteConflict):
+            return _error("This File Sync item changed while it was being saved. Reload it and try again.", 409)
         if isinstance(error, PermissionError):
             return _error("You do not have permission to perform this File Sync operation.", 403)
         if isinstance(error, LookupError):
