@@ -2,6 +2,30 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.137)**
+
+#### New Features
+
+*   **Native Group Actions**
+    *   Group actions can now be listed, opened, created, edited, tested and deleted from the native group workspace, in the same collection and editor as personal actions. Previously the group Actions section offered only the Call agent manager and sent every other action to the classic interface.
+    *   Owners and admins can change and test group actions while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees a read-only collection and read-only details, with each action's configuration fields shown.
+    *   If two managers edit the same action, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   Connection tests from a group editor run in that group, never in whichever group the account last selected.
+    *   Provided (global) actions appear read-only when the administrator merges them into workspaces.
+    *   Unsaved drafts are kept per workspace, so a draft started in one group never appears in another group or in My Workspace.
+    *   Reusable group identities cannot be chosen in the V2 editor yet, and saved MCP preconfigurations are not offered for group actions yet. An action already bound to a group identity keeps that binding.
+    *   The group workspace shows the native collection only when group actions are enabled. A tenant with group agents but not group actions keeps the Call agent manager.
+    *   (Ref: `route_backend_group_actions_scoped.py`, `functions_group_action_access.py`, `functions_group_action_policy.py`, `actionWorkbench.ts`, [V2 Group Actions](features/V2_GROUP_ACTIONS.md), [Group Action APIs](features/GROUP_ACTION_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Members Could Use a Group's Stored Credentials in Connection Tests**
+    *   Fixed group connection tests and MCP discovery accepting requests from any group member. Testing a saved group action loads its stored credentials, and an unsaved test that names a group identity resolves that identity's secrets. Either way, a member could use the group's stored credentials against a destination they chose.
+    *   These requests now need the same roles as editing a group action: Owner or Admin, or Owner alone under the owner-only setting. The group MCP preconfiguration list shares the same check.
+    *   The classic interface only ever offered these actions inside the action editor, which only those roles can open, so no supported flow changes.
+    *   Scripts or integrations that run group connection tests must use an account with one of those roles.
+    *   (Ref: `route_backend_plugins.py`, [Group Action Test Role Alignment Fix](fixes/GROUP_ACTION_TEST_ROLE_ALIGNMENT_FIX.md))
+
 ### **(v0.261.136)**
 
 #### New Features
