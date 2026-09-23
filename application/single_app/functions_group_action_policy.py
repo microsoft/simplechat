@@ -106,13 +106,19 @@ def group_action_management_operations(user_id, group, role, settings, *, availa
     return list(GROUP_ACTION_OPERATIONS)
 
 
-def group_action_actions(action, user_id, group, role, settings):
+def group_action_actions(action, user_id, group, role, settings, *, available=None):
     """The operations advertised for a single action.
 
     Actions carry no per-item eligibility beyond the workspace policy, so this
     is the management projection intersected with the per-item vocabulary. It
     still takes ``action`` so the read projector computes actions per record and
     so a future per-action rule has one place to live.
+
+    ``available`` may carry the caller's precomputed
+    :func:`group_actions_available` result so a list projection resolves the
+    surface once and does not repeat the per-user governance check for every row.
     """
-    operations = set(group_action_management_operations(user_id, group, role, settings))
+    operations = set(
+        group_action_management_operations(user_id, group, role, settings, available=available)
+    )
     return [operation for operation in GROUP_ACTION_ITEM_OPERATIONS if operation in operations]

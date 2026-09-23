@@ -161,13 +161,19 @@ def _writer_can_manage(user_id, group, role, settings):
     return bool(group_action_management_operations(user_id, group, role, settings))
 
 
-def _project_group_action(record, user_id, group, role, settings, *, is_global):
-    """Project one stored record for the group list, with fresh per-item actions."""
+def _project_group_action(record, user_id, group, role, settings, *, is_global, available=None):
+    """Project one stored record for the group list, with fresh per-item actions.
+
+    ``available`` carries the read context's already-established
+    :func:`group_actions_available` result so a list projection resolves the
+    surface once rather than re-running the per-user governance check per row.
+    """
     projected = project_editor_record(
         record, "actions", global_scope=is_global, group_scope=not is_global,
     )
     projected["action_actions"] = (
-        [] if is_global else group_action_actions(projected, user_id, group, role, settings)
+        [] if is_global
+        else group_action_actions(projected, user_id, group, role, settings, available=available)
     )
     return projected
 
@@ -196,9 +202,13 @@ def _global_group_action_resource(record):
 def list_group_actions(user_id, group_id):
     group, role = require_group_action_read_context(user_id, group_id)
     settings = get_settings()
+    # The read context established the surface is available; thread that through
+    # so the projection does not repeat the per-user governance check per row.
     resources = [
-        _project_group_action(record, user_id, group, role, settings, is_global=is_global)
-        for record, is_global in list_group_editor_records(user_id, group_id, settings)
+        _project_group_action(
+            record, user_id, group, role, settings, is_global=is_global, available=True,
+        )
+        for record, is_global in list_group_editor_records("actions", user_id, group_id, settings)
     ]
     return {"actions": resources}, 200
 
@@ -207,12 +217,12 @@ def get_group_action(user_id, group_id, action_id):
     group, role = require_group_action_read_context(user_id, group_id)
     settings = get_settings()
     try:
-        record = read_group_editor_record(user_id, group_id, action_id, settings)
+        record = read_group_editor_record("actions", user_id, group_id, action_id, settings)
     except LookupError:
         # A provided (global) row from a merged list opens read-only through the
         # group route; when the id is not a merged global action this re-raises
         # LookupError, which the boundary maps to 404.
-        global_record = read_group_merged_global_record(user_id, group_id, action_id, settings)
+        global_record = read_group_merged_global_record("actions", user_id, group_id, action_id, settings)
         return _global_group_action_resource(global_record), 200
     read_only = not _writer_can_manage(user_id, group, role, settings)
     return _group_action_resource(record, user_id, group, role, settings, read_only=read_only), 200
@@ -226,13 +236,13 @@ def create_group_action(user_id, group_id, body, prepare):
 
 def update_group_action(user_id, group_id, action_id, body, prepare):
     group, role, settings = require_group_action_write_context(user_id, group_id, "edit")
-    existing = read_group_editor_record(user_id, group_id, action_id, settings)
+    existing = read_group_editor_record("actions", user_id, group_id, action_id, settings)
     saved = apply_group_action_write(user_id, group_id, existing, body, prepare, settings)
     return _group_action_resource(saved, user_id, group, role, settings, read_only=False), 200
 
 
 def delete_group_action(user_id, group_id, action_id):
     _group, _role, settings = require_group_action_write_context(user_id, group_id, "delete")
-    existing = read_group_editor_record(user_id, group_id, action_id, settings)
-    delete_group_editor_record(user_id, group_id, existing, settings)
+    existing = read_group_editor_record("actions", user_id, group_id, action_id, settings)
+    delete_group_editor_record("actions", user_id, group_id, existing, settings)
     return {"success": True}, 200

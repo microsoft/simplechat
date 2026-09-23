@@ -76,6 +76,7 @@ from functions_workspace_authoring import (
     ensure_editor_options_access,
     personal_editor_response,
 )
+from functions_group_agent_policy import group_agents_available
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
@@ -1032,13 +1033,30 @@ def draft_agent_instructions():
     if agent_scope == 'group':
         if not settings.get('allow_group_agents', False):
             return jsonify({'error': 'Group agents are disabled.'}), 403
-        try:
-            require_active_group(
-                user_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
-        except (LookupError, PermissionError, ValueError) as exc:
-            return jsonify({'error': str(exc)}), 403
+        draft_group_id = request_data.get('group_id')
+        if draft_group_id:
+            # A named group authorizes membership of THAT group and its agent
+            # availability, never the account's active group (M4C §3).
+            try:
+                assert_group_role(
+                    user_id, str(draft_group_id),
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except LookupError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except (PermissionError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 403
+            available, reason = group_agents_available(user_id, settings)
+            if not available:
+                return jsonify({'error': reason}), 403
+        else:
+            try:
+                require_active_group(
+                    user_id,
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except (LookupError, PermissionError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 403
     elif agent_scope not in {'personal', 'global'}:
         return jsonify({'error': 'Invalid agent scope.'}), 400
     elif agent_scope == 'personal' and not settings.get('allow_user_agents', False):
@@ -1265,6 +1283,58 @@ def _prepare_personal_agent_payload(user_id, agent, settings, *, editor_existing
                     if cleaned_agent.get('actions_to_load') else None
                 )
             ),
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
+    return cleaned_agent, None
+
+
+def _prepare_group_agent_payload(user_id, group_id, agent, settings, existing):
+    """Clean, enrich and validate one group agent for the immutable editor routes.
+
+    Mirrors ``_prepare_personal_agent_payload`` but binds every scope-sensitive
+    check to the named group: custom-connection permission comes from the group
+    flag, assigned knowledge resolves in group scope, and delegation bindings
+    validate against ``group_id`` (M4C §3). Returns ``(cleaned_agent, error_response)``
+    with exactly one set. The prepare signature matches ``apply_group_agent_write``.
+    """
+    if not settings.get('allow_group_custom_endpoints', False) and existing is None:
+        _strip_disallowed_local_custom_connection_fields(agent)
+
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    cleaned_agent['is_global'] = False
+    cleaned_agent['is_group'] = True
+
+    try:
+        if existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='group',
+                group_id=group_id,
+                is_admin=False,
+            )
+    except AssignedKnowledgeError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='group', scope_id=group_id,
+            settings=settings, existing_agent=existing,
         )
     except PermissionError:
         return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)

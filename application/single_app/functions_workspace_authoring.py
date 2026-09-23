@@ -46,6 +46,14 @@ _AGENT_TYPES = (
     ("new_foundry", "New Foundry", "allow_personal_new_foundry_agents"),
     ("foundry_workflow", "Foundry Workflow", "allow_personal_new_foundry_agents"),
 )
+# The group-scope agent type gates. Foundry types are governed by the group flags,
+# so a tenant can enable a Foundry type for personal but not group workspaces (M4C §3).
+_GROUP_AGENT_TYPES = (
+    ("local", "Local agent", None),
+    ("aifoundry", "Azure AI Foundry", "allow_group_ai_foundry_agents"),
+    ("new_foundry", "New Foundry", "allow_group_new_foundry_agents"),
+    ("foundry_workflow", "Foundry Workflow", "allow_group_new_foundry_agents"),
+)
 _BUILTIN_ACTIONS = (
     ("time", "Time", "enable_time_plugin"),
     ("fact_memory", "Fact memory", "enable_fact_memory_plugin"),
@@ -75,6 +83,26 @@ _OPTION_DEFAULTS = {
     "agent_templates_allow_user_submission": True,
     "enable_user_workspace": True,
     "enable_public_workspaces": False,
+    "enable_web_search": False,
+    "enable_url_access": False,
+    **{flag: False for _, _, flag in _BUILTIN_ACTIONS},
+}
+# The group agent editor options carry the same shape as the personal options, but
+# every ``allow_user_*`` key is dropped and the group connection/type flags take
+# their place, so a group page never advertises a personal capability (M4C §3).
+_GROUP_OPTION_DEFAULTS = {
+    "enable_semantic_kernel": False,
+    "per_user_semantic_kernel": False,
+    "merge_global_semantic_kernel_with_workspace": False,
+    "allow_group_custom_endpoints": False,
+    "allow_group_ai_foundry_agents": False,
+    "allow_group_new_foundry_agents": False,
+    "enable_multi_model_endpoints": False,
+    "default_model_selection": {},
+    "gpt_model": {},
+    "enable_gpt_apim": False,
+    "azure_apim_gpt_deployment": "",
+    "enable_agent_template_gallery": False,
     "enable_web_search": False,
     "enable_url_access": False,
     **{flag: False for _, _, flag in _BUILTIN_ACTIONS},
@@ -446,13 +474,19 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
 def _secret_scope(kind, user_id, record, path, group_id=None):
     """Resolve the Key Vault (scope_value, source, scope) for one credential path.
 
-    Group actions store their credentials in the group's Key Vault namespace so a
-    saved group action never writes into the saving member's personal namespace,
-    and so the saved-action test path (which resolves group secrets with
+    Group resources store their credentials in the group's Key Vault namespace so a
+    saved group record never writes into the saving member's personal namespace,
+    and so the saved-record test path (which resolves group secrets with
     ``scope="group"``) can rehydrate them.
+
+    Agents are keyed by the agent id (source ``agent``) in whichever namespace they
+    live: personal agents use ``user`` scope, and group agents use ``group`` scope
+    so ``{agent_id}--agent--group--{name}`` names written by the legacy group route
+    resolve, and so a group agent never mints a ``--user--`` secret the legacy
+    ``scope="group"`` delete would leave behind (M4C §2.1).
     """
     if kind == "agents":
-        return (record["id"], "agent", "user")
+        return (record["id"], "agent", "group" if group_id else "user")
     source = "action" if path[0] == "auth" else "action-addset"
     if group_id:
         return (group_id, source, "group")
@@ -650,10 +684,10 @@ def _invalidate_editor_catalog(kind, user_id, operation, group_id=None):
     try:
         cache = import_module("functions_chat_bootstrap_cache")
         if group_id:
-            # Group action changes affect every member, so invalidate globally, exactly
-            # as the classic group action save does.
+            # Group resource changes affect every member, so invalidate globally,
+            # exactly as the classic group action and agent saves do (M4C §2.2).
             cache.bump_chat_bootstrap_global_cache_version(
-                reason=f"group_action_{operation}",
+                reason=f"group_{'agent' if kind == 'agents' else 'action'}_{operation}",
             )
         else:
             cache.bump_chat_bootstrap_user_cache_version(
@@ -761,45 +795,53 @@ def delete_editor_record(kind, user_id, record, settings):
 # personal editor already enforces. Authorization (role and status) is resolved
 # by ``functions_group_action_access`` before any of these run.
 
-def _assert_group_action_access(user_id, group_id, record, settings):
-    """A stored record must belong to this group and pass action-type governance."""
+def _assert_group_record_access(kind, user_id, group_id, record, settings):
+    """A stored record must belong to this group and pass its scope's governance.
+
+    The ownership check is shared: the record must carry this ``group_id``, must not
+    be a global record, and must not claim any non-group scope. Actions additionally
+    pass per-type governance; agents carry no per-record governance (the surface's
+    availability governance is enforced by the read context), matching the personal
+    agent read.
+    """
     if (
         record.get("group_id") != group_id
         or record.get("is_global")
         or record.get("scope") not in (None, "", "group")
     ):
         raise LookupError("This resource is unavailable.")
-    import_module("functions_governance").ensure_action_type_access(
-        "governance_group_actions", user_id, record.get("type"), "group",
-    )
+    if kind == "actions":
+        import_module("functions_governance").ensure_action_type_access(
+            "governance_group_actions", user_id, record.get("type"), "group",
+        )
 
 
-def read_group_editor_record(user_id, group_id, record_id, settings):
-    """Read one raw group action for the editor, reauthorizing group ownership."""
+def read_group_editor_record(kind, user_id, group_id, record_id, settings):
+    """Read one raw group record for the editor, reauthorizing group ownership."""
     if not isinstance(record_id, str) or not record_id or any(char in record_id for char in "/\\?#"):
         raise LookupError("This resource is unavailable.")
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        record = _container("actions", "group").read_item(item=record_id, partition_key=group_id)
+        record = _container(kind, "group").read_item(item=record_id, partition_key=group_id)
     except exceptions.CosmosResourceNotFoundError as exc:
         raise LookupError("This resource is unavailable.") from exc
     if record.get("id") != record_id:
         raise LookupError("This resource is unavailable.")
-    _assert_group_action_access(user_id, group_id, record, settings)
+    _assert_group_record_access(kind, user_id, group_id, record, settings)
     return deepcopy(record)
 
 
-def read_group_merged_global_record(user_id, group_id, record_id, settings):
-    """Read one global action a group member may open read-only from a merged list.
+def read_group_merged_global_record(kind, user_id, group_id, record_id, settings):
+    """Read one global record a group member may open read-only from a merged list.
 
     Provided (global) rows appear in a group listing only while the global merge
     setting is on; this backs the single-record view onto one of them. It raises
     ``LookupError`` — mapped to 404 — when merge is off, the id is unknown, or the
-    action is disabled, so a group route never opens onto a resource the list
-    would not have shown. A governance denial surfaces as ``PermissionError`` —
-    mapped to 403 — from ``ensure_global_action_access``, matching the personal
-    ``scope=global`` read. ``group_id`` is validated by the caller's read context;
-    it is unused here because a global action has no group partition.
+    record is disabled, so a group route never opens onto a resource the list would
+    not have shown. A governance denial surfaces as ``PermissionError`` — mapped to
+    403 — from the scope's global-access check, matching the personal ``scope=global``
+    read. ``group_id`` is validated by the caller's read context; it is unused here
+    because a global record has no group partition.
     """
     if not settings.get("merge_global_semantic_kernel_with_workspace", False):
         raise LookupError("This resource is unavailable.")
@@ -807,82 +849,93 @@ def read_group_merged_global_record(user_id, group_id, record_id, settings):
         raise LookupError("This resource is unavailable.")
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        record = _container("actions", "global").read_item(item=record_id, partition_key=record_id)
+        record = _container(kind, "global").read_item(item=record_id, partition_key=record_id)
     except exceptions.CosmosResourceNotFoundError as exc:
         raise LookupError("This resource is unavailable.") from exc
     if record.get("id") != record_id:
         raise LookupError("This resource is unavailable.")
-    _assert_record_access("actions", user_id, record, settings, global_scope=True)
+    _assert_record_access(kind, user_id, record, settings, global_scope=True)
     return deepcopy(record)
 
 
-def list_group_editor_records(user_id, group_id, settings):
-    """Return (record, is_global) pairs a member may see: group actions plus, when
-    the merge setting is on, read-only global actions."""
-    governance = import_module("functions_governance")
+def list_group_editor_records(kind, user_id, group_id, settings):
+    """Return (record, is_global) pairs a member may see: group records plus, when
+    the merge setting is on, read-only global records. The scope-specific gates on a
+    merged global (agents also require per-user Semantic Kernel and the record being
+    enabled) are enforced by ``_assert_record_access``."""
     records = []
-    for record in _container("actions", "group").query_items(
+    for record in _container(kind, "group").query_items(
         query="SELECT * FROM c WHERE c.group_id = @group_id",
         parameters=[{"name": "@group_id", "value": group_id}], partition_key=group_id,
     ):
         try:
-            _assert_group_action_access(user_id, group_id, record, settings)
+            _assert_group_record_access(kind, user_id, group_id, record, settings)
         except (LookupError, PermissionError):
             continue
         records.append((record, False))
     if settings.get("merge_global_semantic_kernel_with_workspace", False):
-        for record in _container("actions", "global").query_items(
+        for record in _container(kind, "global").query_items(
             query="SELECT * FROM c", enable_cross_partition_query=True,
         ):
             try:
-                _assert_record_access("actions", user_id, record, settings, global_scope=True)
+                _assert_record_access(kind, user_id, record, settings, global_scope=True)
             except (LookupError, PermissionError):
                 continue
             records.append((record, True))
     return records
 
 
-def _assert_group_available_name(user_id, group_id, record, existing):
+def _assert_group_available_name(kind, user_id, group_id, record, existing):
     name = record.get("name")
     if not isinstance(name, str) or not name.strip():
         raise WorkspaceAuthoringValidation("A name is required.")
     if existing and name == existing.get("name"):
         return
-    matches = _container("actions", "group").query_items(
+    matches = _container(kind, "group").query_items(
         query="SELECT c.id FROM c WHERE c.group_id = @group_id AND c.name = @name",
         parameters=[{"name": "@group_id", "value": group_id}, {"name": "@name", "value": name}],
         partition_key=group_id,
     )
     if any(match.get("id") != (existing or {}).get("id") for match in matches):
         raise WorkspaceAuthoringConflict("An item with this name already exists.")
-    globals_matches = _container("actions", "global").query_items(
-        query="SELECT c.id FROM c WHERE STRINGEQUALS(c.name, @name, true)",
-        parameters=[{"name": "@name", "value": name}], enable_cross_partition_query=True,
-    )
-    if next(iter(globals_matches), None):
-        raise WorkspaceAuthoringConflict("An item with this name already exists.")
+    if kind == "actions":
+        # Actions share one runtime namespace with global actions, so a group action
+        # cannot collide with a global name. Agents may reuse a global agent's name,
+        # exactly as personal agents do.
+        globals_matches = _container(kind, "global").query_items(
+            query="SELECT c.id FROM c WHERE STRINGEQUALS(c.name, @name, true)",
+            parameters=[{"name": "@name", "value": name}], enable_cross_partition_query=True,
+        )
+        if next(iter(globals_matches), None):
+            raise WorkspaceAuthoringConflict("An item with this name already exists.")
 
 
-def save_group_editor_record(user_id, group_id, record, existing, settings):
-    """Save one prepared group action manifest with a mandatory conditional write."""
+def save_group_editor_record(kind, user_id, group_id, record, existing, settings):
+    """Save one prepared group manifest with a mandatory conditional write."""
     if existing:
         try:
-            current = read_group_editor_record(user_id, group_id, existing["id"], settings)
+            current = read_group_editor_record(kind, user_id, group_id, existing["id"], settings)
         except LookupError as exc:
             raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
         if not existing.get("_etag") or existing["_etag"] != current.get("_etag"):
             raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.")
-    import_module("functions_governance").ensure_action_type_access(
-        "governance_group_actions", user_id, record.get("type"), "group",
-    )
     delegation = import_module("functions_agent_delegation")
-    record = delegation.validate_agent_action_for_scope(
-        record, user_id=user_id, scope_type="group", scope_id=group_id, settings=settings,
-    )
-    identities = import_module("functions_workspace_identities")
-    identities.validate_action_identity_reference(
-        record, identities.WORKSPACE_IDENTITY_SCOPE_GROUP, group_id,
-    )
+    if kind == "agents":
+        delegation.validate_agent_delegation_bindings(
+            record, user_id=user_id, scope_type="group", scope_id=group_id,
+            settings=settings, existing_agent=existing,
+        )
+    else:
+        import_module("functions_governance").ensure_action_type_access(
+            "governance_group_actions", user_id, record.get("type"), "group",
+        )
+        record = delegation.validate_agent_action_for_scope(
+            record, user_id=user_id, scope_type="group", scope_id=group_id, settings=settings,
+        )
+        identities = import_module("functions_workspace_identities")
+        identities.validate_action_identity_reference(
+            record, identities.WORKSPACE_IDENTITY_SCOPE_GROUP, group_id,
+        )
     result = {
         key: deepcopy(value) for key, value in record.items()
         if not key.startswith("_") and key not in _MANAGED_FIELDS
@@ -898,8 +951,8 @@ def save_group_editor_record(user_id, group_id, record, existing, settings):
     write_started = False
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        _stage_editor_secrets(result, "actions", user_id, settings, staged, group_id)
-        container = _container("actions", "group")
+        _stage_editor_secrets(result, kind, user_id, settings, staged, group_id)
+        container = _container(kind, "group")
         write_started = True
         if existing:
             saved = container.replace_item(
@@ -917,20 +970,20 @@ def save_group_editor_record(user_id, group_id, record, existing, settings):
         if conflict_response:
             raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
         raise
-    saved = _sync_editor_reminders(saved, "actions", user_id, settings, group_id)
-    _cleanup_replaced_secrets(existing, "actions", user_id, settings, group_id)
-    _invalidate_editor_catalog("actions", user_id, "saved", group_id)
+    saved = _sync_editor_reminders(saved, kind, user_id, settings, group_id)
+    _cleanup_replaced_secrets(existing, kind, user_id, settings, group_id)
+    _invalidate_editor_catalog(kind, user_id, "saved", group_id)
     return saved
 
 
-def delete_group_editor_record(user_id, group_id, record, settings):
-    """Delete one group action with a mandatory conditional write, mirroring personal."""
-    _assert_group_action_access(user_id, group_id, record, settings)
+def delete_group_editor_record(kind, user_id, group_id, record, settings):
+    """Delete one group record with a mandatory conditional write, mirroring personal."""
+    _assert_group_record_access(kind, user_id, group_id, record, settings)
     if not record.get("_etag"):
         raise WorkspaceAuthoringConflict("Reload this resource before deleting it.")
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        _container("actions", "group").delete_item(
+        _container(kind, "group").delete_item(
             item=record["id"], partition_key=group_id, etag=record["_etag"],
             match_condition=import_module("azure.core").MatchConditions.IfNotModified,
         )
@@ -938,8 +991,8 @@ def delete_group_editor_record(user_id, group_id, record, settings):
         if exc.status_code in (404, 412):
             raise WorkspaceAuthoringConflict("This resource changed. Reload it before deleting.") from exc
         raise
-    _cleanup_replaced_secrets(record, "actions", user_id, settings, group_id)
-    _invalidate_editor_catalog("actions", user_id, "deleted", group_id)
+    _cleanup_replaced_secrets(record, kind, user_id, settings, group_id)
+    _invalidate_editor_catalog(kind, user_id, "deleted", group_id)
 
 
 def apply_group_action_write(user_id, group_id, existing, body, prepare, settings):
@@ -969,17 +1022,61 @@ def apply_group_action_write(user_id, group_id, existing, body, prepare, setting
         raise WorkspaceAuthoringValidation("Invalid action configuration.")
     if existing:
         prepared = _preserve_unedited_values(existing, proposed, prepared)
-    _assert_group_available_name(user_id, group_id, prepared, existing)
-    return save_group_editor_record(user_id, group_id, prepared, existing, settings)
+    _assert_group_available_name("actions", user_id, group_id, prepared, existing)
+    return save_group_editor_record("actions", user_id, group_id, prepared, existing, settings)
 
 
-def _validate_agent_editor_changes(record, existing, settings, user_id):
+def apply_group_agent_write(user_id, group_id, existing, body, prepare, settings):
+    """Merge editor intent, validate through ``prepare``, and persist one group agent.
+
+    Mirrors :func:`apply_group_action_write` but follows the personal *agent* create
+    contract: the id is a client-allocated UUID, the display/instructions/description
+    defaults are agent-shaped, and the agent-type and custom-connection gates run
+    against the group flags before ``prepare`` (M4C §3). Stored secret placeholders
+    resolve against the group's Key Vault namespace.
+    """
+    merged = merge_editor_write(
+        existing or {}, body, "agents", creating=existing is None,
+        resolve_stored_placeholder=lambda record, path: _legacy_editor_secret_reference(
+            record, path, "agents", user_id, settings, group_id,
+        ),
+    )
+    if not existing:
+        try:
+            merged["id"] = str(uuid.UUID(merged.get("id", "")))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise WorkspaceAuthoringValidation("Allocate an agent ID before saving.") from exc
+        merged.setdefault("display_name", merged.get("name", ""))
+        merged.setdefault("description", "")
+        merged.setdefault("instructions", "")
+    _validate_agent_editor_changes(merged, existing, settings, user_id, scope="group")
+    proposed = deepcopy(merged)
+    prepared, error = prepare(
+        user_id, group_id, _editor_validation_input("agents", merged, existing), settings, existing,
+    )
+    if error:
+        status = error[1] if isinstance(error, tuple) else 400
+        if status == 403:
+            raise PermissionError("This configuration is unavailable.")
+        raise WorkspaceAuthoringValidation("Invalid agent configuration.")
+    if existing:
+        prepared = _preserve_unedited_values(existing, proposed, prepared)
+    _assert_group_available_name("agents", user_id, group_id, prepared, existing)
+    return save_group_editor_record("agents", user_id, group_id, prepared, existing, settings)
+
+
+def _validate_agent_editor_changes(record, existing, settings, user_id, *, scope="personal"):
+    is_group = scope == "group"
+    type_table = _GROUP_AGENT_TYPES if is_group else _AGENT_TYPES
+    endpoint_flag = "allow_group_custom_endpoints" if is_group else "allow_user_custom_endpoints"
+    endpoint_governance = "governance_group_endpoints" if is_group else "governance_user_endpoints"
+    surface = "group" if is_group else "personal"
     kind = record.get("agent_type", "local")
-    flag = next((flag for value, _, flag in _AGENT_TYPES if value == kind), _MISSING)
+    flag = next((flag for value, _, flag in type_table if value == kind), _MISSING)
     if flag is _MISSING:
         raise WorkspaceAuthoringValidation("Select a supported agent type.")
     if flag and not settings.get(flag, False):
-        raise PermissionError("This agent type is disabled for personal workspaces.")
+        raise PermissionError(f"This agent type is disabled for {surface} workspaces.")
     if kind != "local" and record.get("actions_to_load"):
         raise WorkspaceAuthoringValidation("Remove local actions explicitly before selecting a Foundry agent type.")
     if kind == "local":
@@ -989,10 +1086,10 @@ def _validate_agent_editor_changes(record, existing, settings, user_id):
             and not (_is_placeholder((existing or {}).get(field)) and _is_reference(record.get(field)))
             for field in _AGENT_CUSTOM_CONNECTION_FIELDS
         )
-        if configured_connection and not settings.get("allow_user_custom_endpoints", False):
-            raise PermissionError("Custom model connections are disabled for personal workspaces.")
+        if configured_connection and not settings.get(endpoint_flag, False):
+            raise PermissionError(f"Custom model connections are disabled for {surface} workspaces.")
         if configured_connection:
-            import_module("functions_governance").ensure_governance_access("governance_user_endpoints", user_id)
+            import_module("functions_governance").ensure_governance_access(endpoint_governance, user_id)
 
 
 def _preserve_unedited_values(original, merged, prepared, *, root=True):
@@ -1276,6 +1373,83 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
         "builtin_actions": [
             {"id": value, "label": label}
             for value, label, flag in _BUILTIN_ACTIONS if can_manage_agents and safe.get(flag)
+        ],
+    }
+
+
+def build_group_agent_editor_options(user_id, group_id, settings, model_endpoints, can_manage):
+    """The group agent editor options: the personal shape, group-governed.
+
+    Carries no ``allow_user_*`` capability. Agent types come from the group type
+    table, custom endpoints from ``allow_group_custom_endpoints`` (gated by
+    ``governance_group_endpoints``), and the model list from the combined endpoints
+    the caller resolved for this group — globals filtered by
+    ``governance_global_endpoints``, group endpoints included only when custom group
+    endpoints are allowed. Non-managers receive no models, no gpt model and no
+    default selection. Secrets are masked and reminder defaults are shared with the
+    personal builder (M4C §3).
+    """
+    settings_module = import_module("functions_settings")
+    sanitized = settings_module.sanitize_settings_for_user({
+        key: deepcopy(settings.get(key, default)) for key, default in _GROUP_OPTION_DEFAULTS.items()
+    })
+    safe = {key: sanitized[key] for key in _GROUP_OPTION_DEFAULTS if key in sanitized}
+    if not can_manage:
+        model_endpoints = []
+        safe["gpt_model"] = {}
+        safe["default_model_selection"] = {}
+    model_endpoints = settings_module.sanitize_settings_for_user(
+        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
+    ).get("model_endpoints", [])
+    reminder_options = build_secret_reminder_defaults(settings)
+    safe.update({
+        "enable_key_vault_secret_storage": reminder_options["storage_enabled"],
+        "enable_key_vault_secret_expiration_reminders": reminder_options["reminders_enabled"],
+        "key_vault_secret_expiration_default_lead_days": reminder_options["lead_days"],
+        "key_vault_secret_expiration_default_contact_email": reminder_options["contact_email"],
+        "key_vault_secret_expiration_require_expiration": reminder_options["require_expiration"],
+    })
+    governance = import_module("functions_governance")
+    if safe.get("allow_group_custom_endpoints"):
+        try:
+            governance.ensure_governance_access("governance_group_endpoints", user_id)
+        except PermissionError:
+            safe["allow_group_custom_endpoints"] = False
+    globals_allowed = governance.filter_governed_model_endpoints(
+        user_id, [endpoint for endpoint in model_endpoints if endpoint.get("scope") == "global"],
+        "governance_global_endpoints",
+    )
+    allowed_ids = {endpoint.get("id") for endpoint in globals_allowed}
+    endpoints = [
+        deepcopy(endpoint) for endpoint in model_endpoints
+        if (
+            endpoint.get("scope") == "global" and endpoint.get("id") in allowed_ids
+        ) or (
+            endpoint.get("scope") == "group" and safe.get("allow_group_custom_endpoints")
+        )
+    ]
+    for endpoint in endpoints:
+        for path in editor_secret_paths(endpoint, "agents"):
+            _set(endpoint, path, EDITOR_SECRET_MASK)
+    safe["enable_multi_model_endpoints"] = bool(
+        safe.get("enable_multi_model_endpoints") or any(endpoint.get("models") for endpoint in endpoints)
+    )
+    return {
+        "agent_types": [
+            {
+                "value": value, "label": label,
+                "enabled": can_manage and (not flag or bool(settings.get(flag, False))),
+                **({"reason": "Agent authoring is unavailable for this group workspace."} if not can_manage else (
+                    {"reason": "Disabled for group workspaces by your administrator."} if flag and not settings.get(flag, False) else {}
+                )),
+            }
+            for value, label, flag in _GROUP_AGENT_TYPES
+        ],
+        "settings": safe,
+        "model_endpoints": endpoints,
+        "builtin_actions": [
+            {"id": value, "label": label}
+            for value, label, flag in _BUILTIN_ACTIONS if can_manage and safe.get(flag)
         ],
     }
 
