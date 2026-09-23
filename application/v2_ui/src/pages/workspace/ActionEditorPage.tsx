@@ -25,7 +25,7 @@ import {
     changeActionType, createActionDraft, expandActionFieldErrors, hasUsableActionRevision, validateActionDraft,
 } from '../../lib/workspaceActionLogic';
 import {
-    fetchActionEditorHints, validateWorkspaceAction, type ActionEditorHints,
+    validateWorkspaceAction, type ActionEditorHints,
 } from '../../lib/workspaceActionServices';
 import { PERSONAL_ACTION_WORKBENCH, type ActionWorkbenchAdapter } from '../../lib/actionWorkbench';
 import {
@@ -103,7 +103,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
             if (!controller.signal.aborted) setIdentitiesError(errorMessage(cause, 'Could not load reusable identities.'));
         }).finally(() => { if (!controller.signal.aborted) setIdentitiesLoading(false); });
         setHintsLoading(true); setHintsError(null);
-        void fetchActionEditorHints(controller.signal).then((options) => {
+        void adapter.fetchEditorHints(controller.signal).then((options) => {
             if (!controller.signal.aborted) { setHints(options); setHintsError(null); }
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) setHintsError(errorMessage(cause, 'Action authoring permissions and reminder defaults are unavailable.'));

@@ -29,7 +29,7 @@ from ui_tests.fixtures.workspace_authoring import ORIGIN
 from ui_tests.fixtures.group_actions import (  # noqa: F401
     GroupActionsFixture, connect_options, group_actions_ui,
     EDITABLE_ACTION_ID, WITHHELD_ACTION_ID, MEMBER_ACTION_ID,
-    IDENTITY_ACTION_ID, PROVIDED_ACTION_ID, BOUND_IDENTITY_ID,
+    IDENTITY_ACTION_ID, MCP_ACTION_ID, PROVIDED_ACTION_ID, BOUND_IDENTITY_ID,
 )
 from ui_tests.test_v2_workspace_authoring import (
     action_field, begin_action, editor_section, name_field,
@@ -57,6 +57,7 @@ WITHHELD_NAME = "Withheld API"
 MEMBER_NAME = "Team charter API"
 IDENTITY_NAME = "Bound report API"
 PROVIDED_NAME = "Shared platform API"
+MCP_NAME = "Team MCP server"
 
 
 def open_actions(ui, group="group-a", **options):
@@ -311,6 +312,52 @@ def test_identity_bound_action_keeps_its_binding_without_a_personal_read(group_a
     assert "identity_id" not in write.body["updates"]
     assert write.body["updates"] == {"displayName": "Bound report connector"}
     assert ui.record("group-a", IDENTITY_ACTION_ID)["identity_id"] == BOUND_IDENTITY_ID
+
+
+def test_group_mcp_editor_reads_reminder_defaults_from_the_group_route(group_actions_ui):
+    """The group MCP editor sources reminder defaults from the group route, not personal settings."""
+    ui, page = group_actions_ui, group_actions_ui.page
+    open_editor(ui, MCP_ACTION_ID)
+    expect(name_field(page, "action")).to_have_value(MCP_NAME)
+    editor_section(page, "Advanced")
+    # These enabled values can only have come from /api/groups/group-a/action-options; the personal
+    # editor fixture serves all-disabled defaults, so this copy proves the group route was read.
+    expect(page.get_by_text(re.compile(
+        "Key Vault storage is enabled; reminder delivery is enabled"))).to_be_visible()
+    expect(page.get_by_text(re.compile("requires expiration dates for tracked secrets"))).to_be_visible()
+    options_reads = [
+        entry for entry in ui.requests
+        if entry.path == "/api/groups/group-a/action-options" and entry.method == "GET"
+    ]
+    assert options_reads, "The group editor must read reminder defaults from the group action-options route."
+    assert all(not entry.query for entry in options_reads), "The action-options route takes no query parameters."
+    # The two personal-scope leaks §9 closes: neither may ever reach the fixture from a group page.
+    assert not [entry for entry in ui.requests if entry.path == "/api/user/agent/settings"], (
+        "A group action editor must not read personal agent settings."
+    )
+    assert not [entry for entry in ui.requests if entry.path == "/api/plugins/mcp/preconfigurations"], (
+        "A group MCP editor must not read personal MCP preconfigurations."
+    )
+
+
+def test_group_mcp_editor_hides_personal_preconfigurations_but_keeps_presets(group_actions_ui):
+    """The group MCP editor replaces the personal preconfiguration picker with honest copy."""
+    ui, page = group_actions_ui, group_actions_ui.page
+    open_editor(ui, MCP_ACTION_ID)
+    editor_section(page, "Configuration")
+    expect(page.locator('[data-testid="mcp-configuration"]')).to_be_visible()
+    expect(page.get_by_text(re.compile(
+        "Saved MCP preconfigurations aren.t available for group actions yet"))).to_be_visible()
+    # The personal preconfiguration picker is absent entirely in group scope.
+    expect(page.locator("#mcp-preconfiguration")).to_have_count(0)
+    # Compatibility presets stay: their route is scope-neutral, so they load in group scope.
+    expect(page.locator("#mcp-preset")).to_be_visible()
+    assert not [entry for entry in ui.requests if entry.path == "/api/plugins/mcp/preconfigurations"], (
+        "A group MCP editor must not read personal MCP preconfigurations."
+    )
+    assert [entry for entry in ui.requests if entry.path == "/api/plugins/mcp/presets"], (
+        "Scope-neutral MCP presets should still load in group scope."
+    )
 
 
 def test_group_without_the_actions_capability_shows_call_agent(group_actions_ui):
