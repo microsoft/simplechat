@@ -86,6 +86,47 @@ identify the requested IDs.
 Validation failures are raised before any effect, so a rejected request leaves
 no partial work behind.
 
+### Batch outcomes and HTTP status
+
+Operations that act on several documents or files report each item's result in
+arrays — `success`, `queued`, `deleted`, `document_ids`, and `errors` — and use
+the HTTP status to summarize. Two rules apply, and they differ in what happens
+when nothing succeeds:
+
+| Operation | All succeed | Some succeed | None succeed |
+|---|---|---|---|
+| `POST /upload` | 200 | 207 | 400 |
+| `POST /extract_metadata`, `POST /reprocess_extraction` | 202 | 207 | 400 |
+| `POST /bulk-tag`, `PATCH /tags/T`, `DELETE /tags/T` | 200 | 207 | **207** |
+| `POST /bulk-delete` | 200 | 207 | **207** |
+| `POST /tags` (create) | 201 | — | — |
+
+Upload and the extraction jobs return 400 when no item was accepted. Tagging,
+tag changes, and bulk deletion return 207 whenever **any** item failed, including
+when every item failed.
+
+So a 207 alone does not tell a client whether anything changed. **Inspect the
+arrays rather than relying on the HTTP status.** In particular, do not treat a
+207 from bulk deletion as proof that some documents were deleted.
+
+For tag rename and delete, the order of operations determines what a 207 means.
+The new definition is written first, documents are updated one at a time, and
+the old definition is removed **only if every document succeeded**.
+
+- If any document failed, the old definition is deliberately kept so that
+  documents still carrying the old tag are not left without a definition. After
+  a partial rename, both the old and the new name exist. Per-document errors
+  carry a `document_id`.
+- If every document succeeded but removing the old definition failed, the
+  response carries an error with `stage: "vocabulary"` and `error` of
+  `vocabulary_conflict` (a concurrent change) or `vocabulary_update_failed`, and
+  no `document_id`.
+
+`vocabulary_retained` is `true` in **both** cases — it reports that the old
+vocabulary is still present, whatever the cause. The successful document updates
+stand either way. Refresh the vocabulary rather than replaying the writes that
+already succeeded.
+
 ## Authorization
 
 Manager roles are `Owner`, `Admin`, and `DocumentManager`. Ordinary `User`
