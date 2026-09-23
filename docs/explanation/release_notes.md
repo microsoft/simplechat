@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.136)**
+
+#### New Features
+
+*   **Native Group Prompts**
+    *   Group prompts can now be read, written, and used from the native group workspace, in the same workbench as personal prompts. The group Prompts section previously sent users to the classic interface.
+    *   Owners, admins, and document managers can create, edit, duplicate, and delete group prompts while the group is active. Everyone else in the group can read prompts, use them in chat, and reword them in the chat composer for a single message; that rewording is never saved to the group's prompt.
+    *   If two managers edit the same prompt, the second save is refused rather than silently overwriting the first, and the editor keeps what was typed.
+    *   "Use in chat" links for group prompts name the group, so a prompt that has been deleted or is no longer accessible is reported clearly instead of silently attaching something else. Existing prompt links keep working.
+    *   Group prompts have no favorites, because a favorite is stored on the prompt and would be shared by everyone in the group. Personal favorites are unchanged.
+    *   (Ref: `route_backend_group_prompts_scoped.py`, `functions_group_prompt_access.py`, `functions_group_prompt_policy.py`, `promptWorkbench.ts`, [V2 Group Prompts](features/V2_GROUP_PROMPTS.md), [Group Prompt APIs](features/GROUP_PROMPT_APIS.md))
+
+#### Bug Fixes
+
+*   **Ordinary Group Members Could Change Shared Prompts Through the API**
+    *   Fixed the group prompt create, edit, and delete routes accepting requests from any group member. The classic interface only ever offered those actions to owners, admins, and document managers, but the server did not enforce the same rule, so a member calling the API directly could change or delete the group's shared prompts.
+    *   Those routes now refuse ordinary members, matching the rule public workspace prompts already enforced. Reading and using prompts is unchanged for everyone.
+    *   A refused member is told the change needs an owner, admin, or document manager, rather than being told they are not a member.
+    *   Scripts or integrations that create group prompts must use an account with one of those roles.
+    *   (Ref: `route_backend_group_prompts.py`, [Group Prompt Write Access Fix](fixes/GROUP_PROMPT_WRITE_ACCESS_FIX.md))
+
 ### **(v0.261.135)**
 
 #### Bug Fixes
