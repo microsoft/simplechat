@@ -218,7 +218,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
         `${name} ${tool?.function_name || ''} ${tool?.description || ''}`.toLowerCase().includes(toolSearch.toLowerCase()));
     const blockedExecution = readOnly || Boolean(busy) || Object.keys(localErrors).length > 0;
     const doDiscovery = async () => {
-        const result = await run('Discovering MCP tools…', (signal) => discoverMcpAction(draft, original, signal),
+        const result = await run('Discovering MCP tools…', (signal) => discoverMcpAction(draft, original, signal, props.groupScope),
             (current, response) => updateConnectorFields(current, {
                 mcp_tools: mergeMcpTools(current.additionalFields.mcp_tools, response.tools, connectorStrings(current.additionalFields.allowed_tool_names)),
             }),
@@ -448,9 +448,9 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 <p className="text-xs text-text-3">The connection test initializes a server session and lists its tools. It does not invoke tools or save discovered metadata. Authentication is configured in the Authentication section.</p>
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal))}>Validate MCP configuration</GlassButton>
+                        onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal, props.groupScope))}>Validate MCP configuration</GlassButton>
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Testing MCP connection…', (signal) => testApiConnector(draft, original, 'mcp', signal))}>Test MCP connection</GlassButton>
+                        onClick={() => void run('Testing MCP connection…', (signal) => testApiConnector(draft, original, 'mcp', signal, props.groupScope))}>Test MCP connection</GlassButton>
                     {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
                 </div>
                 {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Discovery and connection testing are disabled.</p> : null}
