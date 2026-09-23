@@ -447,6 +447,22 @@ export interface WorkspaceAction {
     type?: string;
     endpoint?: string;
     is_global?: boolean;
+    /** True for actions owned by a group workspace. Set on every group action response. */
+    is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group action response so the
+     * client can prove a returned action belongs to the workspace it asked for -- the same
+     * identity check the group prompt and document readers make. Absent on personal actions.
+     */
+    group_id?: string;
+    /** True when the caller may only read this action, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-action operation hint (`edit`, `delete`, `test`) computed fresh
+     * per request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    action_actions?: string[];
     [key: string]: unknown;
 }
 

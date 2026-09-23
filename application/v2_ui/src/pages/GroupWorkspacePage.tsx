@@ -24,6 +24,9 @@ import { WorkflowsSection } from './workspace/WorkflowsSection';
 import { GroupDocumentsSection } from './workspace/DocumentsSection';
 import { GroupTagsSection } from './workspace/TagsSection';
 import { GroupPromptsSection } from './workspace/PromptsSection';
+import { ActionsSection } from './workspace/ActionsSection';
+import { ActionEditorPage } from './workspace/ActionEditorPage';
+import { createGroupActionWorkbench } from '../lib/actionWorkbench';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -137,9 +140,11 @@ export function GroupWorkspacePage() {
         return {
             id, label, icon, group, blurb: GROUP_SECTION_BLURBS[id],
             availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' || id === 'prompts' ? undefined
-                : id === 'actions' && context?.native_delegation?.enabled ? 'Call agent' : 'Classic',
+                : id === 'actions' ? (context?.sections.actions.enabled ? undefined
+                    : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
+                : 'Classic',
         };
-    }), [context?.native_delegation?.enabled]);
+    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
@@ -147,6 +152,19 @@ export function GroupWorkspacePage() {
     const nativeDocuments = Boolean(ready && section === 'documents' && !resourceId
         && selected?.enabled && context.document_permissions.can_view);
     const nativePrompts = Boolean(ready && section === 'prompts' && !resourceId && selected?.enabled);
+    // Native actions render whenever the workspace advertises the Actions section as available
+    // (context.sections.actions.enabled), which requires the group action capability -- not merely
+    // native_delegation, which enables the nav slot on its own. A read-only member has an available
+    // section with an empty action_management hint, so they still get the native (read-only)
+    // workbench. When the section is unavailable the surface falls through to the Call agent view.
+    // The editor view is full-bleed too, matching the personal action editor's 'full' layout.
+    const nativeActions = Boolean(ready && section === 'actions' && selected?.enabled && context.sections.actions.enabled);
+    const groupActionAdapter = useMemo(
+        () => context?.sections.actions.enabled
+            ? createGroupActionWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.action_management)
+            : null,
+        [context?.scope.id, context?.workspace.name, context?.sections.actions.enabled, context?.action_management],
+    );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
     useEffect(() => {
@@ -260,7 +278,7 @@ export function GroupWorkspacePage() {
 
     const error = notice || state.error;
     return (
-        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts}>
+        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts || nativeActions}>
             {error ? <div role="alert" className="mb-4 space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
                 <p>{error}</p>
                 {state.needsReconciliation ? <GlassButton size="sm" disabled={state.loading || state.activating} onClick={() => void recover()}>Refresh workspace selection</GlassButton>
@@ -289,7 +307,7 @@ export function GroupWorkspacePage() {
                     action={<a href="/profile?tab=groups" className="text-sm text-accent underline">Find or manage your groups in classic</a>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
-                    className={nativeDocuments || nativePrompts ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+                    className={nativeDocuments || nativePrompts || nativeActions ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
                     {!section ? (
                         <>
                             <dl className="space-y-2 text-sm text-text-2">
@@ -318,7 +336,21 @@ export function GroupWorkspacePage() {
                             : section === 'workflows' && !resourceId ? <WorkflowsSection scope={{ type: 'group', groupId: context.scope.id }}
                                 allowManage={context.sections.workflows.can_manage} interactionDisabled={accessUnconfirmed}
                                 onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
-                                : section === 'actions' && context.native_delegation?.enabled && !resourceId ? (
+                                : section === 'actions' && resourceId && groupActionAdapter ? (
+                                    <ActionEditorPage adapter={groupActionAdapter} />
+                                ) : section === 'actions' && !resourceId && groupActionAdapter ? (
+                                    <>
+                                        <div className="min-h-0 flex-1"><ActionsSection agentsEnabled={false} adapter={groupActionAdapter} /></div>
+                                        {context.native_delegation?.enabled ? (
+                                            <div className="mt-4 max-h-[45%] shrink-0 space-y-3 overflow-y-auto border-t border-edge pt-4">
+                                                <SectionIntro title="Call agent" description="Choose which agents this group can call and which local actions may trigger them." />
+                                                <AgentDelegationManager scope={{ type: 'group', groupId: context.scope.id }}
+                                                    allowManage={context.native_delegation.can_manage} interactionDisabled={accessUnconfirmed}
+                                                    onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
+                                            </div>
+                                        ) : null}
+                                    </>
+                                ) : section === 'actions' && context.native_delegation?.enabled && !resourceId ? (
                                     <>
                                         <SectionIntro title="Actions" description="Manage Call agent actions and their local callers. Other group actions still use the classic editor." />
                                         <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed} onClick={() => openClassic('/group_workspaces')}>Open classic group workspace<ArrowUpRight size={14} /></GlassButton>

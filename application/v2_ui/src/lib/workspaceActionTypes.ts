@@ -12,6 +12,16 @@ export interface ActionIdentity {
     scope_id?: string;
 }
 
+/**
+ * The group a connection test runs in. Present only for group actions, whose test payload carries
+ * `action_scope: 'group'` and the group id, never the personal payload. Absent for personal and
+ * global actions.
+ */
+export interface ActionTestGroupScope {
+    id: string;
+    name?: string;
+}
+
 export interface ActionConnectorProps {
     draft: ActionConfiguration;
     original: AuthoringResource<ActionConfiguration> | null;
@@ -22,6 +32,8 @@ export interface ActionConnectorProps {
     identities: ActionIdentity[];
     identitiesLoading: boolean;
     identitiesError: string | null;
+    /** Set when the action belongs to a group, so connector tests send the group test payload. */
+    groupScope?: ActionTestGroupScope;
 }
 
 export interface ActionFieldDescriptor {

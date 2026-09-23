@@ -39,8 +39,8 @@ export function actionResourceKey(action: ActionConfiguration): string {
     return JSON.stringify([actionScope(action), action.id]);
 }
 
-export function actionDetailPath(action: ActionConfiguration): string {
-    return `/workspace/actions/${encodeURIComponent(action.id)}${actionScope(action) === 'provided' ? '?scope=global' : ''}`;
+export function actionDetailPath(action: ActionConfiguration, basePath = '/workspace/actions'): string {
+    return `${basePath}/${encodeURIComponent(action.id)}${actionScope(action) === 'provided' ? '?scope=global' : ''}`;
 }
 
 export function filterAuthoringActions(

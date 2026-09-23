@@ -141,7 +141,7 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
                     Saving does not run this test.
                 </p>
                 <GlassButton type="button" size="sm" disabled={readOnly || Boolean(request.busy)}
-                    onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, props.original, definition, signal))}>
+                    onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, props.original, definition, signal, props.groupScope))}>
                     <FlaskConical size={15} />{request.busy || 'Test connection'}
                 </GlassButton>
                 <ConnectorFeedbackPanel feedback={request.feedback} stale={request.stale} />

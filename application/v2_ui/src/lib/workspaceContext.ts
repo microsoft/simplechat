@@ -70,6 +70,15 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group action management hint (M4). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit, delete or test group actions, computed from role and
+     * status exactly like prompt_management. Absence means "read-only", never an empty grant.
+     */
+    action_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

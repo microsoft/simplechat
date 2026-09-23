@@ -14,6 +14,22 @@ import {
 type Configuration = AgentConfiguration | ActionConfiguration;
 type EditorKind = 'agents' | 'actions';
 
+/**
+ * Which workspace a draft belongs to. Personal is the default and, to keep personal behaviour
+ * byte-identical, contributes nothing to the cache key. A group scope adds its id, so a draft
+ * opened in group A can never be restored into group B or into personal scope -- the isolation
+ * the created-action handoff needs too.
+ */
+export type EditorWorkspaceScope =
+    | { kind: 'personal' }
+    | { kind: 'group'; id: string };
+
+const PERSONAL_EDITOR_SCOPE: EditorWorkspaceScope = { kind: 'personal' };
+
+function editorScopeSegments(scope: EditorWorkspaceScope): string[] {
+    return scope.kind === 'group' ? ['group', scope.id] : [];
+}
+
 interface DraftState<T extends Configuration> {
     draft: T;
     baseline: T;
@@ -59,6 +75,7 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
     kind: EditorKind,
     key: string,
     createDraft: () => T,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
 ): {
     draft: T;
     setDraft: Dispatch<SetStateAction<T>>;
@@ -68,7 +85,7 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
     dirty: boolean;
     restored: boolean;
 } {
-    const cacheKey = JSON.stringify([ownerKey(), kind, key]);
+    const cacheKey = JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), kind, key]);
     const [restored] = useState(() => drafts.has(cacheKey));
     const [state, setState] = useState<DraftState<T>>(() => {
         // The kind and resource key always identify the same concrete draft type.
@@ -116,14 +133,21 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
     };
 }
 
-export function queueCreatedWorkspaceAction(returnPath: string, action: ActionConfiguration): void {
+export function queueCreatedWorkspaceAction(
+    returnPath: string,
+    action: ActionConfiguration,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): void {
     if (!agentEditorReturnPath(returnPath)) throw new Error('Invalid agent editor return path.');
-    createdActions.set(JSON.stringify([ownerKey(), returnPath]), action);
+    createdActions.set(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]), action);
     syncDraftUnloadProtection();
 }
 
-export function takeCreatedWorkspaceAction(returnPath: string): ActionConfiguration | null {
-    const key = JSON.stringify([ownerKey(), returnPath]);
+export function takeCreatedWorkspaceAction(
+    returnPath: string,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): ActionConfiguration | null {
+    const key = JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]);
     const action = createdActions.get(key);
     createdActions.delete(key);
     syncDraftUnloadProtection();

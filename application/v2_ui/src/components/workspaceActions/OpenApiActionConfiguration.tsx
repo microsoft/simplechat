@@ -122,6 +122,7 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
     const selectedId = props.draft.identity_id || '';
     const { identities, unavailable } = connectorIdentityOptions(props.identities, kind, selectedId);
     const disabled = props.readOnly || props.original?.read_only || props.identitiesLoading;
+    const groupScoped = Boolean(props.groupScope);
     const id = `${kind}-identity`;
     return (
         <div className="space-y-2">
@@ -137,7 +138,7 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
                         props.onChange((current) => selectConnectorIdentity(current, kind, identity ?? null));
                     }}>
                     <option value="">Use action-specific credentials</option>
-                    {unavailable ? <option value={selectedId} disabled>Unavailable identity — {selectedId}</option> : null}
+                    {unavailable ? <option value={selectedId} disabled>{groupScoped ? 'Group identity' : 'Unavailable identity'} — {selectedId}</option> : null}
                     {identities.map((identity) => <option key={identity.id} value={identity.id}>
                         {identity.name} · {identity.auth_type.replaceAll('_', ' ')} · {identity.scope_type || 'personal'} · {identity.id}
                     </option>)}
@@ -146,10 +147,12 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
             <div id={`${id}-status`} className="space-y-1 text-xs text-text-3" aria-live="polite">
                 {props.identitiesLoading ? <p>Loading permitted identities…</p> : null}
                 {props.identitiesError ? <p role="alert" className="text-danger">{props.identitiesError} The current identity selection has not been changed.</p> : null}
-                {!props.identitiesLoading && !props.identitiesError && !identities.length ? <p>No compatible reusable identities are available. Action-specific credentials are still supported.</p> : null}
-                {unavailable ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-warn">
-                    The selected identity is unavailable or incompatible. Its ID is retained; choose a replacement explicitly. A same-name identity will not be substituted.
-                </p> : null}
+                {!props.identitiesLoading && !props.identitiesError && !identities.length ? <p>{groupScoped
+                    ? 'Reusable group identities aren’t available in this workspace yet. Action-specific credentials are still supported.'
+                    : 'No compatible reusable identities are available. Action-specific credentials are still supported.'}</p> : null}
+                {unavailable ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-warn">{groupScoped
+                    ? 'Uses a group identity; kept as is. Its ID is retained; enter action-specific credentials to replace it.'
+                    : 'The selected identity is unavailable or incompatible. Its ID is retained; choose a replacement explicitly. A same-name identity will not be substituted.'}</p> : null}
                 {selectedId && !unavailable ? <p>{identities.find(({ id }) => id === selectedId)?.description || 'The server resolves this identity when the action runs.'}</p> : null}
             </div>
         </div>
@@ -321,11 +324,11 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 <p className="text-xs leading-relaxed text-text-3">Validation checks the manifest without running it. Connection testing parses the specification and probes the authenticated base URL; it does not invoke an individual API operation.</p>
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal))}>
+                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
                         Validate OpenAPI configuration
                     </GlassButton>
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal))}>
+                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
                         Test OpenAPI connection
                     </GlassButton>
                     {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
