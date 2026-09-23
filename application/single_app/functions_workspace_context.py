@@ -22,6 +22,7 @@ from functions_group_document_policy import (
     group_document_management_operations,
 )
 from functions_group_prompt_policy import group_prompt_management_operations
+from functions_group_action_policy import group_action_management_operations
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -219,6 +220,10 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         "prompt_management": {
             "schema_version": 1,
             "operations": group_prompt_management_operations(group, role, settings),
+        },
+        "action_management": {
+            "schema_version": 1,
+            "operations": group_action_management_operations(group, role, settings),
         },
     }
 

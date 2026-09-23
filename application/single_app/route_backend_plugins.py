@@ -791,10 +791,15 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
             active_group = require_active_group(user_id)
             if active_group != origin.scope_id:
                 raise PermissionError("Action does not belong to the selected group.")
+            # Testing a saved group action loads its stored credentials, so it is an
+            # editor capability: require the same Owner/Admin (Owner-only when governed)
+            # roles a group edit needs, not the four-role reader set (M4 §2).
+            app_settings = get_settings()
+            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
             assert_group_role(
                 user_id,
                 active_group,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                allowed_roles=allowed_roles,
             )
             return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
         if origin.scope_type == "global":
@@ -1183,10 +1188,14 @@ def _load_existing_plugin_for_test(plugin_context, user_id):
 
     if plugin_scope == 'group':
         active_group = require_active_group(user_id)
+        # A saved group action test loads stored credentials, so it requires the group
+        # edit roles (Owner/Admin, Owner-only when governed), not the reader set (M4 §2).
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(
             user_id,
             active_group,
-            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            allowed_roles=allowed_roles,
         )
         plugin = get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
         scope_type, scope_id = "group", active_group
@@ -1361,7 +1370,75 @@ def _prepare_personal_action_payload(user_id, plugin, *, editor=False):
     return plugin_to_save, None
 
 
-def _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator=None):
+def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing):
+    """Clean, default and validate one group action for the immutable editor routes.
+
+    Mirrors ``_prepare_personal_action_payload`` (editor variant) but binds every
+    scope-sensitive check to the named group: identity, action-type governance and
+    MCP destination policy all resolve against ``group_id`` rather than the caller's
+    personal scope. Returns ``(plugin_to_save, error_response)`` with exactly one set.
+    """
+    validate_legacy_action_update(plugin, existing, 'group_id', group_id)
+    plugin_to_save = dict(plugin)
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+    if 'is_group' in plugin_to_save:
+        del plugin_to_save['is_group']
+
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+    for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+        plugin_to_save.pop(field, None)
+
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    plugin_type = plugin_to_save['type']
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            group_id,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    validation_error = validate_editor_action_manifest(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+
+    try:
+        ensure_action_type_access('governance_group_actions', user_id, plugin_type, 'group')
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            group_id,
+            operation='group_action_save',
+            user_id=user_id,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
     """Persist one personal action, mapping the storage failures onto HTTP responses."""
     try:
         if legacy_locator:
