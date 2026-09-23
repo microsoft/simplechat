@@ -560,6 +560,10 @@ def register_route_frontend_admin_settings(bp):
                 'model_id': '',
                 'provider': ''
             }
+        if 'enable_default_model_for_new_conversations' not in settings:
+            settings['enable_default_model_for_new_conversations'] = False
+        if 'default_reasoning_effort' not in settings:
+            settings['default_reasoning_effort'] = ''
         if 'metadata_extraction_model_selection' not in settings or not isinstance(settings.get('metadata_extraction_model_selection'), dict):
             settings['metadata_extraction_model_selection'] = {
                 'endpoint_id': '',
@@ -1868,6 +1872,19 @@ def register_route_frontend_admin_settings(bp):
                     'provider': ''
                 }
 
+            enable_default_model_for_new_conversations = (
+                enable_multi_model_endpoints
+                and form_data.get('enable_default_model_for_new_conversations') == 'on'
+            )
+            default_reasoning_effort = (
+                form_data.get('default_reasoning_effort', '').strip().lower()
+            )
+            if default_reasoning_effort not in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+                flash('Default reasoning effort is not valid. Please select a supported value.', 'warning')
+                default_reasoning_effort = ''
+            if not enable_default_model_for_new_conversations:
+                default_reasoning_effort = ''
+
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}
             try:
@@ -2520,7 +2537,9 @@ def register_route_frontend_admin_settings(bp):
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
                 'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
+                'enable_default_model_for_new_conversations': enable_default_model_for_new_conversations,
                 'default_model_selection': normalized_default_model_selection,
+                'default_reasoning_effort': default_reasoning_effort,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),

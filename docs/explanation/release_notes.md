@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.044)**
+
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
+
+#### Bug Fixes
+
+*   **New Chat Defaults No Longer Leak Across Conversations**
+    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
+    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
+    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
+    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
 ### **(v0.261.040)**
 
 #### Bug Fixes

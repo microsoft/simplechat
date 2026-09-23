@@ -94,7 +94,9 @@ The Chat Model section belongs to the Model Endpoints tab. Use it with the adjac
 | Enable header | Provides the endpoint or route SimpleChat uses for this service. | Off | `model_endpoint_identity_header_enabled` |
 | Header Name | Provides the endpoint or route SimpleChat uses for this service. | Not specified in defaults | `model_endpoint_identity_header_name` |
 | Identity Value | The selected identity is HMAC-hashed before leaving SimpleChat. Missing identity values omit the header. | Not specified in defaults | `model_endpoint_identity_header_value_type` |
-| Default model for fallbacks | Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected. | Not specified in defaults | Runtime UI control |
+| Default model for fallbacks and new chats | Used for tasks such as conversation summarization and agent fallback. When new conversation defaults are enabled, this model also replaces the user's last selected model for new non-agent chats. | Not specified in defaults | Runtime UI control |
+| Apply to new chats | Starts new non-agent conversations with the admin default model instead of each user's last selected chat model. | Off | `enable_default_model_for_new_conversations`; capability toggle |
+| Default reasoning effort | Sets the reasoning effort sent with new non-agent conversations when the admin default is enabled. | Model default | `default_reasoning_effort` |
 | Use APIM instead of direct to Azure OpenAI endpoint | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_gpt_apim`; capability toggle |
 | Azure OpenAI Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_gpt_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_gpt_authentication_type` |

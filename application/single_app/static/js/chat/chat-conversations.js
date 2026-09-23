@@ -97,9 +97,14 @@ async function refreshModelSelection() {
   try {
     const settings = await loadUserSettings();
     const modelSelectorModule = await import('./chat-model-selector.js');
+    const useAdminDefault = Boolean(
+      window.adminNewConversationDefaultsActive
+      && window.appSettings?.enable_default_model_for_new_conversations
+      && window.initialChatModelSelection?.selection_key
+    );
     await modelSelectorModule.populateModelDropdown({
-      preferredModelId: settings?.preferredModelId,
-      preferredModelDeployment: settings?.preferredModelDeployment,
+      preferredModelId: useAdminDefault ? window.initialChatModelSelection.selection_key : settings?.preferredModelId,
+      preferredModelDeployment: useAdminDefault ? null : settings?.preferredModelDeployment,
       preserveCurrentSelection: false,
     });
   } catch (error) {
@@ -1517,6 +1522,7 @@ export function addConversationToList(conversationId, title = null, classificati
 export async function selectConversation(conversationId) {
   currentConversationId = conversationId;
   window.currentConversationId = conversationId;
+  window.adminNewConversationDefaultsActive = false;
   notifyConversationContextChanged("select", conversationId);
 
   const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
@@ -2219,6 +2225,10 @@ export async function createNewConversation(callback, options = {}) {
       }
 
       currentConversationId = data.conversation_id;
+      window.adminNewConversationDefaultsActive = Boolean(
+        window.appSettings?.enable_multi_model_endpoints
+        && window.appSettings?.enable_default_model_for_new_conversations
+      );
       // Reset scope lock for new conversation
       resetScopeLock({ preserveSelections });
       // Add to list (pass empty classifications for new convo)
