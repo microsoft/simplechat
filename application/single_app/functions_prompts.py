@@ -1,10 +1,24 @@
 # functions_prompts.py
 
 from config import *
+# Conditional-write support for the immutable-target group prompt routes. These
+# are not needed by the legacy active-scoped routes, which never pass an ETag, so
+# they are imported here rather than relied upon from ``config``'s star export.
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from functions_chat_bootstrap_cache import (
     bump_chat_bootstrap_global_cache_version,
     bump_chat_bootstrap_user_cache_version,
 )
+
+
+class PromptConflictError(Exception):
+    """A conditional prompt write lost a race with a concurrent edit.
+
+    Raised only when a caller supplies ``expected_etag`` and the stored prompt
+    has since changed. The legacy active-scoped routes never pass an ETag and so
+    never see this; the group immutable-target routes translate it to a 409.
+    """
 
 
 def _invalidate_prompt_chat_bootstrap_cache(user_id, group_id=None, public_workspace_id=None, reason="prompt_changed"):
@@ -368,10 +382,11 @@ def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_works
     return _query_prompt_items(cosmos_container, query, parameters)
 
 def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None,
-                      description=None, is_favorite=False):
+                      description=None, is_favorite=False, return_full=False):
     """
     Create a new prompt for a user or a group.
-    Returns minimal created doc.
+    Returns minimal created doc, or the full stored document when ``return_full``
+    is set (the group routes project their own shape and need the ETag).
     """
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     prompt_id = str(uuid.uuid4())
@@ -413,7 +428,7 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         public_workspace_id=public_workspace_id,
         reason="prompt_created",
     )
-    return serialize_prompt_summary(created)
+    return created if return_full else serialize_prompt_summary(created)
 
 def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_workspace_id=None):
     """
@@ -429,10 +444,17 @@ def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_worksp
     )
     return item
 
-def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, public_workspace_id=None):
+def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, public_workspace_id=None,
+                      expected_etag=None, return_full=False):
     """
     Update an existing prompt for a user or a group.
     Returns minimal updated doc or None if not found.
+
+    When ``expected_etag`` is supplied the replace is conditional on the stored
+    ETag (Cosmos ``IfNotModified``); a concurrent edit raises
+    ``PromptConflictError`` instead of silently overwriting. ``return_full``
+    yields the stored document (with its new ETag) for callers that project
+    their own shape.
     """
     item, cosmos_container = _get_prompt_doc_with_container(
         user_id,
@@ -449,7 +471,18 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         item[k] = v
     item["updated_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    updated = cosmos_container.replace_item(item=prompt_id, body=item)
+    try:
+        if expected_etag is not None:
+            updated = cosmos_container.replace_item(
+                item=prompt_id, body=item,
+                etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            updated = cosmos_container.replace_item(item=prompt_id, body=item)
+    except CosmosHttpResponseError as error:
+        if expected_etag is not None and getattr(error, "status_code", None) in (409, 412):
+            raise PromptConflictError("The prompt was changed by someone else before your edit was saved.") from error
+        raise
     _invalidate_prompt_chat_bootstrap_cache(
         user_id,
         group_id=group_id,
@@ -457,12 +490,16 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         reason="prompt_updated",
     )
 
-    return serialize_prompt_summary(updated)
+    return updated if return_full else serialize_prompt_summary(updated)
 
-def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=None):
+def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=None, expected_etag=None):
     """
     Delete a prompt for a user or a group.
     Returns True if deleted, False if not found.
+
+    When ``expected_etag`` is supplied the delete is conditional on the stored
+    ETag; a concurrent edit raises ``PromptConflictError`` rather than deleting a
+    prompt the caller has not seen in its current form.
     """
     prompt_type = 'public_prompt' if public_workspace_id is not None else 'group_prompt' if group_id is not None else 'user_prompt'
     item, cosmos_container = _get_prompt_doc_with_container(
@@ -475,7 +512,18 @@ def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=Non
     if not item:
         return False
 
-    cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
+    try:
+        if expected_etag is not None:
+            cosmos_container.delete_item(
+                item=prompt_id, partition_key=prompt_id,
+                etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
+    except CosmosHttpResponseError as error:
+        if expected_etag is not None and getattr(error, "status_code", None) in (409, 412):
+            raise PromptConflictError("The prompt was changed by someone else before it could be deleted.") from error
+        raise
     _invalidate_prompt_chat_bootstrap_cache(
         user_id,
         group_id=group_id,
