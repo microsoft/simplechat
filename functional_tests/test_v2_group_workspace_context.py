@@ -103,12 +103,29 @@ def environment(monkeypatch):
         "functions_settings": module_stub(
             "functions_settings", **settings_namespace,
             is_group_workspace_file_download_enabled=downloads_enabled,
+            is_public_workspace_file_download_enabled=Mock(return_value=True),
         ),
         "functions_workspace_branding": module_stub("functions_workspace_branding", **branding_namespace),
         "functions_workspace_sections": module_stub(
             "functions_workspace_sections", WORKSPACE_SECTION_GROUPS=section_groups,
         ),
+        # Public workspaces are out of scope here, but the context module imports their
+        # lookups at load time. These stand in for the Cosmos-backed functions only.
+        "functions_public_workspaces": module_stub(
+            "functions_public_workspaces",
+            check_public_workspace_status_allows_operation=Mock(return_value=(True, None)),
+            find_public_workspace_by_id=Mock(return_value=None),
+            get_user_role_in_public_workspace=Mock(return_value=None),
+        ),
     }
+    # The document and prompt policy modules are pure, with no config or network, so
+    # they load for real. The group context's advertised operations are then computed
+    # by the same policy the routes enforce. A stub here would let a policy change
+    # pass unnoticed.
+    for name in ("functions_group_document_policy", "functions_group_prompt_policy",
+                 "functions_public_document_policy"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.syspath_prepend(str(APP_ROOT))
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
     spec = importlib.util.spec_from_file_location("tested_workspace_context", APP_ROOT / "functions_workspace_context.py")
