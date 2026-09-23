@@ -28,6 +28,7 @@ EDITABLE_ACTION_ID = "group-a-openapi"
 WITHHELD_ACTION_ID = "group-a-withheld"
 MEMBER_ACTION_ID = "group-b-openapi"
 IDENTITY_ACTION_ID = "group-a-identity"
+MCP_ACTION_ID = "group-a-mcp"
 PROVIDED_ACTION_ID = "global-shared-api"
 BOUND_IDENTITY_ID = "group-identity-legacy"
 
@@ -60,6 +61,18 @@ class GroupActionsFixture(GroupWorkspaceFixture):
             # (M5A), so the editor keeps the binding with neutral copy and lists no identities.
             group_action("group-a", IDENTITY_ACTION_ID, "Bound report API",
                          identity_id=BOUND_IDENTITY_ID, auth={"type": "identity"}),
+            # An editable MCP action. Its editor reads reminder defaults from the group
+            # action-options route and never lists personal MCP preconfigurations, so it proves the
+            # group editor makes no personal-scope reads. No inline credential, so no masked path.
+            group_action("group-a", MCP_ACTION_ID, "Team MCP server", type="mcp",
+                         endpoint="https://mcp.example.test/sse", auth={"type": "none"},
+                         additionalFields={
+                             "server_profile": "generic",
+                             "transport": "streamable_http",
+                             "preconfiguration_id": "",
+                             "allowed_tool_names": [],
+                             "mcp_tools": [],
+                         }),
             provided_action,
         ])
         # group-b: an ordinary member. Actions are readable but the management hint offers no

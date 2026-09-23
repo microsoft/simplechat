@@ -26,7 +26,9 @@ import {
     deleteAuthoringAction, fetchActionEditor, fetchActionTypes, fetchAuthoringActions,
     saveActionConfiguration,
 } from './workspaceAuthoringApi';
-import { fetchActionIdentities, testWorkspaceAction } from './workspaceActionServices';
+import {
+    fetchActionEditorHints, fetchActionIdentities, testWorkspaceAction, type ActionEditorHints,
+} from './workspaceActionServices';
 import type { ActionIdentity, ActionTestGroupScope } from './workspaceActionTypes';
 import type { EditorWorkspaceScope } from './workspaceEditorDrafts';
 import { requireWorkspaceId, workspaceBasePath } from './workspaceContext';
@@ -50,6 +52,7 @@ export interface ActionWorkbenchAdapter {
     allows: (operation: ActionOperation, action?: ActionConfiguration) => boolean;
     listActions: (signal?: AbortSignal) => Promise<ActionConfiguration[]>;
     fetchTypes: (signal?: AbortSignal) => Promise<ActionTypeDefinition[]>;
+    fetchEditorHints: (signal?: AbortSignal) => Promise<ActionEditorHints>;
     fetchEditor: (id: string, providedScope: string, signal?: AbortSignal) => Promise<AuthoringResource<ActionConfiguration>>;
     save: (draft: ActionConfiguration, original: AuthoringResource<ActionConfiguration> | null) => Promise<AuthoringResource<ActionConfiguration>>;
     deleteAction: (action: ActionConfiguration) => Promise<void>;
@@ -114,6 +117,7 @@ export const PERSONAL_ACTION_WORKBENCH: ActionWorkbenchAdapter = {
     allows: () => true,
     listActions: (signal) => fetchAuthoringActions(signal),
     fetchTypes: (signal) => fetchActionTypes(signal),
+    fetchEditorHints: (signal) => fetchActionEditorHints(signal),
     fetchEditor: (id, providedScope, signal) => fetchActionEditor(id, providedScope, signal),
     save: (draft, original) => saveActionConfiguration(draft, original),
     deleteAction: async (action) => {
@@ -180,6 +184,34 @@ function withoutActionProjectionFields<T extends ActionConfiguration>(record: T)
     return clone as T;
 }
 
+/**
+ * Map the group `action-options` envelope onto ActionEditorHints. The group editor needs only the
+ * five tenant-level Key Vault reminder defaults; unlike the personal `/api/user/agent/settings`
+ * read it carries no personal flags and no personal model endpoints. The envelope is validated
+ * strictly, so a drifted shape throws rather than silently rendering blank defaults, and `canAuthor`
+ * comes from the adapter gate, never from a server flag on this response.
+ */
+function groupEditorHints(value: unknown, canAuthor: boolean): ActionEditorHints {
+    if (!isRecord(value) || !isRecord(value.secret_reminders)) {
+        throw new Error('The workspace returned invalid action options. Reload before trying again.');
+    }
+    const reminders = value.secret_reminders;
+    if (typeof reminders.storage_enabled !== 'boolean' || typeof reminders.reminders_enabled !== 'boolean'
+        || typeof reminders.require_expiration !== 'boolean' || typeof reminders.lead_days !== 'number'
+        || typeof reminders.contact_email !== 'string') {
+        throw new Error('The workspace returned invalid action options. Reload before trying again.');
+    }
+    const days = reminders.lead_days;
+    return {
+        canAuthor,
+        storageEnabled: reminders.storage_enabled,
+        remindersEnabled: reminders.reminders_enabled,
+        requireExpiration: reminders.require_expiration,
+        reminderLeadDays: Number.isInteger(days) && days >= 1 && days <= 3650 ? days : 30,
+        reminderEmail: reminders.contact_email,
+    };
+}
+
 export function createGroupActionWorkbench(
     scope: Extract<ActionScope, { kind: 'group' }>, management: unknown,
 ): ActionWorkbenchAdapter {
@@ -211,6 +243,11 @@ export function createGroupActionWorkbench(
                 throw new Error('The workspace returned an invalid action type list.');
             }
             return response.types as unknown as ActionTypeDefinition[];
+        },
+        fetchEditorHints: async (signal) => {
+            const response = await api.get<unknown>(
+                `/api/groups/${encodeURIComponent(groupId)}/action-options`, signal);
+            return groupEditorHints(response, allows('create'));
         },
         fetchEditor: async (id, _providedScope, signal) => {
             const response = await api.get<AuthoringResource<ActionConfiguration>>(groupActionsUrl(groupId, id), signal);

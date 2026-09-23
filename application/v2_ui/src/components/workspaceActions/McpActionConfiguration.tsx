@@ -188,8 +188,9 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
 export function McpActionConfiguration(props: ActionConnectorProps) {
     const { draft, original, onChange, errors } = props;
     const readOnly = props.readOnly || Boolean(original?.read_only);
+    const groupScoped = Boolean(props.groupScope);
     const fields = draft.additionalFields;
-    const catalogue = useMcpCatalogues(props, true);
+    const catalogue = useMcpCatalogues(props, !groupScoped);
     const profile = connectorText(fields.server_profile) || 'generic';
     const preconfigurationId = connectorText(fields.preconfiguration_id);
     const transport = connectorText(fields.transport) || 'streamable_http';
@@ -245,6 +246,11 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     {catalogue.preconfigurationsError ? <p>{catalogue.preconfigurationsError} This is not an empty catalogue; your saved selection is retained.</p> : null}
                     <GlassButton type="button" size="sm" disabled={catalogue.loading} onClick={catalogue.retry}>Retry catalogues</GlassButton>
                 </div> : null}
+                {groupScoped ? (
+                    <p className="rounded-lg bg-panel-2 p-3 text-xs text-text-3">
+                        Saved MCP preconfigurations aren’t available for group actions yet. Choose a compatibility preset below or configure the server manually.
+                    </p>
+                ) : (<>
                 <ActionField id="mcp-preconfiguration" label="Preconfigured server">
                     <select id="mcp-preconfiguration" className={ACTION_INPUT_CLASS} value={preconfigurationChoice} disabled={readOnly || catalogue.loading}
                         onChange={(event) => setPreconfigurationChoice(event.target.value)}>
@@ -276,6 +282,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     }}>
                     {preconfigurationChoice ? 'Apply server preconfiguration' : 'Use custom configuration'}
                 </GlassButton>
+                </>)}
                 <div className="space-y-3 border-t border-edge pt-4">
                     <ActionField id="mcp-preset" label="Compatibility preset">
                         <select id="mcp-preset" className={ACTION_INPUT_CLASS} value={presetChoice} disabled={readOnly || catalogue.loading}

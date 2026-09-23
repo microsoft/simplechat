@@ -36,6 +36,19 @@ ACTION_OPERATIONS = ("create", "edit", "delete", "test")
 ACTION_ACTIONS = ("edit", "delete", "test")
 WRITER_ROLES = ("Owner", "Admin")
 
+# The tenant-level Key Vault reminder defaults the group action editor reads from
+# /api/groups/<group_id>/action-options, the group-scoped counterpart to the personal
+# /api/user/agent/settings that carries no personal flags or model endpoints. The enabled values
+# are distinct from the personal fixture's disabled defaults so a test can prove the editor's
+# reminder copy came from the group route rather than a personal-scope read.
+GROUP_SECRET_REMINDERS = {
+    "storage_enabled": True,
+    "reminders_enabled": True,
+    "require_expiration": True,
+    "lead_days": 45,
+    "contact_email": "group-secrets@example.test",
+}
+
 
 def group_action(group_id, identifier, name, *, actions=ACTION_ACTIONS, **overrides):
     """One shared OpenAPI action as the group projector returns it before masking."""
@@ -185,6 +198,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
+        if path in ("/api/user/agent/settings", "/api/plugins/mcp/preconfigurations"):
+            # A group workspace page must never read personal-scope settings or personal MCP
+            # preconfigurations. The M4 group editor reads its reminder defaults from
+            # /api/groups/<group_id>/action-options and omits preconfigurations entirely, so either
+            # call reaching the fixture from a group page is a personal-scope leak. Record it so
+            # assert_clean() fails the run rather than silently serving personal data.
+            self.unexpected_requests.append(f"{method} {path} (personal-scope read from a group page)")
+            self._json(route, {"error": "Personal-scope reads are not available on group pages."}, 500)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/action-options"):
+            self._action_options(route, entry)
+            return
         if path.startswith("/api/groups/") and "/actions" in path:
             self._actions(route, entry)
             return
@@ -344,6 +369,22 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "secret_paths": copy.deepcopy(self.native_secret_paths.get((group_id, record["id"]), [])),
             "read_only": read_only,
         }
+
+    def _action_options(self, route, entry):
+        # /api/groups/<group_id>/action-options -- its own path segment, so it never collides with
+        # /actions/<id>. It answers the tenant reminder defaults to every member role, takes no
+        # query and no body, and 400s any query exactly as the server's _reject_query_parameters().
+        parts = entry.path.split("/")
+        group_id = parts[3]
+        assert group_id in self.groups, f"Unknown group action-options scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's actions."}, 403)
+            return
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        assert entry.method == "GET", entry
+        self._json(route, {"secret_reminders": copy.deepcopy(GROUP_SECRET_REMINDERS)})
 
     def _actions(self, route, entry):
         parts = entry.path.split("/")
