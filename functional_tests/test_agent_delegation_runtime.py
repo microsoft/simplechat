@@ -1,7 +1,7 @@
 # test_agent_delegation_runtime.py
 """Executable delegation runtime regression tests.
 
-Version: 0.261.105
+Version: 0.261.129
 Implemented in: 0.261.093
 
 Real execution contexts, runtime, plugin and activity logger run against mock
@@ -9,6 +9,7 @@ providers. No Azure credentials or live model requests are used.
 """
 
 import asyncio
+import contextvars
 import importlib
 import inspect
 import json
@@ -254,6 +255,50 @@ def test_blocked_child_is_interrupted_and_finally_runs(runtime, monkeypatch, rea
     assert cleaned == [True]
     assert runtime.contexts.current_agent_execution() is None
     assert runtime.logger.get_plugin_logger().invocations[-1].success is False
+
+
+def test_agent_operations_can_share_one_caller_owned_context(runtime, monkeypatch):
+    """Stream pulls share a Context so a value set on one pull can be reset on a later one."""
+    monkeypatch.setattr(runtime, "CANCELLATION_POLL_SECONDS", 0.005)
+    scope = contextvars.ContextVar("delegated-operation-scope", default="caller")
+    shared = contextvars.copy_context()
+    tokens = []
+    cleaned = []
+    stopped = False
+    root = frame(runtime)
+    cancellable = frame(runtime, cancel=lambda: stopped)
+
+    async def set_scope(value):
+        tokens.append(scope.set(value))
+        return scope.get()
+
+    async def reset_scope():
+        scope.reset(tokens.pop())
+        return scope.get()
+
+    async def blocked():
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cleaned.append(scope.get())
+
+    async def run():
+        nonlocal stopped
+        isolated = await runtime.await_agent_operation(set_scope("isolated"), root)
+        tokens.clear()
+        streamed = await runtime.await_agent_operation(set_scope("stream"), root, context=shared)
+        caller = scope.get()
+        operation = asyncio.create_task(runtime.await_agent_operation(blocked(), cancellable, context=shared))
+        await asyncio.sleep(0.01)
+        stopped = True
+        with pytest.raises(runtime.AgentExecutionCancelled):
+            await asyncio.wait_for(operation, 0.5)
+        after_reset = await runtime.await_agent_operation(reset_scope(), root, context=shared)
+        return isolated, streamed, caller, after_reset, scope.get()
+
+    results = asyncio.run(run())
+    assert results == ("isolated", "stream", "caller", "caller", "caller")
+    assert cleaned == ["stream"]
 
 
 def test_local_target_receives_only_task_context_and_own_knowledge(runtime, monkeypatch):

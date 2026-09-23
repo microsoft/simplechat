@@ -324,7 +324,19 @@ function appendRateLimitMessage(errorBanner, markdownText) {
     errorBanner.appendChild(messageContainer);
 }
 
-function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
+function getStreamErrorPersistenceNote(errorPayload, hasPartialContent) {
+    // Only a persisted assistant reply carries message_id; approval payloads
+    // use message_persisted for the user message alone.
+    if (errorPayload.message_persisted === true && errorPayload.message_id) {
+        return 'The partial content above has been saved.';
+    }
+    if (hasPartialContent) {
+        return 'The partial content above was not saved and will not appear after a reload.';
+    }
+    return '';
+}
+
+function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}, hasPartialContent = false) {
     const errorPayload = getStreamErrorPayload(errorDetails);
     const m365SignInRequired = isM365SignInRequired(errorPayload);
     if (m365SignInRequired && window.SimpleChatM365Connect) {
@@ -387,14 +399,17 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     detailRow.className = 'mt-1';
 
     const detailText = document.createElement('small');
+    const persistenceNote = getStreamErrorPersistenceNote(errorPayload, hasPartialContent);
     if (rateLimited) {
-        detailText.textContent = 'Wait a moment before sending the message again. Any partial content above has been saved.';
+        detailText.textContent = ['Wait a moment before sending the message again.', persistenceNote].filter(Boolean).join(' ');
     } else if (m365SignInRequired) {
         detailText.textContent = 'Refresh the page to restore Microsoft 365 connection controls.';
     } else if (authRequired) {
         detailText.textContent = 'After access is granted, send the message again.';
+    } else if (errorPayload.type === 'm365_approval_required') {
+        detailText.textContent = 'The request continues after the approval is decided.';
     } else {
-        detailText.textContent = 'Response may be incomplete. The partial content above has been saved.';
+        detailText.textContent = ['Response may be incomplete.', persistenceNote].filter(Boolean).join(' ');
     }
 
     detailRow.appendChild(detailText);
@@ -1681,7 +1696,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         hydrateInlineCharts(messageElement);
         hydrateInlineDiagrams(messageElement);
 
-        appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
+        appendStreamErrorBanner(contentElement, displayMessage, errorPayload, Boolean(String(partialContent || '').trim()));
     }
 
     if (m365SignInRequired) {

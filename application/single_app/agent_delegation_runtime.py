@@ -7,6 +7,7 @@ Call agent class before the application's Semantic Kernel loader is initialized.
 
 import asyncio
 from contextlib import nullcontext
+import contextvars
 from copy import deepcopy
 from dataclasses import replace
 import inspect
@@ -63,9 +64,21 @@ def _check_cancelled(frame):
         raise AgentDelegationTimeout("The delegated agent call timed out.")
 
 
-async def await_agent_operation(awaitable, frame):
-    """Interrupt a blocked provider await, not just the next returned stream token."""
-    operation = asyncio.ensure_future(awaitable)
+async def _await_operation(awaitable):
+    return await awaitable
+
+
+async def await_agent_operation(awaitable, frame, *, context=None):
+    """Interrupt a blocked provider await, not just the next returned stream token.
+
+    Pass ``context`` to run the operation in a caller-owned ``contextvars.Context``.
+    ``ensure_future`` copies a fresh Context on every call, which breaks streams
+    that set a ContextVar on one pull and reset it on a later pull.
+    """
+    if context is None:
+        operation = asyncio.ensure_future(awaitable)
+    else:
+        operation = asyncio.get_running_loop().create_task(_await_operation(awaitable), context=context)
     try:
         while True:
             _check_cancelled(frame)
@@ -86,6 +99,14 @@ async def await_agent_operation(awaitable, frame):
         # Await cancellation so stream/client finally blocks execute before context
         # restoration. No automatic retry of potentially write-capable tools.
         await asyncio.gather(operation, return_exceptions=True)
+
+
+async def _close_stream(stream, context):
+    """Close a stream in the same Context that its pulls ran in."""
+    if context is None:
+        await stream.aclose()
+        return
+    await asyncio.get_running_loop().create_task(_await_operation(stream.aclose()), context=context)
 
 
 async def _invoke_local(agent, messages):
@@ -447,6 +468,7 @@ class AgentExecution:
         frame = self._frame()
         kernel = None
         stream = None
+        stream_context = None
         invocation_retry_state = None
         retry_override = self._stream_retry_override
         selected = self.agent
@@ -472,19 +494,23 @@ class AgentExecution:
                     invocation_retry_state = retry_override[1](selected, retry_override[0])
             if streaming:
                 with agent_execution(frame):
-                    stream = selected.invoke_stream(messages=messages, **kwargs)
+                    # Stream wrappers such as the M365 continuation journal set
+                    # ContextVars on the first pull and reset them on the last,
+                    # so create, pull, and close the stream in one Context.
+                    stream_context = contextvars.copy_context()
+                    stream = stream_context.run(selected.invoke_stream, messages=messages, **kwargs)
                 while True:
                     with agent_execution(frame):
                         try:
-                            result = await await_agent_operation(stream.__anext__(), frame)
+                            result = await await_agent_operation(stream.__anext__(), frame, context=stream_context)
                         except StopAsyncIteration:
                             break
                     observed_usage = _observed_usage(result)
                     if observed_usage is not None:
                         self.last_usage = observed_usage
-                    # A synchronous streaming route resumes this generator in a
-                    # new asyncio Task for each token. Never retain a ContextVar
-                    # token across the yield.
+                    # Callers may resume this generator from a different asyncio
+                    # Task for each token. Never retain this frame's ContextVar
+                    # token across the yield; the inner stream keeps stream_context.
                     yield result
             else:
                 with agent_execution(frame):
@@ -495,7 +521,7 @@ class AgentExecution:
             with agent_execution(frame):
                 try:
                     if stream is not None and hasattr(stream, "aclose"):
-                        await stream.aclose()
+                        await _close_stream(stream, stream_context)
                 finally:
                     if retry_override and invocation_retry_state is not None:
                         retry_override[2](selected, invocation_retry_state)
