@@ -26,6 +26,10 @@ from functions_group_action_policy import (
     group_action_management_operations,
     group_actions_available,
 )
+from functions_group_agent_policy import (
+    group_agent_management_operations,
+    group_agents_available,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -103,7 +107,6 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     group_kernel = semantic_kernel and bool(settings.get("per_user_semantic_kernel", False))
     sync_enabled = manager and is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
 
-    agents_configured = group_kernel and bool(settings.get("allow_group_agents", False))
     endpoints_configured = (
         group_kernel
         and bool(settings.get("allow_group_custom_endpoints", False))
@@ -111,7 +114,9 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     )
     delegation_configured = semantic_kernel and bool(settings.get("allow_group_agents", False))
     delegation_allowed = delegation_configured and is_governance_access_allowed("governance_group_agents", user_id)
-    agents_allowed = group_kernel and delegation_allowed
+    # The single availability predicate the immutable agent routes also call, so
+    # the Agents section and the routes agree on one gate (mirrors actions/B3).
+    agents_available, agents_reason = group_agents_available(user_id, settings)
     actions_available, actions_reason = group_actions_available(user_id, settings)
     endpoints_allowed = endpoints_configured and is_governance_access_allowed("governance_group_endpoints", user_id)
     workflows_enabled = is_group_workflows_enabled_for_group(settings, group_id)
@@ -131,8 +136,8 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         "tags": section(True, manager),
         "prompts": section(True, manager),
         "agents": section(
-            agents_allowed, automation_manager,
-            governance_reason if agents_configured else "Group agents are not enabled.",
+            agents_available, automation_manager,
+            agents_reason or "Group agents are not enabled.",
         ),
         "actions": section(
             actions_available, automation_manager,
@@ -227,6 +232,12 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "schema_version": 1,
             "operations": group_action_management_operations(
                 user_id, group, role, settings, available=actions_available,
+            ),
+        },
+        "agent_management": {
+            "schema_version": 1,
+            "operations": group_agent_management_operations(
+                user_id, group, role, settings, available=agents_available,
             ),
         },
     }

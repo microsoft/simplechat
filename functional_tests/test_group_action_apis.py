@@ -235,9 +235,14 @@ def environment(monkeypatch):
         scoped.setitem(sys.modules, "functions_ai_connections", module_stub(
             "functions_ai_connections", filter_model_endpoints_by_capability=Mock(return_value=[]),
         ))
-        scoped.setitem(sys.modules, "functions_appinsights", module_stub(
-            "functions_appinsights", log_event=Mock(),
-        ))
+        appinsights = module_stub("functions_appinsights", log_event=Mock())
+        scoped.setitem(sys.modules, "functions_appinsights", appinsights)
+        activity = module_stub(
+            "functions_activity_logging",
+            log_agent_creation=Mock(), log_agent_update=Mock(), log_agent_deletion=Mock(),
+            log_action_creation=Mock(), log_action_update=Mock(), log_action_deletion=Mock(),
+        )
+        scoped.setitem(sys.modules, "functions_activity_logging", activity)
         scoped.setitem(sys.modules, "functions_keyvault", module_stub(
             "functions_keyvault",
             redact_plugin_secret_values=lambda record: record,
@@ -355,6 +360,7 @@ def environment(monkeypatch):
         env = SimpleNamespace(
             settings=settings, groups=groups, group_container=group_container,
             global_container=global_container, access=access, app=app, client=app.test_client(),
+            activity=activity, appinsights=appinsights,
         )
         as_user(env, "owner")
         yield env
@@ -821,6 +827,76 @@ def test_context_and_routes_call_the_same_availability_predicate():
     assert hasattr(policy, "group_actions_available")
     assert "group_actions_available" in source
     assert "group_actions_available" in context_source
+
+
+# --------------------------------------------------------------------------
+# B1: activity logging for committed group action writes (M4C §8)
+# --------------------------------------------------------------------------
+
+def test_create_logs_action_creation_with_group_scope(environment):
+    as_user(environment, "owner")
+    created = environment.client.post(LIST_PATH, json=write_body(
+        name="logged-create", type="openapi", endpoint="https://api.example.test",
+    ))
+    assert created.status_code == 201
+    action_id = created.get_json()["record"]["id"]
+    environment.activity.log_action_creation.assert_called_once()
+    kwargs = environment.activity.log_action_creation.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a"
+    assert kwargs["action_id"] == action_id and kwargs["action_name"] == "logged-create"
+    assert kwargs["action_type"] == "openapi"
+    environment.activity.log_action_update.assert_not_called()
+    environment.activity.log_action_deletion.assert_not_called()
+
+
+def test_update_logs_action_update_with_group_scope(environment):
+    seed = seed_action(environment.group_container, "a1")
+    as_user(environment, "owner")
+    response = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="edited"))
+    assert response.status_code == 200
+    environment.activity.log_action_update.assert_called_once()
+    kwargs = environment.activity.log_action_update.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a" and kwargs["action_id"] == "a1"
+
+
+def test_delete_logs_action_deletion_with_group_scope(environment):
+    seed_action(environment.group_container, "a1")
+    as_user(environment, "owner")
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 200
+    environment.activity.log_action_deletion.assert_called_once()
+    kwargs = environment.activity.log_action_deletion.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a" and kwargs["action_id"] == "a1"
+
+
+def test_a_raising_action_logger_never_fails_a_committed_write(environment):
+    environment.activity.log_action_creation.side_effect = RuntimeError("logger down")
+    as_user(environment, "owner")
+    created = environment.client.post(LIST_PATH, json=write_body(
+        name="still-created", type="openapi", endpoint="https://api.example.test",
+    ))
+    assert created.status_code == 201
+    action_id = created.get_json()["record"]["id"]
+    assert ("group-a", action_id) in environment.group_container.records
+    warning = [
+        call for call in environment.appinsights.log_event.call_args_list
+        if call.args and "[WORKSPACE_ACTIVITY]" in str(call.args[0])
+    ]
+    assert warning, "A logging failure must emit the WORKSPACE_ACTIVITY warning."
+
+
+@pytest.mark.parametrize("role", NON_WRITER_ROLES)
+def test_a_refused_action_write_logs_nothing(environment, role):
+    seed = seed_action(environment.group_container, "a1")
+    as_user(environment, ROLE_USER[role])
+    assert environment.client.post(LIST_PATH, json=write_body(name="x", type="openapi")).status_code == 403
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+    as_user(environment, "owner")
+    environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="first"))
+    conflict = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="second"))
+    assert conflict.status_code == 409
+    environment.activity.log_action_creation.assert_not_called()
+    environment.activity.log_action_deletion.assert_not_called()
+    assert environment.activity.log_action_update.call_count == 1
 
 
 if __name__ == "__main__":
