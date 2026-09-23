@@ -26,9 +26,17 @@ interface ModelFieldsProps {
      * keeps the historical personal behaviour byte-identical.
      */
     allowCustomEndpoints?: boolean;
+    /**
+     * Whether this editor is a group agent editor. A group member receives no model endpoints and a
+     * group-scoped saved connection cannot be resolved on a group page, so the notices use neutral
+     * read-only copy instead of the personal authoring guidance, and Foundry discovery is withheld
+     * for a group-scoped connection because `/api/models/foundry/agents` resolves the account's
+     * active group, not the page's. Omitted keeps the historical personal behaviour byte-identical.
+     */
+    groupScope?: boolean;
 }
 
-function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints }: ModelFieldsProps) {
+function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints, groupScope }: ModelFieldsProps) {
     const choices = agentModelChoices(options);
     const selected = selectedAgentModel(draft, choices);
     const customAllowed = allowCustomEndpoints ?? options.settings.allow_user_custom_endpoints === true;
@@ -48,7 +56,9 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                     {choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
                 </select>
             </AgentField>
-            {!choices.length ? <AgentNotice>No enabled models are listed. You can retain the saved connection or configure a custom connection below.</AgentNotice> : null}
+            {!choices.length ? <AgentNotice>{groupScope
+                ? 'Uses a configured model.'
+                : 'No enabled models are listed. You can retain the saved connection or configure a custom connection below.'}</AgentNotice> : null}
             <dl className="grid gap-3 rounded-xl border border-edge p-3 text-xs sm:grid-cols-3">
                 <div className="min-w-0"><dt className="text-text-3">Endpoint ID</dt><dd className="break-all text-text-1">{draft.model_endpoint_id || 'Legacy / configured default'}</dd></div>
                 <div className="min-w-0"><dt className="text-text-3">Model ID</dt><dd className="break-all text-text-1">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Configured default'}</dd></div>
@@ -103,7 +113,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
     );
 }
 
-function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
+function FoundryModelFields({ draft, setDraft, options, groupScope }: ModelFieldsProps) {
     const [resources, setResources] = useState<FoundryDiscoveryRecord[]>([]);
     const [responseVersion, setResponseVersion] = useState('');
     const [loading, setLoading] = useState(false);
@@ -116,6 +126,11 @@ function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
     const endpointId = draft.model_endpoint_id || agentText(settings.endpoint_id);
     const endpoints = options.model_endpoints.filter((endpoint) => foundryEndpointMatches(type, endpoint));
     const selectedEndpoint = endpoints.find((endpoint) => endpoint.id === endpointId);
+    // A group-scoped Foundry connection has no group discovery route: /api/models/foundry/agents
+    // resolves the account's active group, not the page's, so another tab could retarget it. The
+    // group editor therefore offers no discovery for it and shows honest copy; a global connection
+    // has no group dependency, so its discovery is kept. M5C adds the group discovery route.
+    const discoveryBlocked = groupScope === true && agentText(selectedEndpoint?.scope) === 'group';
     useEffect(() => {
         setResources([]);
         setLoaded(false);
@@ -183,17 +198,22 @@ function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
                         else setDraft((current) => updateAgentSetting({ ...current, model_endpoint_id: '' }, key, { endpoint_id: '' }));
                     }}>
                     <option value="">Manual Foundry project connection</option>
-                    {endpointId && !selectedEndpoint ? <option value={endpointId}>Saved connection unavailable · {endpointId}</option> : null}
+                    {endpointId && !selectedEndpoint ? <option value={endpointId}>{groupScope
+                        ? 'Uses a configured model' : `Saved connection unavailable · ${endpointId}`}</option> : null}
                     {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id} · {agentText(endpoint.scope) || 'global'}</option>)}
                 </select>
             </AgentField>
-            <div className="flex flex-wrap items-center gap-3">
-                <GlassButton type="button" size="sm" onClick={() => void discover()} disabled={!selectedEndpoint || loading}>
-                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                    {loading ? 'Discovering…' : type === 'foundry_workflow' ? 'Discover workflows' : type === 'new_foundry' ? 'Discover applications' : 'Discover agents'}
-                </GlassButton>
-                {loaded ? <span role="status" className="text-xs text-text-3">{resources.length} resources found.</span> : null}
-            </div>
+            {discoveryBlocked ? (
+                <AgentNotice>Discovery for a group-scoped Foundry connection isn’t available in this workspace yet. Choose a global connection to discover its resources, or enter the project fields manually below.</AgentNotice>
+            ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                    <GlassButton type="button" size="sm" onClick={() => void discover()} disabled={!selectedEndpoint || loading}>
+                        <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                        {loading ? 'Discovering…' : type === 'foundry_workflow' ? 'Discover workflows' : type === 'new_foundry' ? 'Discover applications' : 'Discover agents'}
+                    </GlassButton>
+                    {loaded ? <span role="status" className="text-xs text-text-3">{resources.length} resources found.</span> : null}
+                </div>
+            )}
             {error ? <AgentNotice error>{error}{authUrl ? <> <a href={authUrl} target="_blank" rel="noopener noreferrer" className="underline">Sign in or grant Foundry access</a></> : null}</AgentNotice> : null}
             {resources.length ? (
                 <AgentField id="agent-foundry-resource" label="Discovered resource" help="Selecting a resource updates only this draft. Review provider fields before saving.">

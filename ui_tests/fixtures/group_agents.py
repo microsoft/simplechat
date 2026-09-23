@@ -24,13 +24,14 @@ import pytest
 
 from ui_tests.fixtures.workspace_authoring import STORED_KEY, connect_options  # noqa: F401
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
-    AGENT_ACTIONS, AGENT_OPERATIONS, GroupWorkspaceFixture, WRITER_ROLES,
-    agent_management, group_agent, group_context,
+    AGENT_ACTIONS, AGENT_OPERATIONS, GROUP_FOUNDRY_ENDPOINT_ID, GLOBAL_FOUNDRY_ENDPOINT_ID,
+    GroupWorkspaceFixture, WRITER_ROLES, agent_management, group_agent, group_context,
 )
 
 
 EDITABLE_AGENT_ID = "group-a-editable"
 WITHHELD_AGENT_ID = "group-a-withheld"
+FOUNDRY_AGENT_ID = "group-a-foundry"
 MEMBER_AGENT_ID = "group-b-agent"
 PROVIDED_AGENT_ID = "global-shared-agent"
 
@@ -58,31 +59,42 @@ class GroupAgentsFixture(GroupWorkspaceFixture):
         provided_agent = group_agent("group-a", PROVIDED_AGENT_ID, "Shared platform agent",
                                       actions=(), is_global=True, is_group=False)
         provided_agent["group_id"] = None
+        # A Foundry agent bound to a group-scoped connection. Its discovery route resolves the
+        # account's active group, not this page's, so the editor withholds discovery for it while
+        # keeping it for a global connection. It is fully editable so a manager reaches the control.
+        foundry_agent = group_agent(
+            "group-a", FOUNDRY_AGENT_ID, "Foundry reviewer", agent_type="aifoundry",
+            model_endpoint_id=GROUP_FOUNDRY_ENDPOINT_ID, model_id="", model_provider="aifoundry",
+        )
         self._seed_agents("group-a", [
             group_agent("group-a", EDITABLE_AGENT_ID, "Weekly reviewer",
                         other_settings={"connection": {"api_key": STORED_KEY}}),
             group_agent("group-a", WITHHELD_AGENT_ID, "Withheld reviewer", actions=()),
+            foundry_agent,
             provided_agent,
         ])
         # group-b: an ordinary member. Agents are readable but the management hint offers no
-        # operations, so the workbench is read-only: no create, edit or delete affordances.
+        # operations, so the workbench is read-only: no create, edit or delete affordances. Every
+        # served group agent row carries "chat" -- the real list route serves rows only when the
+        # same conditions that gate chat pass -- so a member can still launch it in chat.
         self.set_agent_policy("group-b", role="User", status="active")
         self._seed_agents("group-b", [
-            group_agent("group-b", MEMBER_AGENT_ID, "Team charter agent", actions=()),
+            group_agent("group-b", MEMBER_AGENT_ID, "Team charter agent", actions=("chat",)),
         ])
-        # group-c: group actions are on but group agents are off. Navigation still surfaces the
-        # Agents slot through native_delegation, so the pre-M4 Call agent view must render and no
-        # /api/groups/group-c/agents request may be made.
+        # group-c: group actions are on but group agents are off. The agents section is unavailable,
+        # so its slot never mounts the native workbench and the honest tenant-flag reason renders in
+        # its place; no /api/groups/group-c/agents request may be made.
         actions_only = group_context("group-c", "Actions only workspace", role="Owner", status="active")
         actions_only["sections"]["agents"]["enabled"] = False
         actions_only["sections"]["agents"]["can_manage"] = False
-        actions_only["sections"]["agents"]["reason"] = "Group agents are turned off for this workspace."
+        actions_only["sections"]["agents"]["reason"] = "Group agents are not enabled."
         # The backend empties the management hint when the capability is off; mirror that so nothing
         # can read create rights for a workspace whose native routes are refused.
         actions_only["agent_management"] = {"schema_version": 1, "operations": []}
         self.groups["group-c"] = actions_only
         # group-c is added after the parent seeded its per-group delegation stores, so mirror that
-        # seeding here: the Call agent view reads the group's caller agent when agents are off.
+        # seeding here: the seeded caller agent is the Actions page's Call agent manager target, not
+        # a native agents view, which is unavailable for this workspace.
         self.group_agents["group-c"] = [{
             "id": "caller", "name": "caller", "display_name": "Local caller",
             "agent_type": "local", "group_id": "group-c", "is_group": True,

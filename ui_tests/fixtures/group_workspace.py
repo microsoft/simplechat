@@ -122,13 +122,26 @@ def agent_management(role, status):
     return {"schema_version": 1, "operations": []}
 
 
-def group_agent_options(group_id):
+GROUP_FOUNDRY_ENDPOINT_ID = "group-foundry-connection"
+GLOBAL_FOUNDRY_ENDPOINT_ID = "global-foundry-connection"
+
+
+def group_agent_options(group_id, *, can_author=True, template_submission=True):
     """The group agent editor options.
 
     Derived from the shared editor options but carrying no personal endpoint permissions: every
     `allow_user_*` / `allow_personal_*` flag is dropped and replaced with the group-scoped
     custom-endpoint flag, so the editor's custom-connection controls read the group's own policy and
     the options response proves it came from the group route rather than a personal-scope read.
+
+    A member cannot author, so the server withholds every model endpoint and the read-only editor
+    shows neutral "Uses a configured model" copy rather than personal authoring guidance. A manager
+    additionally receives two Foundry connections that prove the discovery gate: a group-scoped one
+    whose discovery route resolves the account's active group -- for which the editor offers no
+    discovery -- and a global one with no group dependency, for which discovery is kept.
+
+    `agent_template_submission_allowed` is always present, computed server-side for the caller, so
+    the group template panel gates on it rather than on the absent personal submission flag.
     """
     options = copy.deepcopy(editor_options())
     settings = options["settings"]
@@ -136,6 +149,16 @@ def group_agent_options(group_id):
         if key.startswith("allow_user_") or key.startswith("allow_personal_"):
             settings.pop(key)
     settings["allow_group_custom_endpoints"] = True
+    settings["agent_template_submission_allowed"] = bool(can_author and template_submission)
+    if not can_author:
+        options["model_endpoints"] = []
+        return options
+    options["model_endpoints"].extend([
+        {"id": GROUP_FOUNDRY_ENDPOINT_ID, "name": "Group Foundry connection", "provider": "aifoundry",
+         "enabled": True, "scope": "group", "connection": {}, "models": []},
+        {"id": GLOBAL_FOUNDRY_ENDPOINT_ID, "name": "Global Foundry connection", "provider": "aifoundry",
+         "enabled": True, "scope": "global", "connection": {}, "models": []},
+    ])
     return options
 
 
@@ -222,6 +245,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "group-b": group_context("group-b", "Read-only group", role="User"),
         }
         self.denied_groups = set()
+        # Groups whose server-computed template-submission gate is off despite a manager viewer, so a
+        # manager who still sees no submit button is proven, not just an incidental member read-only.
+        self.template_submission_denied = set()
+        # The submission decision of the last group options served, so a POST /api/agent-templates
+        # from a group page whose gate is off is recorded as unexpected rather than answered.
+        self._template_submission_allowed = True
         self.delegation_manage = True
         self.group_actions = {}
         self.group_agents = {}
@@ -322,6 +351,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         if path.startswith("/api/groups/") and "/actions" in path:
             self._actions(route, entry)
+            return
+        if path == "/api/models/foundry/agents" and method == "POST":
+            self._foundry_discovery(route, entry)
+            return
+        if path == "/api/agent-templates" and method == "POST" and not self._template_submission_allowed:
+            # The group template panel hides its submit button when the server gate is off, so a POST
+            # from a group page whose last options withheld submission is a leaked affordance. Record
+            # it rather than answering, exactly as the server 403s a non-admin in that state.
+            self.unexpected_requests.append(
+                f"POST {path} (template submission is not allowed on this group page)"
+            )
+            self._json(route, {"error": "Template submission is not allowed for this group."}, 403)
             return
         if path == "/api/groups" and method == "GET":
             term = entry.query.get("search", [""])[0].lower()
@@ -684,7 +725,32 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
             return
         assert entry.method == "GET", entry
-        self._json(route, group_agent_options(group_id))
+        can_author = bool(self.groups[group_id].get("agent_management", {}).get("operations"))
+        template_submission = group_id not in self.template_submission_denied
+        self._template_submission_allowed = bool(can_author and template_submission)
+        self._json(route, group_agent_options(
+            group_id, can_author=can_author, template_submission=template_submission))
+
+    def _foundry_discovery(self, route, entry):
+        # POST /api/models/foundry/agents -- Foundry resource discovery. The server route resolves a
+        # group-scoped connection through the account's ACTIVE group, not the page's, so the group
+        # editor must offer no discovery for one; a request that still arrives with scope 'group'
+        # from a group page is a cross-scope hazard and is recorded as unexpected. A global
+        # connection has no group dependency, so it is answered like the personal path.
+        scope = (entry.body or {}).get("scope")
+        if scope == "group":
+            self.unexpected_requests.append(
+                f"POST {entry.path} (group-scoped Foundry discovery from a group page)"
+            )
+            self._json(route, {"error": "Group-scoped Foundry discovery is not available on a group page."}, 500)
+            return
+        self._json(route, {
+            "agents": [{
+                "id": "global-assistant", "name": "global-assistant",
+                "display_name": "Global assistant", "description": "A discoverable global resource.",
+            }],
+            "responses_api_version": "2025-01-01",
+        })
 
     def _agent_knowledge(self, route, entry):
         # /api/groups/<group_id>/agent-knowledge -- the group-scoped assigned-knowledge catalogue,

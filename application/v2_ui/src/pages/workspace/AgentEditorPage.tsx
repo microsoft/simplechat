@@ -230,7 +230,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                         {restored ? <p role="status" className="mt-3 text-xs text-text-3">Your unsaved draft was restored from this tab’s memory.</p> : null}</>,
                 },
                 { id: 'model', label: 'Model & connection', content: structured(<AgentModelFields draft={draft} setDraft={setDraft} options={options} original={original}
-                    allowCustomEndpoints={adapter.allowsCustomEndpoints(options.settings)} />) },
+                    allowCustomEndpoints={adapter.allowsCustomEndpoints(options.settings)} groupScope={adapter.scope.kind === 'group'} />) },
                 { id: 'actions', label: 'Actions', content: structured(<AgentActionPicker draft={draft} setDraft={setDraft}
                     actions={actions} targets={targets} loading={actionsLoading} error={actionsError} targetError={targetError}
                     builtinActions={options.builtin_actions} ownerId={ownerId} canCreateActions={canCreateActions} readOnly={readOnly}
@@ -244,7 +244,8 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                     contextError={actionsError || (readAgentKnowledgeEnabled(draft) ? knowledgeError : null)} /> },
                 { id: 'advanced', label: 'Advanced', content: <AgentAdvancedFields draft={draft} setDraft={setDraft} options={options} original={original} /> },
                 { id: 'templates', label: 'Examples & templates', content: structured(<div ref={templatesAnchor} tabIndex={-1}>
-                    <AgentTemplatesPanel draft={draft} setDraft={setDraft} options={options} actions={actions} isNew={isNew} dirty={dirty} readOnly={readOnly} />
+                    <AgentTemplatesPanel draft={draft} setDraft={setDraft} options={options} actions={actions} isNew={isNew} dirty={dirty} readOnly={readOnly}
+                        submissionAllowed={adapter.allowsTemplateSubmission(options.settings)} groupScope={adapter.scope.kind === 'group'} />
                 </div>) },
             ]}
         />

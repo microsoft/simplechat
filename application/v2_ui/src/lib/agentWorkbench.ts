@@ -75,6 +75,12 @@ export interface AgentWorkbenchAdapter {
     chatScope: (agent: AgentConfiguration) => AgentLinkScope;
     /** Whether custom model endpoints may be configured, from this scope's own settings flag. */
     allowsCustomEndpoints: (settings: Record<string, unknown>) => boolean;
+    /**
+     * Whether the caller may submit an agent template in this scope. Personal reads the classic
+     * per-user submission flag; group reads the server-computed `agent_template_submission_allowed`,
+     * always present on group options, so a mislabelled button never renders and always 403s.
+     */
+    allowsTemplateSubmission: (settings: Record<string, unknown>) => boolean;
     listAgents: (signal?: AbortSignal) => Promise<AgentConfiguration[]>;
     fetchOptions: (signal?: AbortSignal) => Promise<AgentEditorOptions>;
     fetchEditor: (id: string, providedScope: string, signal?: AbortSignal) => Promise<AuthoringResource<AgentConfiguration>>;
@@ -151,6 +157,7 @@ export const PERSONAL_AGENT_WORKBENCH: AgentWorkbenchAdapter = {
     canUseInChat: (agent) => agent.is_enabled !== false,
     chatScope: (agent) => ({ kind: agent.is_global ? 'global' : 'personal' }),
     allowsCustomEndpoints: (settings) => settings.allow_user_custom_endpoints === true,
+    allowsTemplateSubmission: (settings) => settings.agent_templates_allow_user_submission !== false,
     listAgents: (signal) => fetchAuthoringAgents(signal),
     fetchOptions: (signal) => fetchAgentEditorOptions(signal),
     fetchEditor: (id, providedScope, signal) => fetchAgentEditor(id, providedScope, signal),
@@ -260,6 +267,7 @@ export function createGroupAgentWorkbench(
         canUseInChat: (agent) => Array.isArray(agent.agent_actions) && agent.agent_actions.includes('chat'),
         chatScope: () => ({ kind: 'group', id: groupId }),
         allowsCustomEndpoints: (settings) => settings.allow_group_custom_endpoints === true,
+        allowsTemplateSubmission: (settings) => settings.agent_template_submission_allowed === true,
         listAgents: async (signal) => {
             const response = await api.get<unknown>(groupAgentsUrl(groupId), signal);
             const agents = agentsFromResponse(response);

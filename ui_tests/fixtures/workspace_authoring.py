@@ -350,10 +350,19 @@ def personal_scope_leak(path, query):
     """
     if path.startswith("/api/user/") and path != "/api/user/settings":
         return "personal user resource"
+    if path.startswith("/api/file-sync/personal/"):
+        return "personal file-sync source"
     if path.startswith("/api/workspace-identities/personal/"):
         return "personal identity list"
     if path == "/api/plugins/mcp/preconfigurations":
         return "personal MCP preconfigurations"
+    # Personal prompts and personal documents are the caller's own workspace resources; a shared
+    # page reaches them only through a scoped route (`/api/groups/<g>/...`, `/api/group_documents`,
+    # `/api/public-workspaces/<id>/documents`), never these personal prefixes.
+    if path == "/api/prompts" or path.startswith("/api/prompts/"):
+        return "personal prompts"
+    if path == "/api/documents" or path.startswith("/api/documents/"):
+        return "personal documents"
     if query.get("agent_scope") == ["personal"]:
         return "personal agent scope"
     if query.get("scope") == ["personal"]:
