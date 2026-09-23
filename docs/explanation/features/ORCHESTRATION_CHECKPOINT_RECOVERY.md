@@ -571,6 +571,18 @@ cancellation, rather than recording an access denial or generic model failure.
 Ordinary model timeouts, invalid content and definite access denials keep their
 existing safe step-failure codes.
 
+Headless preparation, normal finalization and model-free refresh translate
+authority uncertainty into `HarnessExecutionError(code="message_not_saved",
+retryable=...)`, with `final_frames=[]` and `durable_status=None`. Supported
+application wrappers preserve the typed failure's retryability; malformed or
+configuration faults remain non-retryable. Callers must not turn this into
+revoked access, a success frame or permission to replay a producer. When final
+message publication has been staged but is unconfirmed, its saved state remains
+`message_saved=False` and `finalization_status="pending"`; earlier authority
+refusals preserve the existing durable state. Clients and the heartbeat are
+closed, and the worker releases only its own lease. Publication recovery verifies
+or delivers the retained outcome; it does not repeat content generation.
+
 An invocation can fail after its immutable input checkpoint and running-step
 record are already durable. Service uncertainty preserves those start facts and
 any previously retained work; it does not rewind the run to its pre-invocation
