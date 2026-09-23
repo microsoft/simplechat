@@ -504,8 +504,29 @@ def test_tags_carry_definition_colors_and_are_sorted(environment):
 def test_single_document_is_top_level_and_actionable(environment):
     payload = get(environment, f"{LIST_PATH}/doc-b").get_json()
     assert payload["id"] == "doc-b"
+    # A plain reader (role User) gets no management verbs, but collaboration
+    # inspect is a live per-request hint — never the M3A-era hardcoded [].
     assert payload["document_actions"] == []
+    assert payload["document_collaboration_actions"] == ["inspect"]
     assert "documents" not in payload
+
+
+def test_manager_document_actions_are_wired_from_real_authorization(environment):
+    # Managers see real per-document management verbs computed fresh per request.
+    # This pins that the projector wires get_public_document_actions rather than
+    # serving a stored or hardcoded array (the M3B inert-surface regression).
+    login(environment, "manager")
+    payload = get(environment, f"{LIST_PATH}/doc-b").get_json()
+    actions = payload["document_actions"]
+    assert isinstance(actions, list) and actions, actions
+    assert set(actions) <= {
+        "upload", "download", "edit_metadata", "tag_documents", "manage_tags",
+        "delete", "extract_metadata", "reprocess",
+    }
+    assert {"edit_metadata", "tag_documents"} <= set(actions)
+    # Collaboration inspect is available to managers too; artifact verbs only
+    # surface for a document with a pending generated-artifact operation.
+    assert payload["document_collaboration_actions"] == ["inspect"]
 
 
 def test_single_document_unknown_is_404(environment):
@@ -524,6 +545,7 @@ def test_versions_only_expose_workspace_revisions(environment):
     assert current == {"doc-a-r2": True, "doc-a-r1": False}
     for item in payload["versions"]:
         assert item["document_actions"] == []
+        assert item["document_collaboration_actions"] == ["inspect"]
 
 
 def test_versions_reject_a_foreign_document(environment):

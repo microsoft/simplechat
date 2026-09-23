@@ -1,11 +1,13 @@
 # test_group_document_projection_fence.py
 """
-Functional test for group projection/collaboration exclusion.
-Version: 0.261.130
+Functional test for scope-aware projection/collaboration exclusion.
+Version: 0.261.134
 Implemented in: 0.261.130
 
 Conditional in-memory storage exercises the real pure fence helper without
-application bootstrap or cloud calls.
+application bootstrap or cloud calls. Group cases pin the original behaviour;
+public cases prove the generalized fence isolates the two scopes in both
+directions and that a scope can never act on the other scope's document.
 """
 
 import copy
@@ -347,10 +349,133 @@ if "config" in sys.modules or "functions_settings" in sys.modules:
     raise RuntimeError("Fence helper crossed an application bootstrap boundary")
 if module.GROUP_DOCUMENT_PROJECTION_WRITER != "group_document_projection_writer":
     raise RuntimeError("Unexpected writer-field contract")
+if module.PUBLIC_DOCUMENT_PROJECTION_WRITER != "public_document_projection_writer":
+    raise RuntimeError("Unexpected public writer-field contract")
 """
     command = [sys.executable, *(["-O"] if optimized else []), "-c", probe, str(APP_DIR)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stderr
+
+
+class PublicConditionalSource(ConditionalSource):
+    def __init__(self):
+        super().__init__()
+        self.document = {"id": "doc", "public_workspace_id": "owner", "version": 2, "_etag": "1", "public_marker": "kept"}
+
+
+def public_operation(phase="executing"):
+    return {
+        "schema_version": 1, "id": "operation", "document_id": "doc",
+        "source_public_workspace_id": "owner", "document_version": 2, "phase": phase,
+        "execution_token": "execution",
+    }
+
+
+def test_public_writer_claim_lifecycle_mirrors_group():
+    store = PublicConditionalSource()
+    with fence.hold_public_document_projection(store, "doc", "owner", expected_version=2) as current:
+        assert current[fence.PUBLIC_DOCUMENT_PROJECTION_WRITER]["state"] == "executing"
+        with pytest.raises(fence.GroupDocumentProjectionConflict):
+            fence.assert_no_public_document_projection_writer(current)
+        with fence.hold_public_document_projection(store, "doc", "owner") as nested:
+            assert nested["_etag"] == current["_etag"]
+        assert store.replacements == 1
+    assert fence.PUBLIC_DOCUMENT_PROJECTION_WRITER not in store.document
+    assert store.document["public_marker"] == "kept"
+    assert store.replacements == 2
+
+
+def test_public_hold_refuses_a_group_document():
+    store = ConditionalSource()
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            pytest.fail("A public hold must not act on a group document.")
+    assert store.replacements == 0
+    assert fence.PUBLIC_DOCUMENT_PROJECTION_WRITER not in store.document
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in store.document
+
+
+def test_group_hold_refuses_a_public_document():
+    store = PublicConditionalSource()
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_group_document_projection(store, "doc", "owner"):
+            pytest.fail("A group hold must not act on a public document.")
+    assert store.replacements == 0
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in store.document
+    assert fence.PUBLIC_DOCUMENT_PROJECTION_WRITER not in store.document
+
+
+@pytest.mark.parametrize("public_workspace_id,version", [("other", 2), ("owner", 3)])
+def test_public_hold_refuses_a_different_public_workspace_or_revision(public_workspace_id, version):
+    # Same-kind isolation: a public hold must match the exact workspace identity,
+    # not merely "this is a public document"; workspace A cannot act on B's doc.
+    store = PublicConditionalSource()
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_public_document_projection(store, "doc", public_workspace_id, expected_version=version):
+            pytest.fail("A public hold must not act on another workspace's or revision's document.")
+    assert store.replacements == 0
+    assert fence.PUBLIC_DOCUMENT_PROJECTION_WRITER not in store.document
+
+
+def test_a_dual_scoped_document_is_refused_by_both_scopes():
+    store = ConditionalSource()
+    store.document["public_workspace_id"] = "owner"
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_group_document_projection(store, "doc", "owner"):
+            pytest.fail("A group hold must reject a document that also names a public workspace.")
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            pytest.fail("A public hold must reject a document that also names a group.")
+    assert store.replacements == 0
+
+
+def test_group_collaboration_context_cannot_authorize_a_public_projection():
+    store = PublicConditionalSource()
+    store.document[fence.PUBLIC_DOCUMENT_COLLABORATION_OPERATION] = public_operation()
+    with fence.group_collaboration_projection_context("doc", "operation", "execution"):
+        with pytest.raises(fence.GroupDocumentProjectionConflict):
+            with fence.hold_public_document_projection(store, "doc", "owner"):
+                pytest.fail("A group execution context must not satisfy a public collaboration claim.")
+    with fence.public_collaboration_projection_context("doc", "operation", "execution"):
+        with fence.hold_public_document_projection(store, "doc", "owner") as current:
+            assert current["id"] == "doc"
+    assert store.replacements == 0
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            pytest.fail("Public executor context must not leak.")
+
+
+def test_public_collaboration_context_cannot_authorize_a_group_projection():
+    store = ConditionalSource()
+    store.document[fence.GROUP_DOCUMENT_COLLABORATION_OPERATION] = operation()
+    with fence.public_collaboration_projection_context("doc", "operation", "execution"):
+        with pytest.raises(fence.GroupDocumentProjectionConflict):
+            with fence.hold_group_document_projection(store, "doc", "owner"):
+                pytest.fail("A public execution context must not satisfy a group collaboration claim.")
+    assert store.replacements == 0
+
+
+@pytest.mark.parametrize("error", [TimeoutError("fixture"), ServiceResponseError("fixture")])
+def test_public_ambiguous_effect_never_expires_or_releases_its_claim(error):
+    store = PublicConditionalSource()
+    with pytest.raises(type(error)):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            raise error
+    assert store.document[fence.PUBLIC_DOCUMENT_PROJECTION_WRITER]["state"] == "uncertain"
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        fence.assert_no_public_document_projection_writer(store.document)
+    with pytest.raises(fence.GroupDocumentProjectionConflict):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            pytest.fail("Unknown outcome must not admit another public writer.")
+
+
+def test_public_known_service_refusal_releases_claim_without_changing_acl():
+    store = PublicConditionalSource()
+    with pytest.raises(CosmosHttpResponseError):
+        with fence.hold_public_document_projection(store, "doc", "owner"):
+            raise CosmosHttpResponseError(status_code=403, message="Fixture denial")
+    assert fence.PUBLIC_DOCUMENT_PROJECTION_WRITER not in store.document
+    assert store.document["public_marker"] == "kept"
 
 
 if __name__ == "__main__":

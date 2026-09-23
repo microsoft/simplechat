@@ -2,10 +2,12 @@
 """Public-workspace management capability projections; write routes reauthorize.
 
 Public workspaces have no cross-workspace share relationship (that arrives with
-M3C), so these projections describe only owner-scoped management eligibility.
+M3D), so these projections describe only owner-scoped management and
+generated-artifact eligibility.
 """
 
 from content_screening.contracts import SCREENING_FIELD
+from functions_artifact_publication_readiness import PUBLICATION_BINDING
 
 
 PUBLIC_DOCUMENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
@@ -16,12 +18,55 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 PUBLIC_DOCUMENT_MUTABLE_SCREENING_STATES = frozenset({
     "pending_review", "scan_error", "incomplete", "rejected", "deleting",
 })
+# Public workspaces have no cross-workspace share relationship yet (M3D), so the
+# only collaboration operations are the owner-side generated-artifact decisions.
+PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = (
+    "inspect", "approve_artifact", "reject_artifact", "cancel_artifact",
+)
+PUBLIC_DOCUMENT_COLLABORATION_STATUSES = frozenset({"active", "upload_disabled"})
+
+
+def public_document_collaboration_operations(workspace, role, settings):
+    if (
+        role not in (*PUBLIC_DOCUMENT_MANAGER_ROLES, "User")
+        or not settings.get("enable_public_workspaces", False)
+        or workspace.get("status", "active") not in {"active", "locked", "upload_disabled"}
+    ):
+        return []
+    operations = {"inspect"}
+    if workspace.get("status", "active") in PUBLIC_DOCUMENT_COLLABORATION_STATUSES:
+        operations.add("cancel_artifact")
+        if role in PUBLIC_DOCUMENT_MANAGER_ROLES:
+            operations.add("reject_artifact")
+            if workspace.get("status", "active") == "active":
+                operations.add("approve_artifact")
+    return [operation for operation in PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS if operation in operations]
 
 
 def public_document_approval_pending(document):
     promotion_status = document.get("generated_artifact_promotion_status")
     return promotion_status == "pending_approval" or (
         promotion_status is None and str(document.get("status") or "").strip().lower() == "pending approval"
+    )
+
+
+def public_document_has_publication(document):
+    """Single source of truth for whether a public document carries a
+    generated-artifact publication.
+
+    Defined in this lightweight, adapter-free policy layer so both the
+    publication adapter and the read/list projection share one rule. The list
+    path uses it to decide whether to consult the artifact-publication adapter
+    at all, so the adapter import and its per-document Cosmos read stay off the
+    common list path. Keeping one definition prevents the silent drift where a
+    mirror lacks a condition and hides pending approve/reject/cancel from a
+    reviewer behind a plain read-only document.
+    """
+    return bool(
+        public_document_approval_pending(document)
+        or document.get("generated_artifact_promotion_status")
+        or document.get("generated_artifact_publication_receipt_id")
+        or document.get(PUBLICATION_BINDING)
     )
 
 

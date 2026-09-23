@@ -2,7 +2,7 @@
 """
 Ensure immutable-target public document routes cannot match a legacy public route.
 
-Version: 0.261.133
+Version: 0.261.134
 Implemented in: 0.261.132
 
 A mixed deployment must reject an unsupported workspace-bound public URL rather
@@ -42,6 +42,13 @@ MANAGEMENT_REQUESTS = [
     ("POST", "/api/public-workspaces/requested-workspace/documents/bulk-tag"),
 ]
 ALL_REQUESTS = READ_REQUESTS + MANAGEMENT_REQUESTS
+COLLABORATION_REQUESTS = [
+    ("GET", "/api/public-workspaces/requested-workspace/documents/document-id/publication"),
+    ("POST", "/api/public-workspaces/requested-workspace/documents/document-id/artifact/approve"),
+    ("POST", "/api/public-workspaces/requested-workspace/documents/document-id/artifact/reject"),
+    ("POST", "/api/public-workspaces/requested-workspace/documents/document-id/artifact/cancel"),
+]
+ALL_REQUESTS = ALL_REQUESTS + COLLABORATION_REQUESTS
 MANAGEMENT_TEMPLATES = {
     "/api/public-workspaces/<workspace_id>/documents/upload",
     "/api/public-workspaces/<workspace_id>/documents/<document_id>",
@@ -53,6 +60,12 @@ MANAGEMENT_TEMPLATES = {
     "/api/public-workspaces/<workspace_id>/documents/tags",
     "/api/public-workspaces/<workspace_id>/documents/tags/<path:tag_name>",
     "/api/public-workspaces/<workspace_id>/documents/bulk-tag",
+}
+COLLABORATION_TEMPLATES = {
+    "/api/public-workspaces/<workspace_id>/documents/<document_id>/publication",
+    "/api/public-workspaces/<workspace_id>/documents/<document_id>/artifact/approve",
+    "/api/public-workspaces/<workspace_id>/documents/<document_id>/artifact/reject",
+    "/api/public-workspaces/<workspace_id>/documents/<document_id>/artifact/cancel",
 }
 
 
@@ -96,6 +109,14 @@ def test_new_public_management_paths_are_registered_under_the_immutable_prefix()
         if PUBLIC_READ_PREFIX.match(route.path)
     }
     assert MANAGEMENT_TEMPLATES <= new_paths
+
+
+def test_new_public_collaboration_paths_are_registered_under_the_immutable_prefix():
+    new_paths = {
+        route.path for route in iter_route_functions()
+        if PUBLIC_READ_PREFIX.match(route.path)
+    }
+    assert COLLABORATION_TEMPLATES <= new_paths
 
 
 if __name__ == "__main__":

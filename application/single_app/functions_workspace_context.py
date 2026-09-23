@@ -29,7 +29,10 @@ from functions_settings import (
 )
 from functions_workspace_branding import get_workspace_logo_metadata, normalize_workspace_hero_color
 from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
-from functions_public_document_policy import public_document_management_operations
+from functions_public_document_policy import (
+    public_document_collaboration_operations,
+    public_document_management_operations,
+)
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
@@ -316,6 +319,10 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
                 workspace, role, settings,
                 download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
             ),
+        },
+        "document_collaboration": {
+            "schema_version": 1,
+            "operations": public_document_collaboration_operations(workspace, role, settings),
         },
         "document_queries": {
             "sort_fields": [

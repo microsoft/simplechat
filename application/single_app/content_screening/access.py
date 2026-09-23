@@ -69,6 +69,8 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
     "group_document_projection_writer",
     "group_document_collaboration_operation", "document_share_details",
+    "public_document_projection_writer",
+    "public_document_collaboration_operation",
     # Recomputed per request from current authorization, so a stored copy is
     # always stale. The group projection re-adds them after serialization.
     "document_actions", "document_collaboration_actions",
