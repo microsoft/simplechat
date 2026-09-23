@@ -169,6 +169,10 @@ def environment(monkeypatch):
         "merge_global_semantic_kernel_with_workspace": False,
         "require_owner_for_group_agent_management": False,
         "enable_key_vault_secret_storage": False,
+        "enable_key_vault_secret_expiration_reminders": True,
+        "key_vault_secret_expiration_require_expiration": True,
+        "key_vault_secret_expiration_default_lead_days": 45,
+        "key_vault_secret_expiration_default_contact_email": "kv@example.com",
     }
     with monkeypatch.context() as scoped:
         scoped.syspath_prepend(str(APP_ROOT))
@@ -201,6 +205,7 @@ def environment(monkeypatch):
             "functions_settings",
             get_settings=lambda: settings,
             enabled_required=settings_namespace["enabled_required"],
+            sanitize_settings_for_user=lambda data: data,
         ))
 
         # --- chat bootstrap cache seam ------------------------------------
@@ -315,6 +320,7 @@ def environment(monkeypatch):
             "create_group_action": access.create_group_action,
             "delete_group_action": access.delete_group_action,
             "get_group_action": access.get_group_action,
+            "get_group_action_options": access.get_group_action_options,
             "group_action_error_response": access.group_action_error_response,
             "list_group_actions": access.list_group_actions,
             "require_group_action_types_context": access.require_group_action_types_context,
@@ -619,6 +625,82 @@ def test_types_are_refused_to_non_members_and_inactive_groups(environment):
 
 
 # --------------------------------------------------------------------------
+# Action options: tenant Key Vault reminder defaults (a read capability, §9.2)
+# --------------------------------------------------------------------------
+
+OPTIONS_PATH = "/api/groups/group-a/action-options"
+REMINDER_KEYS = {"storage_enabled", "reminders_enabled", "require_expiration", "lead_days", "contact_email"}
+
+
+@pytest.mark.parametrize("role", READER_ROLES)
+def test_action_options_offered_to_every_member_role(environment, role):
+    # The group editor reads only these five reminder defaults here, so the surface
+    # is a read capability gated like the list, not a personal agent-settings read.
+    as_user(environment, ROLE_USER[role])
+    response = environment.client.get(OPTIONS_PATH)
+    assert response.status_code == 200
+    assert response.headers.get("Cache-Control") == "no-store"
+    reminders = response.get_json()["secret_reminders"]
+    assert set(reminders) == REMINDER_KEYS
+    # The block carries no allow_user_* key or any other option leakage.
+    assert not any(key.startswith("allow_user_") for key in reminders)
+    assert reminders["reminders_enabled"] is True
+    assert reminders["require_expiration"] is True
+    assert reminders["lead_days"] == 45
+    assert reminders["contact_email"] == "kv@example.com"
+
+
+def test_action_options_refused_to_non_members(environment):
+    as_user(environment, "stranger")
+    assert environment.client.get(OPTIONS_PATH).status_code == 403
+
+
+def test_action_options_refused_for_inactive_group(environment):
+    as_user(environment, "owner")
+    assert environment.client.get("/api/groups/inactive-grp/action-options").status_code == 403
+
+
+def test_action_options_refused_when_unavailable(environment):
+    environment.settings["allow_group_plugins"] = False
+    as_user(environment, "owner")
+    assert environment.client.get(OPTIONS_PATH).status_code == 403
+
+
+def test_action_options_readable_for_locked_and_upload_disabled(environment):
+    as_user(environment, "owner")
+    assert environment.client.get("/api/groups/locked-grp/action-options").status_code == 200
+    assert environment.client.get("/api/groups/upload-disabled-grp/action-options").status_code == 200
+
+
+def test_action_options_lead_days_is_clamped(environment):
+    as_user(environment, "owner")
+    environment.settings["key_vault_secret_expiration_default_lead_days"] = 99999
+    high = environment.client.get(OPTIONS_PATH).get_json()["secret_reminders"]
+    assert high["lead_days"] == 3650
+    environment.settings["key_vault_secret_expiration_default_lead_days"] = 0
+    low = environment.client.get(OPTIONS_PATH).get_json()["secret_reminders"]
+    assert low["lead_days"] == 1
+    environment.settings["key_vault_secret_expiration_default_lead_days"] = "not-a-number"
+    fallback = environment.client.get(OPTIONS_PATH).get_json()["secret_reminders"]
+    assert fallback["lead_days"] == 30
+
+
+def test_action_options_contact_email_is_capped(environment):
+    as_user(environment, "owner")
+    environment.settings["key_vault_secret_expiration_default_contact_email"] = "a" * 500
+    reminders = environment.client.get(OPTIONS_PATH).get_json()["secret_reminders"]
+    assert len(reminders["contact_email"]) == 254
+
+
+def test_action_options_rejects_query_and_body(environment):
+    as_user(environment, "owner")
+    assert environment.client.get(f"{OPTIONS_PATH}?view=editor").status_code == 400
+    assert environment.client.get(
+        OPTIONS_PATH, data=b"{}", content_type="application/json",
+    ).status_code == 400
+
+
+# --------------------------------------------------------------------------
 # Global merge (read-only)
 # --------------------------------------------------------------------------
 
@@ -727,7 +809,13 @@ def test_management_projection_is_empty_when_unavailable(environment):
 def test_context_and_routes_call_the_same_availability_predicate():
     # Pin that the context section and the routes both resolve availability through
     # group_actions_available, so the two can never drift (like the publication pin).
-    import functions_group_action_policy as policy
+    # Load the policy module from APP_ROOT rather than a bare import so this passes
+    # without application/single_app on sys.path, as the rest of the suite does.
+    spec = importlib.util.spec_from_file_location(
+        "functions_group_action_policy", APP_ROOT / "functions_group_action_policy.py",
+    )
+    policy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
     source = (APP_ROOT / "functions_group_action_access.py").read_text(encoding="utf-8")
     context_source = (APP_ROOT / "functions_workspace_context.py").read_text(encoding="utf-8")
     assert hasattr(policy, "group_actions_available")

@@ -12,7 +12,9 @@ referenced a saved group action, while a group edit needs Owner/Admin (Owner
 only when ``require_owner_for_group_agent_management`` is set). This pins the
 narrowed policy on both saved-group branches, so a later change cannot re-widen
 a saved-action test back to ordinary members. The transient no-saved-action
-branch keeps the four-role set on purpose and is asserted separately.
+branch is likewise narrowed to the edit roles (M4 §9.1), because its four callers
+hydrate a group identity's stored credentials, and that narrowing is asserted
+separately.
 """
 
 import ast
@@ -70,8 +72,15 @@ def test_load_existing_plugin_group_branch_requires_edit_roles():
     assert READER_TUPLE_MARKER not in segment
 
 
-def test_transient_group_identity_branch_keeps_four_role_reader_set():
-    """A test that does not reference a saved action keeps the four-role default."""
+def test_transient_group_identity_branch_requires_edit_roles():
+    """A transient group test (no saved action, no group_id) requires the edit roles.
+
+    All four callers of this branch hydrate a group identity's stored credentials
+    with ``SecretReturnType.VALUE``, and members can read an ``identity_id``, so a
+    reader must not be able to trigger one (M4 §9.1). The legacy no-``group_id``
+    branch now gates on the owner-only setting exactly as the saved branch does,
+    never on the four-role reader set.
+    """
     # The no-existing-plugin group branch follows the existing-plugin handling and
     # precedes the global branch that ends the requested-scope resolution.
     segment = _segment(
@@ -80,7 +89,8 @@ def test_transient_group_identity_branch_keeps_four_role_reader_set():
         'if requested_scope == "global":',
     )
     assert "assert_group_role" in segment
-    assert READER_TUPLE_MARKER in segment
+    assert OWNER_ONLY_SETTING in segment
+    assert READER_TUPLE_MARKER not in segment
 
 
 if __name__ == "__main__":

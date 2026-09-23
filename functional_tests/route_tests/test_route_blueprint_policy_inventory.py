@@ -153,6 +153,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_list"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_create"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_types"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_action_options"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_actions_scoped.py", "api_scoped_group_action_read"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_actions_scoped.py", "api_scoped_group_action_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_actions_scoped.py", "api_scoped_group_action_delete"): ("login_required", "user_required", "enabled_required"),

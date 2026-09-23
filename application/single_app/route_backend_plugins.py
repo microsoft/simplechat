@@ -851,13 +851,15 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
             target_group = _resolve_group_for_test(user_id, requested_group_id)
         else:
             # Legacy transient group test (V1 sends no group_id): the active group,
-            # with the four-role reader set that predates the V2 tightening.
+            # with the Owner/Admin (Owner-only when governed) edit roles a group
+            # test needs. Members can read an identity_id, and all four callers that
+            # reach this branch hydrate that identity's stored credentials with
+            # SecretReturnType.VALUE, so a reader must not be able to trigger one
+            # (M4 §9.1). Classic only reaches these callers inside the editor.
             target_group = require_active_group(user_id)
-            assert_group_role(
-                user_id,
-                target_group,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
+            app_settings = get_settings()
+            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+            assert_group_role(user_id, target_group, allowed_roles=allowed_roles)
         return WORKSPACE_IDENTITY_SCOPE_GROUP, target_group
     if requested_scope == "global":
         if requested_group_id:

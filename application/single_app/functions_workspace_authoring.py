@@ -794,10 +794,12 @@ def read_group_merged_global_record(user_id, group_id, record_id, settings):
 
     Provided (global) rows appear in a group listing only while the global merge
     setting is on; this backs the single-record view onto one of them. It raises
-    ``LookupError`` — mapped to 404 — when merge is off, the id is not a global
-    action, or governance denies it, so a group route never opens onto a resource
-    the list would not have shown. ``group_id`` is validated by the caller's read
-    context; it is unused here because a global action has no group partition.
+    ``LookupError`` — mapped to 404 — when merge is off, the id is unknown, or the
+    action is disabled, so a group route never opens onto a resource the list
+    would not have shown. A governance denial surfaces as ``PermissionError`` —
+    mapped to 403 — from ``ensure_global_action_access``, matching the personal
+    ``scope=global`` read. ``group_id`` is validated by the caller's read context;
+    it is unused here because a global action has no group partition.
     """
     if not settings.get("merge_global_semantic_kernel_with_workspace", False):
         raise LookupError("This resource is unavailable.")
@@ -1179,6 +1181,31 @@ def personal_editor_response(kind, user_id, prepare, record_id=None, *, migrate=
         return editor_error_response(exc)
 
 
+def build_secret_reminder_defaults(settings):
+    """The tenant-level Key Vault reminder defaults both editor option builders share.
+
+    ``lead_days`` is clamped to 1..3650 with a default of 30, ``contact_email`` is
+    capped at 254 characters, and the whole block passes through
+    ``sanitize_settings_for_user``. The keys contain "secret"/"key", but every
+    value here is a UI flag or default, never a credential. This is the single
+    source of truth for the group ``/action-options`` route and the personal
+    ``build_agent_editor_options`` block, so the two surfaces cannot drift.
+    """
+    settings_module = import_module("functions_settings")
+    try:
+        lead_days = min(3650, max(1, int(settings.get("key_vault_secret_expiration_default_lead_days", 30))))
+    except (ValueError, TypeError):
+        lead_days = 30
+    contact = settings.get("key_vault_secret_expiration_default_contact_email", "")
+    return settings_module.sanitize_settings_for_user({
+        "storage_enabled": bool(settings.get("enable_key_vault_secret_storage", False)),
+        "reminders_enabled": bool(settings.get("enable_key_vault_secret_expiration_reminders", False)),
+        "require_expiration": bool(settings.get("key_vault_secret_expiration_require_expiration", False)),
+        "lead_days": lead_days,
+        "contact_email": contact[:254] if isinstance(contact, str) else "",
+    })
+
+
 def build_agent_editor_options(user_id, settings, model_endpoints):
     can_manage_agents = ensure_editor_options_access(user_id, settings)
     settings_module = import_module("functions_settings")
@@ -1200,18 +1227,7 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
         {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
     ).get("model_endpoints", [])
     # These names contain "key"/"secret", but their values are strictly UI flags/defaults.
-    try:
-        reminder_lead_days = min(3650, max(1, int(settings.get("key_vault_secret_expiration_default_lead_days", 30))))
-    except (ValueError, TypeError):
-        reminder_lead_days = 30
-    reminder_contact = settings.get("key_vault_secret_expiration_default_contact_email", "")
-    reminder_options = settings_module.sanitize_settings_for_user({
-        "storage_enabled": bool(settings.get("enable_key_vault_secret_storage", False)),
-        "reminders_enabled": bool(settings.get("enable_key_vault_secret_expiration_reminders", False)),
-        "lead_days": reminder_lead_days,
-        "contact_email": reminder_contact[:254] if isinstance(reminder_contact, str) else "",
-        "require_expiration": bool(settings.get("key_vault_secret_expiration_require_expiration", False)),
-    })
+    reminder_options = build_secret_reminder_defaults(settings)
     safe.update({
         "enable_key_vault_secret_storage": reminder_options["storage_enabled"],
         "enable_key_vault_secret_expiration_reminders": reminder_options["reminders_enabled"],
