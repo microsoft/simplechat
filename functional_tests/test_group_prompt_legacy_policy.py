@@ -83,8 +83,12 @@ def resolver(monkeypatch):
         route_namespace = {
             "jsonify": jsonify,
             "require_active_group": group_namespace["require_active_group"],
+            "GROUP_PROMPT_MEMBER_ROLES": ("Owner", "Admin", "DocumentManager", "User"),
+            "GROUP_PROMPT_WRITE_ROLES": MANAGER_ROLES,
         }
-        execute_functions(LEGACY_FILE, {"_get_active_group_or_error"}, route_namespace)
+        execute_functions(
+            LEGACY_FILE, {"_get_active_group_or_error", "_is_active_group_member"}, route_namespace,
+        )
         helper = route_namespace["_get_active_group_or_error"]
 
         app = Flask("legacy_group_prompt_policy")
@@ -123,6 +127,38 @@ def test_manager_roles_pass_the_write_gate(resolver, role):
 
 def test_user_is_refused_the_write_gate(resolver):
     assert _status(resolver("member", allowed_roles=MANAGER_ROLES)) == 403
+
+
+def _message(result):
+    _group_id, error = result
+    return error[0].get_json()["error"]
+
+
+def test_a_member_refused_a_write_is_told_it_is_a_role_problem(resolver):
+    """Tightening the writes made a new 403 reachable by members.
+
+    Before the fix, members could never be refused here, so the helper's
+    single "not a member" message was never shown to one. Now a member who
+    lacks the role would be told they are not a member, which is false and
+    sends them looking for a membership problem that does not exist.
+    """
+    message = _message(resolver("member", allowed_roles=MANAGER_ROLES))
+
+    assert "not a member" not in message
+    assert "owners, admins, and document managers" in message
+
+
+def test_a_non_member_is_still_told_they_are_not_a_member(resolver):
+    """The role message must not leak to someone outside the group."""
+    message = _message(resolver("stranger", allowed_roles=MANAGER_ROLES))
+
+    assert message == "You are not a member of the active group"
+
+
+def test_a_non_member_read_keeps_the_original_message(resolver):
+    message = _message(resolver("stranger"))
+
+    assert message == "You are not a member of the active group"
 
 
 @pytest.mark.parametrize("role", ("Owner", "Admin", "DocumentManager", "User"))
