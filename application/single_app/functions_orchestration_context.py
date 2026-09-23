@@ -51,6 +51,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_schema import validate_elicitation_response
 from functions_prompt_metadata import build_prompt_selection_metadata
+from functions_model_catalog import ModelCatalogError
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -150,6 +151,11 @@ def resolve_seeds(request_data):
         for key in ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
         if _text(request_data.get(key))
     }
+    routing = request_data.get('model_routing', 'manual')
+    if routing not in ('manual', 'auto'):
+        raise ModelCatalogError("Choose Auto or a specific model.", "model_routing")
+    if routing == 'auto' and model:
+        raise ModelCatalogError("Auto cannot be combined with a pinned model.", "model_routing")
 
     prompt = request_data.get('prompt_info')
     prompt = prompt if isinstance(prompt, dict) else None
@@ -172,6 +178,7 @@ def resolve_seeds(request_data):
             document_labels[document_id] = label
 
     return {
+        **({'model_routing': 'auto'} if routing == 'auto' else {}),
         'document_ids': document_ids,
         'document_labels': document_labels,
         'doc_scope': _text(request_data.get('doc_scope')) or 'all',
@@ -1143,6 +1150,8 @@ def normalize_history_message(message):
     if (
         metadata.get('masked')
         or metadata.get('is_generated_chat_artifact')
+        or (metadata.get('chat_content_checks') or {}).get('decision') == 'block'
+        or (metadata.get('content_moderation') or {}).get('removed') is True
         or thread.get('active_thread') is False
     ):
         return None

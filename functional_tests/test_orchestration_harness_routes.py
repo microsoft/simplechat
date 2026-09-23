@@ -1,9 +1,10 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.129
+Version: 0.261.131
 Implemented in: 0.261.127
 Initial-claim timing coverage added in: 0.261.129
+Auto-routing admission and content-review file visibility added in: 0.261.131
 
 Only external settings/storage I/O is replaced. The production Flask routes,
 Blueprint guards, result services and shared format registry run unchanged.
@@ -1414,10 +1415,12 @@ def test_v2_run_projection_does_not_hide_backend_outage_as_empty_outputs(retry_r
 
 def test_headless_stream_emits_progress_then_one_terminal_frame(modules):
     execution = Mock()
+    progress = modules.route.serialize_sse({"type": "thought", "content": "progress"})
+    complete = modules.route.serialize_sse({"done": True, "status": "completed"})
 
     def execute(emit):
-        emit("data: progress\n\n")
-        return ["data: complete\n\n"]
+        emit(progress)
+        return [complete]
 
     execution.execute.side_effect = execute
     response = modules.route._stream_harness_execution(
@@ -1425,8 +1428,32 @@ def test_headless_stream_emits_progress_then_one_terminal_frame(modules):
     )
     frames = list(response.response)
     response.close()
-    assert frames == ["data: progress\n\n", "data: complete\n\n"]
+    assert frames == [progress, complete]
     assert execution.execute.call_count == 1
+    execution.close.assert_called_once()
+
+
+def test_headless_stream_withholds_progress_until_the_checked_reply(modules):
+    execution = Mock()
+    progress = modules.route.serialize_sse({"type": "thought", "content": "unchecked progress"})
+    complete = modules.route.serialize_sse({
+        "done": True, "status": "completed", "metadata": {"chat_content_checks": {"status": "passed"}},
+    })
+
+    def execute(emit):
+        emit(progress)
+        return [complete]
+
+    execution.execute.side_effect = execute
+    response = modules.route._stream_harness_execution(
+        execution, run_id="run", conversation_id="conversation", settings={
+            "enable_content_screening": True, "enable_content_screening_chat_output": True,
+            "chat_content_output_mode": "check_before_display",
+        },
+    )
+    frames = list(response.response)
+    response.close()
+    assert frames == [modules.route.serialize_sse({"done": True, "status": "completed", "metadata": {}})]
     execution.close.assert_called_once()
 
 
@@ -1460,14 +1487,15 @@ def test_headless_worker_keeps_running_after_browser_disconnect(modules):
     continue_work = threading.Event()
     closed = threading.Event()
     finished_work = []
+    progress = modules.route.serialize_sse({"type": "thought", "content": "progress"})
 
     def execute(emit):
-        emit("data: progress\n\n")
+        emit(progress)
         if not continue_work.wait(timeout=5):
             raise RuntimeError("The test did not release its worker.")
         finished_work.append("committed")
-        emit("data: later progress\n\n")
-        return ["data: complete\n\n"]
+        emit(modules.route.serialize_sse({"type": "thought", "content": "later progress"}))
+        return [modules.route.serialize_sse({"done": True, "status": "completed"})]
 
     execution.execute.side_effect = execute
     execution.close.side_effect = closed.set
@@ -1483,7 +1511,7 @@ def test_headless_worker_keeps_running_after_browser_disconnect(modules):
     finally:
         continue_work.set()
         worker_closed = closed.wait(timeout=5)
-    assert first == "data: progress\n\n"
+    assert first == progress
     assert not closed_on_disconnect
     assert worker_closed
     assert finished_work == ["committed"]
@@ -1518,3 +1546,64 @@ with offline_app_imports() as environment:
     command = [sys.executable, *(["-O"] if optimized else []), "-c", script]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_auto_model_routing_keeps_new_plans_on_the_enforcing_executor(modules):
+    enabled = {"enable_chat_orchestration": True, "enable_chat_orchestration_harness": True}
+    assert modules.route._new_plan_contract_version(enabled, {}) == 2
+    assert modules.route._new_plan_contract_version(enabled, {"model_routing": "auto"}) == 1
+    assert modules.route._new_plan_contract_version(
+        {**enabled, "enable_chat_orchestration_harness": False}, {},
+    ) == 1
+
+
+def test_removed_harness_reply_hides_run_files_from_history(real_http_harness, monkeypatch):
+    runtime = real_http_harness
+    harness = runtime.harness
+    checks = importlib.import_module("functions_chat_content_checks")
+    policies = importlib.import_module("content_screening.policies")
+    policy = policies.default_policy()
+    policy["enabled"] = True
+    policy["rules"] = [deepcopy(policies.STARTER_RULE_TEMPLATES["email"])]
+    harness.settings.update({
+        "enable_content_screening": True, "enable_content_screening_chat_output": True,
+    })
+
+    def evaluate(text, checkpoint, *, user_id, settings=None, required_scanners=None):
+        return checks.evaluate_chat_content(
+            text, checkpoint, settings if settings is not None else harness.settings,
+            baseline_loader=lambda: policy, required_scanners=required_scanners,
+        )
+
+    monkeypatch.setattr(checks, "check_chat_content", evaluate)
+    record = harness.create(
+        [compose_step(), render_step("report", "md")],
+        replies=["The complete retained report."], final_response=input_binding("prepare"),
+    )
+    executed = runtime.client.post("/api/v2/orchestration/run", json={
+        "run_id": record["id"], "conversation_id": "conversation-1",
+    }, buffered=True)
+    saved = harness.read()
+    before = runtime.client.get(
+        f"/api/v2/orchestration/runs/{record['id']}", query_string={"conversation_id": "conversation-1"},
+    ).get_json()["run"]
+    message = harness.messages.read_item(saved["assistant_message_id"], "conversation-1")
+    decision = checks.ChatContentDecision("chat_output", "findings", "block", {
+        "schema_version": 1, "checkpoint": "chat_output", "origin": "assistant", "status": "findings",
+        "complete": True, "decision": "block", "attempted_at": "2026-09-23T12:00:00+00:00", "scanners": [],
+    }, checks.REMOVED_REPLY_MESSAGE)
+    harness.messages.upsert_item(checks.retract_message_content(message, decision))
+    after = runtime.client.get(
+        f"/api/v2/orchestration/runs/{record['id']}", query_string={"conversation_id": "conversation-1"},
+    ).get_json()["run"]
+    listed = runtime.client.get(
+        "/api/v2/orchestration/runs", query_string={"conversation_id": "conversation-1"},
+    ).get_json()
+
+    assert executed.status_code == 200 and saved["chat_content_checked_output"] is True
+    assert len(before["outputs"]) == len(before["generated_artifacts"]) == before["artifact_count"] == 1
+    assert after["outputs"] == [] and after["generated_artifacts"] == [] and after["artifact_count"] == 0
+    rows = [row for row in listed["runs"] if row["run_id"] == record["id"]]
+    assert rows and rows[0]["outputs"] == [] and rows[0]["artifact_count"] == 0
+    assert checks.CHECK_METADATA not in json.dumps([before, after, listed])
+    assert harness.blobs.file_uploads == 1 and len(harness.model_calls) == 1

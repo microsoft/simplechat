@@ -12,6 +12,8 @@ from content_screening.contracts import ScreeningError
 from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
 from config import *
 from functions_appinsights import log_event
+from functions_chat_content_checks import attach_chat_check, check_chat_content, strip_private_chat_checks
+from functions_chat_content_review import patch_chat_message_metadata, record_blocked_chat_attempt
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
@@ -49,7 +51,7 @@ from functions_conversation_cache import (
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
 from functions_message_image_revisions import resolve_served_revision
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
-from flask import Response, request, stream_with_context
+from flask import Response, current_app, request, stream_with_context
 from functions_debug import debug_print
 from functions_documents import (
     delete_chat_upload_workspace_documents_for_conversation,
@@ -1063,6 +1065,12 @@ def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, ne
 
 
 def register_route_backend_conversations(bp):
+    @bp.after_request
+    def public_conversation_json_response(response):
+        if response.is_json:
+            response.set_data(current_app.json.dumps(strip_private_chat_checks(response.get_json())))
+        return response
+
 
     @bp.route('/api/get_messages', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -2865,7 +2873,7 @@ def register_route_backend_conversations(bp):
                         subsequent_msg['metadata']['thread_info']['previous_thread_id'] = thread_previous_id
                         
                         # Upsert the updated message
-                        cosmos_messages_container.upsert_item(subsequent_msg)
+                        patch_chat_message_metadata(cosmos_messages_container, subsequent_msg)
                         print(f"Repaired thread chain: Message {subsequent_msg['id']} now points to thread {thread_previous_id}")
                 else:
                     messages_to_delete = [message_doc]
@@ -2924,7 +2932,7 @@ def register_route_backend_conversations(bp):
                             if 'thread_info' not in msg_to_activate['metadata']:
                                 msg_to_activate['metadata']['thread_info'] = {}
                             msg_to_activate['metadata']['thread_info']['active_thread'] = True
-                            cosmos_messages_container.upsert_item(msg_to_activate)
+                            patch_chat_message_metadata(cosmos_messages_container, msg_to_activate)
                         
                         print(f"Promoted thread_attempt {next_attempt_number} to active after deleting active thread {thread_id}")
             
@@ -2949,13 +2957,14 @@ def register_route_backend_conversations(bp):
                     msg['metadata']['masked_by_user_id'] = user_id
                     msg['metadata']['masked_timestamp'] = datetime.utcnow().isoformat()
                     
-                    # Archive the message
+                    msg = patch_chat_message_metadata(cosmos_messages_container, msg, fields=(
+                        "is_deleted", "deleted_by_user_id", "deleted_timestamp",
+                        "masked", "masked_by_user_id", "masked_timestamp",
+                    ))
                     archived_msg = dict(msg)
                     archived_msg['archived_at'] = datetime.utcnow().isoformat()
                     cosmos_archived_messages_container.upsert_item(archived_msg)
                     
-                    # Update the message in the main container (for conversation history exclusion)
-                    cosmos_messages_container.upsert_item(msg)
                 else:
                     # Permanently delete the message
                     cosmos_messages_container.delete_item(msg_id, partition_key=conversation_id)
@@ -3040,6 +3049,27 @@ def register_route_backend_conversations(bp):
             
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
+
+            user_msg_results = list(cosmos_messages_container.query_items(
+                query=(
+                    "SELECT TOP 1 * FROM c WHERE c.conversation_id = @conversation "
+                    "AND c.metadata.thread_info.thread_id = @thread AND c.role = 'user' "
+                    "ORDER BY c.metadata.thread_info.thread_attempt ASC"
+                ),
+                parameters=[
+                    {"name": "@conversation", "value": conversation_id},
+                    {"name": "@thread", "value": thread_id},
+                ],
+                partition_key=conversation_id,
+            ))
+            if not user_msg_results:
+                return jsonify({"error": "User message not found in thread"}), 404
+            original_user_msg = user_msg_results[0]
+            user_content = original_user_msg.get("content", "")
+            input_check = check_chat_content(user_content, "chat_input", user_id=user_id)
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, user_id, conversation_id)
+                return jsonify({"error": input_check.notice, "blocked": True}), 422
             
             # Find current max thread_attempt for this thread_id
             attempt_query = f"""
@@ -3079,30 +3109,11 @@ def register_route_backend_conversations(bp):
                 if 'thread_info' not in msg['metadata']:
                     msg['metadata']['thread_info'] = {}
                 msg['metadata']['thread_info']['active_thread'] = False
-                cosmos_messages_container.upsert_item(msg)
+                patch_chat_message_metadata(cosmos_messages_container, msg)
                 
                 print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
             
-            # Find the original user message in this thread to get the content
-            # Get the FIRST user message in this thread (attempt=1) to ensure we get the original content
-            user_msg_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
-            user_msg_results = list(cosmos_messages_container.query_items(
-                query=user_msg_query,
-                partition_key=conversation_id
-            ))
-            
-            if not user_msg_results:
-                return jsonify({'error': 'User message not found in thread'}), 404
-            
             # Get the first user message (attempt 1) to get original content and metadata
-            original_user_msg = user_msg_results[0]
-            user_content = original_user_msg.get('content', '')
             original_metadata = original_user_msg.get('metadata', {})
             original_thread_info = original_metadata.get('thread_info', {})
             
@@ -3142,6 +3153,7 @@ def register_route_backend_conversations(bp):
                 'model_deployment_name': None,
                 'metadata': new_metadata
             }
+            attach_chat_check(new_user_message, input_check)
             cosmos_messages_container.upsert_item(new_user_message)
 
             _rebuild_authorized_personal_conversation_used_documents(
@@ -3258,6 +3270,11 @@ def register_route_backend_conversations(bp):
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only edit your own messages'}), 403
+
+            input_check = check_chat_content(edited_content, "chat_input", user_id=user_id)
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, user_id, conversation_id)
+                return jsonify({"error": input_check.notice, "blocked": True}), 422
             
             # Get thread info from original message
             thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
@@ -3304,7 +3321,7 @@ def register_route_backend_conversations(bp):
                 if 'thread_info' not in msg['metadata']:
                     msg['metadata']['thread_info'] = {}
                 msg['metadata']['thread_info']['active_thread'] = False
-                cosmos_messages_container.upsert_item(msg)
+                patch_chat_message_metadata(cosmos_messages_container, msg)
                 
                 print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
             
@@ -3365,6 +3382,7 @@ def register_route_backend_conversations(bp):
                 'model_deployment_name': None,
                 'metadata': new_metadata
             }
+            attach_chat_check(new_user_message, input_check)
             cosmos_messages_container.upsert_item(new_user_message)
 
             _rebuild_authorized_personal_conversation_used_documents(
@@ -3533,7 +3551,7 @@ def register_route_backend_conversations(bp):
                 
                 msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
                 msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
-                cosmos_messages_container.upsert_item(msg)
+                patch_chat_message_metadata(cosmos_messages_container, msg)
 
             _rebuild_authorized_personal_conversation_used_documents(
                 user_id,

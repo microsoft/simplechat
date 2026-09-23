@@ -148,9 +148,20 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
  * partial step still arrives as something the card can render, with a status the runtime can
  * key on, rather than as `undefined` reaching a component mid-run.
  */
+export function normalizeModelBinding(raw: unknown): OrchestrationStep['model_binding'] {
+    const binding = asRecord(raw);
+    if (typeof binding.label !== 'string') return undefined;
+    return {
+        label: binding.label,
+        reason: asString(binding.reason),
+        profile_id: asString(binding.profile_id),
+    };
+}
+
 export function normalizeStep(raw: unknown, index = 0, contractVersion = 1): OrchestrationStep {
     const source = asRecord(raw);
     return {
+        model_binding: normalizeModelBinding(source.model_binding),
         step_id: asString(source.step_id) || `step_${index + 1}`,
         capability_id: asString(source.capability_id),
         title: asString(source.title),

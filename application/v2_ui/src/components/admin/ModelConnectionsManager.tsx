@@ -74,6 +74,7 @@ import {
     type ModelConnection,
 } from '../../lib/modelConnections';
 import { AdminModal } from './AdminModal';
+import { CatalogProfilePicker } from './ModelCatalogManager';
 import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
@@ -1194,6 +1195,15 @@ function ConnectionEditor({
                                         }}
                                     />
                                 </label> : null}
+                                <CatalogProfilePicker
+                                    value={model.catalogProfileId}
+                                    onChange={(catalogProfileId) => setModels(models.map((item, at) => {
+                                        if (at !== index) return item;
+                                        const next = { ...item, catalogProfileId };
+                                        delete next.capability_status;
+                                        return next;
+                                    }))}
+                                />
                                 <ModelCapabilities
                                     model={model}
                                     connection={draft}

@@ -1,7 +1,7 @@
 # classic_ai_connections_admin.py
 """
 Classic admin panes with real local scripts and a closed capability API boundary.
-Version: 0.261.108
+Version: 0.261.125
 Implemented in: 0.261.105; embeddings added in 0.261.106
 """
 
@@ -81,7 +81,7 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
         else:
             super()._route(route)
 
-    def open(self, width=1440):
+    def open(self, width=1440, *, wait_until="networkidle"):
         self.page.set_viewport_size({"width": width, "height": 1100})
         self.page.add_init_script(
             "window.modelEndpoints = " + json.dumps([self.editor_endpoint(endpoint) for endpoint in self.endpoints]) + ";"
@@ -91,7 +91,7 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
             "window.embeddingSelected = " + json.dumps(self.settings.get("embedding_model", {}).get("selected", [])) + ";"
             "window.embeddingAll = " + json.dumps(self.settings.get("embedding_model", {}).get("all", [])) + ";"
         )
-        self.page.goto(f"{ORIGIN}/classic-admin", wait_until="networkidle")
+        self.page.goto(f"{ORIGIN}/classic-admin", wait_until=wait_until)
         expect(self.page.locator("#model-endpoints-wrapper")).to_be_visible()
         expect(self.page.get_by_label("Default image model", exact=True)).to_be_enabled()
         expect(self.page.get_by_label("Default embedding model", exact=True)).to_be_enabled()

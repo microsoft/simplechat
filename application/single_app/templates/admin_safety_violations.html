@@ -192,6 +192,55 @@
 
   <div id="safetyPageStatusAlert" class="alert d-none mb-3" role="status" aria-live="polite"></div>
 
+  <section class="surface-card mb-4" id="unchecked-chat-content" aria-labelledby="unchecked-chat-heading">
+    <h3 class="h5" id="unchecked-chat-heading">Unchecked chat content</h3>
+    <p class="text-body-secondary">
+      These messages were allowed through when a required check could not finish. Users are not shown
+      a technical warning. Rechecking uses the current rules and automatically removes AI replies with
+      confirmed findings from saved and shared chat. It cannot undo earlier views or external actions.
+    </p>
+    <div class="row g-3 align-items-end mb-3">
+      <div class="col-sm-4 col-lg-3">
+        <label for="uncheckedChatSource" class="form-label">Conversation source</label>
+        <select class="form-select" id="uncheckedChatSource">
+          <option value="all">All sources</option>
+          <option value="chat">Chat and canonical AI messages</option>
+          <option value="shared">Shared user messages</option>
+        </select>
+      </div>
+      <div class="col-sm-4 col-lg-3">
+        <label for="uncheckedChatCheckpoint" class="form-label">Message type</label>
+        <select class="form-select" id="uncheckedChatCheckpoint">
+          <option value="">All message types</option>
+          <option value="chat_input">Submitted messages</option>
+          <option value="chat_output">AI replies</option>
+        </select>
+      </div>
+      <div class="col-sm-4 col-lg-3">
+        <label for="uncheckedChatScanner" class="form-label">Incomplete scanner</label>
+        <select class="form-select" id="uncheckedChatScanner">
+          <option value="">All scanners</option>
+          <option value="content_screening">Content Screening</option>
+          <option value="content_safety">Azure Content Safety</option>
+        </select>
+      </div>
+      <div class="col-lg-3">
+        <button type="button" class="btn btn-outline-primary" id="refreshUncheckedChat">Refresh unchecked messages</button>
+      </div>
+    </div>
+    <div class="alert d-none" id="uncheckedChatStatus" role="status" aria-live="polite"></div>
+    <div class="table-responsive">
+      <table class="table align-middle" id="uncheckedChatTable">
+        <caption>Private check metadata, grouped by source. Message bodies are not copied into this list.</caption>
+        <thead>
+          <tr><th scope="col">Message</th><th scope="col">Type</th><th scope="col">Incomplete checks</th><th scope="col">Last attempt</th><th scope="col">Action</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <button type="button" class="btn btn-outline-secondary d-none" id="moreUncheckedChat">Load more unchecked messages</button>
+  </section>
+
   <ul class="nav nav-tabs violations-nav-tabs mb-3" id="safetyViolationTabs" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="safety-stats-tab" data-bs-toggle="tab" data-bs-target="#safety-stats-pane" type="button" role="tab" aria-controls="safety-stats-pane" aria-selected="true">
@@ -477,8 +526,27 @@
     </div>
   </div>
 </div>
+<div class="modal fade" id="chatCheckConfirmModal" tabindex="-1" aria-labelledby="chatCheckConfirmTitle" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 class="modal-title h5" id="chatCheckConfirmTitle">Recheck this message?</h4>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        Use the current rules to check this message again. An AI reply with confirmed findings will be
+        removed from saved and shared chat. A checker outage leaves the message available and marked for another attempt.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-warning" id="confirmChatRecheck">Recheck and apply rules</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/admin-safety-violations.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin/admin-chat-content-checks.js') }}"></script>
 {% endblock %}

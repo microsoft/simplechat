@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved V2 harness attempts.
 
-Version: 0.261.130
+Version: 0.261.131
 Implemented in: 0.261.127
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
@@ -66,6 +66,12 @@ Typed invocation cancellation remains cancellation, including through known
 application wrappers; ordinary owner interruptions are not inferred to be stops.
 Headless lifecycle failures opt in to typed invocation control. Capture may
 reconstruct their safe code, but never their diagnostics or publication state.
+Every published reply, including model-free delivery, passes chat's configured
+output checkpoint first. A removed reply publishes only the safe notice, without
+citations or file cards; an administrator's later retraction is never overwritten.
+Check-before-display runs keep files private until that checked reply is saved.
+Saved history rejects content-check removals through the shared normalizer. Dependency
+plans do not enforce per-step Auto model bindings, so a v2 plan carrying them fails closed.
 
 Application-owner imports are deliberately deferred until preparation. Importing
 this module neither imports a route nor discovers configuration or Azure clients.
@@ -550,6 +556,9 @@ class HarnessExecution:
         self.settings = deepcopy(bootstrap.get_settings() if settings is None else settings)
         if type(self.settings) is not dict or not self.settings.get("enable_chat_orchestration"):
             raise HarnessExecutionError("context_unavailable")
+        if self.record["plan"].get("model_routing") == "auto":
+            # Dependency execution cannot enforce per-step Auto bindings; never ignore them.
+            raise HarnessExecutionError("model_routing_changed")
         user_id, conversation_id = self.record["user_id"], self.record["conversation_id"]
         seeds = self.record.get("seeds") or {}
         snapshot = self._revalidate_context()
@@ -1147,6 +1156,17 @@ class HarnessExecution:
         elif not content:
             content.append("The requested content is prepared. No downloadable files were created.")
         answer = "\n\n".join(content)
+        # Durable orchestration replies use chat's output checkpoint before persistence.
+        from functions_chat_content_checks import (
+            CHECK_METADATA, attach_chat_check, check_chat_content, retract_message_content,
+            strip_private_chat_checks,
+        )
+
+        output_check = check_chat_content(
+            answer, "chat_output", user_id=self.record["user_id"], settings=self.settings,
+        )
+        if output_check.blocked:
+            answer, citations = output_check.notice, []
         if self._delivery_only:
             if "harness_step_token_usage" in self.record:
                 combined_usage = _usage(self.prompt_token_usage, self.record["harness_step_token_usage"])
@@ -1192,6 +1212,9 @@ class HarnessExecution:
             updates["harness_step_token_usage"] = _usage(
                 result.get("token_usage", self.context.token_usage if self.context is not None else {}),
             )
+        if output_check.blocked:
+            # The executor's provisional summary cannot retain text the checkpoint removed.
+            updates["summary"] = answer
         current = self.lease.update(updates)
         public = public_execution_fields({
             **current, "execution_lease": None, "finalization_status": "saved",
@@ -1214,6 +1237,11 @@ class HarnessExecution:
             "hybrid_citations": documents, "web_search_citations": web, "agent_citations": tools,
             "generated_artifacts": artifacts, "augmented": bool(documents or web or tools),
         }
+        if output_check.status != "not_required":
+            document = (
+                retract_message_content(document, output_check) if output_check.blocked
+                else attach_chat_check(document, output_check)
+            )
         latest = self.lease.read()
         if latest.get("cancellation_requested_at") and status != "cancelled":
             return self._finalize(result, error, refreshes=refreshes + 1)
@@ -1241,9 +1269,22 @@ class HarnessExecution:
         )
         if fingerprint({key: value for key, value in saved.items() if not key.startswith("_")}) != fingerprint(document):
             raise HarnessExecutionError("message_not_saved")
+        # Publication preserves an administrator's earlier retraction of this reply.
+        blocked = document.get("role") == "safety"
+        if blocked:
+            answer, documents, web, tools = document["content"], [], [], []
+        checked = CHECK_METADATA in (document.get("metadata") or {})
         self.lease.update({
             "assistant_message_id": message_id, "message_saved": True, "finalization_status": "saved",
+            "chat_content_checked_output": checked, "chat_content_output_pending": False,
         })
+        if checked:
+            try:
+                from functions_chat_content_review import record_chat_content_incident
+
+                record_chat_content_incident(document, self.record["user_id"])
+            except Exception as exc:
+                _log_failure("A chat content incident could not be recorded.", self.record, exc)
         if self._bootstrap is not None:
             self._touch_conversation(documents)
         finalized = self.lease.close(release=True)
@@ -1253,7 +1294,8 @@ class HarnessExecution:
         frame = build_run_done_event(
             self.record["conversation_id"], message_id=message_id, run_id=self.record["id"],
             turn_id=self.record.get("turn_id"), full_content=answer, citations=documents,
-            web_citations=web, agent_citations=tools, artifacts=artifacts, outputs=outputs,
+            web_citations=web, agent_citations=tools, artifacts=[] if blocked else artifacts,
+            outputs=[] if blocked else outputs,
             plan_summary=summary, status=status, outcome=outcome,
             attempt_index=public["attempt_index"], retry_of_run_id=public["retry_of_run_id"],
             failure=updates["failure"], failures=failures, recovery=public["recovery"],
@@ -1261,8 +1303,11 @@ class HarnessExecution:
             **model_metadata, **reasoning,
         )
         payload = json.loads(frame.partition("data:")[2].strip())
-        payload["metadata"] = metadata
-        return [build_content_event(answer), serialize_sse(payload)]
+        payload.update({
+            "metadata": document.get("metadata") or {}, "role": document["role"],
+            "replace_content": True, "blocked": blocked,
+        })
+        return [build_content_event(answer), serialize_sse(strip_private_chat_checks(payload))]
 
     def _finish(self, result, error):
         try:
@@ -1336,6 +1381,7 @@ class HarnessExecution:
             result, error = None, None
             try:
                 self._validate_capabilities()
+                self._mark_output_check_pending()
                 adjustments = self._reasoning()["reasoning_adjustments"]
                 if adjustments:
                     self._send(build_reasoning_adjustment_event(adjustments))
@@ -1353,6 +1399,16 @@ class HarnessExecution:
         finally:
             self.close()
             self._execution_lock.release()
+
+    def _mark_output_check_pending(self):
+        """Keep run files private until a check-before-display reply is published."""
+        from functions_chat_content_checks import enabled_chat_scanners
+
+        if (
+            self.settings.get("chat_content_output_mode") == "check_before_display"
+            and enabled_chat_scanners(self.settings, "chat_output")
+        ):
+            self.lease.update({"chat_content_output_pending": True})
 
     def close(self):
         """Idempotently close model clients and stop/release only our own heartbeat."""

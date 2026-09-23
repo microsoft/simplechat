@@ -15,6 +15,31 @@ Use these pages when configuring SimpleChat from **Admin Settings**. The applica
 
 For a first-time deployment, configure **Appearance**, **AI Models**, **Knowledge**, **Workspaces**, **Chat**, **Security**, and **Agents & Actions** first. Then review **Scale**, **Operations**, **Governance**, **Data Lifecycle**, **Backup & Recovery**, **Workflow**, and **Help** as the deployment moves into operations.
 
+## Application version and updates
+
+Classic and V2 Admin Settings display the running server's application version.
+Use this value when diagnosing a deployment or deciding whether to upgrade; it is
+not the frontend package version.
+
+Opening either admin page automatically checks the
+[SimpleChat releases page](https://github.com/microsoft/simplechat/releases) when
+the shared cached check is at least 24 hours old. This is an on-visit check, not a
+scheduled background task. V2 displays a **New version available** notice and a
+**View releases** link only when the discovered numeric version is greater than
+the running version. Equal or older releases do not trigger an upgrade notice.
+The checker retains classic behavior: it selects the greatest numeric version
+among release-tag links on the fetched releases page.
+
+The application server needs outbound HTTPS access to GitHub; browsers do not
+contact GitHub to perform the check. A failed check shows an unavailable message
+and labels any last known release information as potentially stale. Failed
+attempts are also cached for 24 hours when settings storage is available. If the
+check cannot be saved, the page reports that failure and a later visit may retry.
+Settings remain editable while update checks are unavailable.
+
+V2 version/update display was implemented in **0.261.126**. There is no manual
+refresh button, automatic installation, or upgrade triggered by saving settings.
+
 ## Settings groups
 
 | Group | What it controls | Tabs | Link |

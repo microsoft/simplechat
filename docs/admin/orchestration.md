@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.127"
+version: "0.261.131"
 ---
 
 
@@ -67,9 +67,13 @@ governance; this is not a read-only mode.
 
 ### Chat Orchestration {#chat-orchestration-section}
 
-Adds an orchestration mode to the V2 chat composer. While it is on, the capability toggles
-and the model, agent and reasoning pickers collapse behind a disclosure, and the user
-simply asks.
+Adds an orchestration mode to the V2 chat composer. While it is on, capability
+toggles and advanced agent/reasoning controls collapse behind a disclosure.
+Since **0.261.126**, the orchestration model picker remains visible: choose a
+specific model to pin it, or **Auto - choose per step** to select connected
+models using catalog suitability, administrator priority, and favorites.
+This is separate from automatic plan approval. See
+[Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
 
 #### Settings
 
@@ -98,6 +102,13 @@ runtime, but does not enable either setting on existing deployments. Saving the
 preview switch never bypasses current capability or source access. Until all
 three conditions hold, enabled orchestration keeps the legacy **contract v1** path.
 When Enable Chat Orchestration is off, new orchestration remains unavailable.
+
+Since **0.261.131**, a request that selects **Auto - choose per step** stays on
+contract v1 even when the preview is admitted. Only that standard step executor
+enforces per-step model bindings. Choose a specific model to use the harness.
+Harness replies, including later model-free file-status updates, pass the same
+[chat output content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }})
+as ordinary chat before they are saved.
 
 This control does not enable individual file formats, grant capability or model access,
 or bypass approval, token, time or step budgets. Keep the existing capability selection

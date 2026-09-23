@@ -150,20 +150,21 @@
             dependency.textContent = prerequisitesReady
                 ? (storageValidated ? "Enhanced Citations and screening storage prerequisites are ready."
                     : "Enhanced Citations is enabled. The server validates its private storage when Content Screening is enabled.")
-                : "New scanning cannot be enabled until Enhanced Citations and its private storage are configured and validated.";
+                : "Workspace scans require Enhanced Citations and private storage. Turn off workspace uploads to use chat-only screening without that storage.";
             this.panel.appendChild(dependency);
             const capability = document.getElementById("enable_content_screening");
             if (global && capability) {
                 capability.checked = this.data.configuration.enabled === true;
-                capability.disabled = !canEdit || (!prerequisitesReady && !capability.checked);
+                capability.disabled = !canEdit;
                 if (!capability.dataset.screeningBound) {
                     capability.dataset.screeningBound = "true";
                     capability.addEventListener("change", () => this.configure(capability));
                     const citations = document.getElementById("enable_enhanced_citations");
                     citations?.addEventListener("change", () => {
-                        if (capability.checked && !citations.checked) {
+                        const uploads = document.getElementById("enable_content_screening_workspace_uploads");
+                        if (capability.checked && uploads?.checked && !citations.checked) {
                             citations.checked = true;
-                            showMessage(this.message, "Enhanced Citations is required while new Content Screening is enabled. Existing reviews also depend on its retained storage.", "warning");
+                            showMessage(this.message, "Enhanced Citations is required while workspace upload screening is enabled. Turn off upload screening for chat-only checks. Existing reviews still depend on retained storage.", "warning");
                         }
                     });
                 }
@@ -171,7 +172,7 @@
             if (!global) this.renderBaseline(this.data.baseline);
             this.panel.append(
                 element("h3", "h5", global ? "Mandatory screening policy" : "Workspace additions"),
-                ...(global ? [element("p", "small text-body-secondary", "Enabling Content Screening creates an enabled empty baseline if none exists. You can save it empty and add checks later.")] : []),
+                ...(global ? [element("p", "small text-body-secondary", "This baseline also supplies the enabled chat checkpoints. An empty baseline cannot produce a passed chat check; such attempts follow the configured failure setting and are recorded for admins.")] : []),
                 element("p", "small text-body-secondary", "Policies are saved separately from application settings. Pattern checks are indicators, not a guarantee that all PII or instruction manipulation will be detected.")
             );
             const summary = element("div", "alert alert-secondary");
@@ -492,8 +493,7 @@
             this.testButton.disabled = busy || this.stale || !hasAction(this.data.allowed_actions, "test_policy");
             const capability = document.getElementById("enable_content_screening");
             if (this.scope.scopeType === "global" && capability) {
-                capability.disabled = busy || this.stale || !canEdit
-                    || (!this.data.prerequisites?.ready && !capability.checked);
+                capability.disabled = busy || this.stale || !canEdit;
             }
         }
 
@@ -504,7 +504,8 @@
             this.setBusy(true);
             clearMessage(this.message);
             try {
-                const configuration = await screening.api.configure(enabled);
+                const uploads = document.getElementById("enable_content_screening_workspace_uploads");
+                const configuration = await screening.api.configure(enabled, uploads?.checked);
                 configurationSaved = true;
                 capability.checked = configuration.enabled === true;
                 const next = await screening.api.getPolicy(this.scope);
@@ -535,7 +536,7 @@
                     capability.checked = !enabled;
                     this.freezeOnConflict(error);
                     showMessage(this.message, [400, 409, 503].includes(error.status)
-                        ? "Content Screening could not be changed. Verify Enhanced Citations, its private storage, and any configured scanner models. Existing holds are unchanged."
+                        ? "Content Screening could not be changed. Workspace uploads require Enhanced Citations and private storage; turn that checkpoint off for chat-only checks. Verify configured scanner models. Existing holds are unchanged."
                         : errorMessage(error));
                 }
             } finally {

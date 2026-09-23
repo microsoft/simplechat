@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from functions_appinsights import log_event
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -895,8 +896,17 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
         log_event(f"Secret '{full_secret_name}' stored successfully in Key Vault.", level=logging.INFO)
         return full_secret_name
     except Exception as e:
-        log_event(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
-        raise RuntimeError(f"Failed to store secret '{full_secret_name}' in Key Vault.") from e
+        log_event(
+            "[KEY_VAULT] Secret write failed.",
+            extra={
+                "scope": scope,
+                "source": source,
+                "error_type": type(e).__name__,
+                "status_code": getattr(e, "status_code", None),
+            },
+            level=logging.ERROR,
+        )
+        raise KeyVaultSecretStorageError(e) from e
 
 def build_full_secret_name(secret_name, scope_value, source, scope):
     """
@@ -1656,7 +1666,7 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
             raise Exception(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
     return agent_dict
 
-def get_keyvault_credential(settings=None):
+def get_keyvault_credential(settings=None, **credential_options):
     """
     Get the Key Vault credential using DefaultAzureCredential, optionally with a managed identity client ID.
 
@@ -1664,6 +1674,7 @@ def get_keyvault_credential(settings=None):
         settings (dict, optional): Settings dict to use directly. If None, falls back to
             app_settings_cache.get_settings_cache(). Pass settings explicitly when calling
             before the cache is initialised (e.g. during configure_app_cache bootstrap).
+        credential_options: Optional SDK timeouts/retry limits for bounded diagnostics.
 
     Returns:
         DefaultAzureCredential: The credential object for Key Vault access.
@@ -1671,12 +1682,10 @@ def get_keyvault_credential(settings=None):
     if settings is None:
         settings = app_settings_cache.get_settings_cache()
 
-    key_vault_identity = settings.get("key_vault_identity", None)
-    if key_vault_identity is not None:
-        credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
-    else:
-        credential = DefaultAzureCredential()
-    return credential
+    return DefaultAzureCredential(
+        managed_identity_client_id=settings.get("key_vault_identity") or None,
+        **credential_options,
+    )
 
 def clean_name_for_keyvault(name):
     """

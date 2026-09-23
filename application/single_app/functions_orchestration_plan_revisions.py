@@ -57,12 +57,12 @@ _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
     'steps', 'inputs', 'outputs', 'validation', 'edit_version',
-    'final_response',
+    'final_response', 'model_routing',
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
     'optional', 'enabled', 'estimated_cost', 'phase', 'status',
-    'role', 'inputs', 'outputs',
+    'role', 'inputs', 'outputs', 'model_task', 'model_binding',
 )
 _QUESTION_FIELDS = (
     'elicitation_id', 'contract_version', 'run_id', 'revision', 'message',

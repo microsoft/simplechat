@@ -98,11 +98,17 @@ Someone who signs in successfully but holds none of the required roles reaches a
 
 ### Key Vault {#keyvault-section}
 
-Agents and actions hold credentials: API keys for the services they call, subscription keys for gateways in front of them. By default those live in the settings document. Enabling Key Vault moves them into Azure Key Vault instead, leaving only a reference behind, which is what deployments with a policy against secrets at rest outside a vault need.
+Agents, actions, and AI Connections hold credentials: API keys for the services they call, subscription keys for gateways in front of them. By default those live in the settings document. Enabling Key Vault stores supported application-managed credentials in Azure Key Vault instead, leaving only a reference behind, which is what deployments with a policy against secrets at rest outside a vault need.
 
 Treat enabling this as one-way. Secrets saved afterwards are referenced by name, so turning it back off leaves those references pointing at values the application can no longer read, and every agent and action depending on them stops working.
 
-The vault identity needs Get, Set and List on secrets. Use the Test Key Vault connection button before saving: a wrong identity is otherwise invisible until an agent tries to read a secret at runtime.
+Assign **Key Vault Secrets Officer at the vault scope** to the application's selected managed identity. **Key Vault Secrets User is read-only**: it can read existing secrets but cannot save new credentials. Leave the managed identity client ID blank for the App Service system-assigned identity, or supply the client ID of the attached user-assigned identity. Permissions on the deploying administrator do not give the application access. A vault using legacy access policies needs **Get, List, Set, and Delete** secret permissions.
+
+**Permission test (0.261.125).** Before saving a vault change, run **Test Key Vault connection** in either interface. The test uses the draft vault and identity, lists secret properties, writes a uniquely named `simplechat-connection-test-*` secret containing a synthetic value, reads it back, and deletes it. Success requires every stage, including cleanup; it never changes existing secrets or purges deleted secrets.
+
+The temporary secret expires after ten minutes, but expiration is not deletion. If cleanup cannot be confirmed, the result identifies the generated secret for an administrator to remove. Soft-deleted test metadata remains under the vault's retention policy. Do not remove other application secrets when cleaning up a test.
+
+A denied-write result or save error names the missing permission rather than suggesting that a successful list operation proves write access. Check the identity, vault-scoped role or access policy, propagation of a recent role assignment, and network restrictions. A failed secret write does not fall back to storing the submitted credential as plaintext. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
 **Expiration reminders.** Secret names written by SimpleChat are content hashes, so a Key Vault expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. Reminder tracking records the missing half: which user or group owns each secret, which action and field it backs, and who to contact. The tracked secret inventory in this section is the lookup from an opaque secret name back to that context.
 
@@ -114,7 +120,7 @@ SimpleChat does not send the reminder emails. It raises them in-app and emits an
 | --- | --- | --- | --- |
 | Store agent and action secrets in Key Vault | Writes agent and action credentials to Azure Key Vault and keeps only a reference in the settings document. | Off | `enable_key_vault_secret_storage`; capability toggle |
 | Key Vault Name | The vault resource name, not a URL. The endpoint suffix comes from the `AZURE_ENVIRONMENT` App Service setting. | Empty | `key_vault_name` |
-| Key Vault Managed Identity Client ID | Client ID of the user-assigned managed identity holding Get, Set and List on the vault. Blank uses the App Service system-assigned identity. | Empty | `key_vault_identity` |
+| Key Vault Managed Identity Client ID | Selects the user-assigned identity granted vault-scoped Secrets Officer, or equivalent Get, List, Set, and Delete secret permissions. Blank uses the App Service system-assigned identity. | Empty | `key_vault_identity` |
 | Track secret expiration dates | Records owner, source and field for each tracked secret, and warns before it expires. | Off | `enable_key_vault_secret_expiration_reminders`; capability toggle |
 | Default lead days | How far ahead of expiry the first reminder is raised. Accepts 1 to 3650. | 30 | `key_vault_secret_expiration_default_lead_days` |
 | Default reminder email | Recorded against secrets that name no owner of their own, for downstream automation to route to. SimpleChat does not email it. | Empty | `key_vault_secret_expiration_default_contact_email` |
@@ -147,13 +153,13 @@ remove the reference first.
 
 ### Policies and scans {#content-screening-section}
 
-Content screening holds extracted workspace knowledge until its required checks and any human review are complete. Use deterministic PII/pattern/value rules for known data formats and an approved model for contextual criteria such as instructions that try to manipulate source priority.
+Content screening applies saved PII, regex, literal, and optional model rules at administrator-selected checkpoints. Workspace uploads retain their hold-and-review workflow. Submitted chat messages and AI reply text can use the same global baseline without inheriting workspace-specific additions.
 
-The feature requires Enhanced Citations and reuses its storage account for private evidence and clean derivatives. Administrators define required baseline rules; workspace managers can add checks without weakening that baseline. It is separate from the Azure AI Content Safety chat-category feature below.
+Workspace screening requires Enhanced Citations and reuses its storage account for private evidence and clean derivatives. Chat-only checks do not require that storage: turn off **Screen workspace uploads** before enabling the master for chat-only use. Administrators define required baseline rules; workspace managers can add document checks without weakening that baseline. This is separate from Azure AI Content Safety below.
 
-Open **Admin Settings > Security > Content Screening** in either interface. The tab is visible even when Enhanced Citations is off; only activation is blocked by that prerequisite. It does not depend on **Enable Content Safety**.
+Open **Admin Settings > Security > Content Screening** in either interface. The tab and policy editor remain visible without Enhanced Citations. The storage prerequisite applies to uploads and explicit document scans, not to chat-text checkpoints. Content Screening does not depend on **Enable Content Safety**.
 
-You can enable Content Screening before choosing checks. First activation creates an enabled empty baseline if no policy has been saved; it never replaces an existing policy or activates a deliberately disabled baseline. In V2, change **Screen workspace content before publication**, then use **Save changes**. The classic interface saves its new-scan switch immediately.
+You can enable Content Screening before choosing checks. First activation creates an enabled empty baseline if no policy has been saved; it never replaces an existing policy or activates a deliberately disabled baseline. In V2, change **Enable Content Screening**, then use **Save changes**. The classic master switch saves immediately with the current upload selection; other checkpoint and behavior controls use the main Save button.
 
 Use **Save screening policy** to persist rules and model criteria independently of the main Admin Settings save. An enabled policy with no checks is valid and stays enabled after saving. New uploads follow normal processing when their effective policy has no checks; no screening result or hold is created. Enabled workspace additions can supply checks even when the baseline is empty. Adding checks later screens subsequent uploads; use an explicit workspace scan for existing knowledge.
 
@@ -169,25 +175,32 @@ Added in **0.261.106**; admin discovery and save feedback corrected in **0.261.1
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Content Screening | Applies configured baseline and workspace checks before new documents become usable knowledge. With no applicable checks, new uploads use normal processing; existing holds remain enforced. | Off | `enable_content_screening`; requires Enhanced Citations and working storage; creates an enabled empty baseline if absent |
+| Enable Content Screening | Makes the selected checkpoints use the saved screening policies. Disabling it does not release document holds or restore removed replies. | Off | `enable_content_screening`; creates an enabled empty baseline if absent |
+| Screen workspace uploads | Keeps new workspace content out of knowledge use until its applicable checks and review finish. Existing holds stay enforced when this is disabled. | On beneath the master | `enable_content_screening_workspace_uploads`; requires Enhanced Citations and working storage |
+| Screen submitted chat messages | Checks submitted text against the global baseline before it reaches the answering model or chat actions. | Off | `enable_content_screening_chat_input`; includes chat retries and message edits |
+| Screen AI replies | Checks complete reply text against the global baseline and replaces replies with confirmed findings. | Off | `enable_content_screening_chat_output`; uses the shared chat behavior controls below |
+
+**Chat checkpoints implemented in version: 0.261.127**, tracked in `application/single_app/config.py`. Empty policies remain valid for document configuration, but an enabled chat checkpoint without usable checks records **not checked**, never a passing scan. Review the configured rules before enabling that checkpoint.
 
 ## Content Safety {#content-safety}
 
 ### Content Safety {#content-safety-section}
 
-Every user message is sent to Azure AI Content Safety before it reaches a model. A message that trips the configured thresholds is blocked, replaced with your violation message, and recorded as a safety violation for the report on the Access & Roles tab.
+Choose whether submitted messages, AI replies, or both are sent to Azure AI Content Safety. A category severity of 4 or higher, or a returned blocklist match, is a finding. Submitted-message findings stop the request; reply findings replace the answer with a neutral content-check notice.
 
 Content Safety can reach the service directly or through Azure API Management. Route it through APIM when the rest of your Azure AI traffic already goes that way, so this traffic is subject to the same policy, quota and logging. Direct connections authenticate with a key or with the App Service managed identity; managed identity avoids storing a key and needs the Cognitive Services User role on the resource.
 
-Test the connection before saving. A broken Content Safety connection blocks chat rather than failing quietly, so the failure mode is loud and immediate.
+Test the connection before saving. By default, a check that cannot finish allows chat to continue without a technical warning to the user and records private **not checked** metadata for administrators. Choose the stricter failure action below when an unavailable check should stop the request instead.
 
-**Trigger information** appends the detected categories, their severities and any blocklist matches beneath the message. It helps users self-correct instead of rephrasing blindly, at the cost of telling them exactly which thresholds are set.
+**Trigger information** appends safe category and severity information to blocked-input notices. The expanded chat checks do not echo matched sensitive values, and removed-output notices do not repeat the rejected answer. AI-generated findings are not user misconduct and cannot be used to warn, suspend, or block the user through the remediation actions.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Content Safety | Sends user messages to Azure AI Content Safety before a model sees them, and blocks anything that trips the configured thresholds. | Off | `enable_content_safety`; capability toggle |
+| Enable Content Safety | Makes Azure AI Content Safety available at the selected chat checkpoints. Its existing document-metadata behavior is unchanged; this does not add full-file safety scans. | Off | `enable_content_safety`; master switch |
+| Check submitted messages with Content Safety | Screens typed requests before they reach a model or action. | On beneath the master | `enable_content_safety_chat_input`; preserves existing input coverage |
+| Check AI replies with Content Safety | Inspects the complete reply text and removes confirmed violations. | Off | `enable_content_safety_chat_output`; optional output checkpoint |
 | Route through Azure API Management | Sends Content Safety calls to an APIM front end rather than the service endpoint. | Off | `enable_content_safety_apim`; capability toggle |
 | Content Safety Endpoint | The resource endpoint from the Content Safety resource in Azure. Used for direct connections. | Empty | `content_safety_endpoint` |
 | Authentication Type | Whether a direct connection authenticates with a key or the App Service managed identity. | key | `content_safety_authentication_type` |
@@ -195,7 +208,22 @@ Test the connection before saving. A broken Content Safety connection blocks cha
 | APIM Content Safety Endpoint | The APIM API base URL fronting the Content Safety resource. | Empty | `azure_apim_content_safety_endpoint` |
 | APIM Subscription Key | The APIM subscription key authorised for that API. Stored write-only. | Empty | `azure_apim_content_safety_subscription_key` |
 | Safety Violation Message | Markdown that replaces the blocked message in the conversation. Say what to do next, since the user cannot see the cause unless trigger information is on. | Your message was blocked by Content Safety. | `content_safety_violation_message` |
-| Show what triggered the block | Appends detected categories, severities and blocklist matches beneath the message. | On | `content_safety_include_trigger_information` |
+| Show what triggered the block | Appends safe detected-category and severity details to blocked-input notices. Output notices remain generic. | On | `content_safety_include_trigger_information` |
+
+## Chat check behavior
+
+These controls live under **Content Screening > Chat check behavior (both scanners)** and apply to both scanners. Content Safety links to the same controls; there are not two competing copies.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| When to show AI replies | Streams provisional text and checks it at completion, or holds reply text until checking finishes. A confirmed finding replaces the entire reply, not just matching characters. | Stream first, then remove flagged replies | `chat_content_output_mode`: `stream_then_check` or `check_before_display` |
+| When a chat check cannot finish | Allows content without a technical warning and queues private metadata for review, or stops messages/removes unchecked replies. A finding always wins over allow-on-error. | Allow quietly and mark not checked for admins | `chat_content_scan_failure_action`: `allow_unchecked` or `block`; does not change document holds or access controls |
+
+Streaming first is **post-response moderation**. Removing an answer cannot undo text already read, copied, downloaded, or sent elsewhere. Checking before display avoids showing provisional reply text, but still follows the failure action when a check cannot finish.
+
+Use **Review unchecked chat content** to open the protected report. It lists incomplete checks without duplicating message bodies, and offers a revision-bound **Recheck** action. A later finding automatically removes an AI reply from stored chat and shared representations. Outages remain retryable; old submitted-message findings are recorded for review rather than pretending earlier model calls can be undone.
+
+See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}) for the workflow and [Chat content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) for the coverage boundary.
 
 ## Session {#session}
 

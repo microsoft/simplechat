@@ -2,8 +2,9 @@
 """
 Small, opt-in paired evaluation of research-selection guidance and context.
 
-Version: 0.261.104
+Version: 0.261.131
 Implemented in: 0.261.099
+Planner keyword forwarding for plan contracts added in: 0.261.131
 
 Default invocation lists synthetic cases without network access. Capture BEFORE changing
 planner guidance; capture never imports the application or constructs Azure/Cosmos clients:
@@ -241,10 +242,11 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
     original_messages = planner["build_planner_messages"]
     client.labels = {"case_id": case["id"], "variant": variant, "repetition": repetition}
 
-    def captured_messages(current_context, replan_hint=None, edit_context=None):
+    def captured_messages(current_context, replan_hint=None, edit_context=None, **kwargs):
         captured = copy.deepcopy(snapshot["contexts"][case["id"]])
         captured["capabilities"] = copy.deepcopy(current_context["capabilities"])
-        return original_messages(captured, replan_hint=replan_hint, edit_context=edit_context)
+        # Forward planner-owned options such as the plan contract version unchanged.
+        return original_messages(captured, replan_hint=replan_hint, edit_context=edit_context, **kwargs)
 
     def observed_call(configured_client, configured_deployment, messages, **kwargs):
         message_digests.append(_digest(messages))

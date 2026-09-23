@@ -109,9 +109,9 @@ def _manifest_address(step_id, *, waiting=False, input_only=False):
 
 def effective_plan(plan):
     values = [
-        {key: deepcopy(step.get(key)) for key in (
+        {**{key: deepcopy(step.get(key)) for key in (
             'step_id', 'capability_id', 'arguments', 'depends_on', 'enabled', 'optional',
-        )}
+        )}, **({'model_binding': deepcopy(step['model_binding'])} if 'model_binding' in step else {})}
         for step in plan.get('steps') or []
     ]
     if plan_contract_version(plan) == 2:

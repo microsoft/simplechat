@@ -785,6 +785,10 @@ def refresh_workspace_attachment(message, user_id=None):
 
 def public_history_messages(messages, user_id=None):
     """Withhold unavailable source material without deleting ordinary chat text."""
+    # This read boundary already has conversation authorization. Keep the chat
+    # adapter out of the document contracts' import/bootstrap dependency chain.
+    from functions_chat_content_checks import strip_private_chat_checks
+
     user_id = _current_user_id(user_id)
     safe_messages = []
     flask = import_module("flask")
@@ -795,6 +799,10 @@ def public_history_messages(messages, user_id=None):
         previous_error = getattr(flask.g, "content_screening_error", None) if request_context else None
         previous_sources = dict(getattr(flask.g, "content_screening_sources", {}) or {}) if request_context else {}
         try:
+            if (message.get("metadata") or {}).get("content_moderation"):
+                from functions_chat_content_review import refresh_checked_message
+
+                message = refresh_checked_message(message)
             refreshed = refresh_workspace_attachment(message, user_id)
             assert_evidence_available(refreshed, user_id, cached=True)
         except (ScreeningError, LookupError, PermissionError):
@@ -820,7 +828,9 @@ def public_history_messages(messages, user_id=None):
             # must escape rather than become an unrelated document-screening hold.
             from functions_generated_artifact_sources import sanitize_generated_artifact_history
 
-            safe_messages.append(deepcopy(sanitize_generated_artifact_history(refreshed, user_id)))
+            safe_messages.append(strip_private_chat_checks(
+                deepcopy(sanitize_generated_artifact_history(refreshed, user_id)),
+            ))
     assert_current_request_sources_available(user_id)
     return safe_messages
 

@@ -1,9 +1,11 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.129
+Version: 0.261.131
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
+Terminal publication preserves an administrator's reply retraction; its probe
+never replaces the original publication failure with a missing-reply read.
 """
 
 import logging
@@ -495,31 +497,60 @@ class ExecutionLease:
 
     def publish_message(self, document):
         """Fence and message are in the same container/partition: no stale publish."""
+        # Recovery can initialize before chat routes; resolve the projection
+        # adapter only at the publication boundary, never during bootstrap.
+        from functions_chat_content_review import reply_is_retracted
+
         self.read()
         if self.message_container is None:
             raise CheckpointError('message_not_saved')
         if (
             document.get('id') != f'assistant_orchestration_{fingerprint(self.run_id)[:40]}'
-            or document.get('conversation_id') != self.conversation_id or document.get('role') != 'assistant'
+            or document.get('conversation_id') != self.conversation_id
+            or not (document.get('role') == 'assistant' or document.get('role') == 'safety' and reply_is_retracted(document))
             or (document.get('metadata') or {}).get('orchestration', {}).get('run_id') != self.run_id
         ):
             raise CheckpointError('message_not_saved')
         item_id = _publication_id(self.run_id)
-        guard = self.message_container.read_item(item=item_id, partition_key=self.conversation_id)
-        if not self._owns_publication_guard(guard):
-            raise CheckpointError('ownership_lost')
-        replacement = run_store._strip_cosmos_metadata(guard)
-        replacement['published_message_id'] = document['id']
-        replacement['document_digest'] = fingerprint(run_store._strip_cosmos_metadata(document))
-        try:
-            self.message_container.execute_item_batch(
-                batch_operations=[
-                    ('replace', (item_id, replacement), {'if_match_etag': guard['_etag']}),
-                    ('upsert', (document,)),
-                ], partition_key=self.conversation_id,
+        for attempt in range(2):
+            guard = self.message_container.read_item(item=item_id, partition_key=self.conversation_id)
+            if not self._owns_publication_guard(guard):
+                raise CheckpointError('ownership_lost')
+            try:
+                previous = self.message_container.read_item(item=document["id"], partition_key=self.conversation_id)
+            except exceptions.CosmosResourceNotFoundError:
+                previous = None
+            if previous is not None and reply_is_retracted(previous):
+                document.clear()
+                document.update(run_store._strip_cosmos_metadata(previous))
+            replacement = run_store._strip_cosmos_metadata(guard)
+            replacement['published_message_id'] = document['id']
+            replacement['document_digest'] = fingerprint(run_store._strip_cosmos_metadata(document))
+            message_operation = (
+                ("replace", (document["id"], document), {"if_match_etag": previous["_etag"]})
+                if previous is not None else ("create", (document,))
             )
-        except Exception:
-            if not self._published_message_matches(document, replacement['document_digest']):
+            try:
+                self.message_container.execute_item_batch(
+                    batch_operations=[
+                        ('replace', (item_id, replacement), {'if_match_etag': guard['_etag']}),
+                        message_operation,
+                    ], partition_key=self.conversation_id,
+                )
+                break
+            except Exception:
+                if self._published_message_matches(document, replacement['document_digest']):
+                    break
+                if attempt == 0:
+                    # Probe only for a concurrent retraction; never replace the original failure.
+                    try:
+                        current = self.message_container.read_item(
+                            item=document["id"], partition_key=self.conversation_id,
+                        )
+                    except Exception:
+                        current = None
+                    if current is not None and reply_is_retracted(current):
+                        continue
                 raise
         self.read()
 
@@ -1151,7 +1182,7 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         'assistant_message_id', 'cancellation_requested_at', 'cancellation_requested_by',
         'retry_submission', 'latest_attempt_run_id', 'recovery_blocked_code', 'message_saved',
         'edit_claim', 'edit_pending', 'edit_narrowing', 'terminal_publication', 'finalization_status',
-        'inherited_checkpoints',
+        'inherited_checkpoints', 'chat_content_checked_output', 'chat_content_output_pending',
     ):
         child.pop(key, None)
     if plan_contract_version(record['plan']) == 2:

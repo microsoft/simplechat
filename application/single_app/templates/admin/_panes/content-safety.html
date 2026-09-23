@@ -1,14 +1,13 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'content-safety' %} show active{% endif %}" id="content-safety" role="tabpanel" aria-labelledby="content-safety-tab">
 
                 <p class="text-body-secondary">
-                    For PII, regex, value, and model-based document checks, use
+                    For PII, regex, literal, and model-based checks, use
                     <a href="#content-screening" data-screening-open-settings>Security &gt; Content Screening</a>.
                 </p>
 
                  <p class="text-muted">
-                    Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
-                    messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see
-                    thumbs up/down to provide feedback on AI responses.
+                    Choose whether Azure AI Content Safety checks submitted messages, AI replies, or both.
+                    Reply display and checker-failure behavior are shared with Content Screening.
                 </p>
                 <div class="card p-3 mb-3" id="content-safety-section">
                     <h5>
@@ -32,7 +31,27 @@
 
                     <div id="content_safety_settings"
                          {% if not settings.enable_content_safety %}style="display: none;"{% endif %}>
-
+                        <fieldset class="mb-3">
+                            <legend class="h6">Where to check</legend>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="enable_content_safety_chat_input"
+                                    name="enable_content_safety_chat_input"
+                                    {% if settings.enable_content_safety_chat_input|default(true) %}checked{% endif %} />
+                                <label class="form-check-label" for="enable_content_safety_chat_input">Check submitted messages with Content Safety</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="enable_content_safety_chat_output"
+                                    name="enable_content_safety_chat_output"
+                                    {% if settings.enable_content_safety_chat_output|default(false) %}checked{% endif %} />
+                                <label class="form-check-label" for="enable_content_safety_chat_output">Check AI replies with Content Safety</label>
+                            </div>
+                            <p class="form-text">
+                                Configure both scanners' response display and failure choices under
+                                <a href="#content-screening" data-screening-open-settings>Content Screening &gt; Chat check behavior</a>.
+                                These choices do not add full-file Azure Content Safety scans.
+                            </p>
+                            <a href="/admin/safety_violations#unchecked-chat-content">Review unchecked chat content</a>
+                        </fieldset>
 
                         <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                             <input

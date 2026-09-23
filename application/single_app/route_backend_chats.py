@@ -12,7 +12,7 @@ from content_screening.access import (
     guard_chat_service,
     guard_model_callable,
 )
-from content_screening.contracts import DocumentHeldError, ScreeningError, document_is_available
+from content_screening.contracts import DocumentHeldError, ScreeningConflictError, ScreeningError, document_is_available
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget
 from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
 from semantic_kernel import Kernel
@@ -51,6 +51,7 @@ from model_endpoint_clients import (
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_catalog import apply_model_profile
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
@@ -151,7 +152,21 @@ from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
 )
-from functions_content_safety import build_content_safety_violation_message
+from functions_chat_content_checks import (
+    attach_chat_check,
+    blocked_chat_payload,
+    check_chat_content,
+    enabled_chat_scanners,
+    prepare_checked_reply,
+    public_chat_payload,
+    should_withhold_chat_event,
+    strip_private_chat_checks,
+)
+from functions_chat_content_review import (
+    checked_history_messages, persist_chat_reply, record_chat_content_incident,
+    retracted_stream_payload, reply_is_retracted,
+)
+from azure.core import MatchConditions
 from functions_prompt_metadata import build_prompt_selection_metadata
 from functions_settings import *
 from functions_assigned_knowledge import (
@@ -3951,18 +3966,23 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
     return authorized_context
 
 
-def _persist_screened_assistant(message, user_id):
+def _persist_screened_assistant(message, user_id, settings=None):
     """Persist provenance, and discard an in-flight result if its source changed."""
     assert_current_request_sources_available(user_id)
+    prepare_checked_reply(message, user_id=user_id, settings=settings)
     sources = current_request_source_provenance()
     if sources:
         message.setdefault("metadata", {})["screening_sources"] = sources
-    result = cosmos_messages_container.upsert_item(message)
+    result = persist_chat_reply(cosmos_messages_container, message)
+    if reply_is_retracted(result):
+        record_chat_content_incident(result, user_id)
+        return result
     try:
         assert_current_request_sources_available(user_id)
     except ScreeningError:
         cosmos_messages_container.delete_item(
             item=message["id"], partition_key=message["conversation_id"],
+            etag=result["_etag"], match_condition=MatchConditions.IfNotModified,
         )
         raise
     return result
@@ -4252,6 +4272,7 @@ def _initialize_assistant_response_tracking(
     is_retry,
     user_id,
     assistant_message_id=None,
+    settings=None,
 ):
     """Create assistant response tracking state for both new and retry/edit flows."""
     assistant_message_id = assistant_message_id or f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
@@ -4260,6 +4281,7 @@ def _initialize_assistant_response_tracking(
         message_id=assistant_message_id,
         thread_id=current_user_thread_id,
         user_id=user_id,
+        settings=settings,
     )
     assistant_thread_attempt = retry_thread_attempt if is_retry and retry_thread_attempt is not None else 1
     response_message_context = _load_user_message_response_context(
@@ -4296,6 +4318,43 @@ def _build_safety_message_doc(
             },
         },
     })
+
+
+def _reject_chat_submission(conversation, user_id, result):
+    """Save safe, thread-aligned placeholders rather than the rejected input body."""
+    conversation_id = conversation["id"]
+    user_message_id = f"{conversation_id}_user_{uuid.uuid4().hex}"
+    assistant_message_id = f"{conversation_id}_assistant_{uuid.uuid4().hex}"
+    thread_id = str(uuid.uuid4())
+    user_info = {**(get_current_user_info() or {}), "user_id": user_id}
+    user_doc = {
+        "id": user_message_id, "conversation_id": conversation_id, "role": "user",
+        "content": "Message not sent because of content checks.",
+        "timestamp": datetime.utcnow().isoformat(),
+        "metadata": {
+            "user_info": user_info,
+            "thread_info": {
+                "thread_id": thread_id, "previous_thread_id": None,
+                "active_thread": True, "thread_attempt": 1,
+            },
+        },
+    }
+    attach_chat_check(user_doc, result)
+    cosmos_messages_container.upsert_item(user_doc)
+    safety_doc = _build_safety_message_doc(
+        conversation_id, assistant_message_id, result.notice,
+        {"user_info": user_info, "thread_id": thread_id, "previous_thread_id": None}, 1,
+    )
+    cosmos_messages_container.upsert_item(safety_doc)
+    record_chat_content_incident(user_doc, user_id)
+    conversation["last_updated"] = safety_doc["timestamp"]
+    cosmos_conversations_container.replace_item(item=conversation_id, body=conversation)
+    invalidate_conversation_cache_for_item(conversation, reason="chat_content_blocked")
+    return {
+        **blocked_chat_payload(result, conversation_id=conversation_id, message_id=assistant_message_id),
+        "user_message_id": user_message_id, "conversation_title": conversation.get("title"),
+    }
+
 
 def _build_fact_memory_context_lines(
     scope_id,
@@ -8355,6 +8414,11 @@ class BackgroundStreamBridge:
 
             if next_item is self._sentinel:
                 break
+            if self._stream_session:
+                replacement = self._stream_session.get_terminal_replacement()
+                if replacement is not None:
+                    yield f"data: {json.dumps(replacement)}\n\n"
+                    break
             yield next_item
 
     def detach_consumer(self, reason='consumer_cleanup', update_session=False):
@@ -8526,6 +8590,7 @@ class ActiveConversationStreamSession:
         self._condition = threading.Condition()
         self._accepting_events = True
         self._analysis_message_id = analysis_message_id
+        self._terminal_replacement = None
 
     def _build_metadata(self, active, existing=None):
         metadata = dict(existing or {})
@@ -8674,6 +8739,31 @@ class ActiveConversationStreamSession:
         metadata = self._get_metadata()
         return str(metadata.get('cancel_reason') or 'user_requested')
 
+    def get_terminal_replacement(self):
+        return self._terminal_replacement or self._get_metadata().get("terminal_replacement")
+
+    def retract(self, payload):
+        if not isinstance(payload, dict) or not payload.get("blocked"):
+            raise ValueError("A terminal content replacement is required.")
+        with self._condition:
+            self._terminal_replacement = strip_private_chat_checks(payload)
+            self._accepting_events = False
+            metadata = self._build_metadata(active=False, existing=self._get_metadata())
+            metadata.update({
+                "status": STREAM_STATUS_COMPLETED,
+                "message_id": payload.get("message_id"), "completed_at": _utcnow_iso(),
+                "terminal_replacement": self._terminal_replacement,
+            })
+            app_settings_cache.initialize_stream_session_cache(
+                self.cache_key, metadata, ttl_seconds=self.session_ttl_seconds,
+            )
+            app_settings_cache.append_stream_session_event(
+                self.cache_key, f"data: {json.dumps(self._terminal_replacement)}\n\n",
+                ttl_seconds=self.session_ttl_seconds,
+            )
+            self._condition.notify_all()
+        return True
+
     def publish(self, event_text):
         """Append an SSE event to the replay history and notify listeners."""
         if event_text is None:
@@ -8684,6 +8774,8 @@ class ActiveConversationStreamSession:
                 return False
 
         payload = _extract_sse_event_payload(event_text)
+        if isinstance(payload, dict) and payload.get("blocked") and payload.get("role") == "safety":
+            return self.retract(payload)
         is_cancel_event = isinstance(payload, dict) and (
             payload.get('cancelled')
             or payload.get('canceled')
@@ -8692,6 +8784,8 @@ class ActiveConversationStreamSession:
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
         metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
+        if isinstance(payload, dict) and payload.get("message_id") and payload.get("type") != "user_message_persisted":
+            metadata["message_id"] = payload["message_id"]
         metadata['event_count'] = _safe_int(metadata.get('event_count')) + 1
         metadata['last_event_at'] = _utcnow_iso()
 
@@ -8810,6 +8904,13 @@ class ActiveConversationStreamSession:
         last_heartbeat_at = time.time()
 
         while True:
+            metadata = self._get_metadata()
+            replacement = self.get_terminal_replacement()
+            if replacement is None and metadata.get("message_id") and not metadata.get("active"):
+                replacement = retracted_stream_payload(self.conversation_id, metadata["message_id"])
+            if replacement is not None:
+                yield f"data: {json.dumps(replacement)}\n\n"
+                return
             pending_events = app_settings_cache.get_stream_session_events(
                 self.cache_key,
                 start_index=next_index,
@@ -14544,6 +14645,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    model_cfg = apply_model_profile(model_cfg, resolved_endpoint_cfg, settings)
     if not model_cfg.get('enabled', True):
         if selection_source == 'request' or resolved_endpoint_cfg.get('provider') == 'custom':
             raise ValueError('Selected model is disabled.')
@@ -14726,6 +14828,17 @@ def register_route_backend_chats(bp):
     CLIENT_SAFE_INTERNAL_ERROR_MESSAGE = 'Something went wrong while processing the request. Please try again.'
     CLIENT_SAFE_STREAM_ERROR_MESSAGE = 'Something went wrong while streaming the response. Please try again.'
 
+    @bp.after_request
+    def public_chat_json_response(response):
+        if response.is_json:
+            original = response.get_json()
+            payload = public_chat_payload(original)
+            if isinstance(original, dict) and original.get("success") and payload.get("blocked"):
+                payload.update({"success": False, "error": "This reply was removed by content checks."})
+                response.status_code = 409
+            response.set_data(current_app.json.dumps(payload))
+        return response
+
     def build_stream_error_event(message=CLIENT_SAFE_STREAM_ERROR_MESSAGE, **extra):
         payload = {'error': message}
         for key, value in extra.items():
@@ -14782,6 +14895,7 @@ def register_route_backend_chats(bp):
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
         viewer_user_id = get_current_user_id()
         stream_user_message_id = None
+        content_check_settings = get_settings()
 
         def publish_background_event(event_text):
             nonlocal stream_user_message_id
@@ -14790,6 +14904,17 @@ def register_route_backend_chats(bp):
 
             payload = _extract_sse_event_payload(event_text)
             if isinstance(payload, dict):
+                if should_withhold_chat_event(payload, content_check_settings):
+                    return True
+                payload = public_chat_payload(payload)
+                if (
+                    payload.get("error") and not payload.get("message_persisted")
+                    and enabled_chat_scanners(content_check_settings, "chat_output")
+                ):
+                    payload.update({
+                        "replace_content": True, "content": "", "full_content": "", "partial_content": "",
+                    })
+                event_text = f"data: {json.dumps(payload)}\n\n"
                 if payload.get('user_message_id'):
                     stream_user_message_id = payload['user_message_id']
                 if payload.get('done') or payload.get('error') or payload.get('cancelled') or payload.get('canceled'):
@@ -14809,7 +14934,8 @@ def register_route_backend_chats(bp):
                         event_text = f"data: {json.dumps(enriched)}\n\n"
 
             if stream_session:
-                stream_session.publish(event_text)
+                if not stream_session.publish(event_text):
+                    return False
 
             return stream_bridge.push(event_text)
 
@@ -15590,6 +15716,17 @@ def register_route_backend_chats(bp):
             conversation = _load_or_create_analyze_conversation(user_id, conversation_id)
             conversation_id = conversation['id']
             g.conversation_id = conversation_id
+            retry_id = data.get("retry_user_message_id") or data.get("edited_user_message_id")
+            if retry_id:
+                original_input = cosmos_messages_container.read_item(item=retry_id, partition_key=conversation_id)
+                if original_input.get("role") != "user" or original_input.get("conversation_id") != conversation_id:
+                    raise PermissionError("The original user message is unavailable.")
+                user_message = original_input.get("content", "")
+            input_check = check_chat_content(
+                user_message, "chat_input", user_id=user_id, settings=settings,
+            )
+            if input_check.blocked:
+                return _reject_chat_submission(conversation, user_id, input_check), 200
             saved_input, descriptor = load_saved_analysis_input(user_id, context, bounded=True)
             raise_if_mixed_source_cancelled(cancel_requested, 'saved_analysis_input')
             previous_thread_id = _get_latest_chat_thread_id(conversation_id)
@@ -15599,6 +15736,8 @@ def register_route_backend_chats(bp):
                 user_doc = cosmos_messages_container.read_item(item=retry_id, partition_key=conversation_id)
                 if user_doc.get('conversation_id') != conversation_id or user_doc.get('role') != 'user':
                     raise PermissionError('The original user message is unavailable.')
+                if user_doc.get("content") != user_message:
+                    raise ScreeningConflictError()
                 user_message_id = user_doc['id']
                 current_thread_id = (user_doc.get('metadata') or {}).get('thread_info', {}).get('thread_id') or current_thread_id
             else:
@@ -15619,6 +15758,10 @@ def register_route_backend_chats(bp):
                 prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), user_message)
                 if prompt_selection:
                     user_doc['metadata']['prompt_selection'] = prompt_selection
+                attach_chat_check(user_doc, input_check)
+                cosmos_messages_container.upsert_item(make_json_serializable(user_doc))
+            if retry_id:
+                attach_chat_check(user_doc, input_check)
                 cosmos_messages_container.upsert_item(make_json_serializable(user_doc))
             if callable(publish_background_event):
                 publish_background_event(build_user_message_persisted_stream_event(conversation_id, user_message_id))
@@ -15626,7 +15769,7 @@ def register_route_backend_chats(bp):
                 conversation_id=conversation_id, user_message_id=user_message_id,
                 current_user_thread_id=current_thread_id, previous_thread_id=previous_thread_id,
                 retry_thread_attempt=data.get('retry_thread_attempt'),
-                is_retry=bool(retry_id), user_id=user_id,
+                is_retry=bool(retry_id), user_id=user_id, settings=settings,
             )
             previous_attempt = bind_chat_analysis_attempt(
                 user_id, conversation_id, user_message_id, assistant_message_id,
@@ -15720,7 +15863,8 @@ def register_route_backend_chats(bp):
             })
             raise_if_mixed_source_cancelled(cancel_requested, 'saved_analysis_finalization')
             assert_analysis_attempt_current(explanation_checkpoints)
-            cosmos_messages_container.upsert_item(assistant_doc)
+            assistant_doc = _persist_screened_assistant(assistant_doc, user_id, settings=settings)
+            reply = assistant_doc["content"]
             assistant_saved = True
             assert_analysis_attempt_current(explanation_checkpoints)
             raise_if_mixed_source_cancelled(cancel_requested, 'saved_analysis_finalization')
@@ -15998,6 +16142,12 @@ def register_route_backend_chats(bp):
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
 
+        input_check = check_chat_content(
+            user_message, "chat_input", user_id=user_id, settings=settings,
+        )
+        if input_check.blocked:
+            return _reject_chat_submission(conversation_item, user_id, input_check), 200
+
         previous_thread_id = _get_latest_chat_thread_id(conversation_id)
         current_thread_id = str(uuid.uuid4())
         retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
@@ -16040,9 +16190,12 @@ def register_route_backend_chats(bp):
             'metadata': user_metadata,
         })
         if retry_user_doc is None:
+            attach_chat_check(user_message_doc, input_check)
             cosmos_messages_container.upsert_item(user_message_doc)
         else:
             user_message_doc = retry_user_doc
+            attach_chat_check(user_message_doc, input_check)
+            cosmos_messages_container.upsert_item(user_message_doc)
             user_metadata = deepcopy(retry_user_doc.get('metadata') or {})
         if callable(publish_background_event):
             publish_background_event(
@@ -16097,6 +16250,7 @@ def register_route_backend_chats(bp):
             retry_thread_attempt=None,
             is_retry=False,
             user_id=user_id,
+            settings=settings,
             **({'assistant_message_id': analysis_message_id} if analysis_message_id else {}),
         )
 
@@ -16671,7 +16825,8 @@ def register_route_backend_chats(bp):
         try:
             if analysis_checkpoints is not None:
                 assert_analysis_attempt_current(analysis_checkpoints)
-            _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id)
+            assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+            document_action_reply_content = assistant_doc["content"]
             if analysis_checkpoints is not None:
                 assert_analysis_attempt_current(analysis_checkpoints)
             raise_if_mixed_source_cancelled(
@@ -17392,6 +17547,37 @@ def register_route_backend_chats(bp):
             is_retry = bool(retry_user_message_id)
             is_edit = bool(data.get('edited_user_message_id'))
 
+            admitted_conversation = None
+            if conversation_id:
+                try:
+                    admitted_conversation = _authorize_personal_conversation_access(user_id, conversation_id)
+                except LookupError:
+                    return jsonify({"error": "Conversation not found"}), 404
+                except PermissionError:
+                    return jsonify({"error": "Forbidden"}), 403
+            if is_retry:
+                if not admitted_conversation:
+                    return jsonify({"error": "A conversation is required for retry."}), 400
+                try:
+                    retry_input = cosmos_messages_container.read_item(
+                        item=retry_user_message_id, partition_key=conversation_id,
+                    )
+                except CosmosResourceNotFoundError:
+                    return jsonify({"error": "Retry user message not found"}), 404
+                if retry_input.get("role") != "user" or retry_input.get("conversation_id") != conversation_id:
+                    return jsonify({"error": "Retry user message not found"}), 404
+                user_message = retry_input.get("content", "")
+                data["message"] = user_message
+            if not isinstance(user_message, str):
+                return jsonify({"error": "Message must be text."}), 400
+            input_check = check_chat_content(
+                user_message, "chat_input", user_id=user_id, settings=settings,
+            )
+            if input_check.blocked:
+                if admitted_conversation is None:
+                    admitted_conversation, _ = _resolve_or_create_authorized_personal_conversation(user_id, conversation_id)
+                return jsonify(_reject_chat_submission(admitted_conversation, user_id, input_check)), 200
+
             if is_retry:
                 operation_type = 'Edit' if is_edit else 'Retry'
                 debug_print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
@@ -17871,6 +18057,12 @@ def register_route_backend_chats(bp):
 
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
+            input_check = check_chat_content(
+                user_message, "chat_input", user_id=user_id, settings=settings,
+            )
+            if input_check.blocked:
+                return jsonify(_reject_chat_submission(conversation_item, user_id, input_check)), 200
+
             auto_linked_chat_upload_document_ids = []
             auto_merge_chat_upload_workspace_context = (
                 not mixed_source_explicit_selection
@@ -18178,9 +18370,13 @@ def register_route_backend_chats(bp):
                         item=user_message_id,
                         partition_key=conversation_id
                     )
+                    if user_message_doc.get("role") != "user" or user_message_doc.get("content") != user_message:
+                        return jsonify({"error": "The retry message changed. Reload before retrying."}), 409
                     previous_thread_id = user_message_doc.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     # Extract user_metadata from existing message for later use
                     user_metadata = user_message_doc.get('metadata', {})
+                    attach_chat_check(user_message_doc, input_check)
+                    cosmos_messages_container.upsert_item(user_message_doc)
 
                     debug_print(f"🔍 Chat API - Read retry user message:")
                     debug_print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
@@ -18422,6 +18618,7 @@ def register_route_backend_chats(bp):
 
                 # Note: Message-level chat_type will be updated after document search
 
+                attach_chat_check(user_message_doc, input_check)
                 cosmos_messages_container.upsert_item(user_message_doc)
                 if callable(publish_background_event):
                     publish_background_event(
@@ -18465,114 +18662,11 @@ def register_route_backend_chats(bp):
                 retry_thread_attempt=retry_thread_attempt,
                 is_retry=is_retry,
                 user_id=user_id,
+                settings=settings,
             )
             user_info_for_assistant = response_message_context.get('user_info')
             user_thread_id = response_message_context.get('thread_id')
             user_previous_thread_id = response_message_context.get('previous_thread_id')
-
-        # region 3 - Content Safety
-            # ---------------------------------------------------------------------
-            # 3) Check Content Safety (but DO NOT return 403).
-            #    If blocked, add a "safety" role message & skip GPT.
-            # ---------------------------------------------------------------------
-            blocked = False
-            block_reasons = []
-            triggered_categories = []
-            blocklist_matches = []
-
-            if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
-                thought_tracker.add_thought('content_safety', 'Checking content safety...')
-                try:
-                    content_safety_client = CLIENTS["content_safety_client"]
-                    request_obj = AnalyzeTextOptions(text=user_message)
-                    cs_response = content_safety_client.analyze_text(request_obj)
-
-                    max_severity = 0
-                    for cat_result in cs_response.categories_analysis:
-                        triggered_categories.append({
-                            "category": cat_result.category,
-                            "severity": cat_result.severity
-                        })
-                        if cat_result.severity > max_severity:
-                            max_severity = cat_result.severity
-
-                    if cs_response.blocklists_match:
-                        for match in cs_response.blocklists_match:
-                            blocklist_matches.append({
-                                "blocklistName": match.blocklist_name,
-                                "blocklistItemId": match.blocklist_item_id,
-                                "blocklistItemText": match.blocklist_item_text
-                            })
-
-                    # Example: If severity >=4 or blocklist, we call it "blocked"
-                    if max_severity >= 4:
-                        blocked = True
-                        block_reasons.append("Max severity >= 4")
-                    if len(blocklist_matches) > 0:
-                        blocked = True
-                        block_reasons.append("Blocklist match")
-
-                    if blocked:
-                        # Upsert to safety container
-                        safety_item = {
-                            'id': str(uuid.uuid4()),
-                            'user_id': user_id,
-                            'conversation_id': conversation_id,
-                            'message': user_message,
-                            'triggered_categories': triggered_categories,
-                            'blocklist_matches': blocklist_matches,
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'reason': "; ".join(block_reasons),
-                            'metadata': {
-                                'message_id': assistant_message_id,
-                                'thread_info': {
-                                    'thread_id': response_message_context.get('thread_id'),
-                                    'previous_thread_id': response_message_context.get('previous_thread_id'),
-                                    'thread_attempt': assistant_thread_attempt,
-                                },
-                            }
-                        }
-                        cosmos_safety_container.upsert_item(safety_item)
-
-                        # Instead of 403, we'll add a "safety" message
-                        blocked_msg_content = build_content_safety_violation_message(
-                            settings=settings,
-                            block_reasons=block_reasons,
-                            triggered_categories=triggered_categories,
-                            blocklist_matches=blocklist_matches,
-                        )
-
-                        # Insert a special "role": "safety" or "blocked"
-                        safety_doc = _build_safety_message_doc(
-                            conversation_id=conversation_id,
-                            message_id=assistant_message_id,
-                            content=blocked_msg_content.strip(),
-                            response_context=response_message_context,
-                            thread_attempt=assistant_thread_attempt,
-                        )
-                        cosmos_messages_container.upsert_item(safety_doc)
-
-                        # Update conversation's last_updated
-                        conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
-                        invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
-
-                        # Return a normal 200 with a special field: blocked=True
-                        return jsonify({
-                            'reply': blocked_msg_content.strip(),
-                            'blocked': True,
-                            'role': 'safety',
-                            'triggered_categories': triggered_categories,
-                            'blocklist_matches': blocklist_matches,
-                            'conversation_id': conversation_id,
-                            'conversation_title': conversation_item['title'],
-                            'message_id': assistant_message_id
-                        }), 200
-
-                except HttpResponseError as e:
-                    debug_print(f"[CONTENT_SAFETY_ERROR] {e}")
-                except Exception as ex:
-                    debug_print(f"[CONTENT_SAFETY] Unexpected error: {ex}")
 
             if (
                 not image_gen_enabled
@@ -21345,7 +21439,8 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
-            _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id)
+            assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+            ai_message = assistant_doc["content"]
 
             if selected_agent and agent_name:
                 log_agent_run(
@@ -21555,6 +21650,8 @@ def register_route_backend_chats(bp):
         # because request context may not be available inside the generator
         try:
             data = request.get_json()
+            if not isinstance(data, dict) or not isinstance(data.get("message", ""), str):
+                return jsonify({"error": "Message must be text."}), 400
             user_id = get_current_user_id()
             current_user_info = get_current_user_info() or {}
             current_user_email = current_user_info.get('email')
@@ -21596,6 +21693,16 @@ def register_route_backend_chats(bp):
             active_public_workspace_id=data.get('active_public_workspace_id'),
             active_public_workspace_ids=data.get('active_public_workspace_ids', []),
         )
+        try:
+            input_check = check_chat_content(
+                data.get("message") or "", "chat_input", user_id=user_id, settings=settings,
+            )
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        if input_check.blocked:
+            conversation, _ = _resolve_or_create_authorized_personal_conversation(user_id, requested_conversation_id)
+            payload = _reject_chat_submission(conversation, user_id, input_check)
+            return Response(f"data: {json.dumps(payload)}\n\n", mimetype="text/event-stream")
         finalized_conversation_id = requested_conversation_id or (
             _load_or_create_analyze_conversation(user_id)['id']
             if data.get('analysis_result_context') is not None else str(uuid.uuid4())
@@ -21609,7 +21716,6 @@ def register_route_backend_chats(bp):
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
-        request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
         debug_print(
             "[STREAMING] Incoming /api/chat/stream request | "
             f"requested_conversation_id={requested_conversation_id} | "
@@ -21626,7 +21732,7 @@ def register_route_backend_chats(bp):
             f"active_group_ids={len(data.get('active_group_ids', []) or [])} | "
             f"active_public_workspace_id={data.get('active_public_workspace_id')} | "
             f"frontend_model={data.get('model_deployment')} | "
-            f"message_preview={request_preview!r}"
+            f"message_characters={len(request_message)}"
         )
 
         if is_retry:
@@ -22727,6 +22833,15 @@ def register_route_backend_chats(bp):
 
                     user_message = user_message_doc.get('content', user_message)
                     data['message'] = user_message
+                    retry_input_check = check_chat_content(
+                        user_message, "chat_input", user_id=user_id, settings=settings,
+                    )
+                    if retry_input_check.blocked:
+                        payload = _reject_chat_submission(conversation_item, user_id, retry_input_check)
+                        yield f"data: {json.dumps(payload)}\n\n"
+                        return
+                    attach_chat_check(user_message_doc, retry_input_check)
+                    cosmos_messages_container.upsert_item(user_message_doc)
                     user_metadata = user_message_doc.get('metadata') if isinstance(user_message_doc.get('metadata'), dict) else {}
                     thread_info = user_metadata.get('thread_info') if isinstance(user_metadata.get('thread_info'), dict) else {}
                     requested_thread_id = str(retry_thread_id or '').strip()
@@ -22953,6 +23068,7 @@ def register_route_backend_chats(bp):
                         'metadata': user_metadata
                     }
 
+                    attach_chat_check(user_message_doc, input_check)
                     cosmos_messages_container.upsert_item(user_message_doc)
                     yield build_user_message_persisted_stream_event(
                         conversation_id,
@@ -22995,6 +23111,7 @@ def register_route_backend_chats(bp):
                     retry_thread_attempt=effective_retry_thread_attempt,
                     is_retry=is_retry,
                     user_id=user_id,
+                    settings=settings,
                 )
                 user_info_for_assistant = response_message_context.get('user_info')
                 user_thread_id = response_message_context.get('thread_id')
@@ -23069,113 +23186,6 @@ def register_route_backend_chats(bp):
                             progress=thought_payload.get('progress'),
                         )
                     )
-
-                # Content Safety check (matching non-streaming path)
-                blocked = False
-                if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
-                    yield emit_thought('content_safety', 'Checking content safety...')
-                    try:
-                        content_safety_client = CLIENTS["content_safety_client"]
-                        request_obj = AnalyzeTextOptions(text=user_message)
-                        cs_response = content_safety_client.analyze_text(request_obj)
-
-                        max_severity = 0
-                        triggered_categories = []
-                        blocklist_matches = []
-                        block_reasons = []
-
-                        for cat_result in cs_response.categories_analysis:
-                            triggered_categories.append({
-                                "category": cat_result.category,
-                                "severity": cat_result.severity
-                            })
-                            if cat_result.severity > max_severity:
-                                max_severity = cat_result.severity
-
-                        if cs_response.blocklists_match:
-                            for match in cs_response.blocklists_match:
-                                blocklist_matches.append({
-                                    "blocklistName": match.blocklist_name,
-                                    "blocklistItemId": match.blocklist_item_id,
-                                    "blocklistItemText": match.blocklist_item_text
-                                })
-
-                        if max_severity >= 4:
-                            blocked = True
-                            block_reasons.append("Max severity >= 4")
-                        if len(blocklist_matches) > 0:
-                            blocked = True
-                            block_reasons.append("Blocklist match")
-
-                        if blocked:
-                            # Upsert to safety container
-                            safety_item = {
-                                'id': str(uuid.uuid4()),
-                                'user_id': user_id,
-                                'conversation_id': conversation_id,
-                                'message': user_message,
-                                'triggered_categories': triggered_categories,
-                                'blocklist_matches': blocklist_matches,
-                                'timestamp': datetime.utcnow().isoformat(),
-                                'reason': "; ".join(block_reasons),
-                                'metadata': {
-                                    'message_id': assistant_message_id,
-                                    'thread_info': {
-                                        'thread_id': response_message_context.get('thread_id'),
-                                        'previous_thread_id': response_message_context.get('previous_thread_id'),
-                                        'thread_attempt': assistant_thread_attempt,
-                                    },
-                                }
-                            }
-                            cosmos_safety_container.upsert_item(safety_item)
-
-                            # Build blocked message
-                            blocked_msg_content = build_content_safety_violation_message(
-                                settings=settings,
-                                block_reasons=block_reasons,
-                                triggered_categories=triggered_categories,
-                                blocklist_matches=blocklist_matches,
-                            )
-
-                            # Insert safety message
-                            safety_doc = _build_safety_message_doc(
-                                conversation_id=conversation_id,
-                                message_id=assistant_message_id,
-                                content=blocked_msg_content.strip(),
-                                response_context=response_message_context,
-                                thread_attempt=assistant_thread_attempt,
-                            )
-                            cosmos_messages_container.upsert_item(safety_doc)
-
-                            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
-                            invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
-
-                            final_data = make_json_serializable({
-                                'content': blocked_msg_content.strip(),
-                                'full_content': blocked_msg_content.strip(),
-                                'blocked': True,
-                                'role': 'safety',
-                                'done': True,
-                                'conversation_id': conversation_id,
-                                'conversation_title': conversation_item.get('title'),
-                                'message_id': assistant_message_id,
-                                'user_message_id': user_message_id,
-                                'augmented': False,
-                                'hybrid_citations': [],
-                                'web_search_citations': [],
-                                'agent_citations': [],
-                                'model_deployment_name': None,
-                                'metadata': safety_doc.get('metadata', {}),
-                                'thoughts_enabled': thought_tracker.enabled,
-                            })
-                            yield f"data: {json.dumps(final_data)}\n\n"
-                            return
-
-                    except HttpResponseError as e:
-                        debug_print(f"[CONTENT_SAFETY_ERROR_STREAMING] {e}")
-                    except Exception as ex:
-                        debug_print(f"[CONTENT_SAFETY_STREAMING] Unexpected error: {ex}")
 
                 if (
                     not original_hybrid_search_enabled
@@ -24830,7 +24840,7 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
-                        _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id)
+                        assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
                         if token_usage_data and token_usage_data.get('total_tokens') is not None:
                             try:
                                 log_token_usage(
@@ -25642,7 +25652,8 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
-                    _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id)
+                    assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+                    accumulated_content = assistant_doc["content"]
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
                         'finalization',
@@ -25945,7 +25956,8 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
-                            _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id)
+                            assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+                            safe_partial_content = assistant_doc["content"]
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
                             initialize_conversation_used_document_tracking(
@@ -26377,7 +26389,7 @@ def register_route_backend_chats(bp):
 
             # Update the message in Cosmos DB
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 debug_print(f"Error updating message {message_id}: {str(e)}")
                 log_event(
@@ -26482,7 +26494,7 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': str(ex)}), 400
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 debug_print(f'Error updating message {message_id}: {e}')
                 log_event(
@@ -26612,7 +26624,7 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': str(ex)}), 400
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 log_event(
                     f'[BLOCK_REVISION] Failed to update message: {e}',
@@ -26679,7 +26691,7 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': str(ex)}), 400
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 log_event(
                     f'[BLOCK_REVISION] Failed to update message: {e}',
@@ -26853,7 +26865,7 @@ def register_route_backend_chats(bp):
                 }), 502
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 log_event(
                     f'[BLOCK_REVISION] Failed to update message: {e}',
@@ -27022,7 +27034,7 @@ def register_route_backend_chats(bp):
                     pass
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 log_event(
                     f'[IMAGE_REVISION] Failed to update message: {e}',
@@ -27082,7 +27094,7 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': str(ex)}), 400
 
             try:
-                cosmos_messages_container.upsert_item(message_doc)
+                message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
                 log_event(
                     f'[IMAGE_REVISION] Failed to restore version: {e}',
@@ -27939,6 +27951,7 @@ def build_conversation_history_segments(
     include_assistant_citation_context=True,
 ):
     """Build shared conversation history segments for chat completions."""
+    all_messages = checked_history_messages(all_messages, for_model=True)
     all_messages = _sanitize_saved_analysis_history(all_messages)
     conversation_history_messages = []
     summary_of_older = ""

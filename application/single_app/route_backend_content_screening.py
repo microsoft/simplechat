@@ -210,6 +210,7 @@ def _configuration(settings=None):
     settings = settings if isinstance(settings, dict) else get_settings() or {}
     return {
         "enabled": settings.get("enable_content_screening") is True,
+        "workspace_uploads_enabled": settings.get("enable_content_screening_workspace_uploads", True) is True,
         "enhanced_citations_enabled": settings.get("enable_enhanced_citations") is True,
         "can_manage_global": _is_admin(), "can_scan_all": _is_admin(),
         "templates": _templates(),
@@ -356,10 +357,12 @@ def register_route_backend_content_screening(bp):
     @login_required
     @admin_required
     def content_screening_update_configuration():
-        value = _body({"enabled"}, {"enabled"})
-        if type(value["enabled"]) is not bool:
+        value = _body({"enabled", "workspace_uploads_enabled"}, {"enabled"})
+        if any(type(item) is not bool for item in value.values()):
             raise ScreeningValidationError()
         updates = {"enable_content_screening": value["enabled"]}
+        if "workspace_uploads_enabled" in value:
+            updates["enable_content_screening_workspace_uploads"] = value["workspace_uploads_enabled"]
         settings = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
         if not isinstance(settings, dict):
             raise ScreeningConfigurationError()

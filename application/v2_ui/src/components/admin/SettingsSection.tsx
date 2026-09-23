@@ -297,7 +297,7 @@ export function SettingsSection({
 
     // A section states each distinct prerequisite once, at the top, rather than repeating
     // it on every field that carries it.
-    const requirements = useMemo(() => collectRequirements(fields), [fields]);
+    const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
 
     const groups = useMemo(
         () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),

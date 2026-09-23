@@ -48,6 +48,7 @@ from openai import APIConnectionError, APITimeoutError
 
 from agent_execution_context import AgentDelegationTimeout
 from functions_appinsights import log_event
+from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
@@ -1021,6 +1022,8 @@ def validate_plan(
             'estimated_cost': capability['cost_class'],
             'phase': capability['phase'],
             'status': STEP_STATUS_PENDING,
+            **({'model_task': raw['model_task']} if isinstance(raw.get('model_task'), str) else {}),
+            **({'model_binding': raw['model_binding']} if isinstance(raw.get('model_binding'), dict) else {}),
         })
         used_counts[capability_id] = used_counts.get(capability_id, 0) + 1
 
@@ -1288,6 +1291,12 @@ def normalize_plan(
         raise PlanValidationError('A model cannot change the admitted plan contract.')
     plan_contract_version({'planner_contract_version': contract_version})
 
+    # Bindings are server-owned. A planner response cannot authorize a deployment.
+    plan.pop('model_routing', None)
+    for step in plan.get('steps') or []:
+        if isinstance(step, dict):
+            step.pop('model_binding', None)
+
     intent = plan.get('intent') if isinstance(plan.get('intent'), dict) else {}
     complexity = _text(intent.get('complexity')).lower()
     if complexity not in COMPLEXITIES:
@@ -1494,6 +1503,7 @@ FAILURE_MESSAGES = {
     'checkpoint_invalid': 'Saved progress could not be verified. Review the request and create a new plan.',
     'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
     'model_failed': 'The answering model could not complete the reply.',
+    'model_routing_changed': 'The approved model or its capabilities changed. Review a new plan before running.',
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
 }
@@ -1525,6 +1535,8 @@ def safe_failure(value, *, step_id=None, capability_id=None):
 
 def failure_from_exception(exc, *, answering=False, _depth=0):
     """Use types and structured status, never diagnostic prose or model content."""
+    if isinstance(exc, ModelCatalogError):
+        return build_failure('model_routing_changed')
     status = getattr(exc, 'status_code', None)
     if not isinstance(status, int):
         status = getattr(getattr(exc, 'response', None), 'status_code', None)

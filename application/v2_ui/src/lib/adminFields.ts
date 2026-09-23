@@ -333,6 +333,14 @@ export interface AdminSettingsResponse {
      */
     suppressed_capabilities: string[];
     version: string;
+    update_status?: {
+        latest_version: string | null;
+        update_available: boolean;
+        status: 'checked' | 'stale' | 'unavailable';
+        checked_at: string | null;
+        attempted_at: string | null;
+        error: string | null;
+    };
 }
 
 export interface AdminSettingsPatchResponse {

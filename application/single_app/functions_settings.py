@@ -1,10 +1,13 @@
 # functions_settings.py
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from functools import wraps
 import logging
+import re
 import threading
 
+import requests
 from flask import g, has_request_context, jsonify, request, session
 from azure.core import MatchConditions
 
@@ -1193,6 +1196,29 @@ def _get_app_settings_store():
         return app_settings_cache.get_settings_store()
 
 
+def save_model_catalog_change(payload, *, profile_id=None):
+    """Fence profile writes without swallowing conflict or publication failures."""
+    # The pure profile service does not import this settings owner.
+    from functions_model_catalog import change_catalog, ModelCatalogError
+
+    if not isinstance(payload, dict) or set(payload) - {"profile", "preferences", "etag"}:
+        raise ModelCatalogError("The catalog request contains unsupported fields.")
+    etag = payload.get("etag")
+    if not isinstance(etag, str) or not etag:
+        raise ModelCatalogError("Reload the catalog before saving.", "etag")
+    if "profile" not in payload and "preferences" not in payload:
+        raise ModelCatalogError("No profile changes were supplied.")
+    saved = _get_app_settings_store().write(
+        lambda current: change_catalog(
+            current, profile_id=profile_id, profile=payload.get("profile"),
+            preferences=payload.get("preferences"),
+        ),
+        expected_etag=etag,
+    )
+    log_event("[MODELS] Model catalog change saved.", extra={"profile_id": profile_id or "new"})
+    return saved
+
+
 def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_client_factory):
     """Supply runtime dependencies separately from the persisted settings object."""
     with _settings_store_init_lock:
@@ -1685,6 +1711,13 @@ def get_settings(use_cosmos=False, include_source=False):
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'enable_content_screening': False,
+        'enable_content_screening_workspace_uploads': True,
+        'enable_content_screening_chat_input': False,
+        'enable_content_screening_chat_output': False,
+        'enable_content_safety_chat_input': True,
+        'enable_content_safety_chat_output': False,
+        'chat_content_output_mode': 'stream_then_check',
+        'chat_content_scan_failure_action': 'allow_unchecked',
         'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
         'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
@@ -2045,31 +2078,46 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
         raise ScreeningValidationError()
     if any(key.startswith('content_screening') for key in new_settings):
         raise ScreeningValidationError()
-    if 'enable_content_screening' in new_settings and type(new_settings['enable_content_screening']) is not bool:
-        raise ScreeningValidationError()
+    for key in (
+        'enable_content_screening', 'enable_content_screening_workspace_uploads',
+        'enable_content_screening_chat_input', 'enable_content_screening_chat_output',
+        'enable_content_safety_chat_input', 'enable_content_safety_chat_output',
+    ):
+        if key in new_settings and type(new_settings[key]) is not bool:
+            raise ScreeningValidationError("Content check switches must be boolean values.")
+    for key, choices in {
+        'chat_content_output_mode': ('stream_then_check', 'check_before_display'),
+        'chat_content_scan_failure_action': ('allow_unchecked', 'block'),
+    }.items():
+        if key in new_settings and new_settings[key] not in choices:
+            raise ScreeningValidationError("The chat content check behavior is invalid.")
     merged = {**current_settings, **new_settings}
     if merged.get('enable_content_screening') is not True:
         return
-    if merged.get('enable_enhanced_citations') is not True:
+    uploads_enabled = merged.get('enable_content_screening_workspace_uploads', True) is True
+    if uploads_enabled and merged.get('enable_enhanced_citations') is not True:
         raise ScreeningCitationsRequiredError()
     storage_fields = (
         'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint',
         'office_docs_key', 'office_docs_authentication_type',
     )
     activating = current_settings.get('enable_content_screening') is not True
+    activating_uploads = uploads_enabled and current_settings.get('enable_content_screening_workspace_uploads', True) is not True
     storage_changed = any(
         field in new_settings and new_settings[field] != current_settings.get(field)
         for field in storage_fields
     )
-    if activating or storage_changed or 'enable_content_screening' in new_settings:
+    if activating or storage_changed or any(key.startswith('enable_content_screening') for key in new_settings):
         # Import at the operation boundary; the service itself reads settings.
         from content_screening.service import validate_screening_configuration
 
         try:
             validate_screening_configuration(
-                merged, repository=repository, check_storage=activating or storage_changed,
+                merged, repository=repository,
+                check_storage=uploads_enabled and (activating or activating_uploads or storage_changed),
                 proposed_settings=True,
                 allow_missing_policy=new_settings.get('enable_content_screening') is True,
+                document_operation=uploads_enabled,
             )
         except ScreeningError:
             raise
@@ -2132,7 +2180,10 @@ def update_settings(new_settings, *, expected_etag=None):
                     from content_screening.service import initialize_screening_policy, validate_screening_configuration
 
                     initialize_screening_policy()
-                    validate_screening_configuration(candidate, proposed_settings=True)
+                    validate_screening_configuration(
+                        candidate, proposed_settings=True,
+                        document_operation=candidate.get('enable_content_screening_workspace_uploads', True) is True,
+                    )
                 yield
 
         _get_app_settings_store().write(
@@ -2406,6 +2457,87 @@ def compare_versions(v1_str, v2_str):
 
     # If all compared parts are equal, they are the same version
     return 0
+
+def get_application_update_status(settings, current_version):
+    """Check releases on admin visits, sharing successful and failed attempts for 24 hours."""
+    now = datetime.now(timezone.utc)
+
+    def read_time(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed > now:
+            return None
+        return parsed
+
+    def valid_version(value):
+        return isinstance(value, str) and re.fullmatch(
+            r'[vV]?\d+(?:\.\d+)*', value.strip()
+        ) is not None
+
+    latest_version = settings.get('latest_version_available')
+    latest_version = latest_version.strip().lstrip('vV') if valid_version(latest_version) else None
+    last_success = read_time(settings.get('last_update_check_time'))
+    last_attempt = read_time(settings.get('last_update_check_attempt_time'))
+    error = 'Unable to check for application updates.'
+    failed = settings.get('last_update_check_failed') is True
+    cache_time = last_attempt if failed else last_success
+    cache_valid = cache_time is not None and (now - cache_time).total_seconds() < 86400
+    if not failed:
+        cache_valid = cache_valid and latest_version is not None
+
+    if not cache_valid:
+        updates = {
+            'last_update_check_attempt_time': now.isoformat(),
+            'last_update_check_failed': True,
+        }
+        failed = True
+        try:
+            response = requests.get(
+                'https://github.com/microsoft/simplechat/releases', timeout=3
+            )
+            if response.status_code != 200:
+                raise ValueError('Unexpected release response status')
+            discovered_version = extract_latest_version_from_html(response.text)
+            if not valid_version(discovered_version):
+                raise ValueError('No valid release version')
+            latest_version = discovered_version
+            last_success = now
+            failed = False
+            updates.update({
+                'last_update_check_time': now.isoformat(),
+                'latest_version_available': latest_version,
+                'last_update_check_failed': False,
+            })
+        except (requests.RequestException, ValueError) as exc:
+            log_event(
+                '[APP_UPDATES] Release check failed.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+        updates['update_available'] = compare_versions(latest_version, current_version) == 1
+        try:
+            saved = update_settings(updates)
+        except AIConnectionError:
+            saved = False
+        if not saved:
+            failed = True
+            error = 'Unable to cache the application update check.'
+            log_event('[APP_UPDATES] Could not persist release check.', level=logging.WARNING)
+        last_attempt = now
+
+    return {
+        'latest_version': latest_version,
+        'update_available': compare_versions(latest_version, current_version) == 1,
+        'status': ('stale' if latest_version else 'unavailable') if failed else 'checked',
+        'checked_at': last_success.isoformat() if last_success else None,
+        'attempted_at': last_attempt.isoformat() if last_attempt else None,
+        'error': error if failed else None,
+    }
+
 
 def extract_latest_version_from_html(html_content):
     """
@@ -2833,6 +2965,16 @@ def normalize_model_endpoints(endpoints):
             if not isinstance(model, dict):
                 continue
             model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            # Effective profile metadata is resolved from current settings, never accepted
+            # as a caller-supplied assertion or saved back as a deployment override.
+            model_copy.pop("_catalog_profile", None)
+            model_copy.pop("_catalog_effective_revision", None)
+            profile_id = model_copy.get("catalogProfileId")
+            if profile_id is not None and (
+                not isinstance(profile_id, str) or len(profile_id) > 160
+                or (profile_id and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]*", profile_id))
+            ):
+                raise ModelTokenBudgetError("invalid_model_profile", "Choose a valid catalog profile.")
             if model_copy != model:
                 changed = True
             for field_name, value in normalize_model_budget_overrides(model_copy).items():
@@ -3002,12 +3144,22 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True, catalog_settings=None):
     """Keep editable model metadata while stripping stored auth credentials."""
+    from functions_model_catalog import ModelCatalogError, apply_model_profile, get_effective_model_profiles
+
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
         return []
 
+    # Resolve tenant profiles only for linked deployments; unlinked callers keep
+    # the existing settings-independent projection.
+    if catalog_settings is None and any(
+        model.get("catalogProfileId") for endpoint in normalized
+        for model in endpoint.get("models", []) if isinstance(model, dict)
+    ):
+        catalog_settings = get_settings()
+    profiles = get_effective_model_profiles(catalog_settings) if catalog_settings is not None else None
     sanitized = []
     for endpoint in normalized:
         if not isinstance(endpoint, dict):
@@ -3032,8 +3184,15 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
         endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
+                effective_model = model
+                if profiles is not None:
+                    try:
+                        effective_model = apply_model_profile(model, endpoint, catalog_settings, profiles)
+                    except ModelCatalogError as exc:
+                        log_event("[MODELS] Linked catalog profile is unavailable.", level=logging.WARNING,
+                                  extra={"error_code": exc.code})
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider"), endpoint=endpoint,
+                    effective_model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
         if not include_connection_details:
             for field in ("auth", "connection", "management", "identity_header"):

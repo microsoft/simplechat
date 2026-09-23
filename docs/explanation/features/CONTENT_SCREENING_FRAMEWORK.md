@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.127.** Strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.131.** Orchestration harness integration with chat checkpoints was implemented in 0.261.131. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
@@ -108,7 +108,7 @@ Automatic metadata generation uses admitted source content. New metadata changes
 
 ## Configuration and usage
 
-`enable_content_screening` is disabled by default. Enhanced Citations and its working storage configuration are required before activation. Review the selected model's data routing and the expected workload before adding model checks to a broad workspace scan.
+`enable_content_screening` is disabled by default. Enhanced Citations and working storage are required for workspace upload screening and explicit document scans. In **0.261.127**, chat-only use can leave `enable_content_screening_workspace_uploads` off and does not require Blob storage. Review the selected model's data routing and workload before enabling model checks.
 
 Since **0.261.107**, both interfaces expose **Admin Settings > Security > Content Screening** independently of Content Safety. The V2 policy editor loads and saves the protected policy through its dedicated API, supports sample inspection and configured-model selection, and remains visible before Enhanced Citations is enabled. Main settings saves no longer report success when persistence fails.
 
@@ -138,6 +138,6 @@ The core cases include a last-page finding, complete window coverage, regex dead
 
 `functional_tests\test_orchestration_source_access.py` exercises strict metadata and scope-service failures, the real mixed-source/search resolver, retained-result discovery and reopen, unchanged legacy defaults, caught-error model fences, concurrent scope isolation and network-blocked cold imports in normal and optimized Python. `test_content_screening_access.py` continues to cover the original default-mode sanitization and model-fallback fence.
 
-This release covers workspace knowledge, including chat files handed off to a workspace. It does not add ordinary message screening, chat-only attachment screening, outbound web-search preflight, or agent-to-agent message inspection.
+The document adapter covers workspace knowledge, including chat files handed off to a workspace. **0.261.127** adds [chat text checkpoints]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) that reuse its global baseline without changing document holds or workspace review. Since **0.261.131**, Gather / Reason / Render orchestration replies use the same output checkpoint before publication, including model-free delivery. Chat-only attachment screening, outbound web-search preflight, and agent-to-agent message inspection remain outside these checkpoints.
 
 Formatting-based hidden-text detection and layout-preserving PDF/Office redaction remain separate work. Neither regex nor a model guarantees that all sensitive information or prompt injection will be found. Previously downloaded content and requests already sent to a provider cannot be recalled.

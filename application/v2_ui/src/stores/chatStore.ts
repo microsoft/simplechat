@@ -37,7 +37,9 @@ import {
 import {
     cancelStream,
     fetchStreamStatus,
+    isReplyRemoved,
     reattachChatStream,
+    resolveStreamContent,
     streamChat,
     type ChatStreamHandlers,
     type ChatStreamOptions,
@@ -784,8 +786,14 @@ function mergeCollaborationMessage(
 ): ChatMessage[] {
     const existingIndex = messages.findIndex((message) => message.id === incoming.id);
     if (existingIndex !== -1) {
+        if (
+            isReplyRemoved(messages[existingIndex].metadata)
+            && !isReplyRemoved(incoming.metadata)
+        ) return messages;
         const merged = [...messages];
-        merged[existingIndex] = { ...merged[existingIndex], ...incoming };
+        merged[existingIndex] = isReplyRemoved(incoming.metadata)
+            ? { ...incoming, thoughts: undefined }
+            : { ...merged[existingIndex], ...incoming };
         return merged;
     }
 
@@ -918,8 +926,8 @@ function buildStreamHandlers(
             const finalMessage: ChatMessage = {
                 id: String(event.message_id ?? STREAMING_MESSAGE_ID),
                 conversation_id: conversationId,
-                role: 'assistant',
-                content: accumulated,
+                role: event.blocked ? 'safety' : event.role ?? 'assistant',
+                content: resolveStreamContent(event, accumulated),
                 timestamp: new Date().toISOString(),
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
@@ -929,7 +937,7 @@ function buildStreamHandlers(
                 // available after the stream ends instead of disappearing with the
                 // streaming placeholder.
                 thoughts:
-                    getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
+                    !event.blocked && getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
             };
             set((state) => ({
                 // Appended by id rather than blindly: in a shared conversation the same
@@ -944,6 +952,7 @@ function buildStreamHandlers(
                 streamingContent: '',
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
+                ...(event.blocked ? { thoughts: [] } : {}),
             }));
             const descriptor = latestSavedAnalysis([finalMessage]);
             if (descriptor) {
@@ -956,7 +965,8 @@ function buildStreamHandlers(
             }
             // Partial output is kept: discarding what was already generated is more
             // annoying than useful when someone stops a long answer.
-            if (accumulated) {
+            const finalContent = resolveStreamContent(_event, accumulated);
+            if (finalContent) {
                 set((state) => ({
                     messages: [
                         ...state.messages,
@@ -964,7 +974,7 @@ function buildStreamHandlers(
                             id: `cancelled-${Date.now()}`,
                             conversation_id: conversationId,
                             role: 'assistant',
-                            content: accumulated,
+                            content: finalContent,
                             timestamp: new Date().toISOString(),
                             metadata: completionMetadata(_event),
                             thoughts:
@@ -1238,6 +1248,12 @@ function attachCollaborationEvents(conversationId: string): void {
 
     stopCollaborationEvents();
     detachCollaborationEvents = subscribeToCollaborationEvents(conversationId, {
+        onMessageUpdated: (message) => {
+            if (!stillOpen()) return;
+            set((state) => ({
+                messages: mergeCollaborationMessage(state.messages, message),
+            }));
+        },
         onMessageCreated: (message, conversation) => {
             if (conversation) {
                 collaboration().applyBroadcast(conversation);
@@ -2729,9 +2745,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const finalMessage: ChatMessage = {
             id: String(event.message_id ?? (attempt.run_id ? `orchestration-status-${attempt.run_id}` : STREAMING_MESSAGE_ID)),
             conversation_id: conversationId,
-            role: 'assistant',
-            content: typeof event.full_content === 'string' && event.full_content
-                ? event.full_content : accumulated || (outcome.status === 'completed' ? '' : fallback),
+            role: event.blocked ? 'safety' : event.role ?? 'assistant',
+            content: resolveStreamContent(event, accumulated || (outcome.status === 'completed' ? '' : fallback)),
             timestamp: new Date().toISOString(),
             model_deployment_name: event.model_deployment_name,
             agent_display_name: event.agent_display_name,
@@ -2752,7 +2767,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ...attempt,
                 },
             },
-            thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
+            thoughts: !event.blocked && get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };
         set((state) => {
             // Reconcile the optimistic user bubble with the server id when the run reports one, so
@@ -2780,6 +2795,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reconnectPhase: null,
                 streamError: null,
                 streamAuthUrl: null,
+                ...(event.blocked ? { thoughts: [] } : {}),
             };
         });
 

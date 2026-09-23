@@ -89,6 +89,8 @@ const supportLatestFeaturesSettingsDiv = document.getElementById('support_latest
 
 const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
+let indexChecksPending = false;
+let indexSettingsConflict = false;
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 const groupWorkflowAssignmentsInput = document.getElementById('group_workflow_allowed_group_ids');
@@ -8741,8 +8743,14 @@ function setupTestButtons() {
     const testKeyVaultBtn = document.getElementById('test_key_vault_button');
     if (testKeyVaultBtn) {
         testKeyVaultBtn.addEventListener('click', async () => {
+            if (testKeyVaultBtn.disabled) {
+                return;
+            }
             const resultDiv = document.getElementById('test_key_vault_result');
-            resultDiv.innerHTML = 'Testing Key Vault...';
+            testKeyVaultBtn.disabled = true;
+            testKeyVaultBtn.setAttribute('aria-busy', 'true');
+            resultDiv.className = 'mt-2 alert alert-info';
+            resultDiv.textContent = 'Testing Key Vault list, write, read-back, and cleanup permissions...';
 
             const payload = {
                 test_type: 'key_vault',
@@ -8750,19 +8758,25 @@ function setupTestButtons() {
                 client_id: document.getElementById('key_vault_identity').value
             };
 
-             try {
+            try {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
-                if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
-                } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;                }
-            } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;            }
+                resultDiv.className = `mt-2 alert alert-${resp.ok ? 'success' : 'danger'}`;
+                resultDiv.textContent = resp.ok
+                    ? data.message
+                    : data.error || 'The Key Vault permission test failed.';
+            } catch (error) {
+                resultDiv.className = 'mt-2 alert alert-danger';
+                resultDiv.textContent = 'Unable to complete the Key Vault permission test. Check the connection and server diagnostics.';
+            } finally {
+                testKeyVaultBtn.disabled = false;
+                testKeyVaultBtn.removeAttribute('aria-busy');
+            }
         });
     }
 
@@ -9771,142 +9785,159 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 document.addEventListener('DOMContentLoaded', () => {
-        ['user','group','public'].forEach(type => {
-            const warnDiv = document.getElementById(`index-warning-${type}`);
-            const missingSpan = document.getElementById(`missing-fields-${type}`);
-            const fixBtn = document.getElementById(`fix-${type}-index-btn`);
-  
-            // 1) check for missing fields
-            fetch('/api/admin/settings/check_index_fields', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'same-origin',
-                body: JSON.stringify({ indexType: type })
-            })
-            .then(r => {
-                if (!r.ok) {
-                    return r.json().then(errorData => {
-                        throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
-                    });
-                }
-                return r.json();
-            })
-            .then(response => {
-                if (response.autoFixed) {
-                    // Fields were automatically fixed
-                    console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
-                    if (warnDiv) {
-                        warnDiv.className = 'alert alert-success';
-                        missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
-                        warnDiv.style.display = 'block';
-                        if (fixBtn) fixBtn.style.display = 'none';
+    const revisionInput = document.querySelector('input[name="admin_settings_etag"]');
+    const indexTypes = ['user', 'group', 'public'].filter(type =>
+        document.getElementById(`index-warning-${type}`)
+        && document.getElementById(`missing-fields-${type}`)
+        && document.getElementById(`fix-${type}-index-btn`)
+    );
+    if (!indexTypes.length) {
+        return;
+    }
 
-                        // Hide success message after 5 seconds
-                        setTimeout(() => {
-                            warnDiv.style.display = 'none';
-                        }, 5000);
-                    }
-                } else if (response.autoFixFailed) {
-                    // Auto-fix failed, show manual button
-                    console.warn(`Auto-fix failed for ${type} index:`, response.error);
-                    missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
-                    warnDiv.className = 'alert alert-warning';
-                    warnDiv.style.display = 'block';
-                    if (fixBtn) {
-                        fixBtn.textContent = `Fix ${type} Index Fields`;
-                        fixBtn.style.display = 'inline-block';
-                    }
-                } else if (response.missingFields && response.missingFields.length > 0) {
-                    // Missing fields but auto-fix was disabled
-                    missingSpan.textContent = response.missingFields.join(', ');
-                    warnDiv.className = 'alert alert-warning';
-                    warnDiv.style.display = 'block';
-                    if (fixBtn) {
-                        fixBtn.textContent = `Fix ${type} Index Fields`;
-                        fixBtn.style.display = 'inline-block';
-                    }
-                } else if (response.indexExists) {
-                    // Index exists and is complete
-                    if (warnDiv) warnDiv.style.display = 'none';
-                    console.log(`${type} index is properly configured`);
-                }
-            })
-            .catch(err => {
-                console.warn(`Checking ${type} index fields:`, err.message);
-        
-                // Check if this is an index not found error
-                if (err.message.includes('does not exist yet') || err.message.includes('not found')) {
-                    // Show a different message for missing index
-                    if (warnDiv && missingSpan && fixBtn) {
-                        missingSpan.textContent = `Index "${type}" does not exist yet`;
-                        warnDiv.style.display = 'block';
-                        fixBtn.textContent = `Create ${type} Index`;
-                        fixBtn.style.display = 'inline-block';
-                        fixBtn.dataset.action = 'create';
-                    }
-                } else if (err.message.includes('not configured')) {
-                    // Azure AI Search not configured
-                    if (warnDiv && missingSpan) {
-                        missingSpan.textContent = 'Azure AI Search not configured';
-                        warnDiv.style.display = 'block';
-                        if (fixBtn) fixBtn.style.display = 'none';
-                    }
-                } else {
-                    // Hide the warning div for other errors
-                    if (warnDiv) warnDiv.style.display = 'none';
-                }
+    function showIndexStatus(type, message, severity = 'warning', action = null) {
+        const warning = document.getElementById(`index-warning-${type}`);
+        const button = document.getElementById(`fix-${type}-index-btn`);
+        warning.className = `alert alert-${severity}`;
+        document.getElementById(`missing-fields-${type}`).textContent = message;
+        button.classList.toggle('d-none', !action);
+        button.dataset.action = action || 'fix';
+        button.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+    }
+
+    function showSettingsConflict(type) {
+        indexSettingsConflict = true;
+        const message = 'Settings changed since this page was loaded. Your unsaved edits are still here. Copy them before reloading to review the latest settings.';
+        showIndexStatus(type, message, 'danger');
+        showToast(message, 'danger');
+        updateSaveButtonState();
+    }
+
+    let indexFailureReported = false;
+    function reportIndexFailure() {
+        if (!indexFailureReported) {
+            showToast('An AI Search index check failed. Review the index warning before saving.', 'danger');
+            indexFailureReported = true;
+        }
+    }
+
+    async function checkIndex(type) {
+        const startingRevision = revisionInput?.value;
+        const payload = { indexType: type };
+        if (startingRevision) {
+            payload.settings_etag = startingRevision;
+        }
+        try {
+            const response = await fetch('/api/admin/settings/check_index_fields', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload)
             });
-  
-            // 2) wire up the fix button
-            fixBtn.addEventListener('click', () => {
-                fixBtn.disabled = true;
-                const action = fixBtn.dataset.action || 'fix';
-                const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
-                const actionText = action === 'create' ? 'Creating' : 'Fixing';
-        
-                fixBtn.textContent = `${actionText}...`;
-        
-                fetch(endpoint, {
+            const data = await response.json();
+            if (!response.ok) {
+                if (data.code === 'settings_conflict' || data.needsReload) {
+                    showSettingsConflict(type);
+                } else {
+                    showIndexStatus(
+                        type,
+                        data.error || 'Unable to inspect the AI Search index.',
+                        data.needsCreation || data.needsConfiguration ? 'warning' : 'danger',
+                        data.needsCreation ? 'create' : null
+                    );
+                    if (!data.needsCreation && !data.needsConfiguration) {
+                        reportIndexFailure();
+                    }
+                }
+                return;
+            }
+
+            // Only adopt the revision from this form's own conditional metadata write.
+            if (startingRevision && data.settings_etag) {
+                if (revisionInput.value !== startingRevision || typeof data.settings_etag !== 'string') {
+                    showSettingsConflict(type);
+                    return;
+                }
+                revisionInput.value = data.settings_etag;
+            }
+            if (data.autoFixed) {
+                showIndexStatus(type, `Automatically added fields: ${(data.fieldsAdded || []).join(', ')}`, 'success');
+            } else if (data.autoFixFailed) {
+                showIndexStatus(type, data.error || 'Automatic field repair failed. Review the Search configuration.', 'warning', 'fix');
+            } else if (data.missingFields?.length) {
+                showIndexStatus(type, `Missing fields: ${data.missingFields.join(', ')}`, 'warning', 'fix');
+            } else {
+                document.getElementById(`index-warning-${type}`).classList.add('d-none');
+            }
+        } catch (error) {
+            showIndexStatus(type, 'Unable to complete the index check. Check the connection and server diagnostics.', 'danger');
+            reportIndexFailure();
+        }
+    }
+
+    indexTypes.forEach(type => {
+        const fixButton = document.getElementById(`fix-${type}-index-btn`);
+        fixButton.addEventListener('click', async event => {
+            event.preventDefault();
+            fixButton.disabled = true;
+            const action = fixButton.dataset.action || 'fix';
+            const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
+            fixButton.textContent = `${action === 'create' ? 'Creating' : 'Fixing'}...`;
+            try {
+                const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     credentials: 'same-origin',
                     body: JSON.stringify({ indexType: type })
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(errorData => {
-                            throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
-                        });
-                    }
-                    return r.json();
-                })
-                .then(resp => {
-                    if (resp.status === 'success') {
-                        showToast(
-                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
-                            'success',
-                            { persist: true }
-                        );
-                        window.location.reload();
-                    } else {
-                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
-                        fixBtn.disabled = false;
-                        fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
-                    }
-                })
-                .catch(err => {
-                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
-                    fixBtn.disabled = false;
-                    fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });
-            });
+                const data = await response.json();
+                if (!response.ok || !['success', 'nothingToAdd'].includes(data.status)) {
+                    throw new Error(data.error || `Unable to ${action} the index.`);
+                }
+                showToast(data.message || `Successfully ${action === 'create' ? 'created' : 'checked'} ${type} index.`, 'success', { persist: true });
+                window.location.reload();
+            } catch (error) {
+                showIndexStatus(type, error.message, 'danger', action);
+            } finally {
+                fixButton.disabled = false;
+                fixButton.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+            }
         });
     });
-  
+
+    indexChecksPending = true;
+    updateSaveButtonState();
+    const checksFinished = (async () => {
+        for (const type of indexTypes) {
+            await checkIndex(type);
+            if (indexSettingsConflict) {
+                break;
+            }
+        }
+    })().finally(() => {
+        indexChecksPending = false;
+        updateSaveButtonState();
+    });
+
+    let submissionQueued = false;
+    adminForm?.addEventListener('submit', async event => {
+        if (!indexChecksPending && !indexSettingsConflict) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (indexSettingsConflict || submissionQueued) {
+            return;
+        }
+        submissionQueued = true;
+        const submitter = event.submitter;
+        await checksFinished;
+        submissionQueued = false;
+        if (!indexSettingsConflict) {
+            adminForm.requestSubmit(submitter || undefined);
+        }
+    }, { capture: true });
+});
 
 togglePassword('toggle_gpt_key', 'azure_openai_gpt_key');
 togglePassword('toggle_embedding_key', 'azure_openai_embedding_key');
@@ -11108,6 +11139,14 @@ function updateSaveButtonState() {
     const isBackupRecoveryActive = Boolean(document.querySelector('[data-admin-group-pane="backup-recovery"].active'));
     saveButton.classList.toggle('d-none', isBackupRecoveryActive);
     if (isBackupRecoveryActive) {
+        return;
+    }
+
+    if (indexChecksPending || indexSettingsConflict) {
+        saveButton.disabled = true;
+        saveButton.classList.remove('btn-primary');
+        saveButton.classList.add('btn-secondary');
+        saveButton.textContent = indexSettingsConflict ? 'Reload Settings to Save' : 'Checking Search Indexes...';
         return;
     }
     

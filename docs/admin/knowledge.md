@@ -101,7 +101,11 @@ The Deep Research section belongs to the Web & Research tab. Use it with the adj
 
 ### Azure AI Search {#azure-ai-search-section}
 
-The Azure AI Search section belongs to the Search Index tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Azure AI Search stores searchable document chunks and vectors for personal, group, and public workspaces. The connection here is also used to inspect and maintain those three index schemas. A missing index can be created; missing compatible fields can be added. A vector-dimension mismatch is different and is not repaired by silently changing the embedding model or rebuilding an index.
+
+In the classic interface, opening Admin Settings checks the three indexes in sequence. Starting in **0.261.125**, unchanged observations do not rewrite settings. A first observation or repair can update embedding metadata, and the page adopts only the revision from its own conditional metadata operation. Saving waits for these checks to settle. Another administrator's edit still requires reviewing the latest settings; copy any unsaved edits before reloading.
+
+Connection and permission failures stay visible rather than being hidden as if the index were healthy. Configure either the direct Search endpoint and authentication method, or the APIM endpoint and subscription key. Public Azure uses the Search audience `https://search.azure.com`; government and custom-cloud audiences remain separate. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
 #### Settings
 

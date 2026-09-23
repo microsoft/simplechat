@@ -76,6 +76,44 @@ exceptions
 
 If startup logs show an error while Flask instrumentation is initializing, disable it with the `DISABLE_FLASK_INSTRUMENTATION` environment variable. Set the value to `1` or `true`, then restart the app service so the process starts cleanly without the instrumentation hook.
 
+## Admin settings saves and connection tests
+
+The diagnostics below apply to **0.261.125** and later. A redirect after posting the classic settings form is not proof that the save succeeded: check its banner and correlate the request with dependency operations.
+
+### Key Vault can be read but settings will not save
+
+The older connection test only listed secret properties. An identity with **Key Vault Secrets User** could pass that test and still receive `ForbiddenByRbac` when saving a secret. Grant **Key Vault Secrets Officer on the vault** to the identity actually selected by the application, not just the deploying account. For access-policy vaults, grant Get, List, Set, and Delete. Network restrictions can also produce a 403.
+
+The current test verifies list, write, read-back, and deletion of a uniquely owned temporary secret using the values currently in the form. A write or cleanup failure remains a failed test. Follow the reported cleanup instruction only for the generated `simplechat-connection-test-*` secret. The test does not purge soft-deleted metadata.
+
+For this incident, successful Cosmos reads preceded the failed Key Vault writes. A prior Cosmos key rotation was a separate authentication problem. Diagnose each dependency from its own operation and time window rather than rotating Cosmos keys again to address a Key Vault permission failure.
+
+### Search checks fail or a form becomes stale
+
+An error importing `search_resource_manager` from `config` identifies the public-cloud configuration regression fixed in **0.261.125**. It occurs before Search authentication, so changing Search or Cosmos keys does not repair it.
+
+The same release makes unchanged schema observations read-only and sequences initial index checks. The page updates its hidden revision only after its own conditional metadata operation. If another settings edit wins, the page keeps the draft and asks for a reload; copy the unsaved values before reviewing the latest settings. Do not substitute an arbitrary latest revision or bypass the conflict check.
+
+Redis-required settings writes intentionally fail closed if safe shared publication is unavailable. Repair that dependency rather than bypassing it with a direct Cosmos write. The model discovery and model-test APIs remain supported by classic and V2 clients.
+
+### Find the diagnostic stage
+
+Human-readable `log_event` messages are in `customDimensions.sc_message`. Query the stable tags and correlate the resulting `operation_Id` with requests and dependencies:
+
+```kusto
+traces
+| where timestamp > ago(1h)
+| extend app_message = tostring(customDimensions.sc_message)
+| where app_message has_any ("[AKV_TEST]", "[KEY_VAULT]", "[EMBEDDING]")
+| project timestamp, operation_Id, app_message,
+          stage = tostring(customDimensions.sc_stage),
+          error_type = tostring(customDimensions.sc_error_type),
+          status_code = tostring(customDimensions.sc_status_code)
+| order by timestamp desc
+```
+
+Use the equivalent Application Insights table and properties columns when querying a Log Analytics workspace. Responses deliberately omit raw provider exceptions and secret values. See the [Key Vault setup guidance]({{ '/admin/security/#keyvault-section' | relative_url }}) and [Search settings]({{ '/admin/knowledge/#azure-ai-search-section' | relative_url }}).
+
 ## Mixed-Source Partial Coverage
 
 A mixed-source answer may complete with partial coverage when one narrative retrieval, table tool call, authorization check, or comparison Target cannot complete. This is expected fail-closed behavior: a failed table is not silently treated as narrative text, and prior conversation evidence does not fill a gap in the current selection.
@@ -87,4 +125,3 @@ A mixed-source answer may complete with partial coverage when one narrative retr
 5. If aggregate development telemetry is enabled, correlate `MixedSourceTelemetry` events by `request_correlation_id` and inspect only counts, mode, status, cancellation phase, and latency. Source content or identity should never appear.
 
 If cancellation occurs, no final assistant response or new generated artifact should be published. A background tabular export that was already queued is canceled through its existing export run status.
-

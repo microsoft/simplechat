@@ -5,7 +5,7 @@ description: "Configure shared chat, image, and embedding connections, independe
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.107"
+version: "0.261.126"
 ---
 
 
@@ -28,6 +28,15 @@ Model endpoints are production dependencies for every generated answer, embeddin
 - Provision Azure OpenAI, APIM, and image resources before pointing SimpleChat to them.
 - Choose authentication supported by the connection and grant required permissions: Azure discovery uses managed identity or a service principal; Custom API connections support API keys, bearer tokens, or OAuth2 client credentials.
 - Identify the models used by background tasks before retiring a connection.
+
+## Model Catalog {#model-catalog}
+
+Since **0.261.126**, [Model Catalog]({{ '/admin/model-catalog/' | relative_url }})
+describes model strengths and limitations separately from connections. Associate
+an existing deployment with a **Catalog profile** without changing its request
+name, credentials, publishing, or defaults. Administrators manage custom profiles,
+favorites, and priorities in both classic and React V2. These preferences influence
+V2 orchestration's explicit Auto mode, not ordinary manual chat selections.
 
 ## AI Connections {#model-endpoints}
 

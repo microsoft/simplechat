@@ -525,22 +525,22 @@
         </div>
     </div>
 </div>
-<div id="index-warning-user" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ User-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-user"></span>
-    <button id="fix-user-index-btn" class="btn btn-sm btn-primary ms-2">Add missing user-fields</button>
+<div id="index-warning-user" class="alert alert-warning d-none" role="alert">
+    <strong>User index:</strong>
+    <span id="missing-fields-user"></span>
+    <button type="button" id="fix-user-index-btn" class="btn btn-sm btn-primary ms-2">Add missing user-fields</button>
 </div>
 
-<div id="index-warning-group" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ Group-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-group"></span>
-    <button id="fix-group-index-btn" class="btn btn-sm btn-primary ms-2">Add missing group-fields</button>
+<div id="index-warning-group" class="alert alert-warning d-none" role="alert">
+    <strong>Group index:</strong>
+    <span id="missing-fields-group"></span>
+    <button type="button" id="fix-group-index-btn" class="btn btn-sm btn-primary ms-2">Add missing group-fields</button>
 </div>
 
-<div id="index-warning-public" class="alert alert-warning" style="display:none;">
-    <strong>⚠️ Public-index schema mismatch:</strong>
-    Missing fields: <span id="missing-fields-public"></span>
-    <button id="fix-public-index-btn" class="btn btn-sm btn-primary ms-2">Add missing public-fields</button>
+<div id="index-warning-public" class="alert alert-warning d-none" role="alert">
+    <strong>Public index:</strong>
+    <span id="missing-fields-public"></span>
+    <button type="button" id="fix-public-index-btn" class="btn btn-sm btn-primary ms-2">Add missing public-fields</button>
 </div>
 
 <!-- Flash messages display section -->
@@ -581,8 +581,16 @@
             Version: {{ config['VERSION'] }}
             {% if update_available %}
                 <span class="ms-2 badge bg-warning text-dark align-middle">
-                    New version available, v{{ latest_version }}.
+                    {{ 'New version available' if update_status.status == 'checked' else 'Last known newer release' }}, v{{ latest_version }}.
                     <a href="{{ download_url }}" target="_blank" rel="noopener noreferrer" class="link-primary text-decoration-underline">Download here</a>.
+                </span>
+            {% endif %}
+            {% if update_status.error %}
+                <span class="text-warning" role="status">
+                    {{ update_status.error }}
+                    {% if update_status.latest_version %}
+                        Last known release: v{{ update_status.latest_version }}; this result may be stale.
+                    {% endif %}
                 </span>
             {% endif %}
         </p>
@@ -1034,6 +1042,7 @@
 
 
             {% include "admin/_panes/model-endpoints.html" %}
+            {% include "admin/_panes/model-catalog.html" %}
             {% include "admin/_panes/embeddings.html" %}
             {% include "admin/_panes/image-generation.html" %}
 
@@ -2392,6 +2401,7 @@
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_data_management.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_model_catalog.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_governance.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_card_links.js') }}?v={{ config['VERSION'] }}"></script>

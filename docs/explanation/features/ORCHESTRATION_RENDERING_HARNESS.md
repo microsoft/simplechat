@@ -1,6 +1,6 @@
 # Gather / Reason / Render orchestration harness
 
-**Version: 0.261.130**
+**Version: 0.261.131**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; harness integration implemented in
@@ -15,6 +15,11 @@ Initial preparation uses the initialized store owner without importing the
 continuation module, while retaining a fresh check of the approved run, actor,
 conversation, and attempt. See
 [the initial binding fix](../fixes/ORCHESTRATION_INITIAL_RESULT_BINDING_FIX.md).
+
+Chat content checks and model-catalog routing integrated in version:
+**0.261.131**. Harness replies use chat's output checkpoint before publication,
+and Auto model routing remains on the standard orchestration contract. See
+[the integration fix](../fixes/ORCHESTRATION_HARNESS_CHAT_CHECKS_ROUTING_INTEGRATION_FIX.md).
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 This documents the retained-result contracts, shared ten-format exports,

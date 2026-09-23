@@ -1,7 +1,7 @@
 # test_content_screening_access.py
 """
 Behavioral regression tests for authoritative document quarantine access.
-Version: 0.261.106
+Version: 0.261.127
 Implemented in: 0.261.106
 
 Uses fake Cosmos/Blob containers, injected canonical storage, and a local Flask
@@ -157,7 +157,6 @@ class ScreeningAccessFixture(unittest.TestCase):
             "content_screening.storage": fake_module(
                 "content_screening.storage", ScreeningStorage=lambda: SimpleNamespace(read_json=self.read_units),
             ),
-            "azure.core": fake_module("azure.core", MatchConditions=SimpleNamespace(IfNotModified="if-not-modified")),
         }
         self.module_patch = patch.dict(sys.modules, self.modules)
         self.module_patch.start()

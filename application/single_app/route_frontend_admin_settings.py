@@ -13,6 +13,7 @@ from flask import current_app, jsonify, request
 from admin_settings_fields import get_field_definition
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
@@ -37,6 +38,7 @@ from functions_ai_connection_migration import (
 )
 from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
@@ -137,11 +139,6 @@ AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
     'public': 'AzureCloud',
     'usgovernment': 'AzureUSGovernment',
 }
-
-
-def _is_update_version_newer(latest_version, current_version):
-    """Return True only when the discovered release version is newer than the running version."""
-    return compare_versions(latest_version, current_version) == 1
 
 
 def allowed_file(filename, allowed_extensions):
@@ -695,7 +692,7 @@ def register_route_frontend_admin_settings(bp):
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -1055,56 +1052,10 @@ def register_route_frontend_admin_settings(bp):
 
             # Check for application updates
             current_version = current_app.config['VERSION']
-            update_available = False
-            latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
-            
-            # Only check for updates every 24 hours at most
-            last_check_time = settings.get('last_update_check_time')
-            check_needed = last_check_time is None or (
-                datetime.now(timezone.utc) - 
-                datetime.fromisoformat(last_check_time)
-            ).total_seconds() > 86400  # 24 hours in seconds
-            
-            if check_needed:
-                try:
-                    # Fetch latest release from GitHub
-                    response = requests.get(
-                        "https://github.com/microsoft/simplechat/releases", 
-                        timeout=3
-                    )
-                    if response.status_code == 200:
-                        # Extract the latest version
-                        latest_version = extract_latest_version_from_html(response.text)
-                        
-                        # Store the results in settings for persistence
-                        new_settings = {
-                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
-                            'latest_version_available': latest_version
-                        }
-                        
-                        # Compare with current version
-                        if _is_update_version_newer(latest_version, current_version):
-                            new_settings['update_available'] = True
-                        else:
-                            new_settings['update_available'] = False
-                        
-                        # Update settings to persist these values
-                        if update_settings(new_settings):
-                            settings = get_settings()
-                except Exception as e:
-                    print(f"Error checking for updates: {e}")
-                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
-            
-            # Get the persisted values for template rendering
-            latest_version = settings.get('latest_version_available')
-            update_available = _is_update_version_newer(latest_version, current_version)
-            if settings.get('update_available') != update_available:
-                try:
-                    if update_settings({'update_available': update_available}):
-                        settings = get_settings()
-                except Exception as e:
-                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
+            update_status = get_application_update_status(settings, current_version)
+            latest_version = update_status['latest_version']
+            update_available = update_status['update_available']
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
@@ -1137,6 +1088,7 @@ def register_route_frontend_admin_settings(bp):
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
                 update_available=update_available,
+                update_status=update_status,
                 latest_version=latest_version,
                 download_url=download_url,
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),
@@ -2478,6 +2430,7 @@ def register_route_frontend_admin_settings(bp):
                 return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
                 **m365_settings,
+                **chat_content_form_updates(form_data, settings),
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,
@@ -3309,6 +3262,9 @@ def register_route_frontend_admin_settings(bp):
                 ]
                 new_settings["model_endpoints"] = parsed_model_endpoints
                 settings_saved = update_settings(new_settings, expected_etag=settings_etag)
+            except KeyVaultSecretStorageError as exc:
+                flash(f"Admin settings were not saved. {exc.public_message}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             except AIConnectionError as exc:
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))

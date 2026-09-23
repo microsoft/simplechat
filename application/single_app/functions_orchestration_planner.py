@@ -22,7 +22,7 @@ and occasionally return two objects. That is normal rather than exceptional, so 
 tries several strategies before giving up. A failed model call or invalid plan is an
 error, not evidence that the task can be answered without gathering information.
 
-Version: 0.261.127
+Version: 0.261.131
 """
 
 import json
@@ -37,6 +37,10 @@ from config import cognitive_services_scope
 from functions_appinsights import log_event
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_events import build_model_reasoning_metadata
+from functions_model_catalog import TASKS, ModelCatalogError
+from functions_orchestration_model_routing import (
+    ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
+)
 from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_RESPOND,
@@ -477,6 +481,11 @@ def build_planner_messages(planner_context, replan_hint=None, edit_context=None,
         {
             'role': 'system',
             'content': system_prompt + (
+                # Auto bindings are enforced by the legacy step executor only.
+                '\n' + ROUTING_INSTRUCTIONS
+                if contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION and payload.get('model_routing') == 'auto'
+                else ''
+            ) + (
                 '\n\n' + editing if edit_context is not None else ''
             ),
         },
@@ -849,6 +858,16 @@ def plan_request(
     available_ids = [capability['id'] for capability in capabilities]
 
     context = dict(planner_context or {})
+    model_candidates = []
+    if (seeds or {}).get('model_routing') == 'auto':
+        if contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
+            # Dependency plans do not execute per-step bindings; never display unenforced choices.
+            raise ModelCatalogError(
+                'Auto model routing is not available for this plan type. Choose a specific model.',
+                'model_routing', 'model_routing_unsupported',
+            )
+        model_candidates = authorized_routing_candidates(settings, user_id)
+        context.update(model_routing='auto', model_tasks=TASKS, model_candidates=model_candidates)
     context['capabilities'] = build_planner_capability_projection(capabilities)
     if contract_version == 2:
         context['plan_contract_version'] = contract_version
@@ -1058,6 +1077,8 @@ def plan_request(
         return _failure('invalid_plan_work')
 
     plan['revision'] = revision
+    if (seeds or {}).get('model_routing') == 'auto':
+        assign_step_models(plan, model_candidates)
     plan['planner_model'] = deployment
     plan['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
     if usage is not None:

@@ -929,7 +929,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     event_count: eventCount,
                     error_message: data.error,
                 });
-                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
+                handleStreamError(tempAiMessageId, resolveStreamContent(data, accumulatedContent), data.error, data);
                 if (
                     data.message_persisted
                     && data.message_id
@@ -999,7 +999,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
             }
 
-            if (data.content) {
+            if (data.replace_content === true) {
+                accumulatedContent = resolveStreamContent(data, '');
+                hasStreamedContent = Boolean(accumulatedContent);
+                updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            } else if (data.content) {
                 accumulatedContent += data.content;
                 hasStreamedContent = true;
                 updateStreamingMessage(tempAiMessageId, accumulatedContent);
@@ -1016,7 +1020,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 finalizePendingUserMessageMetadata();
                 enablePersistedUserMessageActions();
 
-                if (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled') {
+                if (!data.blocked && (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled')) {
                     finalizeCancelledStreamingMessage(
                         tempAiMessageId,
                         tempUserMessageId,
@@ -1536,9 +1540,18 @@ function renderStoppedContent(messageElement, partialContent) {
     appendStoppedResponseBanner(messageElement, Boolean(normalizedContent));
 }
 
+export function resolveStreamContent(data, fallbackContent = '') {
+    if (typeof data.full_content === 'string') return data.full_content;
+    if (data.replace_content === true) {
+        return typeof data.content === 'string' ? data.content
+            : typeof data.partial_content === 'string' ? data.partial_content : '';
+    }
+    return typeof data.partial_content === 'string' ? data.partial_content : fallbackContent;
+}
+
 function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, fallbackContent = '') {
     const messageElement = getStreamingMessageElement(messageId);
-    const partialContent = finalData.full_content || finalData.partial_content || fallbackContent || '';
+    const partialContent = resolveStreamContent(finalData, fallbackContent);
 
     removeStreamingStopButton(messageId);
 
@@ -1547,7 +1560,11 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             messageElement.remove();
         }
 
-        const existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        let existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        if (existingFinalMessage && finalData.replace_content) {
+            existingFinalMessage.remove();
+            existingFinalMessage = null;
+        }
         if (!existingFinalMessage) {
             const finalMessageObject = {
                 ...finalData,
@@ -1702,7 +1719,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
 
-    if (existingFinalMessage && !finalData.metadata?.saved_analysis) {
+    if (existingFinalMessage && !finalData.metadata?.saved_analysis && !finalData.replace_content && !finalData.blocked) {
         renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(
@@ -1715,7 +1732,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
 
     const finalMessageObject = {
         ...finalData,
-        content: finalData.full_content || finalData.content || fallbackContent,
+        content: resolveStreamContent(finalData, typeof finalData.content === 'string' ? finalData.content : fallbackContent),
         role: finalData.role || 'assistant',
     };
 

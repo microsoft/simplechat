@@ -50,6 +50,7 @@ import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelCatalogManager } from '../components/admin/ModelCatalogManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
 import { ScreeningWorkspaceControls } from '../components/screening/ScreeningWorkspaceControls';
 import { ScreeningPolicyEditor } from '../components/screening/ScreeningPolicyEditor';
@@ -200,6 +201,7 @@ function buildCapabilityIndex(
 
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
+    const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
 
     /**
      * Re-read the bootstrap payload once a save lands.
@@ -749,6 +751,10 @@ export function AdminSettingsPage() {
                             <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }}
                                 configurationVersion={screeningConfigurationVersion} disabled={saving} />
                             <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
+                            <a href="/admin/safety_violations#unchecked-chat-content"
+                                className="inline-block text-sm text-accent hover:underline">
+                                Review unchecked chat content
+                            </a>
                         </div>
                     );
                 case 'custom-pages-table':
@@ -769,6 +775,8 @@ export function AdminSettingsPage() {
                     return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
+                case 'model-catalog-manager':
+                    return <ModelCatalogManager key={key} />;
                 case 'model-picker':
                     return (
                         <ModelPicker
@@ -933,7 +941,7 @@ export function AdminSettingsPage() {
                 error={error}
                 warning={warning}
                 disabled={saving || (
-                    field.key === 'enable_content_screening'
+                    field.key === 'enable_content_screening_workspace_uploads'
                     && !asBoolean(value) && !isRequirementSatisfied(field, settings, draft)
                 )}
                 onChange={(next) => {
@@ -1010,6 +1018,48 @@ export function AdminSettingsPage() {
                         : undefined
                 }
             />
+
+            <div
+                role="status"
+                aria-label="Application version"
+                className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-edge px-6 py-3 text-sm"
+            >
+                <span className="font-medium text-text-1">
+                    Version: {data?.version || bootstrapVersion || 'Unavailable'}
+                </span>
+                {loading ? (
+                    <span className="text-text-3">Checking for updates...</span>
+                ) : data?.update_status ? (
+                    <>
+                        {data.update_status.update_available && (
+                            <span className="text-warn">
+                                {data.update_status.status === 'checked' ? 'New version available' : 'Last known newer release'}
+                                : v{data.update_status.latest_version}.{' '}
+                                <a
+                                    href="https://github.com/microsoft/simplechat/releases"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-accent underline"
+                                >
+                                    View releases
+                                </a>
+                            </span>
+                        )}
+                        {data.update_status.status !== 'checked' ? (
+                            <span className="text-warn">
+                                {data.update_status.error || 'Unable to check for application updates.'}
+                                {data.update_status.latest_version && (
+                                    <> Last known release: v{data.update_status.latest_version}; this result may be stale.</>
+                                )}
+                            </span>
+                        ) : !data.update_status.update_available && (
+                            <span className="text-text-3">No newer release found.</span>
+                        )}
+                    </>
+                ) : (
+                    <span className="text-warn">Unable to check for application updates.</span>
+                )}
+            </div>
 
             <div className="flex min-h-0 flex-1">
                 <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">

@@ -878,6 +878,14 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    "model-catalog-section": [
+        {
+            "type": "component",
+            "component": "model-catalog-manager",
+            "label": "Model Catalog",
+            "help": "Reusable capability profiles, custom models, and organization-wide routing preferences. Profiles do not contain endpoint credentials.",
+        },
+    ],
     "multi-endpoint-configuration": [
         {
             "key": "enable_multi_model_endpoints",
@@ -4937,9 +4945,10 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Vault connection",
             "label": "Managed Identity Client ID",
             "help": (
-                "Client ID of the user-assigned managed identity that holds Get, Set "
-                "and List on the vault. Leave blank to use the App Service "
-                "system-assigned identity."
+                "Client ID of the user-assigned managed identity. Leave blank to use "
+                "the App Service system-assigned identity. Assign Key Vault Secrets "
+                "Officer to that identity at vault scope; Secrets User cannot write. "
+                "Legacy access policies need Get, List, Set, and Delete."
             ),
             "default": "",
             "max_length": 120,
@@ -4956,9 +4965,11 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Vault connection",
             "label": "Test Key Vault connection",
             "help": (
-                "Lists secret properties with the identity above. Run this before "
-                "saving a vault change, because a wrong identity is only visible once "
-                "an agent tries to read a secret."
+                "Lists secrets, writes and reads a unique synthetic test secret, then "
+                "deletes it using the draft vault and identity above. Success requires "
+                "cleanup; existing secrets are never changed. The test secret expires "
+                "after ten minutes if cleanup fails, but may still need manual deletion. "
+                "Soft-deleted metadata follows vault retention; the test never purges."
             ),
             "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
         },
@@ -5104,22 +5115,73 @@ ADMIN_SETTINGS_FIELDS = {
             "key": "enable_content_screening",
             "type": "switch",
             "role": "capability",
-            "label": "Screen workspace content before publication",
+            "label": "Enable Content Screening",
             "help": (
-                "Hold extracted workspace knowledge until required checks complete. "
+                "Use the saved PII, regex, literal and optional AI rules at the selected checkpoints. "
                 "Enabling creates an enabled empty baseline if none exists. With no "
                 "applicable checks, new uploads use normal processing. Add checks later; "
                 "emptying a policy or disabling future scans never releases existing holds."
             ),
             "default": False,
+        },
+        {
+            "key": "enable_content_screening_workspace_uploads",
+            "type": "switch",
+            "group": "Where to check",
+            "label": "Screen workspace uploads",
+            "help": "Hold new workspace documents until their required checks and review finish. Turn this off for chat-only screening without Enhanced Citations; existing document holds stay enforced.",
+            "default": True,
+            "depends_on": {"key": "enable_content_screening", "equals": True},
             "requires": {
                 "key": "enable_enhanced_citations",
                 "label": "Enhanced Citations",
                 "description": (
-                    "Configure Chat > Citations > Enhanced and its storage before enabling new scans. "
-                    "You can prepare and save the screening policy below first."
+                    "Workspace uploads require Chat > Citations > Enhanced and its private storage. "
+                    "Chat text checks do not require this storage."
                 ),
             },
+        },
+        {
+            "key": "enable_content_screening_chat_input",
+            "type": "switch",
+            "group": "Where to check",
+            "label": "Screen submitted chat messages",
+            "help": "Check typed messages against the saved global baseline before a model or action receives them. Workspace-specific additions still apply only to documents.",
+            "default": False,
+            "depends_on": {"key": "enable_content_screening", "equals": True},
+        },
+        {
+            "key": "enable_content_screening_chat_output",
+            "type": "switch",
+            "group": "Where to check",
+            "label": "Screen AI replies",
+            "help": "Check the complete AI reply against the saved global baseline and replace replies with confirmed findings. Response handling is configured below.",
+            "default": False,
+            "depends_on": {"key": "enable_content_screening", "equals": True},
+        },
+        {
+            "key": "chat_content_output_mode",
+            "type": "select",
+            "group": "Chat check behavior (both scanners)",
+            "label": "When to show AI replies",
+            "help": "Applies to Content Screening and Content Safety. Streaming first cannot undo text someone already read or copied. Holding the reply still follows the failure setting if a check cannot finish.",
+            "default": "stream_then_check",
+            "options": [
+                {"value": "stream_then_check", "label": "Stream first, then remove flagged replies"},
+                {"value": "check_before_display", "label": "Check before displaying the reply"},
+            ],
+        },
+        {
+            "key": "chat_content_scan_failure_action",
+            "type": "select",
+            "group": "Chat check behavior (both scanners)",
+            "label": "When a chat check cannot finish",
+            "help": "Allowing content records private not-checked metadata for administrator rechecks without warning the user. Actual findings always block messages or remove replies. Document holds are not affected.",
+            "default": "allow_unchecked",
+            "options": [
+                {"value": "allow_unchecked", "label": "Allow quietly and mark not checked for admins"},
+                {"value": "block", "label": "Stop messages or remove unchecked replies"},
+            ],
         },
         {
             "type": "component",
@@ -5135,11 +5197,28 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Connection",
             "label": "Enable Content Safety",
             "help": (
-                "Every user message is sent to Azure AI Content Safety before it "
-                "reaches a model. A message that trips the configured thresholds is "
-                "blocked and recorded as a safety violation."
+                "Use Azure AI Content Safety at the selected chat checkpoints. "
+                "Confirmed findings block submitted messages or remove AI replies."
             ),
             "default": False,
+        },
+        {
+            "key": "enable_content_safety_chat_input",
+            "type": "switch",
+            "group": "Where to check",
+            "label": "Check submitted messages with Content Safety",
+            "help": "Check typed messages for harmful categories before they reach a model or action.",
+            "default": True,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "enable_content_safety_chat_output",
+            "type": "switch",
+            "group": "Where to check",
+            "label": "Check AI replies with Content Safety",
+            "help": "Check complete AI replies and remove confirmed violations. The shared response and failure settings are under Content Screening > Chat check behavior.",
+            "default": False,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
         },
         {
             "key": "enable_content_safety_apim",
@@ -5249,8 +5328,8 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Connection",
             "label": "Test Content Safety connection",
             "help": (
-                "Analyses a harmless sample string. Worth running before saving, "
-                "because a broken connection blocks chat rather than failing quietly."
+                "Analyses a harmless sample string. Connection failures follow the shared "
+                "chat failure setting and are recorded privately for administrator rechecks."
             ),
             "depends_on": {"key": "enable_content_safety", "equals": True},
         },
@@ -7125,9 +7204,14 @@ def _check_content_screening_dependency(normalized, current_settings, errors):
     citations = normalized.get(
         "enable_enhanced_citations", current_settings.get("enable_enhanced_citations", False),
     )
-    if screening is True and citations is not True:
-        message = "Content Screening requires Enhanced Citations. Existing content holds are preserved."
+    uploads = normalized.get(
+        "enable_content_screening_workspace_uploads",
+        current_settings.get("enable_content_screening_workspace_uploads", True),
+    )
+    if screening is True and uploads is True and citations is not True:
+        message = "Workspace upload screening requires Enhanced Citations. Turn off upload screening for chat-only checks. Existing holds are preserved."
         errors["enable_content_screening"] = message
+        errors["enable_content_screening_workspace_uploads"] = message
         if "enable_enhanced_citations" in normalized:
             errors["enable_enhanced_citations"] = message
     for key in normalized:

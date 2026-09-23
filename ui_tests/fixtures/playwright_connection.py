@@ -1,8 +1,9 @@
 # playwright_connection.py
 """
 Shared local/Azure Playwright browser connection fixture.
-Version: 0.261.096
+Version: 0.261.125
 Implemented in: 0.261.096
+Browser-service Entra audience corrected in: 0.261.125
 
 Reuse a configured Azure workspace without provisioning resources or storing tokens.
 Without PLAYWRIGHT_SERVICE_URL, pytest-playwright uses its normal local browser.
@@ -46,7 +47,8 @@ def connect_options():
             or endpoint.hostname != urlsplit(dataplane_uri).hostname
         ):
             raise ValueError("PLAYWRIGHT_SERVICE_URL must target the configured Azure workspace.")
-        token = credential.get_token("https://management.azure.com/.default").token
+        # The browser service expects the Azure Playwright SDK's audience, not ARM's.
+        token = credential.get_token("https://management.core.windows.net/.default").token
 
     query = dict(parse_qsl(endpoint.query))
     query.update({

@@ -332,7 +332,7 @@ def embedding_index_maintenance(settings):
         yield
 
 
-def record_embedding_index_schema(index, settings):
+def record_embedding_index_schema(index, settings, *, expected_etag=None):
     """Persist admin-observed schema metadata; inference keeps its data-plane-only roles."""
     expected = _optional_profile(settings)
     if expected is None:
@@ -350,7 +350,14 @@ def record_embedding_index_schema(index, settings):
         return current
 
     try:
-        _get_embedding_settings_store().write(record_observation)
+        store = _get_embedding_settings_store()
+        current = store.read(use_cosmos=True)
+        if expected_etag is not None and current.get("_etag") != expected_etag:
+            raise SettingsConflictError("Settings changed during index maintenance.")
+        if record_observation(copy.deepcopy(current)) == current:
+            return current["_etag"]
+        stored = store.write(record_observation, expected_etag=expected_etag)
+        return stored["_etag"]
     except SettingsConflictError as exc:
         raise AIConnectionError(
             "Settings changed during index maintenance. Reload and retry.", "settings_conflict",
