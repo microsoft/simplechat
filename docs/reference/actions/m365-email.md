@@ -1,19 +1,19 @@
 ---
 layout: page
 title: "Microsoft 365 Email"
-description: "Read mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
+description: "Read and search mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.038"
+version: "0.261.129"
 ---
 
 <!-- action-slug: m365-email -->
 
 ## What this action does
 
-Microsoft 365 Email provides mail reading, read-state updates, and message
-composition/delivery using delegated access. It does not expose calendar or
-file-retrieval tools.
+Microsoft 365 Email provides mail reading and search, read-state updates, and
+message composition/delivery using delegated access. It does not expose
+calendar or file-retrieval tools.
 
 Use it for mailbox context, drafting a response, or marking a message read.
 The user must have the Microsoft 365 permissions required by the chosen
@@ -37,6 +37,57 @@ In shared conversations, email results can disclose personal information.
 Users acknowledge that disclosure in chat or Approvals. Their source preference
 is managed in Profile and is constrained by the action's permitted duration.
 This acknowledgement does not authorize a mail send or grant OAuth scopes.
+
+## Find older mail
+
+Implemented in version: **0.261.129** (`application/single_app/config.py`).
+
+**Read my mail** reaches any message still in the user's mailbox, not only the
+newest ones. The agent narrows a request with these parameters:
+
+| Parameter | What it does |
+|---|---|
+| `search` | Plain words that must all appear in the sender, subject, or body. Operators such as `OR` and field prefixes such as `from:` are ignored, so the agent can't widen or reshape the query. Up to 10 words. |
+| `received_from` | Returns only messages received at or after this date or time. |
+| `received_to` | Returns only messages received before this date or time. A date without a time includes that whole day. |
+| `folder` | `inbox` by default. Use `all` for every folder, or a folder such as `sentitems` or `archive`. |
+| `unread_only` | Returns only unread messages. |
+| `top` | Up to 25 messages per call, newest first. |
+
+Dates and times without a time zone are read as UTC.
+
+Example: "Find every email about the Fabrikam contract from March 2024, in all
+folders."
+
+### Read a long history
+
+Each result includes a `coverage` summary: the folder, words, and date range
+that were read, the newest and oldest message returned, and whether that range
+was read completely. When more messages match, `coverage.continue_with` holds
+the exact arguments for the next, older set. The agent calls again with those
+arguments to keep reading back, and a continuation doesn't return a message it
+already returned.
+
+When a result is incomplete without a continuation, its note says why. For
+example, more messages can share one received second than `top` allows; the note
+then names that time and suggests a larger `top`.
+
+### Permissions and limits
+
+Older mail uses the same delegated `Mail.Read` permission as new mail.
+Microsoft Graph has no separate permission for mailbox history, so no new
+consent or app registration change is needed.
+
+- Only the user's primary mailbox is read. Online archive and shared mailboxes
+  aren't included.
+- Messages that were permanently deleted, by the user or a retention policy,
+  can't be returned.
+- Microsoft 365 returns at most 1,000 results for one keyword search. When a
+  search is combined with a date range or `unread_only`, one call examines up
+  to 500 search results and then offers a continuation from where it stopped.
+- Keyword results are ordered by when each message was sent. A message that
+  arrived long after it was sent can be skipped when a search continues across
+  calls.
 
 ## Failure and approval behavior
 
