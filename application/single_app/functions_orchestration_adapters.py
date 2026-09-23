@@ -17,9 +17,9 @@ proven machinery.
 
 Three rules hold for all of them, because the executor depends on them and cannot check them:
 
-**An adapter never raises.** A wrapped function that throws becomes a ``failed`` step result,
-not an exception out of the executor. One capability failing must not abandon a plan that
-could still answer from the others.
+**Ordinary producer failures become failed steps.** Version-2 acquisition preserves safe
+authority-service, lifecycle, access-denial and screening-hold exceptions for the owning
+runtime. They must not be mistaken for verified empty data or an ordinary tool failure.
 
 **An adapter returns only through ``build_step_result``.** That is the single shape the
 executor merges and the schema owns; an adapter that returned a bare dict would drift from it
@@ -44,9 +44,10 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.113
+Version: 0.261.129
 """
 
+import inspect
 import json
 import logging
 from copy import deepcopy
@@ -56,6 +57,18 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_orchestration_context import build_elicitation_user_request, conversation_reference_messages
 from functions_orchestration_memory import OrchestrationMemoryError
+from functions_orchestration_execution_policy import orchestration_file_policy
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationCapture,
+    OrchestrationInvocationCancelledError,
+    OrchestrationInvocationControlError,
+    OrchestrationInvocationDeniedError,
+    OrchestrationInvocationHeldError,
+    OrchestrationInvocationServiceError,
+)
+from functions_orchestration_result_contracts import (
+    ProducerIdentity, ResultContractError, digest as validate_result_digest,
+)
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
@@ -73,6 +86,7 @@ from functions_mixed_source_orchestration import (
     build_narrative_evidence_envelopes,
     build_tabular_file_contexts_from_manifest,
     partition_source_manifest,
+    raise_if_mixed_source_cancelled,
 )
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -86,12 +100,14 @@ from functions_orchestration_registry import (
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
     DOCUMENT_ACTION_TYPE_COMPARISON,
+    get_capability,
 )
 from functions_orchestration_schema import (
     STEP_STATUS_CANCELLED,
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
     STEP_STATUS_PENDING,
+    STEP_STATUS_PARTIAL,
     build_step_result,
     build_failure,
     failure_from_exception,
@@ -113,6 +129,121 @@ _EMPTY_ANSWER = "I wasn't able to produce an answer for this request."
 
 def _ctx(context, name, default=None):
     return getattr(context, name, default)
+
+
+def _external_invocation_capture(
+    step, context, settings, *, user_id, capability_id, selector=None, invocation_check=None,
+):
+    """Authorize the owning invocation before binding its private acquisition hook."""
+    source_types = {
+        CAPABILITY_WEB_SEARCH: 'web', CAPABILITY_URL_FETCH: 'url',
+        CAPABILITY_DEEP_RESEARCH: 'deep_research',
+        CAPABILITY_AGENT_INVOKE: 'agent', CAPABILITY_ACTION_INVOKE: 'action',
+    }
+    producer_factory = _ctx(context, 'result_producer')
+    capture = _ctx(context, 'capture_external_source_configuration')
+    if type(settings) is not dict or not callable(producer_factory) or not callable(capture):
+        raise ResultContractError('result_external_configuration_required')
+    producer = producer_factory(step)
+    capability = get_capability(capability_id, contract_version=2)
+    if type(producer) is not ProducerIdentity or capability is None or (
+        producer.user_id != user_id or producer.user_id != _ctx(context, 'user_id')
+        or producer.conversation_id != _ctx(context, 'conversation_id')
+        or producer.run_id != _ctx(context, 'run_id')
+        or type(_ctx(context, 'attempt_index')) is not int
+        or producer.attempt_index != _ctx(context, 'attempt_index')
+        or producer.step_id != step.get('step_id')
+        or producer.capability_id != capability_id or step.get('capability_id') != capability_id
+        or producer.contract_version != capability.get('result_contract_version')
+    ):
+        raise ResultContractError('result_producer_mismatch')
+    expected_type = source_types.get(capability_id)
+    if expected_type is None or (
+        expected_type in ('agent', 'action') and (type(selector) is not str or not selector)
+    ) or (
+        expected_type not in ('agent', 'action') and selector is not None
+    ):
+        raise ResultContractError('result_external_configuration_required')
+    original_selector = selector
+    external_source_preflight = _ctx(context, 'external_source_preflight')
+    if not callable(external_source_preflight) or inspect.iscoroutinefunction(external_source_preflight):
+        raise ResultContractError('result_external_preflight_required')
+
+    def capture_invocation(source_type, *, settings, source=None, selector=None):
+        if source_type != expected_type or selector != original_selector:
+            raise ResultContractError('result_external_configuration_selection_mismatch')
+        if invocation_check is not None:
+            invocation_check()
+        captured = capture(
+            source_type, producer=producer, settings=settings, source=source, selector=selector,
+        )
+        if invocation_check is not None:
+            invocation_check()
+        return captured
+
+    invocation_capture = OrchestrationInvocationCapture(capture_invocation)
+    try:
+        authorized = external_source_preflight(producer=producer, selector=original_selector)
+        if authorized is not None:
+            if inspect.iscoroutine(authorized):
+                authorized.close()
+            raise ResultContractError('result_external_preflight_invalid')
+    except Exception as exc:
+        invocation_capture.fail(exc)
+    return invocation_capture
+
+
+def _capture_external_execution_settings(
+    step, context, settings, *, user_id, capability_id, invocation_capture=None,
+):
+    """Pin settings used by v2 Gather and privately attest them before invocation.
+
+    The owning capture callback stores only opaque configuration identity/revision
+    under this producer, or raises. It must independently bind research planner
+    construction; a settings snapshot is not proof of a pre-existing client.
+    """
+    if _ctx(context, 'plan_contract_version', 1) != 2:
+        return settings
+    try:
+        source_types = {
+            CAPABILITY_WEB_SEARCH: 'web',
+            CAPABILITY_URL_FETCH: 'url',
+            CAPABILITY_DEEP_RESEARCH: 'deep_research',
+        }
+        # Agent/action engines resolve fresh configuration internally; their
+        # catalog candidates cannot be attested as the configuration executed.
+        if capability_id not in source_types:
+            raise ResultContractError('result_external_configuration_unavailable')
+        capture = (
+            invocation_capture if invocation_capture is not None else _external_invocation_capture(
+                step, context, settings, user_id=user_id, capability_id=capability_id,
+            )
+        )
+        if type(capture) is not OrchestrationInvocationCapture:
+            raise ResultContractError('result_external_configuration_required')
+        if capability_id == CAPABILITY_DEEP_RESEARCH and (
+            _ctx(context, 'planner_client') is None
+            or type(_ctx(context, 'planner_deployment')) is not str
+            or not context.planner_deployment.strip()
+        ):
+            raise ResultContractError('result_external_configuration_required')
+        pinned_settings = deepcopy(settings)
+        capture(source_types[capability_id], settings=pinned_settings)
+        return pinned_settings
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationCancelledError,
+        OrchestrationInvocationControlError, OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
+    except Exception as exc:
+        # This is a server callback boundary; retain no raw configuration or error.
+        log_event(
+            f'{_LOG_PREFIX} External source configuration capture failed.',
+            extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id'),
+                   'capability_id': capability_id},
+            level=logging.WARNING,
+        )
+        raise ResultContractError('result_external_configuration_unavailable') from exc
 
 
 def _text(value, limit=None):
@@ -658,7 +789,249 @@ def _prepare_step_analysis_checkpoints(step, context):
     return None
 
 
+def _internal_result_input_fingerprint(step, context):
+    fingerprint_factory = _ctx(context, 'result_input_fingerprint_for_step')
+    if not callable(fingerprint_factory):
+        raise ResultContractError('result_runtime_unavailable')
+    input_fingerprint = fingerprint_factory(step.get('step_id'))
+    validate_result_digest(input_fingerprint)
+    return input_fingerprint
+
+
+def _internal_result_context(step, context, user_id, capability_id, *, input_fingerprint):
+    validate_result_digest(input_fingerprint)
+    service = _ctx(context, 'result_service')
+    producer_factory = _ctx(context, 'result_producer')
+    guard_factory = _ctx(context, 'result_guard_token_for_step')
+    if (
+        service is None or not callable(getattr(service, 'persist_task_result', None))
+        or not callable(producer_factory) or not callable(guard_factory)
+    ):
+        raise ResultContractError('result_runtime_unavailable')
+    producer = producer_factory(step)
+    if not isinstance(producer, ProducerIdentity) or (
+        producer.user_id != user_id or producer.conversation_id != _ctx(context, 'conversation_id')
+        or producer.run_id != _ctx(context, 'run_id')
+        or producer.step_id != step.get('step_id') or producer.capability_id != capability_id
+    ):
+        raise ResultContractError('result_producer_mismatch')
+    guard_token = guard_factory(producer.step_id)
+    if type(guard_token) is not str or not guard_token.strip():
+        raise ResultContractError('result_guard_unavailable')
+    service.access.authorize_producer(producer, for_write=True)
+    service.store.prepare_orchestration_result(
+        producer.user_id, producer.conversation_id, producer.run_id, producer.step_id,
+        guard_token=guard_token,
+    )
+    return service, producer, guard_token, input_fingerprint
+
+
+def _require_internal_narrative_sources(manifest, document_ids):
+    if (
+        not isinstance(manifest, list)
+        or [source.get('document_id') for source in manifest] != document_ids
+        or any(source.get('authorization_status') != AUTHORIZATION_STATUS_AUTHORIZED for source in manifest)
+    ):
+        raise PermissionError('The complete analysis source selection is unavailable.')
+    partitions = partition_source_manifest(manifest)
+    if any(partitions[key] for key in ('tabular_sources', 'unsupported_sources', 'unresolved_sources')):
+        raise ResultContractError('result_native_compute_required')
+
+
+def _fence_internal_analysis(checkpoints, reason):
+    if checkpoints is None:
+        return True
+    try:
+        checkpoints.cancel(reason=reason)
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Internal analysis cancellation could not be confirmed.',
+            extra={'error_type': type(exc).__name__, 'reason': reason}, level=logging.ERROR,
+        )
+        return False
+    return True
+
+
+def _run_internal_document_analyze(step, context, *, settings, user_id, emit, cancel_requested):
+    """V2 returns TaskResult in StepResult.task_result, never automatic artifacts."""
+    arguments = _arguments(step)
+    invoke_prompt = _ctx(context, 'invoke_prompt')
+    checkpoints = None
+    if not callable(invoke_prompt):
+        return _failed_result('Document analysis is unavailable.', 'step_failed')
+    try:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_analysis')
+        input_fingerprint = _internal_result_input_fingerprint(step, context)
+        # The existing saved-result owner is intentionally resolved only for execution.
+        from functions_document_analysis import run_document_analysis
+        from functions_orchestration_analysis_results import persist_saved_analysis_result
+        from functions_saved_analysis import load_orchestration_analysis_input, save_orchestration_analysis
+
+        with orchestration_file_policy(allow_generated_files=False):
+            document_ids = _resolve_step_document_ids(
+                step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_ANALYZE,
+            )
+            if not document_ids:
+                raise ValueError('The Analyze step has no source documents.')
+            prompt = _with_conversation_reference(
+                _text(arguments.get('analysis_prompt') or arguments.get('prompt') or arguments.get('question'))
+                or _effective_request(context), context,
+            )
+            if not prompt:
+                raise ValueError('The Analyze step has no analysis request.')
+            checkpoints = _prepare_step_analysis_checkpoints(step, context)
+            if checkpoints is None:
+                raise ResultContractError('result_analysis_checkpoint_required')
+            service, producer, token, input_fingerprint = _internal_result_context(
+                step, context, user_id, CAPABILITY_DOCUMENT_ANALYZE,
+                input_fingerprint=input_fingerprint,
+            )
+            if token != checkpoints.token:
+                raise ResultContractError('result_analysis_guard_mismatch')
+            manifest = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+            )
+            _require_internal_narrative_sources(manifest, document_ids)
+            _emit(emit, _progress(step, CAPABILITY_DOCUMENT_ANALYZE, 'Analyzing documents'))
+            result = run_document_analysis(
+                user_id, prompt, document_ids, invoke_prompt,
+                doc_scope=_document_scope(context, arguments),
+                active_group_ids=_ctx(context, 'active_group_ids'),
+                active_public_workspace_id=_public_workspace_ids(context),
+                conversation_id=producer.conversation_id, cancel_requested=cancel_requested,
+                request_correlation_id=_ctx(context, 'request_correlation_id'),
+                result_version='analyze-final-v1', source_manifest=manifest,
+                analysis_options=arguments.get('analysis_options'),
+                transformation_spec=arguments.get('transformation_spec'),
+                max_documents=len(document_ids), work_unit_checkpoints=checkpoints,
+            )
+            if (
+                not isinstance(result, dict) or result.get('analysis_result_version') != 'analyze-final-v1'
+                or (result.get('authoritative_result') or {}).get('kind') != 'records'
+                or result.get('generated_tabular_outputs') or result.get('generated_analysis_artifacts')
+            ):
+                raise ResultContractError('result_native_analysis_invalid')
+            if (result.get('analysis_validation') or {}).get('presentation_status') == 'ready' and (
+                not isinstance(result.get('analysis_reply'), str) or not result['analysis_reply'].strip()
+            ):
+                raise ResultContractError('result_analysis_report_missing')
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_analysis_saving')
+            store = service.store
+
+            def save_analysis_section(user_id, conversation_id, run_id, step_id, value, *, settings, guard_token):
+                return store.save_orchestration(
+                    user_id, conversation_id, run_id, step_id, value,
+                    guard_token=guard_token, require_analysis_guard=True,
+                )
+
+            descriptor = save_orchestration_analysis(
+                {'reply': result.get('analysis_reply') or '', 'analysis_result': result,
+                 'analysis_coverage': result.get('coverage') or {}},
+                user_id=user_id, conversation_id=producer.conversation_id,
+                run_id=producer.run_id, step_id=producer.step_id, settings=settings, guard_token=token,
+                save_result=save_analysis_section,
+            )
+            reader, _ = load_orchestration_analysis_input(
+                user_id, descriptor, bounded=True, load_result=store.load_orchestration,
+            )
+            task_result = persist_saved_analysis_result(
+                service=service, producer=producer, reader=reader, guard_token=token,
+                input_fingerprint=input_fingerprint,
+            )
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_analysis_finalization')
+    except MixedSourceCancellationError:
+        if not _fence_internal_analysis(checkpoints, 'cancelled'):
+            return _failed_result('Analysis cancellation could not be confirmed.', 'step_failed')
+        return _cancelled_result('Document analysis was cancelled.')
+    except Exception as exc:
+        _fence_internal_analysis(checkpoints, 'failed')
+        log_event(
+            f'{_LOG_PREFIX} Internal document analysis failed.',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'), 'error_type': type(exc).__name__},
+            level=logging.ERROR, exceptionTraceback=True,
+        )
+        return _failed_result('The internal analysis result could not be completed.', exc)
+    count = task_result.output('findings').item_count
+    qualifier = 'complete' if task_result.status == 'complete' else 'partial; unresolved work remains'
+    return build_step_result(
+        status=STEP_STATUS_COMPLETED if task_result.status == 'complete' else STEP_STATUS_PARTIAL,
+        summary=f'Retained {count} analysis finding(s) ({qualifier}).',
+        saved_analyses=[descriptor], task_result=task_result,
+    )
+
+
+def _run_internal_document_compare(step, context, *, settings, user_id, emit, cancel_requested):
+    arguments = _arguments(step)
+    invoke_prompt = _ctx(context, 'invoke_prompt')
+    if not callable(invoke_prompt):
+        return _failed_result('Document comparison is unavailable.', 'step_failed')
+    try:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_comparison')
+        input_fingerprint = _internal_result_input_fingerprint(step, context)
+        from functions_document_comparison import run_document_comparison
+        from functions_orchestration_analysis_results import persist_comparison_result
+
+        with orchestration_file_policy(allow_generated_files=False):
+            left_id = _text(arguments.get('left_document_id') or arguments.get('source_document_id'))
+            right_ids = _string_list(arguments.get('right_document_ids') or arguments.get('target_document_ids'))
+            if not left_id or not right_ids or left_id in right_ids:
+                raise ValueError('Comparison needs a distinct source and targets.')
+            prompt = _with_conversation_reference(
+                _text(arguments.get('comparison_prompt') or arguments.get('prompt') or arguments.get('question'))
+                or _effective_request(context), context,
+            )
+            service, producer, token, input_fingerprint = _internal_result_context(
+                step, context, user_id, CAPABILITY_DOCUMENT_COMPARE,
+                input_fingerprint=input_fingerprint,
+            )
+            document_ids = [left_id, *right_ids]
+            manifest = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+            )
+            _require_internal_narrative_sources(manifest, document_ids)
+            _emit(emit, _progress(step, CAPABILITY_DOCUMENT_COMPARE, 'Comparing documents'))
+            result = run_document_comparison(
+                user_id, prompt, {
+                    'type': DOCUMENT_ACTION_TYPE_COMPARISON,
+                    'left_document_id': left_id, 'right_document_ids': right_ids,
+                    'doc_scope': _document_scope(context, arguments),
+                    'active_group_ids': _ctx(context, 'active_group_ids'),
+                    'active_public_workspace_id': _public_workspace_ids(context),
+                }, invoke_prompt, conversation_id=producer.conversation_id,
+                cancel_requested=cancel_requested, request_correlation_id=_ctx(context, 'request_correlation_id'),
+                result_version='comparison-v1',
+            )
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_comparison_saving')
+            task_result = persist_comparison_result(
+                service=service, producer=producer, result=result, sources=manifest, guard_token=token,
+                input_fingerprint=input_fingerprint,
+            )
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_comparison_finalization')
+    except MixedSourceCancellationError:
+        return _cancelled_result('Document comparison was cancelled.')
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Internal document comparison failed.',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'), 'error_type': type(exc).__name__},
+            level=logging.ERROR, exceptionTraceback=True,
+        )
+        return _failed_result('The internal comparison result could not be completed.', exc)
+    count = task_result.output('comparison').item_count
+    failed = task_result.status == 'failed'
+    return build_step_result(
+        status=STEP_STATUS_FAILED if failed else (
+            STEP_STATUS_PARTIAL if task_result.status == 'partial' else STEP_STATUS_COMPLETED
+        ),
+        summary=f'Retained {count} of {len(right_ids)} target comparison(s) ({task_result.status}).',
+        failure=build_failure() if failed else None, task_result=task_result,
+    )
+
+
 def run_document_analyze(step, context, *, settings, user_id, emit, cancel_requested):
+    if _ctx(context, 'plan_contract_version', 1) == 2:
+        return _run_internal_document_analyze(
+            step, context, settings=settings, user_id=user_id, emit=emit, cancel_requested=cancel_requested,
+        )
     arguments = _arguments(step)
     invoke_prompt = _ctx(context, 'invoke_prompt', None)
     if not callable(invoke_prompt):
@@ -821,6 +1194,10 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
 # --------------------------------------------------------------------------------------
 
 def run_document_compare(step, context, *, settings, user_id, emit, cancel_requested):
+    if _ctx(context, 'plan_contract_version', 1) == 2:
+        return _run_internal_document_compare(
+            step, context, settings=settings, user_id=user_id, emit=emit, cancel_requested=cancel_requested,
+        )
     arguments = _arguments(step)
     invoke_prompt = _ctx(context, 'invoke_prompt', None)
     if not callable(invoke_prompt):
@@ -948,6 +1325,38 @@ def _tabular_evidence_status(execution_state, reply, artifacts):
 
 
 def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_requested):
+    if _ctx(context, 'plan_contract_version', 1) == 2:
+        if _is_cancelled(cancel_requested):
+            return _cancelled_result('Cancelled before native tabular analysis.')
+        # Keep the native runtime out of legacy startup and cancelled invocations.
+        from functions_orchestration_native_results import (
+            NativeOrchestrationBridge, raise_native_orchestration_infrastructure_failure,
+        )
+
+        try:
+            bridge_for_step = _ctx(context, 'native_bridge_for_step')
+            if not callable(bridge_for_step):
+                raise ResultContractError('result_runtime_unavailable')
+            # The server factory owns native operation/model/source binding.
+            with orchestration_file_policy(allow_generated_files=False):
+                bridge = bridge_for_step(step, context)
+                if type(bridge) is not NativeOrchestrationBridge:
+                    raise ResultContractError('result_runtime_unavailable')
+                return bridge.execute(
+                    step, context, settings=settings, user_id=user_id, emit=emit,
+                    cancel_requested=cancel_requested,
+                )
+        except MixedSourceCancellationError:
+            return _cancelled_result('Native tabular analysis was cancelled.')
+        except Exception as exc:
+            raise_native_orchestration_infrastructure_failure(exc)
+            log_event(
+                f'{_LOG_PREFIX} Native tabular adapter binding failed.',
+                extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')},
+                level=logging.ERROR,
+            )
+            return _failed_result('Native tabular analysis is unavailable.', exc)
+
     arguments = _arguments(step)
     document_ids = _resolve_step_document_ids(
         step, context, settings=settings, capability_id=CAPABILITY_TABULAR_ANALYZE,
@@ -1126,6 +1535,13 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
     web_citations = []
     web_runs = []
     try:
+        invocation_kwargs = {}
+        if _ctx(context, 'plan_contract_version', 1) == 2:
+            invocation_kwargs['invocation_capture'] = _external_invocation_capture(
+                step, context, settings, user_id=user_id, capability_id=CAPABILITY_WEB_SEARCH,
+            )
+            settings = deepcopy(settings)
+            invocation_kwargs['invocation_capture']('web', settings=settings)
         from route_backend_chats import perform_web_search
 
         ok = perform_web_search(
@@ -1144,7 +1560,19 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
             web_search_citations_list=web_citations,
             web_search_runs_list=web_runs,
             search_context_label='chat_orchestration',
+            **invocation_kwargs,
         )
+        if invocation_kwargs:
+            invocation_kwargs['invocation_capture'].require_valid(captured=True)
+    except OrchestrationInvocationCancelledError:
+        return _cancelled_result('Web search authorization was cancelled.')
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+        OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
+    except ResultContractError as exc:
+        return _failed_result('Web search configuration could not be attested.', exc)
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} web_search failed: {exc}',
@@ -1342,6 +1770,9 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
         )
 
     try:
+        settings = _capture_external_execution_settings(
+            step, context, settings, user_id=user_id, capability_id=CAPABILITY_URL_FETCH,
+        )
         result = perform_source_review(
             settings=settings,
             user_id=user_id,
@@ -1355,6 +1786,15 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
             include_direct_user_urls=False,
             additional_seed_urls=additional_seed_urls,
         )
+    except OrchestrationInvocationCancelledError:
+        return _cancelled_result('Linked page authorization was cancelled.')
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+        OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
+    except ResultContractError as exc:
+        return _failed_result('Linked page configuration could not be attested.', exc)
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} url_fetch failed: {exc}',
@@ -1384,6 +1824,46 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             'No research question was available.',
             'Deep research requires a current user request.',
         )
+
+    planner_binding = None
+    capture = None
+    if _ctx(context, 'plan_contract_version', 1) == 2:
+        planner_binding = (_ctx(context, 'planner_client'), _ctx(context, 'planner_deployment'))
+
+    def check_planner_binding():
+        if (
+            _ctx(context, 'planner_client') is not planner_binding[0]
+            or _ctx(context, 'planner_deployment') != planner_binding[1]
+        ):
+            raise ResultContractError('result_external_configuration_unavailable')
+
+    try:
+        if planner_binding is not None:
+            capture = _external_invocation_capture(
+                step, context, settings, user_id=user_id, capability_id=CAPABILITY_DEEP_RESEARCH,
+                invocation_check=check_planner_binding,
+            )
+        settings = _capture_external_execution_settings(
+            step, context, settings, user_id=user_id, capability_id=CAPABILITY_DEEP_RESEARCH,
+            invocation_capture=capture,
+        )
+        if capture is not None:
+            # The model owner records actual constructor inputs, not later settings.
+            from functions_source_review import capture_research_planner_configuration
+
+            capture_research_planner_configuration(
+                settings=settings, planner_client=planner_binding[0], planner_model=planner_binding[1],
+                invocation_capture=capture,
+            )
+    except OrchestrationInvocationCancelledError:
+        return _cancelled_result('Deep research authorization was cancelled.')
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+        OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
+    except ResultContractError as exc:
+        return _failed_result('Deep research configuration could not be attested.', exc)
 
     try:
         from functions_source_review import (
@@ -1415,7 +1895,10 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             'Deep research is not enabled or permitted.',
         )
 
-    planner_client, planner_model = _resolve_source_review_planner(settings, context)
+    planner_client, planner_model = (
+        planner_binding if planner_binding is not None
+        else _resolve_source_review_planner(settings, context)
+    )
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before deep research.')
 
@@ -1434,6 +1917,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
 
         active_group_ids = _ctx(context, 'active_group_ids', None) or []
         try:
+            capture_kwargs = {'invocation_capture': capture} if capture is not None else {}
             search_result = perform_research_web_searches(
                 settings=settings,
                 conversation_id=_ctx(context, 'conversation_id', None),
@@ -1457,9 +1941,17 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
                 deep_research_planner_model=planner_model,
                 cancel_requested=cancel_requested,
                 on_query_progress=query_progress,
+                **capture_kwargs,
             )
-        except MixedSourceCancellationError:
+        except (MixedSourceCancellationError, OrchestrationInvocationCancelledError):
             return _cancelled_result('Cancelled during research searches.')
+        except (
+            OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+            OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+        ):
+            raise
+        except ResultContractError as exc:
+            return _failed_result('Deep research configuration could not be attested.', exc)
 
         query_results = search_result['query_results']
         for query_result in query_results:
@@ -1493,6 +1985,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
     prior_citations = [c for c in (_ctx(context, 'citations', []) or ()) if isinstance(c, dict)]
     message_seed_urls = _request_urls(context, extract_urls_from_text) or None
     try:
+        capture_kwargs = {'invocation_capture': capture} if capture is not None else {}
         result = perform_source_review(
             settings=settings,
             user_id=user_id,
@@ -1507,7 +2000,17 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             url_access_context=URL_ACCESS_CONTEXT_CHAT,
             include_direct_user_urls=False,
             additional_seed_urls=message_seed_urls,
+            **capture_kwargs,
         )
+    except OrchestrationInvocationCancelledError:
+        return _cancelled_result('Deep research authorization was cancelled.')
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+        OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
+    except ResultContractError as exc:
+        return _failed_result('Deep research configuration could not be attested.', exc)
     except (RuntimeError, ValueError, OSError) as exc:
         log_event(
             f'{_LOG_PREFIX} Research source review failed.',
@@ -1748,11 +2251,11 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
 
 
 def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requested):
+    if _ctx(context, 'plan_contract_version', 1) == 2 and _is_cancelled(cancel_requested):
+        return _cancelled_result('Action execution was cancelled.')
     # Action dependencies initialize SK/Azure; keep them out of the adapter import path.
     import asyncio
     from agent_execution_context import AgentExecutionCancelled
-    from functions_orchestration_actions import invoke_action
-    from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
 
     arguments = _arguments(step)
     action_ref = _text(arguments.get('action_ref'))
@@ -1772,12 +2275,31 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     _emit(emit, _progress(step, CAPABILITY_ACTION_INVOKE, f'Using action {display_name}'))
     task = _with_conversation_reference(task, context)
     try:
+        invocation_kwargs = {}
+        if _ctx(context, 'plan_contract_version', 1) == 2:
+            invocation_kwargs['invocation_capture'] = _external_invocation_capture(
+                step, context, settings, user_id=user_id,
+                capability_id=CAPABILITY_ACTION_INVOKE, selector=action_ref,
+            )
+            settings = deepcopy(settings)
+            invocation_kwargs['invocation_capture']('action', settings=settings, selector=action_ref)
+        from functions_orchestration_actions import invoke_action
+        from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
+
         result = asyncio.run(invoke_action(
             action_ref, task, context, settings=settings, user_id=user_id,
             cancel_requested=lambda: _is_cancelled(cancel_requested),
+            **invocation_kwargs,
         ))
-    except AgentExecutionCancelled:
+        if invocation_kwargs:
+            invocation_kwargs['invocation_capture'].require_valid(captured=True)
+    except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Action execution was cancelled.')
+    except (
+        OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+        OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+    ):
+        raise
     except Exception as exc:
         # This is the boundary for arbitrary plugin/provider code; never expose its exceptions.
         log_event(
@@ -1819,7 +2341,12 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     # repaired plan -- from naming an agent this user cannot reach. Access is verified here, at
     # run time, not trusted from the plan-time request gate.
     catalog = [a for a in (_ctx(context, 'agent_catalog', None) or ()) if isinstance(a, dict)]
-    selected_agent_data = next((a for a in catalog if _text(a.get('name')) == agent_name), None)
+    candidates = [a for a in catalog if _text(a.get('name')) == agent_name]
+    selected_agent_data = next(iter(candidates), None)
+    if _ctx(context, 'plan_contract_version', 1) == 2 and (
+        len(candidates) != 1 or type(candidates[0].get('id')) is not str or not candidates[0]['id']
+    ):
+        return _failed_result('The agent selection could not be verified.', 'An exact, unambiguous agent is required.')
     if selected_agent_data is None:
         return _failed_result(
             f'No agent named "{agent_name}" is available to this user.',
@@ -1841,7 +2368,10 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
                 f'The scope of agent "{agent_name}" is not enabled.',
                 'agent_invoke selected agent scope is disabled by settings.',
             )
-        agent_cfg = find_agent_by_scope(catalog, selected_agent_data) or selected_agent_data
+        agent_cfg = (
+            selected_agent_data if _ctx(context, 'plan_contract_version', 1) == 2
+            else find_agent_by_scope(catalog, selected_agent_data) or selected_agent_data
+        )
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} agent_invoke could not resolve agent scope: {exc}',
@@ -1855,28 +2385,61 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         return _cancelled_result('Cancelled before invoking the agent.')
 
     execution_identity = _ctx(context, 'agent_execution_identity', None)
+    if _ctx(context, 'plan_contract_version', 1) == 2 and (
+        execution_identity is None or execution_identity.user_id != user_id
+        or execution_identity.conversation_id != _ctx(context, 'conversation_id')
+    ):
+        return _failed_result('The agent execution identity is unavailable.', 'A server execution identity is required.')
     if execution_identity is not None:
         # Runtime owns the isolated compatibility bridge. Adapters never inspect
         # Flask state, and all steps share the run's root delegation budget.
         import asyncio
         from agent_execution_context import AgentExecutionCancelled, DelegationBudget
-        from agent_delegation_runtime import delegation_citations, invoke_scoped_agent
-        from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 
-        budget = _ctx(context, 'delegation_budget', None)
-        if budget is None:
-            budget = DelegationBudget()
-        prior_ids = {record['invocation_id'] for record in budget.snapshot()}
-        plugin_logger = get_plugin_logger()
-        conversation_id = _ctx(context, 'conversation_id', None)
-        seen_before = {id(inv) for inv in budget.invocations()}
         try:
+            invocation_kwargs = {}
+            if _ctx(context, 'plan_contract_version', 1) == 2:
+                from functions_agent_delegation import agent_reference
+
+                reference = agent_reference(agent_cfg, user_id)
+                selector = agent_cfg.get('catalog_key')
+                expected_selector = f"{reference['scope_type']}:{reference['scope_id']}:{reference['id']}"
+                if type(selector) is not str or selector != expected_selector:
+                    raise ResultContractError('result_external_configuration_selection_mismatch')
+                invocation_capture = _external_invocation_capture(
+                    step, context, settings, user_id=user_id,
+                    capability_id=CAPABILITY_AGENT_INVOKE, selector=selector,
+                )
+                invocation_settings = deepcopy(settings)
+                invocation_capture('agent', settings=invocation_settings, selector=selector)
+                invocation_kwargs = {
+                    'settings': invocation_settings,
+                    'invocation_capture': invocation_capture,
+                }
+            from agent_delegation_runtime import delegation_citations, invoke_scoped_agent
+            from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+
+            budget = _ctx(context, 'delegation_budget', None)
+            if budget is None:
+                budget = DelegationBudget()
+            prior_ids = {record['invocation_id'] for record in budget.snapshot()}
+            plugin_logger = get_plugin_logger()
+            conversation_id = _ctx(context, 'conversation_id', None)
+            seen_before = {id(inv) for inv in budget.invocations()}
             result = asyncio.run(invoke_scoped_agent(
                 agent_cfg, task, identity=execution_identity, budget=budget,
                 cancel_requested=cancel_requested,
+                **invocation_kwargs,
             ))
-        except AgentExecutionCancelled:
+            if invocation_kwargs:
+                invocation_kwargs['invocation_capture'].require_valid(captured=True)
+        except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
             return _cancelled_result('Agent execution was cancelled.')
+        except (
+            OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
+            OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
+        ):
+            raise
         except Exception as exc:
             log_event('[AGENT_DELEGATION] Orchestration agent execution failed.',
                       extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')})
@@ -2245,6 +2808,16 @@ ADAPTER_REGISTRY = {
 }
 
 
-def get_adapter(name):
-    """The adapter callable for a capability/adapter name, or ``None`` if unknown."""
+def get_adapter(name, *, contract_version=1):
+    """Resolve a supported plan adapter without changing the legacy registry."""
+    if type(contract_version) is not int or contract_version not in (1, 2):
+        return None
+    if contract_version == 2:
+        if name == CAPABILITY_RESPOND:
+            return None
+        if name == 'compose':
+            # Keep composition lazy so the legacy adapter import graph is unchanged.
+            from functions_orchestration_composition import adapter_compose
+
+            return adapter_compose
     return ADAPTER_REGISTRY.get(name)

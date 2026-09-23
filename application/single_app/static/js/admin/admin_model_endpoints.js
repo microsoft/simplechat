@@ -1,6 +1,7 @@
 // admin_model_endpoints.js
 
 import { showToast } from "../chat/chat-toast.js";
+import { mountProfilePicker } from "./model_catalog_ui.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
 import {
     ModelBudgetValidationError,
@@ -2041,6 +2042,12 @@ function renderModalModels(models) {
         fieldsRow.appendChild(iconCol);
         fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
+        const profileCol = createElement("div", "col-12");
+        mountProfilePicker(profileCol, model, (value) => {
+            model.catalogProfileId = value;
+            delete model.capability_status;
+        });
+        fieldsRow.appendChild(profileCol);
         if (!custom && !isKnownEmbeddingModel(model)) fieldsRow.appendChild(createModelVisionControl(model, modelId));
 
         const actions = createElement("div", "d-flex flex-wrap gap-2 mt-2");

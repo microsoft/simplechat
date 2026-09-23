@@ -18,19 +18,22 @@
 //     therefore persisted to `sessionStorage`, kept apart from the plan/step state because they
 //     are the part that has to survive the page rather than merely the re-render.
 //
-// The plan itself is not persisted: it is large, the server owns it, and a reload re-fetches or
-// re-plans. What is persisted is the minimum needed to recognise a run that is already running.
+// The plan itself is not persisted here: the server owns it and a reload reads the saved state.
+// What is persisted is the minimum needed to recognise active work, including durable waits;
+// restoring it never approves or repeats execution.
 
 import { create } from 'zustand';
 import { normalizeReasoningAdjustments } from '../lib/reasoning';
-import { isOrchestrationRunPending, normalizeOrchestrationAttempt, normalizeOrchestrationFailure } from '../lib/orchestration';
+import { isOrchestrationRunPending, isOrchestrationRunWaiting, normalizeOrchestrationAttempt, normalizeOrchestrationFailure } from '../lib/orchestration';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
+import type { OrchestrationOutputRetry } from '../lib/orchestrationOutputs';
 import {
     applyPlanEdits,
     disableStep as narrowDisableStep,
     emptyPlanEdits,
     enableStep as narrowEnableStep,
     normalizePlan,
+    normalizeModelBinding,
     removeDocumentFromStep as narrowRemoveDocument,
     restoreDocumentToStep as narrowRestoreDocument,
 } from '../lib/orchestrationPlan';
@@ -62,6 +65,8 @@ function conversationOfScope(key: string): string {
 const STEP_STATUS_SET: ReadonlySet<StepStatus> = new Set<StepStatus>([
     'pending',
     'running',
+    'waiting',
+    'partial',
     'completed',
     'failed',
     'skipped',
@@ -80,6 +85,7 @@ function coerceStepStatus(value: unknown): StepStatus | null {
 
 /** One step's live runtime, driven by `orchestration_step` frames rather than the plan object. */
 export interface StepRuntime {
+    model_binding?: OrchestrationStep['model_binding'];
     status: StepStatus;
     summary: string;
     reused?: boolean;
@@ -94,6 +100,11 @@ export interface RunRecoveryState extends OrchestrationAttempt {
     transportUnknown?: boolean;
     checking?: boolean;
     detailLoaded?: boolean;
+    outputRevision?: number;
+    outputChecking?: boolean;
+    outputError?: string | null;
+    outputAccessDenied?: boolean;
+    outputRetries?: Record<string, OrchestrationOutputRetry>;
 }
 
 export type StepRuntimeMap = Record<string, StepRuntime>;
@@ -108,7 +119,7 @@ export type RunOutcome = 'completed' | 'failed' | 'cancelled';
  * terminal status because the browser that started it went away. It is not `running`, because
  * this page has no stream for it and must not claim to be watching it.
  */
-export type RunDisplayStatus = RunOutcome | 'interrupted';
+export type RunDisplayStatus = RunOutcome | 'interrupted' | 'waiting';
 
 /** Where a history entry came from, which decides what the drawer may offer for it. */
 export type RunOrigin = 'local' | 'server';
@@ -169,6 +180,7 @@ const NON_TERMINAL_PLAN_STATUSES: ReadonlySet<string> = new Set([
     'awaiting_approval',
     'approved',
     'running',
+    'waiting',
 ]);
 
 /**
@@ -201,7 +213,7 @@ function epochMs(value: string | null | undefined): number {
  * reduced to the four states a row can draw. `superseded` folds into `cancelled` because that is
  * what it means to the reader -- the run was abandoned for another -- and every non-terminal
  * status folds into `interrupted` rather than `running`, since a stored record is by definition
- * not something this page is streaming.
+ * not something this page is streaming. A durable wait retains its distinct waiting status.
  */
 export function historyEntryFromPersistedRun(run: PersistedRunSummary): RunHistoryEntry | null {
     const runId = run?.run_id;
@@ -214,7 +226,9 @@ export function historyEntryFromPersistedRun(run: PersistedRunSummary): RunHisto
 
     const planStatus = (run.status ?? run.plan_summary?.status ?? null) as PlanStatus | null;
     let status: RunDisplayStatus;
-    if (run.outcome === 'partial' || run.outcome === 'failed') {
+    if (isOrchestrationRunWaiting({ ...run, status: planStatus })) {
+        status = 'waiting';
+    } else if (run.outcome === 'partial' || run.outcome === 'failed') {
         status = 'failed';
     } else if (planStatus === 'completed') {
         status = 'completed';
@@ -489,7 +503,15 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     recoveryTarget: null,
     runRecovery: {},
     updateRunRecovery: (runId, patch) => set((state) => ({
-        runRecovery: { ...state.runRecovery, [runId]: { ...state.runRecovery[runId], ...patch } },
+        runRecovery: {
+            ...state.runRecovery,
+            [runId]: {
+                ...state.runRecovery[runId], ...patch,
+                ...(patch.outputs !== undefined ? {
+                    outputRevision: (state.runRecovery[runId]?.outputRevision ?? 0) + 1,
+                } : {}),
+            },
+        },
     })),
     plans: {},
     elicitations: {},
@@ -551,6 +573,14 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             }
             return {
                 plans: { ...state.plans, [key]: canonical },
+                ...(canonical.planner_contract_version === 2 && Array.isArray(editor.export_catalog) ? {
+                    runRecovery: {
+                        ...state.runRecovery,
+                        [canonical.run_id]: {
+                            ...state.runRecovery[canonical.run_id], export_catalog: editor.export_catalog,
+                        },
+                    },
+                } : {}),
                 // Unlike setPlan, this adopts the authoritative overlay in the same update.
                 // Unsaved Review changes may survive reopening only against the identical
                 // server version. A stale tab must adopt the server's overlay instead.
@@ -757,7 +787,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         const key = scopeKey(conversationId, turnId);
         set((state) => {
             const current = state.edits[key] ?? emptyPlanEdits();
-            const next = narrowDisableStep(current, step);
+            const next = narrowDisableStep(current, step, state.plans[key]);
             if (next === current) {
                 return {};
             }
@@ -855,6 +885,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return;
         }
         const patch: Partial<StepRuntime> = {};
+        if (event.model_binding) patch.model_binding = normalizeModelBinding(event.model_binding);
         if (typeof event.reused === 'boolean') patch.reused = event.reused;
         if (event.failure) patch.failure = normalizeOrchestrationFailure(event.failure);
         const status = coerceStepStatus(event.status);
@@ -981,6 +1012,11 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 runRecovery[entry.runId] = {
                     ...runRecovery[entry.runId],
                     ...normalizeOrchestrationAttempt(run),
+                    // List hydration must not overwrite fresher detail, SSE or retry receipts.
+                    ...(runRecovery[entry.runId]?.outputRevision ? {
+                        outputs: runRecovery[entry.runId].outputs,
+                        generated_artifacts: runRecovery[entry.runId].generated_artifacts,
+                    } : {}),
                     status: run.status,
                 };
                 persistedStatus.set(entry.runId, entry.planStatus ?? null);
@@ -1056,6 +1092,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 }
                 const status = coerceStepStatus(record.status) ?? runtime[stepId]?.status ?? 'pending';
                 runtime[stepId] = {
+                    model_binding: normalizeModelBinding(record.model_binding),
                     status,
                     summary: typeof record.summary === 'string' ? record.summary : '',
                     reused: record.reused === true,

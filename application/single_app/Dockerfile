@@ -30,6 +30,14 @@ WORKDIR /v2_ui
 COPY application/v2_ui/package.json application/v2_ui/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
 
+# The model catalog UI is shared source: the V2 SPA imports the same module and stylesheet
+# that the legacy admin page loads, by relative path out of application/v2_ui. Those files
+# must exist at /single_app/static for `tsc -b && vite build` to resolve the import.
+COPY application/single_app/static/js/admin/model_catalog_ui.js \
+     application/single_app/static/js/admin/model_catalog_ui.d.ts \
+     /single_app/static/js/admin/
+COPY application/single_app/static/css/model-catalog.css /single_app/static/css/
+
 COPY application/v2_ui/ ./
 
 # Vite is configured to emit into ../single_app/static/v2, so the build output lands at

@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Annotated, Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from azure.core.exceptions import AzureError
@@ -71,6 +71,17 @@ class MSGraphPlugin(BasePlugin):
     MAX_ITEMS_PER_RESULT = 25
     MAX_PAGES_PER_REQUEST = 5
     DEFERRED_DELIVERY_EXTENDED_PROPERTY_ID = "SystemTime 0x000F"
+    MAIL_SEARCH_PAGE_SIZE = 100
+    MAIL_SEARCH_MAX_PAGES = 5
+    MAIL_EARLIEST_RECEIVED = "1900-01-01T00:00:00Z"
+    CALENDAR_DEFAULT_WINDOW_DAYS = 30
+    CALENDAR_SCAN_PAGE_SIZE = 100
+    CALENDAR_SCAN_MAX_PAGES = 10
+    SEARCH_MAX_CHARS = 500
+    SEARCH_MAX_TERMS = 10
+    SEARCH_OPERATOR_WORDS = frozenset({"and", "or", "not", "near", "onear"})
+    DEFAULT_EVENT_SELECT = "id,subject,start,end,location,organizer,isAllDay,webLink"
+    DEFAULT_MESSAGE_SELECT = "id,subject,from,receivedDateTime,isRead,importance,webLink"
 
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         super().__init__(manifest)
@@ -263,19 +274,22 @@ class MSGraphPlugin(BasePlugin):
             },
             "get_my_events": {
                 "name": "get_my_events",
-                "description": "Get upcoming calendar events for the signed-in user.",
+                "description": (
+                    "Read or search the signed-in user's calendar events in any past or future time range. "
+                    "Without a time range, reads events from now through the next 30 days."
+                ),
                 "parameters": [
-                    {"name": "top", "type": "int", "description": "Maximum number of events to return.", "required": False},
+                    {"name": "top", "type": "int", "description": "Maximum number of events to return, from 1 to 25.", "required": False},
                     {
                         "name": "start_datetime",
                         "type": "str",
-                        "description": "Optional ISO datetime. If provided with end_datetime, uses calendarView.",
+                        "description": "Start of the time range as an ISO 8601 date or date and time. Requires end_datetime.",
                         "required": False,
                     },
                     {
                         "name": "end_datetime",
                         "type": "str",
-                        "description": "Optional ISO datetime. If provided with start_datetime, uses calendarView.",
+                        "description": "End of the time range as an ISO 8601 date or date and time. A date alone includes that whole UTC day.",
                         "required": False,
                     },
                     {
@@ -284,8 +298,29 @@ class MSGraphPlugin(BasePlugin):
                         "description": "Optional comma-separated Graph fields to include.",
                         "required": False,
                     },
+                    {
+                        "name": "query",
+                        "type": "str",
+                        "description": "Optional plain words that must all appear in the subject, location, organizer, attendees, categories, or description.",
+                        "required": False,
+                    },
+                    {
+                        "name": "order",
+                        "type": "str",
+                        "description": "oldest_first (default) or newest_first.",
+                        "required": False,
+                    },
+                    {
+                        "name": "starts_in_range",
+                        "type": "bool",
+                        "description": "If true, leave out events that were already in progress at start_datetime.",
+                        "required": False,
+                    },
                 ],
-                "returns": {"type": "dict", "description": "Calendar event results from Microsoft Graph."},
+                "returns": {
+                    "type": "dict",
+                    "description": "Calendar events with coverage that reports whether the range was fully read and how to continue.",
+                },
             },
             "create_calendar_invite": {
                 "name": "create_calendar_invite",
@@ -307,10 +342,15 @@ class MSGraphPlugin(BasePlugin):
             },
             "get_my_messages": {
                 "name": "get_my_messages",
-                "description": "Get recent mail messages for the signed-in user.",
+                "description": "Read or search the signed-in user's mail of any age, newest first.",
                 "parameters": [
-                    {"name": "top", "type": "int", "description": "Maximum number of messages to return.", "required": False},
-                    {"name": "folder", "type": "str", "description": "Optional mail folder name, such as inbox.", "required": False},
+                    {"name": "top", "type": "int", "description": "Maximum number of messages to return, from 1 to 25.", "required": False},
+                    {
+                        "name": "folder",
+                        "type": "str",
+                        "description": "Mail folder to read, such as inbox, sentitems, or archive, a folder id, or all for every folder.",
+                        "required": False,
+                    },
                     {"name": "unread_only", "type": "bool", "description": "If true, only unread messages are returned.", "required": False},
                     {
                         "name": "select_fields",
@@ -318,8 +358,29 @@ class MSGraphPlugin(BasePlugin):
                         "description": "Optional comma-separated Graph fields to include.",
                         "required": False,
                     },
+                    {
+                        "name": "search",
+                        "type": "str",
+                        "description": "Optional plain words to find in the sender, subject, or body. Every word must match.",
+                        "required": False,
+                    },
+                    {
+                        "name": "received_from",
+                        "type": "str",
+                        "description": "Optional ISO 8601 date or date and time. Only messages received at or after it are returned.",
+                        "required": False,
+                    },
+                    {
+                        "name": "received_to",
+                        "type": "str",
+                        "description": "Optional ISO 8601 date or date and time. Only messages received before it are returned; a date alone includes that whole UTC day.",
+                        "required": False,
+                    },
                 ],
-                "returns": {"type": "dict", "description": "Mail message results from Microsoft Graph."},
+                "returns": {
+                    "type": "dict",
+                    "description": "Mail messages with coverage that reports whether every match was read and how to continue.",
+                },
             },
             "mark_message_as_read": {
                 "name": "mark_message_as_read",
@@ -921,6 +982,356 @@ class MSGraphPlugin(BasePlugin):
 
         return params, headers
 
+    def _parse_graph_datetime(self, value: Any) -> Optional[datetime]:
+        if isinstance(value, dict):
+            value = value.get("dateTime")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text = value.strip()
+        if text[-1] in "Zz":
+            text = f"{text[:-1]}+00:00"
+        # Graph event times carry seven fractional digits, more than datetime stores.
+        text = re.sub(r"(\.\d{6})\d+", r"\1", text)
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _format_graph_datetime(self, value: Optional[datetime]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _raise_top_hint(self, top: int) -> str:
+        return " Raise top to include them." if top < self.MAX_ITEMS_PER_RESULT else ""
+
+    def _parse_time_bound(
+        self,
+        value: Any,
+        parameter_name: str,
+        operation_name: str,
+        end_of_day: bool = False,
+    ) -> Tuple[Optional[datetime], Optional[Dict[str, Any]]]:
+        text = str(value or "").strip()
+        if not text:
+            return None, None
+        parsed = self._parse_graph_datetime(text)
+        if parsed is None or not 1900 <= parsed.year <= 2999:
+            return None, self._invalid_parameter_error(
+                operation_name,
+                f"{parameter_name} must be an ISO 8601 date or date and time, such as 2025-03-01 or 2025-03-01T09:00:00Z.",
+            )
+        parsed = parsed.replace(microsecond=0)
+        if end_of_day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            parsed += timedelta(days=1)
+        return parsed, None
+
+    def _literal_search_terms(
+        self,
+        value: Any,
+        parameter_name: str,
+        operation_name: str,
+    ) -> Tuple[List[str], Optional[Dict[str, Any]]]:
+        text = str(value or "")
+        if not text.strip():
+            return [], None
+        if len(text) > self.SEARCH_MAX_CHARS or any(ord(character) < 32 and character not in "\t\r\n" for character in text):
+            return [], self._invalid_parameter_error(
+                operation_name,
+                f"{parameter_name} must be plain words and at most {self.SEARCH_MAX_CHARS} characters.",
+            )
+        # Only literal words reach Graph, so model-written field prefixes and operators can't reshape the query.
+        words = re.findall(r"\w+(?:[-.@]\w+)*", re.sub(r"\b[A-Za-z]+:", " ", text))
+        terms: List[str] = []
+        for word in words:
+            term = word.lower()
+            if term not in self.SEARCH_OPERATOR_WORDS and term not in terms:
+                terms.append(term)
+        if not terms:
+            return [], self._invalid_parameter_error(operation_name, f"{parameter_name} must include at least one word.")
+        if len(terms) > self.SEARCH_MAX_TERMS:
+            return [], self._invalid_parameter_error(
+                operation_name,
+                f"{parameter_name} can include at most {self.SEARCH_MAX_TERMS} words. Use a few distinctive words.",
+            )
+        return terms, None
+
+    def _merge_select_fields(self, select_fields: str, required_fields: List[str]) -> Tuple[str, List[str]]:
+        fields = [field.strip() for field in str(select_fields or "").split(",") if field.strip()]
+        present = {field.lower() for field in fields}
+        added = [field for field in required_fields if field.lower() not in present]
+        return ",".join(fields + added), added
+
+    def _strip_fields(self, items: List[Any], fields: List[str]) -> List[Any]:
+        names = {field.lower() for field in fields}
+        if not names:
+            return list(items)
+        return [
+            {key: value for key, value in item.items() if key.lower() not in names} if isinstance(item, dict) else item
+            for item in items
+        ]
+
+    def _message_received_at(self, message: Any) -> Optional[datetime]:
+        return self._parse_graph_datetime(message.get("receivedDateTime")) if isinstance(message, dict) else None
+
+    def _event_start_at(self, event: Any) -> Optional[datetime]:
+        return self._parse_graph_datetime(event.get("start")) if isinstance(event, dict) else None
+
+    def _split_page_at_cursor(
+        self,
+        page: List[Any],
+        cursor: datetime,
+        position: Callable[[Any], Optional[datetime]],
+        descending: bool,
+    ) -> Tuple[List[Any], bool]:
+        """Drop page items at or past the cursor, because the next call starts at the cursor and returns them.
+
+        When every page item sits at the cursor the page is kept, and True tells the caller to start strictly
+        past the cursor instead, so paging still moves forward.
+        """
+        def reached(item: Any) -> bool:
+            item_position = position(item)
+            if item_position is None:
+                return False
+            return item_position <= cursor if descending else item_position >= cursor
+
+        kept = [item for item in page if not reached(item)]
+        if kept:
+            return kept, False
+        return page, True
+
+    def _event_query_matches(self, event: Dict[str, Any], terms: List[str]) -> Optional[List[str]]:
+        def as_dict(value: Any) -> Dict[str, Any]:
+            return value if isinstance(value, dict) else {}
+
+        def email_text(entry: Any) -> List[Any]:
+            address = as_dict(as_dict(entry).get("emailAddress"))
+            return [address.get("name"), address.get("address")]
+
+        attendees = event.get("attendees") if isinstance(event.get("attendees"), list) else []
+        categories = event.get("categories") if isinstance(event.get("categories"), list) else []
+        fields = {
+            "subject": [event.get("subject")],
+            "location": [as_dict(event.get("location")).get("displayName")],
+            "organizer": email_text(event.get("organizer")),
+            "attendees": [text for attendee in attendees for text in email_text(attendee)],
+            "categories": categories,
+            "description": [event.get("bodyPreview")],
+        }
+        haystacks = {
+            name: " ".join(value for value in values if isinstance(value, str)).lower()
+            for name, values in fields.items()
+        }
+        matched_on: List[str] = []
+        for term in terms:
+            hits = [name for name, text in haystacks.items() if term in text]
+            if not hits:
+                return None
+            matched_on.extend(name for name in hits if name not in matched_on)
+        return matched_on
+
+    def _with_mail_coverage(
+        self,
+        result: Dict[str, Any],
+        top: int,
+        folder_label: str,
+        terms: List[str],
+        unread_only: bool,
+        lower: Optional[datetime],
+        upper: Optional[datetime],
+        select_fields: str,
+        last_examined: Any,
+    ) -> Dict[str, Any]:
+        items = list(result.get("value") or [])
+        page = items[:top]
+        peek = items[top] if len(items) > top else None
+        more = peek is not None or bool(result.get("truncated"))
+        continue_with = None
+        tie_time = None
+        anchor = peek if peek is not None else last_examined
+        cursor = self._message_received_at(anchor) if more else None
+        if cursor is not None:
+            page, strict = self._split_page_at_cursor(page, cursor, self._message_received_at, descending=True)
+            next_upper = cursor if strict else cursor + timedelta(seconds=1)
+            if strict:
+                tie_time = cursor
+            if lower and next_upper <= lower:
+                # Not strict means the last examined message is already older than received_from.
+                if not strict:
+                    more = False
+            elif upper is None or next_upper < upper:
+                continue_with = {"folder": folder_label, "top": top}
+                if terms:
+                    continue_with["search"] = " ".join(terms)
+                if unread_only:
+                    continue_with["unread_only"] = True
+                if lower:
+                    continue_with["received_from"] = self._format_graph_datetime(lower)
+                continue_with["received_to"] = self._format_graph_datetime(next_upper)
+                if select_fields:
+                    continue_with["select_fields"] = select_fields
+
+        received_times = [value for value in (self._message_received_at(message) for message in page) if value]
+        coverage: Dict[str, Any] = {
+            "folder": folder_label,
+            "search_terms": terms,
+            "unread_only": unread_only,
+            "received_from": self._format_graph_datetime(lower),
+            "received_to": self._format_graph_datetime(upper),
+            "newest_received": self._format_graph_datetime(max(received_times)) if received_times else None,
+            "oldest_received": self._format_graph_datetime(min(received_times)) if received_times else None,
+            "complete": not more,
+        }
+        if continue_with:
+            coverage["continue_with"] = continue_with
+
+        notes = []
+        if not more:
+            notes.append("Every message that matches this request is included." if page else "No messages match this request.")
+        elif continue_with:
+            notes.append(
+                "More matching messages are older than these. To keep reading back, call get_my_messages again "
+                "with the arguments in coverage.continue_with."
+            )
+        elif tie_time is None:
+            notes.append(
+                "More messages match than could be listed. Narrow the request with search words or received_from and received_to."
+            )
+        if tie_time is not None:
+            notes.append(
+                f"Some messages received at {self._format_graph_datetime(tie_time)} may be missing because more messages "
+                f"arrived then than this call could list.{self._raise_top_hint(top)}"
+            )
+        if folder_label.lower() == "inbox" and (terms or lower or upper):
+            notes.append("Only the inbox was read; set folder to all to include every folder.")
+        note = " ".join(notes)
+
+        result.update({"count": len(page), "value": page, "truncated": more, "coverage": coverage, "note": note})
+        return result
+
+    def _with_calendar_coverage(
+        self,
+        result: Dict[str, Any],
+        top: int,
+        window_start: datetime,
+        window_end: datetime,
+        default_window: bool,
+        newest_first: bool,
+        in_range_only: bool,
+        terms: List[str],
+        select_fields: str,
+        added_fields: List[str],
+        scan: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        items = list(result.get("value") or [])
+        page = items[:top]
+        peek = items[top] if len(items) > top else None
+        more = peek is not None or bool(result.get("truncated"))
+        order_label = "newest_first" if newest_first else "oldest_first"
+        continue_with = None
+        in_progress_left = False
+        tie_time = None
+        anchor = peek if peek is not None else scan.get("last")
+        cursor = self._event_start_at(anchor) if more else None
+        if cursor is not None:
+            base: Dict[str, Any] = {"top": top, "order": order_label}
+            if terms:
+                base["query"] = " ".join(terms)
+            if select_fields:
+                base["select_fields"] = select_fields
+            if cursor < window_start:
+                # Everything past this page began before the range and is still in progress at its start.
+                if newest_first and in_range_only:
+                    more = False
+                elif newest_first:
+                    in_progress_left = True
+                elif not in_range_only:
+                    in_progress_left = True
+                    continue_with = {
+                        **base,
+                        "start_datetime": self._format_graph_datetime(window_start),
+                        "end_datetime": self._format_graph_datetime(window_end),
+                        "starts_in_range": True,
+                    }
+            else:
+                page, strict = self._split_page_at_cursor(page, cursor, self._event_start_at, descending=newest_first)
+                if strict:
+                    tie_time = cursor
+                if newest_first:
+                    next_end = cursor if strict else cursor + timedelta(seconds=1)
+                    if next_end <= window_start:
+                        # Only a tie at start_datetime lands here, so what's left shares that time or began earlier.
+                        if not in_range_only:
+                            in_progress_left = True
+                    elif next_end < window_end:
+                        continue_with = {
+                            **base,
+                            "start_datetime": self._format_graph_datetime(window_start),
+                            "end_datetime": self._format_graph_datetime(next_end),
+                            "starts_in_range": in_range_only,
+                        }
+                else:
+                    next_start = cursor + timedelta(seconds=1) if strict else cursor
+                    if next_start < window_end and (next_start > window_start or not in_range_only):
+                        # Continuation starts at an event start, so events still running from this page are left out.
+                        continue_with = {
+                            **base,
+                            "start_datetime": self._format_graph_datetime(next_start),
+                            "end_datetime": self._format_graph_datetime(window_end),
+                            "starts_in_range": True,
+                        }
+
+        starts = [value for value in (self._event_start_at(event) for event in page) if value]
+        page = self._strip_fields(page, added_fields)
+        coverage: Dict[str, Any] = {
+            "start_datetime": self._format_graph_datetime(window_start),
+            "end_datetime": self._format_graph_datetime(window_end),
+            "order": order_label,
+            "starts_in_range": in_range_only,
+            "query_terms": terms,
+            "events_scanned": scan.get("examined", 0),
+            "earliest_start": self._format_graph_datetime(min(starts)) if starts else None,
+            "latest_start": self._format_graph_datetime(max(starts)) if starts else None,
+            "complete": not more,
+        }
+        if continue_with:
+            coverage["continue_with"] = continue_with
+
+        label = "matching events" if terms else "events"
+        notes = []
+        if default_window:
+            notes.append(
+                f"No time range was given, so only events from now through the next {self.CALENDAR_DEFAULT_WINDOW_DAYS} days "
+                "were read. Pass start_datetime and end_datetime to read past or later events."
+            )
+        if not more:
+            notes.append(f"Every {label[:-1]} in this time range is included." if page else f"No {label} in this time range.")
+        elif continue_with:
+            notes.append(
+                f"More {label} exist in this time range. To continue, call get_my_events again with the arguments "
+                "in coverage.continue_with."
+            )
+        elif not in_progress_left and tie_time is None:
+            notes.append(f"More {label} exist than could be listed. Narrow the time range or use more specific query words.")
+        if in_progress_left:
+            notes.append(
+                "Some events that began before start_datetime and are still in progress aren't listed. "
+                + ("Move start_datetime earlier to include them." if newest_first else "Raise top to include them.")
+            )
+        if tie_time is not None:
+            notes.append(
+                f"Some events that start at {self._format_graph_datetime(tie_time)} may be missing because more events "
+                f"start then than this call could list.{self._raise_top_hint(top)}"
+            )
+
+        result.update({
+            "count": len(page), "value": page, "truncated": more, "coverage": coverage, "note": " ".join(notes),
+        })
+        return result
+
     def _shape_graph_result(self, operation_name: str, payload: Any, max_items: int) -> Dict[str, Any]:
         if isinstance(payload, dict) and isinstance(payload.get("value"), list):
             items = payload.get("value", [])
@@ -956,19 +1367,23 @@ class MSGraphPlugin(BasePlugin):
         max_items: int = 5,
         additional_headers: Optional[Dict[str, str]] = None,
         expect_json_response: bool = True,
+        item_filter: Optional[Callable[[Any], bool]] = None,
+        max_pages: Optional[int] = None,
+        lookahead: int = 0,
     ) -> Dict[str, Any]:
         denial = self._authorize_operation(operation_name, (params or {}).get("$select", ""))
         if denial:
             return denial
         transport = self._transport_for_operation(operation_name)
-        normalized_max_items = self._normalize_top(max_items)
+        normalized_max_items = self._normalize_top(max_items) + max(0, int(lookahead or 0))
+        page_limit = max_pages or self.MAX_PAGES_PER_REQUEST
         collected_items: List[Any] = []
         next_url = path
         next_params = dict(params or {})
         pages_fetched = 0
         last_next_link = None
 
-        while next_url and pages_fetched < self.MAX_PAGES_PER_REQUEST:
+        while next_url and pages_fetched < page_limit:
             denial = self._authorize_operation(operation_name, (params or {}).get("$select", ""))
             if denial:
                 return denial
@@ -1007,9 +1422,14 @@ class MSGraphPlugin(BasePlugin):
                 return {**payload, "operation": operation_name, "source": transport.source, "provider": "graph"}
 
             if paginate and isinstance(payload, dict) and isinstance(payload.get("value"), list):
-                remaining_capacity = max(0, normalized_max_items - len(collected_items))
                 page_items = payload.get("value", [])
-                collected_items.extend(page_items[:remaining_capacity])
+                examined_count = 0
+                for page_item in page_items:
+                    if len(collected_items) >= normalized_max_items:
+                        break
+                    examined_count += 1
+                    if item_filter is None or item_filter(page_item):
+                        collected_items.append(page_item)
                 last_next_link = payload.get("@odata.nextLink")
                 if len(collected_items) >= normalized_max_items or not last_next_link:
                     return {
@@ -1017,7 +1437,7 @@ class MSGraphPlugin(BasePlugin):
                         "count": len(collected_items),
                         "value": collected_items,
                         "next_link": last_next_link,
-                        "truncated": bool(last_next_link) or len(page_items) > remaining_capacity,
+                        "truncated": bool(last_next_link) or examined_count < len(page_items),
                         "source": transport.source,
                         "provider": "graph",
                     }
@@ -1085,42 +1505,134 @@ class MSGraphPlugin(BasePlugin):
         }
 
     @plugin_function_logger("MSGraphPlugin")
-    @kernel_function(description="Get upcoming calendar events for the signed-in user.")
+    @kernel_function(
+        description=(
+            "Read or search the signed-in user's calendar events in any past or future time range, up to 25 events per call. "
+            "Without start_datetime and end_datetime, reads events from now through the next 30 days. "
+            "Use query to find words in the subject, location, organizer, attendees, categories, or description. "
+            "When coverage.complete is false, call again with the arguments in coverage.continue_with to continue."
+        )
+    )
     @guarded_m365_operation
     def get_my_events(
         self,
-        top: int = 5,
-        start_datetime: str = "",
-        end_datetime: str = "",
-        select_fields: str = "",
+        top: Annotated[int, "Maximum number of events to return, from 1 to 25."] = 5,
+        start_datetime: Annotated[
+            str,
+            "Start of the time range as an ISO 8601 date or date and time, such as 2024-01-01. Requires end_datetime.",
+        ] = "",
+        end_datetime: Annotated[
+            str,
+            "End of the time range as an ISO 8601 date or date and time. Requires start_datetime; a date alone includes that whole UTC day.",
+        ] = "",
+        select_fields: Annotated[str, "Optional comma-separated Graph event fields to include."] = "",
+        query: Annotated[
+            str,
+            "Optional plain words that must all appear in the subject, location, organizer, attendees, categories, or description.",
+        ] = "",
+        order: Annotated[str, "oldest_first (default) or newest_first."] = "oldest_first",
+        starts_in_range: Annotated[
+            bool,
+            "If true, leave out events that were already in progress at start_datetime.",
+        ] = False,
     ) -> dict:
-        use_calendar_view = bool(start_datetime.strip() or end_datetime.strip())
-        if use_calendar_view and not (start_datetime.strip() and end_datetime.strip()):
+        operation_name = "get_my_events"
+        has_start = bool(str(start_datetime or "").strip())
+        has_end = bool(str(end_datetime or "").strip())
+        if has_start != has_end:
             return {
                 "error": "invalid_parameters",
                 "message": "Both start_datetime and end_datetime are required when filtering calendar events by time range.",
-                "operation": "get_my_events",
+                "operation": operation_name,
             }
+        normalized_order = str(order or "oldest_first").strip().lower()
+        if normalized_order not in {"oldest_first", "newest_first"}:
+            return self._invalid_parameter_error(operation_name, "order must be oldest_first or newest_first.")
+        newest_first = normalized_order == "newest_first"
+        in_range_only, error = self._normalize_boolean_parameter(starts_in_range, "starts_in_range", operation_name)
+        if error:
+            return error
+        terms, error = self._literal_search_terms(query, "query", operation_name)
+        if error:
+            return error
 
+        default_window = not has_start
+        if default_window:
+            window_start = datetime.now(timezone.utc).replace(microsecond=0)
+            window_end = window_start + timedelta(days=self.CALENDAR_DEFAULT_WINDOW_DAYS)
+        else:
+            window_start, error = self._parse_time_bound(start_datetime, "start_datetime", operation_name)
+            if error:
+                return error
+            window_end, error = self._parse_time_bound(end_datetime, "end_datetime", operation_name, end_of_day=True)
+            if error:
+                return error
+            if window_start >= window_end:
+                return self._invalid_parameter_error(operation_name, "start_datetime must be earlier than end_datetime.")
+
+        normalized_top = self._normalize_top(top)
+        scan_fields = ["start"]
+        if terms:
+            scan_fields += ["subject", "location", "organizer", "attendees", "categories", "bodyPreview"]
+        select, added_fields = self._merge_select_fields(select_fields or self.DEFAULT_EVENT_SELECT, scan_fields)
         params, headers = self._build_odata_params(
-            top=top,
-            select_fields=select_fields or "id,subject,start,end,location,organizer,isAllDay,webLink",
-            order_by="start/dateTime",
+            top=normalized_top,
+            select_fields=select,
+            order_by="start/dateTime desc" if newest_first else "start/dateTime",
             extra_params={
-                "startDateTime": start_datetime.strip() or None,
-                "endDateTime": end_datetime.strip() or None,
+                "startDateTime": self._format_graph_datetime(window_start),
+                "endDateTime": self._format_graph_datetime(window_end),
             },
         )
-        path = "/v1.0/me/calendarView" if use_calendar_view else "/v1.0/me/events"
-        return self._perform_graph_request(
-            "get_my_events",
+        client_filtered = bool(terms or in_range_only)
+        params["$top"] = self.CALENDAR_SCAN_PAGE_SIZE if client_filtered else normalized_top + 1
+        scan: Dict[str, Any] = {"examined": 0, "last": None}
+
+        def keep(event: Any) -> bool:
+            scan["examined"] += 1
+            scan["last"] = event
+            if not isinstance(event, dict):
+                return False
+            if in_range_only:
+                started = self._event_start_at(event)
+                if started is None or started < window_start:
+                    return False
+            if terms:
+                matched_on = self._event_query_matches(event, terms)
+                if matched_on is None:
+                    return False
+                event["matched_on"] = matched_on
+            return True
+
+        result = self._perform_graph_request(
+            operation_name,
             "GET",
-            path,
+            "/v1.0/me/calendarView",
             ["Calendars.Read"],
             params=params,
             paginate=True,
-            max_items=top,
+            max_items=normalized_top,
             additional_headers=headers,
+            item_filter=keep,
+            max_pages=self.CALENDAR_SCAN_MAX_PAGES if client_filtered else None,
+            lookahead=1,
+        )
+        if result.get("error"):
+            if isinstance(result.get("value"), list):
+                result["value"] = self._strip_fields(result["value"], added_fields)
+            return result
+        return self._with_calendar_coverage(
+            result,
+            top=normalized_top,
+            window_start=window_start,
+            window_end=window_end,
+            default_window=default_window,
+            newest_first=newest_first,
+            in_range_only=in_range_only,
+            terms=terms,
+            select_fields=str(select_fields or "").strip(),
+            added_fields=added_fields,
+            scan=scan,
         )
 
     @plugin_function_logger("MSGraphPlugin")
@@ -1337,36 +1849,129 @@ class MSGraphPlugin(BasePlugin):
         return result
 
     @plugin_function_logger("MSGraphPlugin")
-    @kernel_function(description="Get recent mail messages for the signed-in user.")
+    @kernel_function(
+        description=(
+            "Read or search the signed-in user's mail of any age, newest first, up to 25 messages per call. "
+            "Use search for words in the sender, subject, or body, and received_from or received_to for a date range. "
+            "When coverage.complete is false, call again with the arguments in coverage.continue_with to read older matches."
+        )
+    )
     @guarded_m365_operation
     def get_my_messages(
         self,
-        top: int = 5,
-        folder: str = "inbox",
-        unread_only: bool = False,
-        select_fields: str = "",
+        top: Annotated[int, "Maximum number of messages to return, from 1 to 25."] = 5,
+        folder: Annotated[
+            str,
+            "Folder to read: inbox, sentitems, drafts, deleteditems, archive, junkemail, a folder id, or all for every folder.",
+        ] = "inbox",
+        unread_only: Annotated[bool, "If true, only unread messages are returned."] = False,
+        select_fields: Annotated[str, "Optional comma-separated Graph message fields to include."] = "",
+        search: Annotated[
+            str,
+            "Optional plain words to find in the sender, subject, or body. Every word must match; operators and field prefixes are ignored.",
+        ] = "",
+        received_from: Annotated[
+            str,
+            "Optional ISO 8601 date or date and time. Only messages received at or after it are returned.",
+        ] = "",
+        received_to: Annotated[
+            str,
+            "Optional ISO 8601 date or date and time. Only messages received before it are returned; a date alone includes that whole UTC day.",
+        ] = "",
     ) -> dict:
-        filter_query = "isRead eq false" if unread_only else ""
-        params, headers = self._build_odata_params(
-            top=top,
-            select_fields=select_fields or "id,subject,from,receivedDateTime,isRead,importance,webLink",
-            filter_query=filter_query,
-            order_by="receivedDateTime desc",
-        )
+        operation_name = "get_my_messages"
+        normalized_unread, error = self._normalize_boolean_parameter(unread_only, "unread_only", operation_name)
+        if error:
+            return error
+        terms, error = self._literal_search_terms(search, "search", operation_name)
+        if error:
+            return error
+        lower, error = self._parse_time_bound(received_from, "received_from", operation_name)
+        if error:
+            return error
+        upper, error = self._parse_time_bound(received_to, "received_to", operation_name, end_of_day=True)
+        if error:
+            return error
+        if lower and upper and lower >= upper:
+            return self._invalid_parameter_error(operation_name, "received_from must be earlier than received_to.")
+
+        normalized_top = self._normalize_top(top)
         normalized_folder = (folder or "").strip().strip("/")
-        if normalized_folder:
-            path = f"/v1.0/me/mailFolders/{quote(normalized_folder, safe='')}/messages"
-        else:
+        folder_label = "all" if not normalized_folder or normalized_folder.lower() == "all" else normalized_folder
+        if folder_label == "all":
             path = "/v1.0/me/messages"
-        return self._perform_graph_request(
-            "get_my_messages",
+        else:
+            path = f"/v1.0/me/mailFolders/{quote(normalized_folder, safe='')}/messages"
+
+        default_select = self.DEFAULT_MESSAGE_SELECT + (",bodyPreview" if terms else "")
+        required_fields = ["receivedDateTime"] + (["isRead"] if normalized_unread else [])
+        select, _ = self._merge_select_fields(select_fields or default_select, required_fields)
+        params, headers = self._build_odata_params(top=normalized_top, select_fields=select)
+        scan: Dict[str, Any] = {"last": None}
+
+        def keep(message: Any) -> bool:
+            scan["last"] = message
+            if not isinstance(message, dict):
+                return False
+            if lower or upper:
+                received = self._message_received_at(message)
+                if received is None or (lower and received < lower) or (upper and received >= upper):
+                    return False
+            return not normalized_unread or message.get("isRead") is False
+
+        max_pages = None
+        if terms:
+            clauses = list(terms)
+            # KQL dates match whole days in an unstated time zone, so the bounds are widened a day here and applied exactly in keep().
+            if lower:
+                clauses.append(f"received>={(lower - timedelta(days=1)).date().isoformat()}")
+            if upper:
+                clauses.append(f"received<={(upper + timedelta(days=1)).date().isoformat()}")
+            params["$search"] = '"' + " AND ".join(clauses) + '"'
+            client_filtered = bool(lower or upper or normalized_unread)
+            params["$top"] = self.MAIL_SEARCH_PAGE_SIZE if client_filtered else normalized_top + 1
+            max_pages = self.MAIL_SEARCH_MAX_PAGES
+        else:
+            clauses = []
+            if lower:
+                clauses.append(f"receivedDateTime ge {self._format_graph_datetime(lower)}")
+            if upper:
+                clauses.append(f"receivedDateTime lt {self._format_graph_datetime(upper)}")
+            if normalized_unread:
+                # Graph rejects mail filters whose first property isn't the $orderby property.
+                if not clauses:
+                    clauses.append(f"receivedDateTime ge {self.MAIL_EARLIEST_RECEIVED}")
+                clauses.append("isRead eq false")
+            if clauses:
+                params["$filter"] = " and ".join(clauses)
+            params["$orderby"] = "receivedDateTime desc"
+            params["$top"] = normalized_top + 1
+
+        result = self._perform_graph_request(
+            operation_name,
             "GET",
             path,
             ["Mail.Read"],
             params=params,
             paginate=True,
-            max_items=top,
+            max_items=normalized_top,
             additional_headers=headers,
+            item_filter=keep,
+            max_pages=max_pages,
+            lookahead=1,
+        )
+        if result.get("error"):
+            return result
+        return self._with_mail_coverage(
+            result,
+            top=normalized_top,
+            folder_label=folder_label,
+            terms=terms,
+            unread_only=normalized_unread,
+            lower=lower,
+            upper=upper,
+            select_fields=str(select_fields or "").strip(),
+            last_examined=scan["last"],
         )
 
     @plugin_function_logger("MSGraphPlugin")

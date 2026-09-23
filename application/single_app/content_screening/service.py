@@ -143,7 +143,11 @@ def document_requires_screening(document, settings=None, *, repository=None):
         raise ScreeningValidationError("The document metadata is unavailable.")
     if SCREENING_FIELD in document:
         return True
-    if _settings(settings).get("enable_content_screening") is not True:
+    settings = _settings(settings)
+    if (
+        settings.get("enable_content_screening") is not True
+        or settings.get("enable_content_screening_workspace_uploads", True) is not True
+    ):
         return False
     return policy_is_active(get_effective_policy(
         subject_from_document(document), repository=repository, require_active=False,
@@ -151,11 +155,12 @@ def document_requires_screening(document, settings=None, *, repository=None):
 
 
 def validate_screening_configuration(settings=None, *, repository=None, check_storage=False,
-                                     proposed_settings=False, allow_missing_policy=False):
+                                     proposed_settings=False, allow_missing_policy=False,
+                                     document_operation=True):
     settings = _settings(settings)
     if settings.get("enable_content_screening") is not True:
         return
-    if settings.get("enable_enhanced_citations") is not True:
+    if document_operation and settings.get("enable_enhanced_citations") is not True:
         raise ScreeningCitationsRequiredError()
 
     repository = _repository(repository)

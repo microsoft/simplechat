@@ -857,8 +857,9 @@ export interface NavGroup<TItem> {
 export interface OrchestrationCapability {
     id: string;
     label: string;
-    /** The phase this capability runs in (knowledge, reasoning, output). A string because the registry is server-owned. */
-    phase: string;
+    /** Only legacy descriptors carry phases; v2 descriptors carry server-owned roles instead. */
+    phase?: string;
+    role?: string;
     summary: string;
     cost: 'low' | 'medium' | 'high';
     terminal: boolean;
@@ -1008,6 +1009,10 @@ export interface WorkspaceAvailability {
  * why almost everything here is optional.
  */
 export interface ChatStreamEvent {
+    role?: MessageRole;
+    blocked?: boolean;
+    replace_content?: boolean;
+    full_content?: string;
     reasoning_adjustments?: ReasoningResolution[];
     reasoning_effort?: string | null;
     requested_reasoning_effort?: string | null;

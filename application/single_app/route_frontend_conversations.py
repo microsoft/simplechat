@@ -8,6 +8,8 @@ from flask import Response, jsonify, redirect, render_template, request
 
 from config import *
 from functions_appinsights import log_event
+from functions_chat_content_checks import strip_private_chat_checks
+from functions_chat_content_review import refresh_checked_message
 from functions_azure_maps import (
     AZURE_MAPS_DEFAULT_ENDPOINT,
     AZURE_MAPS_DEFAULT_LANGUAGE,
@@ -378,7 +380,10 @@ def register_route_frontend_conversations(bp):
                     conversation,
                     allow_pending=True,
                 )
-                return jsonify(build_collaboration_message_metadata_payload(message, conversation))
+                message = refresh_checked_message(message, source="shared")
+                return jsonify(strip_private_chat_checks(
+                    build_collaboration_message_metadata_payload(message, conversation),
+                ))
                 
             message = messages[0]
             
@@ -395,6 +400,7 @@ def register_route_frontend_conversations(bp):
                 except CosmosResourceNotFoundError:
                     return jsonify({'error': 'Conversation not found'}), 404
             
+            message = refresh_checked_message(message)
             # Return appropriate data based on message role
             # User messages: return metadata object only (has user_info, button_states, etc.)
             # Other messages: return full document (has id, role, augmented, etc. at top level)
@@ -403,7 +409,7 @@ def register_route_frontend_conversations(bp):
             if message_role == 'user':
                 # User messages - return nested metadata object
                 metadata = message.get('metadata', {})
-                return jsonify(metadata)
+                return jsonify(strip_private_chat_checks(metadata, metadata=True))
             else:
                 # Assistant, image, file messages - return full document.
                 #
@@ -412,7 +418,7 @@ def register_route_frontend_conversations(bp):
                 # this route returns the document verbatim, so it is reduced to its public
                 # shape here as it is everywhere else a message reaches a browser.
                 message = publicize_message_image_revisions(message)
-                return jsonify(message)
+                return jsonify(strip_private_chat_checks(message))
 
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Message not found'}), 404

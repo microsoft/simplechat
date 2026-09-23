@@ -1,7 +1,7 @@
 # test_v2_content_screening.py
 """
 Production V2 browser regressions for screening-controlled documents and review.
-Version: 0.261.114
+Version: 0.261.127
 Implemented in: 0.261.106
 Empty-policy activation coverage: 0.261.114
 
@@ -866,7 +866,7 @@ def test_schema_backed_admin_section_requires_explicit_all_workspace_confirmatio
     ui.scan_enabled = True
     ui.open("/admin")
     page = ui.page
-    expect(page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))).to_be_checked()
+    expect(page.get_by_role("checkbox", name=re.compile("^Enable Content Screening"))).to_be_checked()
     page.get_by_role("button", name="Screening scans", exact=True).click()
     controls = page.get_by_role("dialog", name="Content screening controls", exact=True)
     controls.get_by_role("button", name="Start scan", exact=True).click()
@@ -912,9 +912,9 @@ def test_admin_policy_is_discoverable_and_editable_before_citations_are_enabled(
     editor = open_screening_admin(ui)
     page = ui.page
     expect(page.get_by_role("heading", name="Content Screening", exact=True)).to_be_visible()
-    toggle = page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
+    toggle = page.get_by_role("checkbox", name=re.compile("^Enable Content Screening"))
     expect(toggle).to_be_visible()
-    expect(toggle).to_be_disabled()
+    expect(toggle).to_be_enabled()
     expect(page.get_by_text("must be enabled before these settings take effect.", exact=False)).to_be_visible()
     editor.get_by_role("button", name="Add literal rule", exact=True).click()
     editor.get_by_label("Rule name", exact=True).fill("Restricted project values")
@@ -934,8 +934,8 @@ def test_admin_screening_saves_and_survives_reload_without_content_safety(screen
     ui = screening_ui
     ui.content_safety_enabled = False
     open_screening_admin(ui)
-    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
-    ui.page.get_by_text("Screen workspace content before publication", exact=True).click()
+    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Enable Content Screening"))
+    ui.page.get_by_text("Enable Content Screening", exact=True).click()
     ui.page.get_by_role("button", name="Save changes", exact=True).click()
     expect(ui.page.get_by_text("Saved 1 setting.", exact=True)).to_be_visible()
     assert ui.scan_enabled is True
@@ -949,8 +949,8 @@ def test_admin_failed_screening_write_is_not_reported_as_saved(screening_ui):
     ui = screening_ui
     ui.reject_settings_save = True
     open_screening_admin(ui)
-    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Screen workspace content before publication"))
-    ui.page.get_by_text("Screen workspace content before publication", exact=True).click()
+    toggle = ui.page.get_by_role("checkbox", name=re.compile("^Enable Content Screening"))
+    ui.page.get_by_text("Enable Content Screening", exact=True).click()
     ui.page.get_by_role("button", name="Save changes", exact=True).click()
     expect(ui.page.get_by_text("Settings were not saved. Reload the current settings and try again.", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Saved 1 setting.", exact=True)).to_have_count(0)

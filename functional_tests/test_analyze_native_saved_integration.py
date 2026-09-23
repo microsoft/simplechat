@@ -1,7 +1,7 @@
 # test_analyze_native_saved_integration.py
 """
 Native Analyze output, adapter and saved-consumer integration regressions.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.109
 
 Real native checkpoint serialization, adaptation and saved-section readers run
@@ -70,7 +70,10 @@ def native_run(monkeypatch):
         "_download_json_blob": load,
         "project_structured_deliverable_row": deliverables.project_structured_deliverable_row,
     }
-    load_functions("functions_tabular_generated_exports.py", {"_write_ordered_output_stream"}, namespace)
+    load_functions(
+        "functions_tabular_generated_exports.py",
+        {"_write_ordered_output_stream", "iter_tabular_output_records"}, namespace,
+    )
     monkeypatch.setitem(sys.modules, "functions_tabular_generated_exports", SimpleNamespace(
         _read_run=lambda *args: deepcopy(run),
         _authorize_tabular_export_run_execution=lambda value: None,

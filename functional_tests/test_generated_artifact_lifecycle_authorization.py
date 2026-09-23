@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for generated artifact lifecycle authorization.
-Version: 0.261.119
+Version: 0.261.127
 Implemented in: 0.250.180
 
 This test ensures staged artifact-set members are not directly downloadable or
 promotable, committed members require a completed artifact-set manifest, and
 legacy generated artifacts without artifact-set metadata remain compatible.
+Denied orchestration file scopes must not commit staged message metadata.
 """
 
 import ast
@@ -19,6 +20,7 @@ from test_support.versioning import assert_app_version_at_least
 from test_support.app_stubs import import_app_module
 
 artifact_sources = import_app_module("functions_generated_artifact_sources")
+file_policy = import_app_module("functions_orchestration_execution_policy")
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +88,7 @@ def load_operation_helpers(conversation_item, message_item, run_item=None):
     namespace = {
         "has_generated_artifact_source": artifact_sources.has_generated_artifact_source,
         "authorize_generated_artifact_source": artifact_sources.authorize_generated_artifact_source,
+        "require_generated_file_publication_allowed": file_policy.require_generated_file_publication_allowed,
         "Any": Any,
         "Dict": Dict,
         "Optional": Optional,
@@ -266,6 +269,30 @@ def test_commit_updates_message_lifecycle_metadata():
     assert metadata["generated_artifact_committed_at"]
 
 
+def test_commit_denied_by_file_policy_preserves_staged_metadata():
+    staged_message = build_message({
+        "generated_artifact_run_id": "run-1",
+        "generated_artifact_set_id": "set-1",
+        "generated_artifact_member_id": "analysis",
+        "generated_artifact_lifecycle_state": "staged",
+        "generated_artifact_validation_state": "staged",
+        "generated_artifact_publication_generation": 0,
+    })
+    original_metadata = dict(staged_message["metadata"])
+    helpers = load_operation_helpers({"user_id": "user-1"}, staged_message)
+    with file_policy.orchestration_file_policy(allow_generated_files=False):
+        try:
+            helpers["commit_generated_chat_artifact_publication_for_user"](
+                "user-1", "conversation-1", "message-1", "set-1", "analysis", 3,
+            )
+        except file_policy.OrchestrationFilePolicyError:
+            pass
+        else:
+            raise AssertionError("Denied orchestration scope committed an artifact")
+    assert staged_message["metadata"] == original_metadata
+    assert helpers["cosmos_messages_container"].upserted == []
+
+
 def test_route_helper_enforces_publication_gate():
     assert_app_version_at_least(IMPLEMENTED_VERSION)
     calls = []
@@ -316,6 +343,7 @@ if __name__ == "__main__":
         test_staged_artifact_is_not_published_until_manifest_commits,
         test_committed_artifact_requires_completed_manifest_member,
         test_commit_updates_message_lifecycle_metadata,
+        test_commit_denied_by_file_policy_preserves_staged_metadata,
         test_route_helper_enforces_publication_gate,
         test_failed_post_staging_runs_can_resume_or_cancel,
     ]

@@ -12,7 +12,10 @@ import {
     retryOrchestrationRun,
     runPreparedOrchestrationRetry,
 } from '../../lib/orchestrationController';
-import { normalizeOrchestrationAttempt, type OrchestrationPlan, type PlanStatus } from '../../lib/orchestration';
+import {
+    isOrchestrationRunPending, isOrchestrationRunWaiting, normalizeOrchestrationAttempt,
+    type OrchestrationPlan, type PlanStatus,
+} from '../../lib/orchestration';
 
 function RecoveryConfirmation({
     busy, onConfirm, onClose,
@@ -79,13 +82,16 @@ export function OrchestrationRecoveryNotice({
     const [confirmationVersion, setConfirmationVersion] = useState<string | null>(null);
     const attempt = saved ?? normalizeOrchestrationAttempt(metadata);
     const outcome = attempt.outcome ?? saved?.status ?? status;
-    const failed = outcome === 'failed' || outcome === 'partial' || outcome === 'cancelled';
+    const runState = { ...attempt, status: saved?.status ?? status };
+    const waiting = isOrchestrationRunWaiting(runState);
+    const failed = !waiting && (outcome === 'failed' || outcome === 'partial' || outcome === 'cancelled');
     const newer = attempt.recovery?.current_run_id || attempt.latest_attempt_run_id;
     const previousRunId = attempt.retry_of_run_id;
-    const relevant = failed || saved?.transportUnknown || saved?.error
+    const relevant = failed || waiting || saved?.transportUnknown || saved?.error
         || Boolean(newer && newer !== runId) || Boolean(attempt.retry_of_run_id);
     const currentPlan = saved?.plan ?? plan;
     const recovery = attempt.recovery;
+    const fileOutputs = Boolean(attempt.outputs?.length);
 
     useEffect(() => {
         if (!runId || saved?.detailLoaded || (!relevant && outcome)) return;
@@ -100,7 +106,7 @@ export function OrchestrationRecoveryNotice({
 
     if (!runId || !relevant) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
-    const retryAllowed = failed && recovery?.eligible && recovery.expected_version
+    const retryAllowed = failed && !fileOutputs && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;
     const retry = async (confirmedVersion?: string) => {
         const result = await retryOrchestrationRun(conversationId, runId, confirmedVersion);
@@ -115,6 +121,7 @@ export function OrchestrationRecoveryNotice({
         >
             <p role="status" className="font-medium text-text-1">
                 {saved?.transportUnknown ? 'Checking execution status'
+                    : waiting ? 'Waiting for required results'
                     : outcome === 'partial' ? 'Partially completed'
                     : outcome === 'failed' ? 'The plan could not complete'
                     : outcome === 'cancelled' ? 'This attempt was stopped' : 'Saved execution attempt'}
@@ -122,21 +129,28 @@ export function OrchestrationRecoveryNotice({
             </p>
             {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
             {saved?.error ? <p role="alert">{saved.error}</p> : null}
+            {waiting ? (
+                <p>
+                    This computation is still pending in the same attempt. Dependent tasks will wait for its results.
+                    Checking saved status or reloading does not run the task again.
+                </p>
+            ) : null}
             {failed && !saved?.transportUnknown ? (
-                <p>{recovery?.message || (newer && newer !== runId
+                <p>{fileOutputs ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
+                    : recovery?.message || (newer && newer !== runId
                     ? 'A newer execution attempt already exists. Review its saved result.'
                     : recovery?.eligible
                     ? 'Resume the saved plan without repeating completed plan steps.'
                     : 'This historical attempt has no verified recovery checkpoint. It cannot be resumed; start a new plan deliberately if needed.')}</p>
             ) : null}
-            {failed && recovery?.reused_step_ids.length ? (
+            {failed && !fileOutputs && recovery?.reused_step_ids.length ? (
                 <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
-            {failed && recovery?.retry_step_ids.length ? (
+            {failed && !fileOutputs && recovery?.retry_step_ids.length ? (
                 <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
             <div className="flex flex-wrap gap-2">
-                {attempt.retry_of_run_id && (outcome === 'awaiting_approval' || outcome === 'approved') ? (
+                {!fileOutputs && attempt.retry_of_run_id && (outcome === 'awaiting_approval' || outcome === 'approved') ? (
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void runPreparedOrchestrationRetry(conversationId, runId)}>
                         Run prepared retry
@@ -164,13 +178,13 @@ export function OrchestrationRecoveryNotice({
                     onClick={() => openOrchestrationRecovery(conversationId, runId)}>
                     Review saved attempt
                 </GlassButton>
-                {saved?.transportUnknown || saved?.error ? (
-                    <GlassButton size="sm" variant="subtle" disabled={saved.checking}
+                {waiting || saved?.transportUnknown || saved?.error ? (
+                    <GlassButton size="sm" variant="subtle" disabled={saved?.checking}
                         onClick={() => void reconcileOrchestrationRun(conversationId, runId)}>
                         Check saved status
                     </GlassButton>
                 ) : null}
-                {saved?.transportUnknown && inFlight[runId] ? (
+                {(waiting || saved?.transportUnknown) && inFlight[runId] ? (
                     <GlassButton size="sm" variant="ghost"
                         onClick={() => void cancelOrchestration(conversationId, runId)}>
                         Stop execution

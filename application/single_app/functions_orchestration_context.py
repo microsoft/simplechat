@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import hashlib
@@ -51,6 +51,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_schema import validate_elicitation_response
 from functions_prompt_metadata import build_prompt_selection_metadata
+from functions_model_catalog import ModelCatalogError
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -150,6 +151,11 @@ def resolve_seeds(request_data):
         for key in ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
         if _text(request_data.get(key))
     }
+    routing = request_data.get('model_routing', 'manual')
+    if routing not in ('manual', 'auto'):
+        raise ModelCatalogError("Choose Auto or a specific model.", "model_routing")
+    if routing == 'auto' and model:
+        raise ModelCatalogError("Auto cannot be combined with a pinned model.", "model_routing")
 
     prompt = request_data.get('prompt_info')
     prompt = prompt if isinstance(prompt, dict) else None
@@ -172,6 +178,7 @@ def resolve_seeds(request_data):
             document_labels[document_id] = label
 
     return {
+        **({'model_routing': 'auto'} if routing == 'auto' else {}),
         'document_ids': document_ids,
         'document_labels': document_labels,
         'doc_scope': _text(request_data.get('doc_scope')) or 'all',
@@ -1143,6 +1150,8 @@ def normalize_history_message(message):
     if (
         metadata.get('masked')
         or metadata.get('is_generated_chat_artifact')
+        or (metadata.get('chat_content_checks') or {}).get('decision') == 'block'
+        or (metadata.get('content_moderation') or {}).get('removed') is True
         or thread.get('active_thread') is False
     ):
         return None
@@ -1331,14 +1340,37 @@ def conversation_user_urls(user_message, snapshot=None, message_ids=None, answer
 
 def build_capability_request_context(
     user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None,
+    native_bridge_for_step=None, rendering_service=None,
+    external_source_admission=None, external_source_authorizer=None, external_source_preflight=None,
+    capture_external_source_configuration=None,
 ):
     """Apply the same caller-specific capability gates to planning, revisions, and execution."""
+    if native_bridge_for_step is not None and not callable(native_bridge_for_step):
+        raise ValueError('A server native bridge factory is required.')
+    if rendering_service is not None:
+        # Legacy discovery does not depend on the optional initialized output runtime.
+        from functions_orchestration_rendering import OrchestrationRenderingService
+
+        if (
+            not isinstance(rendering_service, OrchestrationRenderingService)
+            or rendering_service.results.access.user_id != user_id
+        ):
+            raise ValueError('An actor-bound server rendering service is required.')
+    external_bindings = {
+        'external_source_preflight': external_source_preflight,
+        'external_source_admission': external_source_admission,
+        'external_source_authorizer': external_source_authorizer,
+        'capture_external_source_configuration': capture_external_source_configuration,
+    }
+    has_external_bindings = any(callback is not None for callback in external_bindings.values())
+    if has_external_bindings and not all(callable(callback) for callback in external_bindings.values()):
+        raise ValueError('Complete server external-source bindings are required.')
     identity = identity or {}
     urls = (
         list(allowed_user_urls) if allowed_user_urls is not None
         else conversation_user_urls(user_message)
     )
-    return {
+    context = {
         'user_id': user_id,
         'user_message': user_message or '',
         'message_urls': urls,
@@ -1348,6 +1380,13 @@ def build_capability_request_context(
         'agent_catalog': list(agent_catalog or ()),
         'action_catalog': list(action_catalog or ()),
     }
+    if native_bridge_for_step is not None:
+        context['native_bridge_for_step'] = native_bridge_for_step
+    if rendering_service is not None:
+        context['rendering_service'] = rendering_service
+    if has_external_bindings:
+        context.update(external_bindings)
+    return context
 
 
 def build_conversation_signals(messages, user_message, *, truncated=False, message_ids=None):

@@ -1,5 +1,7 @@
 # Cross-Format Compare
 
+**Version: 0.261.127**
+
 Implemented in version: **0.250.067**
 
 GitHub issue: [#1059](https://github.com/microsoft/simplechat/issues/1059)
@@ -43,3 +45,38 @@ This phase does not add many-to-many Compare, all-document discovery, persisted 
 ## Phase 6 Hardening
 
 Version **0.250.070** applies the [#1061](https://github.com/microsoft/simplechat/issues/1061) failure policy: an unprepared Source fails the operation, while a failed Target or pairwise Target reduction remains visible and later valid Targets continue. Mixed Compare citations and generated tabular outputs now survive the outer model and agent return paths with stable deduplication. Cancellation prevents later pairwise work, final reduction, or artifact publication.
+
+## Retained orchestration comparisons
+
+The internal M2 producer contract, implemented in **0.261.127** and tracked with
+the application version in `application/single_app/config.py`, relates to #1509.
+It is separate from the standalone and workflow Compare behavior above.
+
+For a server-owned v2 plan, `run_document_comparison(...,
+result_version="comparison-v1")` keeps the full text of each completed pairwise
+comparison. It records the baseline identity, ordered target identities,
+per-source window coverage, per-target completion state, limitations, and safe
+failure codes. A failed target does not discard later successful targets.
+Failed source preparation or an empty provider response is not a comparison
+finding, and a failure explanation cannot turn an all-failed result into
+success.
+
+The adapter persists `comparison` (`comparison-v1`) and `coverage`
+(`structured-v1`) through `OrchestrationResults`. A genuine consolidated report,
+when produced, is retained separately as `report` (`markdown-v1`). A reduction
+failure preserves the complete pairwise items but does not substitute an
+explanatory paragraph for the missing report. Any incomplete input coverage or
+failed target keeps the task and its outputs partial; failed-only comparisons
+remain failed and are not readable as accepted findings.
+
+The new path creates no managed downloadable file or workspace document.
+Source snapshots come from the authorized manifest, and result writes use the
+owning attempt's server-issued guard. Runtime/route admission and mixed/native
+compute-only integration are separate: the initial internal adapter accepts
+narrative sources and rejects unsupported/native selections rather than
+silently using preview rows or legacy file-producing execution.
+
+`functional_tests/test_orchestration_internal_analysis.py` covers complete
+per-target text after restart, partial and failed targets, full-report retention,
+cancellation, failed result guards, and zero managed uploads. The ordinary
+standalone Compare entry point retains its existing default and return shape.

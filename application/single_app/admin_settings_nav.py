@@ -97,6 +97,14 @@ ADMIN_NAV = [
         "icon": "bi-cpu",
         "tabs": [
             {
+                "id": "model-catalog",
+                "label": "Model Catalog",
+                "icon": "bi-journal-richtext",
+                "sections": [
+                    {"id": "model-catalog-section", "label": "Model Catalog", "icon": "bi-journal-richtext"},
+                ],
+            },
+            {
                 # A connection is one Azure OpenAI or Foundry resource. The Chat
                 # Model card configures the classic single-endpoint path, which is
                 # what chat uses when connections are switched off, so it is listed

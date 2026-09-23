@@ -131,6 +131,7 @@ from functions_settings import (
     build_migrated_model_endpoints_from_legacy,
     enabled_required,
     get_admin_settings_api_secret_fields,
+    get_application_update_status,
     get_settings,
     get_user_settings,
     is_admin_settings_redacted_secret,
@@ -1348,6 +1349,7 @@ def register_route_backend_v2_admin(bp):
         """
         try:
             settings = get_settings()
+            update_status = get_application_update_status(settings, VERSION)
             return (
                 jsonify(
                     {
@@ -1369,6 +1371,7 @@ def register_route_backend_v2_admin(bp):
                         "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
                         "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
+                        "update_status": update_status,
                     }
                 ),
                 200,

@@ -2,7 +2,7 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.122
+Version: 0.261.126
 Implemented in: 0.261.035
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
@@ -116,7 +116,12 @@ class EndpointApiFixture:
     def handle_api(self, route, path):
         prefix = "/api" if self.scope == "admin" else f"/api/{self.scope}"
         body = route.request.post_data_json or {}
-        if path == f"{prefix}/model-endpoints":
+        if path == "/api/models/catalog":
+            payload = {"profiles": [
+                {"id": "gpt-5", "displayName": "GPT-5", "summary": "Coding and reasoning."},
+                {"id": "custom:internal", "displayName": "Internal", "summary": "Administrator-declared text model."},
+            ]}
+        elif path == f"{prefix}/model-endpoints":
             if route.request.method == "POST":
                 self.saved_payloads.append(copy.deepcopy(body))
                 if self.fail_save:
@@ -285,6 +290,20 @@ def _save(page, api):
         return json.loads(page.locator("#model_endpoints_json").input_value())[0]
     assert api.saved_payloads
     return api.saved_payloads[-1]["endpoints"][0]
+
+
+def test_catalog_profile_association_survives_scope_save(capacity_ui):
+    page, api = capacity_ui
+    original = copy.deepcopy(api.endpoints[0])
+    _open_editor(page, api)
+    picker = page.get_by_label("Catalog profile", exact=True)
+    picker.select_option("custom:internal")
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogProfileId"] == "custom:internal"
+    assert saved["models"][0]["modelName"] == original["models"][0]["modelName"]
+    assert saved["models"][0]["capabilities"] == original["models"][0]["capabilities"]
+    _edit_saved_endpoint(page)
+    expect(page.get_by_label("Catalog profile", exact=True)).to_have_value("custom:internal")
 
 
 def test_capacity_save_clear_inheritance_and_metadata(capacity_ui):

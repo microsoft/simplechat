@@ -36,6 +36,10 @@ from functions_generated_file_approvals import assert_generated_file_approval_al
 from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
+from functions_orchestration_execution_policy import (
+    OrchestrationFilePolicyError,
+    require_generated_file_publication_allowed,
+)
 from functions_personal_workflows import normalize_workflow_publication
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
@@ -139,7 +143,8 @@ def _artifact_identity(artifact):
 def _artifact_producer(artifact):
     metadata = artifact.get("metadata") or {}
     if has_generated_artifact_source(metadata):
-        return {"kind": "workflow_saved_output", **metadata["generated_artifact_source"]["producer"]}
+        binding = metadata["generated_artifact_source"]
+        return {"kind": binding["kind"], **binding["producer"]}
     return metadata.get("analysis_producer")
 
 
@@ -173,6 +178,7 @@ def _receipt_change(artifact, key, change):
         updated = change(receipt)
         if updated is None:
             return receipt, False
+        require_generated_file_publication_allowed()
         if updated.get("completion_policy") and any(
             other_key != key and other.get("request_id") == updated.get("request_id")
             for other_key, other in receipts.items()
@@ -380,13 +386,17 @@ def _notification_exists(receipt, notification_type):
 
 
 def _notify_once(artifact, receipt, stage, notification_type, create, *, before=None):
+    require_generated_file_publication_allowed()
     if _stage(artifact, receipt, stage):
         if before is not None:
             before()
+        require_generated_file_publication_allowed()
         try:
             if create():
                 _stage(artifact, receipt, stage, complete=True)
                 return
+        except OrchestrationFilePolicyError:
+            raise
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain(stage, exc)
     if _notification_exists(receipt, notification_type):
@@ -526,6 +536,7 @@ def publish_generated_chat_artifact_for_user(
     user_id, *, conversation_id, message_id, destination, request_id, requester_display_name="", file_name="",
     completion_policy=None, source_receipt=None, execution_check=None,
 ):
+    require_generated_file_publication_allowed()
     with ExitStack() as resources:
         return _publish_generated_chat_artifact_for_user(
             user_id, conversation_id=conversation_id, message_id=message_id, destination=destination,
@@ -540,6 +551,7 @@ def _publish_generated_chat_artifact_for_user(
     completion_policy=None, source_receipt=None, execution_check=None, resources,
 ):
     """Copy or request approval once; uncertain external work is never blindly repeated."""
+    require_generated_file_publication_allowed()
     user_id = _text(user_id, "Acting user")
     request_id = _text(request_id, "Explicit publication request id")
     artifact = _authorize_artifact(
@@ -555,6 +567,7 @@ def _publish_generated_chat_artifact_for_user(
             raise ValueError("Publication completion needs an exact saved workflow source receipt.")
 
     def reauthorize():
+        require_generated_file_publication_allowed()
         if execution_check is not None:
             execution_check()
         current = _authorize_artifact(user_id, artifact["conversation_id"], artifact["id"])
@@ -565,7 +578,10 @@ def _publish_generated_chat_artifact_for_user(
     metadata = artifact.get("metadata") or {}
     bound_source = has_generated_artifact_source(metadata)
     recheck_effect = completion_policy is not None or bound_source
-    if bound_source and source_receipt is None:
+    if (
+        bound_source and source_receipt is None
+        and metadata["generated_artifact_source"]["kind"] == "workflow_saved_output"
+    ):
         source_receipt = deepcopy(metadata["generated_artifact_source"]["source_receipt"])
     name = str(file_name or artifact.get("filename") or "generated-artifact.json").replace("\\", "/").split("/")[-1]
     output_format = str(metadata.get("generated_artifact_output_format") or "").lower()
@@ -622,6 +638,7 @@ def _publish_generated_chat_artifact_for_user(
     if document is None:
         reauthorize()
     if document is None and _stage(artifact, receipt, "create"):
+        require_generated_file_publication_allowed()
         if recheck_effect:
             reauthorize()
         try:
@@ -640,6 +657,8 @@ def _publish_generated_chat_artifact_for_user(
                     source_file_path=source_file_path, allow_deferred_xsd_source=scope != "personal",
                     **scope_args,
                 )
+        except OrchestrationFilePolicyError:
+            raise
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain("create", exc)
         document = _destination_document(container, receipt)
@@ -658,6 +677,7 @@ def _publish_generated_chat_artifact_for_user(
     if not document.get("generated_artifact_publication_receipt_id"):
         reauthorize()
     if not document.get("generated_artifact_publication_receipt_id") and _stage(artifact, receipt, "prepare"):
+        require_generated_file_publication_allowed()
         if recheck_effect:
             reauthorize()
         updates = {"generated_artifact_publication_receipt_id": key}
@@ -685,6 +705,8 @@ def _publish_generated_chat_artifact_for_user(
         try:
             # These are destination documents, not saved-result projections: do not inherit source ACL metadata.
             update_document(document_id=receipt["document_id"], user_id=user_id, **scope_args, **updates)
+        except OrchestrationFilePolicyError:
+            raise
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain("prepare", exc)
         document = _destination_document(container, receipt)
@@ -707,6 +729,7 @@ def _publish_generated_chat_artifact_for_user(
                 raise ValueError("The generated artifact bytes changed.")
         reauthorize()
         if _stage(artifact, receipt, "queue"):
+            require_generated_file_publication_allowed()
             if recheck_effect:
                 reauthorize()
             try:
@@ -716,6 +739,8 @@ def _publish_generated_chat_artifact_for_user(
                 )
                 _stage(artifact, receipt, "queue", complete=True)
                 invalidate_personal_search_cache(user_id)
+            except OrchestrationFilePolicyError:
+                raise
             except (AzureError, OSError, RuntimeError) as exc:
                 _log_uncertain("queue", exc)
         elif (
@@ -772,6 +797,7 @@ def publish_workflow_artifact(
     """Dispatch only a configured publication task using an actual upstream artifact address."""
     if publication is None:
         return {"reply": "", "execution_status": "skipped", "publication": {"state": "not_requested"}, "model_calls": 0}
+    require_generated_file_publication_allowed()
     publication = normalize_workflow_publication(publication)
     if not isinstance(artifact_reference, dict):
         raise ValueError("This publication task needs an existing upstream analysis artifact.")
@@ -781,7 +807,10 @@ def publish_workflow_artifact(
     metadata = artifact.get("metadata") or {}
     saved_output = publication.get("source_kind") == "saved_output"
     if saved_output:
-        if not has_generated_artifact_source(metadata):
+        if (
+            not has_generated_artifact_source(metadata)
+            or metadata["generated_artifact_source"]["kind"] != "workflow_saved_output"
+        ):
             raise ValueError("The upstream artifact is not bound to saved workflow records.")
         bound_receipt = metadata["generated_artifact_source"]["source_receipt"]
         if not isinstance(source_receipt, dict) or any(
@@ -845,6 +874,8 @@ def read_workflow_artifact_publication(
     user_id, request, *, reconcile=False, execution_check=None, authorization_only=False,
 ):
     """Observe one exact receipt. Only the leased workflow may reconcile stage acknowledgements."""
+    if reconcile:
+        require_generated_file_publication_allowed()
     publication = normalize_workflow_publication(request["publication"])
     address = request["artifact_reference"]
     artifact = _authorize_artifact(user_id, address["conversation_id"], address["artifact_message_id"])
@@ -903,10 +934,12 @@ def read_workflow_artifact_publication(
 
 
 def _replace_publication_destination(container, receipt, updates):
+    require_generated_file_publication_allowed()
     for _ in range(8):
         document = _destination_document(container, receipt)
         if not publication_binding_matches(receipt, document):
             raise ValueError("The publication destination revision is unavailable.")
+        require_generated_file_publication_allowed()
         try:
             container.replace_item(
                 item=document["id"], body={**document, **updates}, etag=document["_etag"],
@@ -1043,11 +1076,14 @@ def decide_artifact_publication(
     operation_id=None,
 ):
     """Use the destination's existing review role, while retaining a durable receipt outcome."""
+    require_generated_file_publication_allowed()
     try:
         return _decide_artifact_publication(
             user_id, document, choice, operation_guard=operation_guard,
             delete_destination=delete_destination, decision_link_url=decision_link_url, operation_id=operation_id,
         )
+    except OrchestrationFilePolicyError:
+        raise
     except PermissionError as exc:
         _log_uncertain("destination_authorization", exc)
         raise PermissionError("Current publication source or destination access could not be confirmed.") from exc
@@ -1060,6 +1096,7 @@ def _decide_artifact_publication(
     user_id, document, choice, *, operation_guard=None, delete_destination=None, decision_link_url=None,
     operation_id=None,
 ):
+    require_generated_file_publication_allowed()
     with ExitStack() as resources:
         return _decide_artifact_publication_with_content(
             user_id, document, choice, resources=resources, operation_guard=operation_guard,
@@ -1071,6 +1108,7 @@ def _decide_artifact_publication_with_content(
     user_id, document, choice, *, resources, operation_guard=None, delete_destination=None, decision_link_url=None,
     operation_id=None,
 ):
+    require_generated_file_publication_allowed()
     if choice not in {"approved", "rejected", "cancelled"}:
         raise ValueError("Invalid publication decision.")
     roles = ("Owner", "Admin", "DocumentManager", "User") if choice == "cancelled" else ("Owner", "Admin", "DocumentManager")
@@ -1107,6 +1145,7 @@ def _decide_artifact_publication_with_content(
     destination_deleted = False
 
     def authorize_decision():
+        require_generated_file_publication_allowed()
         if operation_guard is not None:
             operation_guard()
         if scope == "group":
@@ -1191,6 +1230,8 @@ def _decide_artifact_publication_with_content(
                     normalized_file_name=receipt["file_name"], file_content_bytes=source_bytes, **scope_args,
                 )
                 _stage(artifact, receipt, "approval_queue", complete=True)
+            except OrchestrationFilePolicyError:
+                raise
             except (AzureError, OSError, RuntimeError, ValueError, PermissionError, ScreeningError) as exc:
                 _log_uncertain("approval_queue", exc)
                 _replace_publication_destination(container, receipt, {
@@ -1209,6 +1250,7 @@ def _decide_artifact_publication_with_content(
 
         authorize_decision()
         if _destination_document(container, receipt):
+            require_generated_file_publication_allowed()
             if delete_destination is not None:
                 delete_destination(_destination_document(container, receipt))
             else:

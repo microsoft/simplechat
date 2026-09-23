@@ -296,11 +296,21 @@ def _remaining_limits(limits, deadline):
 
 def inspect_content(subject, units, policy, *, model_evaluator=None, on_progress=None):
     """Union mandatory findings; a False progress response cancels without passing."""
-    started = time.monotonic()
-    result = InspectionResult("error", "", "", error_code="screening_invalid_request")
     try:
         if not isinstance(subject, Subject):
             Subject.from_dict(subject)
+    except Exception:
+        return InspectionResult("error", "", "", error_code="screening_invalid_request")
+    return inspect_text_units(
+        units, policy, model_evaluator=model_evaluator, on_progress=on_progress,
+    )
+
+
+def inspect_text_units(units, policy, *, model_evaluator=None, on_progress=None):
+    """Evaluate text without granting document access or manufacturing a document subject."""
+    started = time.monotonic()
+    result = InspectionResult("error", "", "", error_code="screening_invalid_request")
+    try:
         units = [
             ContentUnit.from_dict(deepcopy(unit.to_dict()))
             for unit in normalize_units(units)

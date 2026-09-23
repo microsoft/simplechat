@@ -20,11 +20,16 @@ import type {
     Json,
     OrchestrationApproval,
     OrchestrationIntent,
+    OrchestrationInputBinding,
+    OrchestrationNamedInput,
+    OrchestrationNamedOutput,
+    OrchestrationPhase,
     OrchestrationPlan,
     OrchestrationPlanAction,
     OrchestrationPlanDocument,
     OrchestrationPlanInputs,
     OrchestrationStep,
+    OrchestrationRole,
     OrchestrationValidation,
     PlanComplexity,
     PlanEdits,
@@ -36,8 +41,7 @@ import { normalizeReasoningAdjustments } from './reasoning';
 /**
  * The capability id of the answering step, from `TERMINAL_CAPABILITY_ID` in the registry.
  *
- * Every plan ends with exactly one of these, and it is never narrowable: `apply_plan_edits`
- * skips it, so a user cannot disable the step that writes the answer or empty its inputs.
+ * Legacy plans end with one of these. V2 instead selects prepared content with final_response.
  */
 export const TERMINAL_CAPABILITY_ID = 'respond';
 
@@ -52,6 +56,8 @@ export const DOCUMENT_ARRAY_FIELDS = ['document_ids', 'right_document_ids'] as c
 const STEP_STATUSES: readonly StepStatus[] = [
     'pending',
     'running',
+    'waiting',
+    'partial',
     'completed',
     'failed',
     'skipped',
@@ -63,6 +69,7 @@ const PLAN_STATUSES: readonly PlanStatus[] = [
     'awaiting_approval',
     'approved',
     'running',
+    'waiting',
     'completed',
     'failed',
     'cancelled',
@@ -141,9 +148,20 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
  * partial step still arrives as something the card can render, with a status the runtime can
  * key on, rather than as `undefined` reaching a component mid-run.
  */
-export function normalizeStep(raw: unknown, index = 0): OrchestrationStep {
+export function normalizeModelBinding(raw: unknown): OrchestrationStep['model_binding'] {
+    const binding = asRecord(raw);
+    if (typeof binding.label !== 'string') return undefined;
+    return {
+        label: binding.label,
+        reason: asString(binding.reason),
+        profile_id: asString(binding.profile_id),
+    };
+}
+
+export function normalizeStep(raw: unknown, index = 0, contractVersion = 1): OrchestrationStep {
     const source = asRecord(raw);
     return {
+        model_binding: normalizeModelBinding(source.model_binding),
         step_id: asString(source.step_id) || `step_${index + 1}`,
         capability_id: asString(source.capability_id),
         title: asString(source.title),
@@ -159,7 +177,63 @@ export function normalizeStep(raw: unknown, index = 0): OrchestrationStep {
         // run actually used; looking it up again client-side would disagree the moment a
         // capability is disabled after a plan was made.
         phase: asString(source.phase) || undefined,
+        ...(contractVersion === 2 ? {
+            role: asString(source.role) || undefined,
+            inputs: normalizeNamedInputs(source.inputs),
+            outputs: normalizeNamedOutputs(source.outputs),
+        } : {}),
     };
+}
+
+function normalizeInputBinding(raw: unknown): OrchestrationInputBinding | null {
+    const source = asRecord(raw);
+    if (source.version !== 'orchestration-input-binding-v1') return null;
+    if (typeof source.step_id === 'string' && typeof source.output_name === 'string'
+        && source.existing_result === null) {
+        return {
+            version: source.version, step_id: source.step_id,
+            output_name: source.output_name, existing_result: null,
+        };
+    }
+    if (typeof source.existing_result === 'string' && source.step_id === null && source.output_name === null) {
+        return {
+            version: source.version, step_id: null, output_name: null,
+            existing_result: source.existing_result,
+        };
+    }
+    return null;
+}
+
+function normalizeNamedInputs(raw: unknown): Record<string, OrchestrationNamedInput> {
+    return Object.fromEntries(Object.entries(asRecord(raw)).map(([name, value]) => {
+        const input = asRecord(value);
+        return [name, {
+            binding: normalizeInputBinding(input.binding),
+            allow_partial: input.allow_partial === true,
+        }];
+    }));
+}
+
+function normalizeNamedOutputs(raw: unknown): OrchestrationNamedOutput[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((value) => {
+        const output = asRecord(value);
+        return {
+            name: asString(output.name),
+            kind: asString(output.kind),
+            ...(typeof output.profile === 'string' ? { profile: output.profile } : {}),
+            ...(output.schema !== undefined ? { schema: asRecord(output.schema) } : {}),
+            ...(Array.isArray(output.columns) ? {
+                columns: output.columns.map((value) => {
+                    const column = asRecord(value);
+                    return {
+                        name: asString(column.name), value_type: asString(column.value_type),
+                        nullable: column.nullable === true,
+                    };
+                }),
+            } : {}),
+        };
+    });
 }
 
 function normalizeIntent(raw: unknown): OrchestrationIntent {
@@ -208,9 +282,11 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         return null;
     }
     const source = raw as Json;
+    const contractVersion = typeof source.planner_contract_version === 'number'
+        ? source.planner_contract_version : 1;
 
     const rawSteps: unknown[] = Array.isArray(source.steps) ? source.steps : [];
-    const steps = rawSteps.map((step, index) => normalizeStep(step, index));
+    const steps = rawSteps.map((step, index) => normalizeStep(step, index, contractVersion));
 
     return {
         plan_id: asString(source.plan_id),
@@ -221,15 +297,14 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         revision: typeof source.revision === 'number' ? source.revision : 0,
         conversation_id: asString(source.conversation_id),
         user_id: asString(source.user_id),
-        planner_contract_version:
-            typeof source.planner_contract_version === 'number'
-                ? source.planner_contract_version
-                : 1,
+        planner_contract_version: contractVersion,
         intent: normalizeIntent(source.intent),
         assumptions: asStringList(source.assumptions),
         inputs: source.inputs !== undefined ? normalizeInputs(source.inputs) : undefined,
         steps,
         outputs: Array.isArray(source.outputs) ? (source.outputs as Json[]) : undefined,
+        ...(contractVersion === 2 && source.final_response !== undefined
+            ? { final_response: normalizeInputBinding(source.final_response) } : {}),
         approval: normalizeApproval(source.approval),
         validation: normalizeValidation(source.validation),
         status: oneOf(source.status, PLAN_STATUSES, 'awaiting_approval'),
@@ -368,10 +443,11 @@ export function isDocumentRemoved(
  * producing an edit the server will silently drop -- keeping the client's idea of the edit set
  * identical to the one `apply_plan_edits` will honour.
  */
-export function disableStep(edits: PlanEdits, step: OrchestrationStep): PlanEdits {
+export function disableStep(edits: PlanEdits, step: OrchestrationStep, plan?: OrchestrationPlan): PlanEdits {
     if (step.capability_id === TERMINAL_CAPABILITY_ID) {
         return edits;
     }
+    if (plan && stepDisableExplanation(plan, step.step_id)) return edits;
     if (edits.disabled_step_ids.includes(step.step_id)) {
         return edits;
     }
@@ -528,7 +604,10 @@ export function applyPlanEdits(plan: OrchestrationPlan, edits: PlanEdits): Orche
  * skipped, which leaves a defensible order instead of hanging. The server de-cycles the plan it
  * sends, so this is belt-and-braces for a persisted or hand-built plan.
  */
-export function orderStepsForDisplay(steps: OrchestrationStep[]): OrchestrationStep[] {
+export function orderStepsForDisplay(steps: OrchestrationStep[], contractVersion = 1): OrchestrationStep[] {
+    // V2 is already a stable topological order compiled by the server. A second sort could
+    // move independent tasks and misrepresent the actual execution sequence.
+    if (contractVersion === 2) return steps.slice();
     const byId = new Map(steps.map((step) => [step.step_id, step]));
     const permanent = new Set<string>();
     const temporary = new Set<string>();
@@ -558,6 +637,119 @@ export function orderStepsForDisplay(steps: OrchestrationStep[]): OrchestrationS
     }
 
     return resolved;
+}
+
+const ROLE_LABELS: Record<OrchestrationRole, { label: string; progress: string }> = {
+    gather: { label: 'Gather', progress: 'Gathering' },
+    reason: { label: 'Reason', progress: 'Reasoning' },
+    render: { label: 'Render', progress: 'Rendering' },
+};
+const LEGACY_PHASE_LABELS: Record<OrchestrationPhase, string> = {
+    knowledge: 'Gathering knowledge', reasoning: 'Reasoning', output: 'Creating',
+};
+
+export function stepRoleLabel(step: OrchestrationStep, progress = false): string | null {
+    const role = step.role;
+    if (role !== 'gather' && role !== 'reason' && role !== 'render') return null;
+    return ROLE_LABELS[role][progress ? 'progress' : 'label'];
+}
+
+export interface OrchestrationStepGroup {
+    key: string;
+    label: string | null;
+    steps: Array<{ step: OrchestrationStep; number: number }>;
+}
+
+export function groupStepsForDisplay(
+    plan: OrchestrationPlan,
+    capabilities: readonly { id: string; phase?: string }[] = [],
+): OrchestrationStepGroup[] {
+    const ordered = orderStepsForDisplay(plan.steps, plan.planner_contract_version);
+    if (plan.planner_contract_version === 2) {
+        const groups: OrchestrationStepGroup[] = [];
+        ordered.forEach((step, index) => {
+            const label = stepRoleLabel(step);
+            let group = groups[groups.length - 1];
+            if (!group || group.label !== label) {
+                group = { key: `${step.role ?? 'unclassified'}-${index}`, label, steps: [] };
+                groups.push(group);
+            }
+            group.steps.push({ step, number: index + 1 });
+        });
+        return groups;
+    }
+    const phases = new Map(capabilities.map((capability) => [capability.id, capability.phase]));
+    const buckets = new Map<string, OrchestrationStep[]>();
+    for (const step of ordered) {
+        const phase = step.phase ?? phases.get(step.capability_id) ?? '';
+        const key = Object.hasOwn(LEGACY_PHASE_LABELS, phase) ? phase : '';
+        buckets.set(key, [...(buckets.get(key) ?? []), step]);
+    }
+    let number = 0;
+    return [...Object.entries(LEGACY_PHASE_LABELS), ['', null] as const].flatMap(([key, label]) => {
+        const steps = buckets.get(key);
+        return steps?.length ? [{
+            key: key || 'unclassified', label,
+            steps: steps.map((step) => ({ step, number: ++number })),
+        }] : [];
+    });
+}
+
+export function describeInputBinding(
+    plan: OrchestrationPlan,
+    binding: OrchestrationInputBinding | null,
+): string {
+    if (!binding) return 'Binding details unavailable';
+    if (binding.existing_result) return `Retained result: ${binding.existing_result}`;
+    const producer = plan.steps.find((step) => step.step_id === binding.step_id);
+    const output = producer?.outputs?.find((output) => output.name === binding.output_name);
+    return `Output ${binding.output_name} from ${producer?.title || binding.step_id}`
+        + (output ? ` (${output.kind})` : '');
+}
+
+/** Even a disabled consumer keeps its bindings under the server's v2 validation contract. */
+export function stepDisableExplanation(plan: OrchestrationPlan, stepId: string): string | null {
+    if (plan.planner_contract_version !== 2) return null;
+    const consumers = plan.steps.filter((step) =>
+        step.depends_on.includes(stepId)
+        || Object.values(step.inputs ?? {}).some((input) => input.binding?.step_id === stepId),
+    ).map((step) => step.title || step.step_id);
+    if (plan.final_response?.step_id === stepId) consumers.push('Final chat response');
+    if (!consumers.length) return null;
+    return `Required by: ${consumers.join('; ')}. Use Ask planner to change or remove these consumers first.`;
+}
+
+/** Explain broken edges without rewriting them. Kind, scope and source validation stay server-owned. */
+export function planBindingIssues(plan: OrchestrationPlan, edits?: PlanEdits): string[] {
+    if (plan.planner_contract_version !== 2) return [];
+    const issues = new Set<string>();
+    const disabled = new Set(edits?.disabled_step_ids ?? []);
+    const requireProducer = (consumer: string, stepId: string) => {
+        const producer = plan.steps.find((step) => step.step_id === stepId);
+        if (!producer) issues.add(`${consumer} requires unavailable producer ${stepId}. Ask planner to revise the plan.`);
+        else if (!producer.enabled || disabled.has(stepId)) {
+            issues.add(`${consumer} requires ${producer.title || stepId}. Restore the producer or ask the planner to revise its consumers.`);
+        }
+        return producer;
+    };
+    const requireBinding = (consumer: string, binding: OrchestrationInputBinding | null) => {
+        if (!binding) {
+            issues.add(`${consumer} has unavailable binding details. Refresh the saved plan before running.`);
+        } else if (binding.step_id) {
+            const producer = requireProducer(consumer, binding.step_id);
+            if (producer && !producer.outputs?.some((output) => output.name === binding.output_name)) {
+                issues.add(`${consumer} requires missing output ${binding.output_name} from ${producer.title || binding.step_id}.`);
+            }
+        }
+    };
+    for (const step of plan.steps) {
+        for (const dependency of step.depends_on) requireProducer(step.title || step.step_id, dependency);
+        for (const [name, input] of Object.entries(step.inputs ?? {})) {
+            requireBinding(`${step.title || step.step_id}, input ${name}`, input.binding);
+        }
+    }
+    if (plan.final_response !== undefined) requireBinding('Final chat response', plan.final_response);
+    return [...issues];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -648,12 +840,16 @@ export function planRequiresApproval(plan: OrchestrationPlan): boolean {
 /**
  * Whether a run could be started from this plan as edited.
  *
- * A plan that has already reached a terminal status cannot run again; otherwise it is runnable
- * as long as at least one step survives the edits -- which the terminal answering step always
- * does, so a plan narrowed to nothing but its answer is still runnable.
+ * Active and terminal attempts cannot run again. Legacy plans retain their terminal answer;
+ * v2 plans also require the declared producer edges to survive narrowing. The server still
+ * authorizes and validates the saved plan before executing it.
  */
 export function isPlanRunnable(plan: OrchestrationPlan, edits?: PlanEdits): boolean {
-    if (isPlanTerminal(plan)) {
+    if (isPlanTerminal(plan) || plan.status === 'running' || plan.status === 'waiting'
+        || ![1, 2].includes(plan.planner_contract_version)) {
+        return false;
+    }
+    if (plan.planner_contract_version === 2 && (!plan.validation.ok || planBindingIssues(plan, edits).length > 0)) {
         return false;
     }
     return enabledSteps(plan, edits).length > 0;

@@ -1,13 +1,13 @@
 # test_model_capability_catalog_resolution.py
 """
 Functional tests for the catalog-backed model capability resolver and schema.
-Version: 0.261.122
+Version: 0.261.126
 Implemented in: 0.261.035
 React V2 catalog integration: 0.261.122
 
 The qualitative resolver first shipped in 0.261.014. These tests preserve its
 override, family-isolation, prefix, and fallback behavior while validating the
-schemaVersion 3 token-evidence contract. unittest assertions fail under pytest,
+schemaVersion 4 profile and token-evidence contract. unittest assertions fail under pytest,
 standalone execution, and optimized Python; no failure is returned as False.
 """
 
@@ -64,11 +64,11 @@ class TestModelCapabilityCatalog(unittest.TestCase):
         capabilities.reset_model_capability_catalog_cache()
 
     def test_catalog_matches_schema(self):
-        """The shipped catalog must validate against the strict v3 schema."""
+        """The shipped catalog must validate against the strict v4 schema."""
         validator = load_catalog_schema_validator()
         validator.validate(self.catalog)
 
-        self.assertEqual(self.catalog["schemaVersion"], 3)
+        self.assertEqual(self.catalog["schemaVersion"], 4)
         model_ids = [record["id"] for record in self.catalog["models"]]
         self.assertEqual(len(model_ids), len(set(model_ids)))
         providers = {

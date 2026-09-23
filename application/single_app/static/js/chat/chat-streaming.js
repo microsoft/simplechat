@@ -324,7 +324,19 @@ function appendRateLimitMessage(errorBanner, markdownText) {
     errorBanner.appendChild(messageContainer);
 }
 
-function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
+function getStreamErrorPersistenceNote(errorPayload, hasPartialContent) {
+    // Only a persisted assistant reply carries message_id; approval payloads
+    // use message_persisted for the user message alone.
+    if (errorPayload.message_persisted === true && errorPayload.message_id) {
+        return 'The partial content above has been saved.';
+    }
+    if (hasPartialContent) {
+        return 'The partial content above was not saved and will not appear after a reload.';
+    }
+    return '';
+}
+
+function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}, hasPartialContent = false) {
     const errorPayload = getStreamErrorPayload(errorDetails);
     const m365SignInRequired = isM365SignInRequired(errorPayload);
     if (m365SignInRequired && window.SimpleChatM365Connect) {
@@ -387,14 +399,17 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     detailRow.className = 'mt-1';
 
     const detailText = document.createElement('small');
+    const persistenceNote = getStreamErrorPersistenceNote(errorPayload, hasPartialContent);
     if (rateLimited) {
-        detailText.textContent = 'Wait a moment before sending the message again. Any partial content above has been saved.';
+        detailText.textContent = ['Wait a moment before sending the message again.', persistenceNote].filter(Boolean).join(' ');
     } else if (m365SignInRequired) {
         detailText.textContent = 'Refresh the page to restore Microsoft 365 connection controls.';
     } else if (authRequired) {
         detailText.textContent = 'After access is granted, send the message again.';
+    } else if (errorPayload.type === 'm365_approval_required') {
+        detailText.textContent = 'The request continues after the approval is decided.';
     } else {
-        detailText.textContent = 'Response may be incomplete. The partial content above has been saved.';
+        detailText.textContent = ['Response may be incomplete.', persistenceNote].filter(Boolean).join(' ');
     }
 
     detailRow.appendChild(detailText);
@@ -929,7 +944,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     event_count: eventCount,
                     error_message: data.error,
                 });
-                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
+                handleStreamError(tempAiMessageId, resolveStreamContent(data, accumulatedContent), data.error, data);
                 if (
                     data.message_persisted
                     && data.message_id
@@ -999,7 +1014,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
             }
 
-            if (data.content) {
+            if (data.replace_content === true) {
+                accumulatedContent = resolveStreamContent(data, '');
+                hasStreamedContent = Boolean(accumulatedContent);
+                updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            } else if (data.content) {
                 accumulatedContent += data.content;
                 hasStreamedContent = true;
                 updateStreamingMessage(tempAiMessageId, accumulatedContent);
@@ -1016,7 +1035,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 finalizePendingUserMessageMetadata();
                 enablePersistedUserMessageActions();
 
-                if (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled') {
+                if (!data.blocked && (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled')) {
                     finalizeCancelledStreamingMessage(
                         tempAiMessageId,
                         tempUserMessageId,
@@ -1536,9 +1555,18 @@ function renderStoppedContent(messageElement, partialContent) {
     appendStoppedResponseBanner(messageElement, Boolean(normalizedContent));
 }
 
+export function resolveStreamContent(data, fallbackContent = '') {
+    if (typeof data.full_content === 'string') return data.full_content;
+    if (data.replace_content === true) {
+        return typeof data.content === 'string' ? data.content
+            : typeof data.partial_content === 'string' ? data.partial_content : '';
+    }
+    return typeof data.partial_content === 'string' ? data.partial_content : fallbackContent;
+}
+
 function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, fallbackContent = '') {
     const messageElement = getStreamingMessageElement(messageId);
-    const partialContent = finalData.full_content || finalData.partial_content || fallbackContent || '';
+    const partialContent = resolveStreamContent(finalData, fallbackContent);
 
     removeStreamingStopButton(messageId);
 
@@ -1547,7 +1575,11 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             messageElement.remove();
         }
 
-        const existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        let existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        if (existingFinalMessage && finalData.replace_content) {
+            existingFinalMessage.remove();
+            existingFinalMessage = null;
+        }
         if (!existingFinalMessage) {
             const finalMessageObject = {
                 ...finalData,
@@ -1664,7 +1696,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         hydrateInlineCharts(messageElement);
         hydrateInlineDiagrams(messageElement);
 
-        appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
+        appendStreamErrorBanner(contentElement, displayMessage, errorPayload, Boolean(String(partialContent || '').trim()));
     }
 
     if (m365SignInRequired) {
@@ -1702,7 +1734,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
 
-    if (existingFinalMessage && !finalData.metadata?.saved_analysis) {
+    if (existingFinalMessage && !finalData.metadata?.saved_analysis && !finalData.replace_content && !finalData.blocked) {
         renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(
@@ -1715,7 +1747,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
 
     const finalMessageObject = {
         ...finalData,
-        content: finalData.full_content || finalData.content || fallbackContent,
+        content: resolveStreamContent(finalData, typeof finalData.content === 'string' ? finalData.content : fallbackContent),
         role: finalData.role || 'assistant',
     };
 

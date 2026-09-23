@@ -5,6 +5,9 @@ from collections import defaultdict
 import math
 import re
 
+from content_screening.access import raise_source_authority_error, strict_source_authority_enabled
+from content_screening.contracts import SourceAuthorityUnverifiedError
+
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     SOURCE_MANIFEST_MAX_SOURCES,
@@ -45,7 +48,18 @@ def resolve_analysis_source_manifest(document_ids, user_id, *, resolver=None, **
             or any(not isinstance(source, dict) for source in resolved)
             or [source.get("document_id") for source in resolved] != batch
         ):
+            if strict_source_authority_enabled():
+                raise_source_authority_error(SourceAuthorityUnverifiedError())
             raise AnalysisResultUnavailable("analysis_source_manifest_invalid")
+        if strict_source_authority_enabled():
+            for source in resolved:
+                if source.get("authorization_status") not in {"authorized", "unresolved"}:
+                    raise_source_authority_error(SourceAuthorityUnverifiedError())
+                if source["authorization_status"] == "authorized":
+                    try:
+                        analysis_source_snapshot([source])
+                    except AnalysisResultUnavailable:
+                        raise_source_authority_error(SourceAuthorityUnverifiedError())
         manifest.extend(resolved)
     return manifest
 

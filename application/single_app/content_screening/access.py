@@ -2,7 +2,8 @@
 """Authoritative ordinary-content access, independent of the screening toggle.
 
 ``assert_document_available(document_or_id, user_id=None, group_id=None,
-public_workspace_id=None, *, purpose="read", metadata_reader=None)`` returns a
+public_workspace_id=None, *, purpose="read", metadata_reader=None,
+strict_errors=False)`` returns a
 fresh authorized document, never the supplied record. An injected reader must
 implement the same object authorization as the default reader and accept
 ``document_id, user_id, group_id, public_workspace_id`` keyword arguments.
@@ -13,8 +14,12 @@ results carry revision/generation provenance; a subsequent call is a new read.
 An injected ``units_reader(reference, subject)`` supplies canonical units.
 
 ``assert_evidence_available(evidence, user_id=None, *, metadata_reader=None,
-cached=False)`` checks known provenance on every reuse. Set ``cached=True`` for
+cached=False, strict_errors=False)`` checks known provenance on every reuse. Set ``cached=True`` for
 historical results: an old unversioned context cannot borrow a new clearance.
+
+Server-owned retained-result operations opt into typed authority failures with
+``strict_errors=True`` or ``strict_source_authority()``. A headless owner that
+catches errors keeps the latter scope around the entire source/model decision.
 
 ``public_document_payload(document)`` serializes already-authorized, current
 metadata. Held documents retain only identification and safe status fields.
@@ -22,14 +27,21 @@ Neither a search projection nor a serialized payload is an authorization token.
 """
 
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import wraps
 import hashlib
 from importlib import import_module
 import json
+import logging
+import math
 import mimetypes
 from urllib.parse import unquote
 
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError, ServiceResponseError
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
 from werkzeug.exceptions import HTTPException
 
 from content_screening.contracts import (
@@ -38,6 +50,10 @@ from content_screening.contracts import (
     ScreeningConflictError,
     ScreeningError,
     ScreeningValidationError,
+    SourceAuthorityUnavailableError,
+    SourceAuthorityUnverifiedError,
+    AVAILABLE_STATES,
+    HELD_STATES,
     content_fingerprint,
     hash_payload,
     metadata_fingerprint,
@@ -86,24 +102,101 @@ GENERATED_ARTIFACT_REQUEST_FIELDS = frozenset({
     "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
     "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
 })
+_SOURCE_AUTHORITY_SCOPE = ContextVar("content_screening_source_authority_scope", default=None)
+
+
+@contextmanager
+def strict_source_authority():
+    """Opt this server-owned operation into typed failures, with an isolated model fence."""
+    current = _SOURCE_AUTHORITY_SCOPE.get()
+    token = _SOURCE_AUTHORITY_SCOPE.set(current if current is not None else {"failure": None})
+    try:
+        yield
+    except (ScreeningError, LookupError, PermissionError) as error:
+        _remember_screening_failure(error)
+        raise
+    finally:
+        _SOURCE_AUTHORITY_SCOPE.reset(token)
+
+
+def strict_source_authority_enabled():
+    return _SOURCE_AUTHORITY_SCOPE.get() is not None
+
+
+def source_authority_not_found(error):
+    """Recognize real provider missing records, never exception causes or message text."""
+    return isinstance(error, (ResourceNotFoundError, CosmosResourceNotFoundError)) or (
+        isinstance(error, HttpResponseError) and error.status_code == 404
+    )
+
+
+def raise_source_authority_error(error):
+    """Preserve known access outcomes and sanitize non-authoritative I/O failures."""
+    if isinstance(error, (ScreeningError, PermissionError)) or type(error) in (LookupError, FileNotFoundError):
+        failure = error
+    elif source_authority_not_found(error):
+        failure = LookupError("Source not found or access denied.")
+    elif isinstance(error, (
+        TimeoutError, ConnectionError, ServiceRequestError, ServiceResponseError,
+        RequestsConnectionError, RequestsTimeout,
+    )) or (
+        isinstance(error, HttpResponseError)
+        and isinstance(error.status_code, int)
+        and (error.status_code in (408, 429) or 500 <= error.status_code <= 599)
+    ):
+        failure = SourceAuthorityUnavailableError()
+    else:
+        failure = SourceAuthorityUnverifiedError()
+    _remember_screening_failure(failure)
+    # Import-only screening consumers must stay below telemetry/bootstrap owners.
+    # Resolve logging only for an actual authority failure, after setting its fence.
+    from functions_appinsights import log_event
+
+    log_event(
+        "[CONTENT_SCREENING] Current source authority could not be verified.",
+        extra={"error_type": type(error).__name__, "code": getattr(failure, "code", "source_unavailable")},
+        level=logging.WARNING,
+    )
+    if failure is error:
+        raise error
+    raise failure from error
+
+
+def _malformed_source_authority():
+    if strict_source_authority_enabled():
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
+    raise DocumentHeldError()
 
 
 def _require_available_metadata(document):
     if not isinstance(document, Mapping):
-        raise DocumentHeldError()
+        _malformed_source_authority()
+    invalid_available_marker = False
     if SCREENING_FIELD in document:
         marker = document.get(SCREENING_FIELD)
         if not isinstance(marker, dict) or not isinstance(marker.get("state"), str):
-            raise DocumentHeldError()
-    require_document_available(document)
-    if SCREENING_FIELD in document:
-        marker = document[SCREENING_FIELD]
-        if (
+            _malformed_source_authority()
+        if strict_source_authority_enabled() and marker["state"] not in AVAILABLE_STATES | HELD_STATES:
+            _malformed_source_authority()
+        invalid_available_marker = (
             not isinstance(marker.get("scan_id"), str) or not marker["scan_id"].strip()
             or not isinstance(marker.get("content_fingerprint"), str) or not marker["content_fingerprint"].strip()
             or isinstance(marker.get("source_revision"), bool)
-            or marker.get("review_required") is True
-        ):
+        )
+        if strict_source_authority_enabled() and marker["state"] in AVAILABLE_STATES:
+            revision = marker.get("source_revision")
+            if (
+                invalid_available_marker or not isinstance(revision, (str, int, float))
+                or (isinstance(revision, str) and not revision.strip())
+                or (isinstance(revision, float) and not math.isfinite(revision))
+            ):
+                _malformed_source_authority()
+    require_document_available(document)
+    if SCREENING_FIELD in document:
+        marker = document[SCREENING_FIELD]
+        if invalid_available_marker:
+            _malformed_source_authority()
+        if marker.get("review_required") is True:
             raise DocumentHeldError()
 
 
@@ -125,6 +218,13 @@ def _approved_share(entries, scope_id):
 def _authorize_document(document, user_id, group_id=None, public_workspace_id=None, *, metadata_only=False):
     if not user_id:
         raise PermissionError("Document not found or access denied.")
+    if strict_source_authority_enabled():
+        scope_id = document.get("public_workspace_id") or document.get("group_id") or document.get("user_id")
+        if (
+            not isinstance(scope_id, str) or not scope_id.strip()
+            or (document.get("public_workspace_id") and document.get("group_id"))
+        ):
+            _malformed_source_authority()
     if document.get("public_workspace_id"):
         workspace_id = document["public_workspace_id"]
         if public_workspace_id and str(workspace_id) != str(public_workspace_id):
@@ -132,7 +232,12 @@ def _authorize_document(document, user_id, group_id=None, public_workspace_id=No
         # Public content does not require a management role. Directory visibility
         # is a preference, not an authorization grant for assigned knowledge.
         workspaces = import_module("functions_public_workspaces")
-        if not workspaces.find_public_workspace_by_id(workspace_id):
+        workspace = workspaces.find_public_workspace_by_id(workspace_id)
+        if strict_source_authority_enabled() and workspace is not None and (
+            not isinstance(workspace, Mapping) or workspace.get("id") != workspace_id
+        ):
+            _malformed_source_authority()
+        if not workspace:
             raise PermissionError("Document not found or access denied.")
         return
     if document.get("group_id"):
@@ -153,7 +258,11 @@ def _authorize_document(document, user_id, group_id=None, public_workspace_id=No
             try:
                 groups.assert_group_role(user_id, candidate, allowed_roles=READ_GROUP_ROLES)
                 return
-            except (LookupError, PermissionError, ValueError):
+            except (LookupError, PermissionError, ValueError) as error:
+                if strict_source_authority_enabled() and not (
+                    isinstance(error, PermissionError) or type(error) is LookupError
+                ):
+                    raise_source_authority_error(error)
                 continue
         raise PermissionError("Document not found or access denied.")
     shared = _approved_share(document.get("shared_user_ids"), user_id)
@@ -163,12 +272,15 @@ def _authorize_document(document, user_id, group_id=None, public_workspace_id=No
         raise PermissionError("Document not found or access denied.")
 
 
-def _read_authorized_document(document_id, user_id, group_id=None, public_workspace_id=None, *, metadata_only=False):
+def _read_authorized_document(
+    document_id, user_id, group_id=None, public_workspace_id=None, *, metadata_only=False, scope_type=None,
+):
     # Deliberately bypass the document-access index and all positive caches.
     config = import_module("config")
     names = (
         ["cosmos_public_documents_container"] if public_workspace_id else
         ["cosmos_group_documents_container"] if group_id else
+        ["cosmos_user_documents_container"] if scope_type == "personal" else
         ["cosmos_user_documents_container", "cosmos_group_documents_container",
          "cosmos_public_documents_container"]
     )
@@ -177,11 +289,15 @@ def _read_authorized_document(document_id, user_id, group_id=None, public_worksp
         try:
             document = container.read_item(item=document_id, partition_key=document_id)
         except Exception as error:
+            if strict_source_authority_enabled():
+                if source_authority_not_found(error):
+                    continue
+                raise_source_authority_error(error)
             if getattr(error, "status_code", None) == 404 or type(error).__name__ == "CosmosResourceNotFoundError":
                 continue
             raise DocumentHeldError() from error
         if not isinstance(document, Mapping) or str(document.get("id")) != str(document_id):
-            raise DocumentHeldError()
+            _malformed_source_authority()
         _authorize_document(document, user_id, group_id, public_workspace_id, metadata_only=metadata_only)
         if not metadata_only and SCREENING_FIELD in document:
             _require_release_proof(document, config.cosmos_content_screening_container)
@@ -196,9 +312,11 @@ def _require_release_proof(document, container):
     try:
         scan = container.read_item(item=marker["scan_id"], partition_key=marker["scan_id"])
     except Exception as error:
+        if strict_source_authority_enabled() and not source_authority_not_found(error):
+            raise_source_authority_error(error)
         raise DocumentHeldError() from error
     if not isinstance(scan, Mapping):
-        raise DocumentHeldError()
+        _malformed_source_authority()
     publication = scan.get("publication")
     if (
         scan.get("kind") != "scan"
@@ -227,7 +345,7 @@ def _source_arguments(source, user_id, group_id=None, public_workspace_id=None):
                 or source.get("source_document_id") or source.get("doc_id")
             )
             if source_id is not None and str(source_id) != str(provenance.get("document_id")):
-                raise DocumentHeldError()
+                _malformed_source_authority()
         reference = provenance if isinstance(provenance, Mapping) else source
         document_id = (
             reference.get("workspace_document_id") or reference.get("document_id")
@@ -242,7 +360,7 @@ def _source_arguments(source, user_id, group_id=None, public_workspace_id=None):
     else:
         document_id = source
     if not isinstance(document_id, (str, int)) or not str(document_id).strip():
-        raise DocumentHeldError()
+        _malformed_source_authority()
     return {
         "document_id": str(document_id),
         "user_id": user_id,
@@ -298,6 +416,11 @@ def _remember_document_use(document, user_id):
 
 
 def _remember_screening_failure(error):
+    current = _SOURCE_AUTHORITY_SCOPE.get()
+    if current is not None:
+        if current["failure"] is None:
+            current["failure"] = error
+        error = current["failure"]
     flask = import_module("flask")
     if flask.has_request_context():
         flask.g.content_screening_error = error
@@ -305,21 +428,38 @@ def _remember_screening_failure(error):
 
 def assert_document_available(
     document_or_id, user_id=None, group_id=None, public_workspace_id=None, *,
-    purpose="read", metadata_reader=None,
+    purpose="read", metadata_reader=None, strict_errors=False,
 ):
-    user_id = _current_user_id(user_id)
-    arguments = _source_arguments(document_or_id, user_id, group_id, public_workspace_id)
+    if type(strict_errors) is not bool:
+        raise TypeError("The source authority error policy must be server-owned.")
+    if strict_errors:
+        with strict_source_authority():
+            return assert_document_available(
+                document_or_id, user_id, group_id, public_workspace_id,
+                purpose=purpose, metadata_reader=metadata_reader,
+            )
+    try:
+        user_id = _current_user_id(user_id)
+        arguments = _source_arguments(document_or_id, user_id, group_id, public_workspace_id)
+    except Exception as error:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(error)
+        raise
     reader = metadata_reader or _read_authorized_document
     try:
         document = reader(**arguments)
         if not isinstance(document, Mapping) or str(document.get("id")) != arguments["document_id"]:
-            raise DocumentHeldError()
+            _malformed_source_authority()
         _require_available_metadata(document)
         _check_source_revision(document_or_id, document)
     except (DocumentHeldError, ScreeningConflictError, LookupError, PermissionError) as error:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(error)
         _remember_screening_failure(error)
         raise
     except Exception as error:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(error)
         failure = DocumentHeldError()
         _remember_screening_failure(failure)
         raise failure from error
@@ -463,8 +603,13 @@ def assert_document_chunks_available(
     return checked
 
 
-def assert_evidence_available(evidence, user_id=None, *, metadata_reader=None, cached=False):
+def assert_evidence_available(evidence, user_id=None, *, metadata_reader=None, cached=False, strict_errors=False):
     """Revalidate known workspace provenance before using saved/model evidence."""
+    if type(strict_errors) is not bool:
+        raise TypeError("The source authority error policy must be server-owned.")
+    if strict_errors:
+        with strict_source_authority():
+            return assert_evidence_available(evidence, user_id, metadata_reader=metadata_reader, cached=cached)
     sources = []
     visited = set()
 
@@ -659,6 +804,10 @@ def refresh_workspace_attachment(message, user_id=None):
 
 def public_history_messages(messages, user_id=None):
     """Withhold unavailable source material without deleting ordinary chat text."""
+    # This read boundary already has conversation authorization. Keep the chat
+    # adapter out of the document contracts' import/bootstrap dependency chain.
+    from functions_chat_content_checks import strip_private_chat_checks
+
     user_id = _current_user_id(user_id)
     safe_messages = []
     flask = import_module("flask")
@@ -669,13 +818,12 @@ def public_history_messages(messages, user_id=None):
         previous_error = getattr(flask.g, "content_screening_error", None) if request_context else None
         previous_sources = dict(getattr(flask.g, "content_screening_sources", {}) or {}) if request_context else {}
         try:
+            if (message.get("metadata") or {}).get("content_moderation"):
+                from functions_chat_content_review import refresh_checked_message
+
+                message = refresh_checked_message(message)
             refreshed = refresh_workspace_attachment(message, user_id)
             assert_evidence_available(refreshed, user_id, cached=True)
-            # The shared generated-file source dispatcher keeps private saved-output
-            # cards from bypassing the same boundary used by their downloads.
-            from functions_generated_artifact_sources import sanitize_generated_artifact_history
-
-            safe_messages.append(deepcopy(sanitize_generated_artifact_history(refreshed, user_id)))
         except (ScreeningError, LookupError, PermissionError):
             if request_context:
                 flask.g.content_screening_error = previous_error
@@ -694,12 +842,23 @@ def public_history_messages(messages, user_id=None):
                 "content_unavailable": True, "content_screening_error": "document_under_review",
             })
             safe_messages.append(safe)
+        else:
+            # This dispatcher handles per-file denials itself. Operational failures
+            # must escape rather than become an unrelated document-screening hold.
+            from functions_generated_artifact_sources import sanitize_generated_artifact_history
+
+            safe_messages.append(strip_private_chat_checks(
+                deepcopy(sanitize_generated_artifact_history(refreshed, user_id)),
+            ))
     assert_current_request_sources_available(user_id)
     return safe_messages
 
 
 def assert_current_request_sources_available(user_id=None):
     """Check every source already consumed in this request before a model step."""
+    current = _SOURCE_AUTHORITY_SCOPE.get()
+    if current is not None and current["failure"] is not None:
+        raise current["failure"]
     flask = import_module("flask")
     if flask.has_request_context():
         failure = getattr(flask.g, "content_screening_error", None)

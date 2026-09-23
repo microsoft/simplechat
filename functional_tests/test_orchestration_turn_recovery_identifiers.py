@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.122
+Version: 0.261.131
 Implemented in: 0.261.099
+Chat content-check metadata binding included in: 0.261.131
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
 ``orchestration_turn_id`` on its optimistic user bubble, but the server saved the same message
@@ -149,6 +150,7 @@ def test_run_record_keeps_the_turn_and_question_ids():
             created_runs.append((plan, user_id, {**kwargs, 'turn_context': dict(kwargs['turn_context'])}))
 
         memory = import_app_module("functions_orchestration_memory")
+        checks = import_app_module("functions_chat_content_checks")
         authorize = Mock(return_value={"id": "conversation-1", "user_id": "user-1"})
         latest_run = Mock(return_value=None)
         namespace = {
@@ -156,6 +158,7 @@ def test_run_record_keeps_the_turn_and_question_ids():
             'validate_memory_context': memory.validate_memory_context,
             '_authorize_context_conversation': authorize,
             'get_latest_turn_run': latest_run,
+            'CHECK_METADATA': checks.CHECK_METADATA,
             'g': g, 'has_request_context': has_request_context,
         }
         for name in ('_validate_turn_memory_context', '_persist_planned_turn'):

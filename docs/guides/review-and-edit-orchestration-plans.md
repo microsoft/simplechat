@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.115"
+version: "0.261.127"
 ---
 
 ## Decide what should run
@@ -52,7 +52,7 @@ and the validator still rejects a plan that omits selected documents.
 ## Review versus Edit
 
 **Review** opens the existing drawer. You can inspect steps and their rationales,
-switch off non-answering steps, and remove documents from a step. These controls
+switch off eligible steps, and remove documents from a step. These controls
 only reduce the work already proposed.
 
 **Edit** opens a full-screen preview with **Ask planner** and **History**. Use it
@@ -62,6 +62,56 @@ The planner creates a new version of the same plan.
 If plans currently run immediately, choose Review or countdown approval before
 asking your question, if your administrator permits that choice. A plan that has
 already started cannot be edited.
+
+## Read dependency-driven plans
+
+Version-aware plan inspection was implemented in version **0.261.127**, recorded
+in `application/single_app/config.py` (Refs: microsoft/simplechat#1509). It does
+not enable a new planning contract by itself. The following details appear when
+the server supplies a contract-v2 plan; older saved plans retain their original
+phase labels and meaning.
+
+A saved v1 step keeps its server-recorded phase even if the current capability
+catalog changes. A step whose phase cannot be resolved is still listed.
+
+**Gather**, **Reason**, and **Render** describe a task's purpose, not three
+mandatory stages. The preview follows the server's saved dependency/execution
+order. For example, Gather → Reason → Gather → Reason remains four consecutive
+groups; the second search is not moved ahead of the work it depends on. Running
+tasks show Gathering, Reasoning, or Rendering.
+
+Each task can show **Named inputs** and **Named outputs**. An input names its
+producing task and output, or an explicitly selected retained-result alias.
+The description also says whether complete results are required or partial
+results are accepted. Outputs show their kind, ordered columns, and any
+server-declared prepared-content profile or schema. **Final chat response**
+identifies the prepared content selected for the answer.
+
+Named results are not download links. A retained result or a planned output
+does not prove that a file has been created. The interface does not count those
+results as completed file artifacts.
+
+When the server supplies an explicit `render_file` task, **Planned file** shows
+its intended name, format, profile, bound source, and options before approval.
+These are descriptions of requested work, not success links. Changing a file
+specification requires a validated planner revision; the browser does not infer
+a format or replace the chosen source.
+
+A producer's switch explains which consumers require it. You cannot silently
+disconnect those consumers by disabling the producer. Even a skipped consumer
+retains its declared bindings: use **Ask planner** to change or remove the
+consumer and its requested outputs in a validated revision. A saved edit with
+an unavailable producer blocks approval and identifies the affected inputs.
+Restoring the producer clears that conflict; it does not discard any edges.
+
+File-format reference information is optional and uses only the shared catalog
+supplied by the server. It is not a separate browser format list or permission
+to add a file-producing task. Where available, its profiles, source kinds,
+option rules, and default renderer limits are read-only. Ask the planner for a
+validated revision rather than changing capability arguments in the browser.
+If the current view has no catalog, **Load server file format reference** asks
+the server for the reference authorized for that saved plan. A failed lookup
+does not substitute guessed formats or change the plan.
 
 ## Refine the plan with the planner
 
@@ -155,7 +205,8 @@ Run view. The explanation distinguishes a measured timeout from a user-requested
 Stop and describes the work that could not finish. If answering also fails, a
 status explanation still reports the incomplete request.
 
-Use **Retry from failed step** when the run has recoverable saved progress.
+For checkpoint-based runs without individual file recovery, use **Retry from
+failed step** when the run has recoverable saved progress.
 Review which steps will be reused and which work will execute. Completed steps
 are restored from checkpoints and labelled **Reused saved result**; retry does
 not ask the planner to choose a new agent or start the whole plan again.
@@ -189,6 +240,73 @@ If sources, permissions, or saved context changed, or an older run has no full
 checkpoints, recovery explains why it cannot continue. Create a new plan in that
 case; the application will not quietly rerun completed actions to fill a gap.
 Editing an already-started plan remains unavailable.
+
+## Wait for retained computation
+
+Since **0.261.127**, a server-reported **Waiting for required results** state
+remains active in the same execution attempt. It is neither successful
+completion nor cancellation. Dependent tasks wait for the producer's results,
+and the Map shows **Waiting for results**, including after a conversation reload.
+
+**Check saved status** reads the existing run. It does not approve another plan,
+repeat a task, or create a retry attempt. **Retry from failed step** and **Run
+prepared retry** are not offered for a waiting attempt. **Stop execution**
+continues to request cancellation from the server; closing the browser does not
+mean the computation stopped.
+
+The interface recognizes waiting without assuming that a downloadable file
+exists. Per-file publication and retry controls require their own server-owned
+output lifecycle; waiting alone does not enable them.
+
+## Track and retry individual files
+
+Implemented in version **0.261.127**, recorded in
+`application/single_app/config.py` (Refs: microsoft/simplechat#1509). These controls
+appear only when the server publishes individual output states. They do not
+enable a new planner, renderer, or scheduler on their own.
+
+**Files** appears beside the response and in the Run view. Each requested file
+keeps its own name, format, profile, status, attempt count, and server-reported
+automatic-attempt limit. Waiting and Rendering are unfinished work, not download
+links. **Automatic retry scheduled** shows the server's next retry time; the
+browser does not start a retry when that time arrives.
+
+A completed file uses the existing generated-artifact Download control only
+when the server also supplies its matching committed download descriptor. A
+filename is never turned into a guessed URL. If download details are missing,
+use **Check saved file status**. A file marked **Unavailable**, for example
+after source deletion or a screening/access change, withholds its download
+without hiding other ready files.
+
+Availability does not rewrite the saved completion state. If access is restored
+or a screening hold is lifted, **Check saved file status** can restore the same
+committed download without another rendering attempt. A network or server error
+while reading status instead shows a refresh error and retains previous progress;
+it does not invent a source-access denial.
+
+Generated-file history entries do not substitute for committed output cards or
+open uploaded-file previews. An unavailable history entry shows the server's safe
+explanation and closes any previously opened preview. Empty TXT and MD files
+remain valid downloads; a zero row, character, or byte count is not a failure.
+
+**Retry file** appears only when the server says that specific failed output
+can be retried. It requests that file again from retained results, not another
+plan, producer task, or sibling output. An exhausted automatic-attempt count
+does not by itself authorize a manual retry. Non-retryable failures keep their
+status and reason instead of offering a whole-plan replay.
+
+If a retry response is lost, **Retry same request** keeps the original action
+identity. The identity is saved in this browser tab before the request and
+survives a page reload. Reloading only reads saved progress; it never submits
+the retry automatically. If the browser cannot save that identity, no new retry
+is sent. A sign-in, permission, or conflict error stays visible until you check
+the saved state before trying again.
+
+Pending files continue to refresh while visible even if the earlier aggregate
+run result remains failed or partially completed. **Check saved file status**
+is also available for an immediate read. The run's explanation and the files'
+individual states are separate server records; the interface does not invent
+a successful run just because one file is ready.
 
 ## Related
 

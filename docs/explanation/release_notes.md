@@ -103,6 +103,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments. Share rosters remain serialized, because the surfaces that render share status and counts read them directly.
     *   (Ref: `content_screening/access.py`, `functions_group_document_reads.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, `GENERATED_ARTIFACT_REQUEST_FIELDS`, [Payload Redaction Fix](fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
 
+### **(v0.261.129)**
+
+#### New Features
+
+*   **Microsoft 365 Mail And Calendar History**
+    *   Read my mail can search by words and received dates, and Read my calendar events can read or search any past or future time range. Long histories continue across calls without repeating items.
+    *   Without a range, calendar reads now return occurrences in the next 30 days instead of the calendar's oldest events and recurring series.
+    *   No new Microsoft Graph permission is required. Reads stay limited to the primary mailbox and default calendar, and items removed by retention can't be returned.
+    *   (Ref: `msgraph_plugin.py`, `functions_msgraph_operations.py`, [Microsoft 365 Email](../reference/actions/m365-email.md), [Microsoft 365 Calendar](../reference/actions/m365-calendar.md), #1523)
+
+#### Bug Fixes
+
+*   **Microsoft 365 Agent Replies Survive Stream Failures**
+    *   Fixed agents that have OneDrive or SharePoint Online actions, or that run in a workflow, ending with "Stream interrupted: Agent streaming failed". Each streamed chunk ran in a new context, so the Microsoft 365 continuation journal failed when it closed.
+    *   A reply that fails after streaming text is now saved as an incomplete message and appears when the conversation is reopened. Approval and sign-in waits still resume as before.
+    *   The error banner says the partial content was saved only when the server saved it.
+    *   (Ref: `agent_delegation_runtime.py`, `route_backend_chats.py`, `chat-streaming.js`, [Stream Context And Persistence Fix](fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md), #1523)
+
 ### **(v0.261.123)**
 
 #### New Features

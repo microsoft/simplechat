@@ -25,9 +25,13 @@ import {
     selectPlan,
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
-import { fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps, isOrchestrationRunPending } from './orchestration';
+import {
+    fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps,
+    isOrchestrationRunPending, isOrchestrationRunWaiting,
+} from './orchestration';
 import { loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor } from './orchestrationController';
 import type { Json } from './orchestration';
+import { hasPendingOrchestrationOutputs } from './orchestrationOutputs';
 
 /** How many runs to ask for. Matches the store's per-conversation history cap. */
 const RUN_FETCH_LIMIT = 25;
@@ -84,14 +88,18 @@ export async function resumeOrchestrationForConversation(
 
     const newest = useOrchestrationStore.getState().hydratedHistory[conversationId]?.[0];
     const pending = newest && isOrchestrationRunPending({ ...newest.attempt, status: newest.planStatus });
-    if (newest && (newest.planStatus === 'failed' || newest.planStatus === 'cancelled' || pending)) {
+    if (newest && (newest.planStatus === 'failed' || newest.planStatus === 'cancelled' || pending
+        || hasPendingOrchestrationOutputs(newest.attempt?.outputs))) {
         try {
             const record = await loadOrchestrationRecovery(conversationId, newest.runId);
             const steps = await fetchRunSteps(newest.runId, { conversationId });
             const current = useOrchestrationStore.getState();
             if (record && !selectActiveTurn(current, conversationId)
                 && useChatStore.getState().activeConversationId === conversationId) {
-                current.adoptPersistedPlan(conversationId, newest.turnId, record.plan, steps);
+                current.adoptPersistedPlan(conversationId, newest.turnId, {
+                    ...record.plan,
+                    ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
+                }, steps);
                 current.setActiveTurn(conversationId, newest.turnId);
             }
             if (record && (pending || isOrchestrationRunPending(record))) {

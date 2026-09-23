@@ -266,7 +266,7 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
   {
     key: 'get_my_events',
     label: 'Read my calendar events',
-    description: 'Allow this action to read upcoming calendar events for the signed-in user.'
+    description: 'Allow this action to read and search calendar events in any past or future time range for the signed-in user.'
   },
   {
     key: 'create_calendar_invite',
@@ -276,7 +276,7 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
   {
     key: 'get_my_messages',
     label: 'Read my mail',
-    description: 'Allow this action to read recent mail messages for the signed-in user.'
+    description: 'Allow this action to read and search mail of any age for the signed-in user.'
   },
   {
     key: 'mark_message_as_read',

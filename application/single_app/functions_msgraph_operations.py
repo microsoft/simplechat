@@ -42,7 +42,7 @@ MSGRAPH_CAPABILITY_DEFINITIONS = [
         "key": "get_my_events",
         "function_name": "get_my_events",
         "label": "Read my calendar events",
-        "description": "Read upcoming calendar events for the signed-in user.",
+        "description": "Read or search the signed-in user's calendar events in any past or future time range.",
     },
     {
         "key": "create_calendar_invite",
@@ -54,7 +54,7 @@ MSGRAPH_CAPABILITY_DEFINITIONS = [
         "key": "get_my_messages",
         "function_name": "get_my_messages",
         "label": "Read my mail",
-        "description": "Read recent mail messages for the signed-in user.",
+        "description": "Read or search the signed-in user's mail of any age, by words and received date.",
     },
     {
         "key": "mark_message_as_read",

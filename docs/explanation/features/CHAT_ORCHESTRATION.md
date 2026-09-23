@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.119** (tracked in `application/single_app/config.py`)
+**Version: 0.261.130** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -14,6 +14,10 @@
 **Conversational plan editing implemented in version: 0.261.102**
 **Capability-aware planning and reasoning compatibility fixed in version: 0.261.104**
 **Failure communication and checkpoint recovery implemented in version: 0.261.105**
+**Opt-in dependency runtime and composition implemented in version: 0.261.127**
+**Selected composition profile definitions supplied in version: 0.261.127**
+**Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
+**Runtime boundary hardening implemented in version: 0.261.129**
 
 ## Overview
 
@@ -33,6 +37,17 @@ its required companions.
 
 This is a V2 interface feature. The classic interface is unchanged.
 
+Version **0.261.125** adds the internal
+[Gather / Reason / Render result foundation](ORCHESTRATION_RENDERING_HARNESS.md)
+(Refs #1509), plus an explicitly admitted plan-contract v2 runtime. This internal
+contract is separate from the **V2 chat interface**. The integrated runtime,
+introduced in **0.261.127**, admits new v2 plans only when both **Enable Chat
+Orchestration** and **Gather / Reason / Render harness (preview)** are enabled.
+Both settings remain off by default; saved legacy plans keep their original
+contract. [Runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md)
+in **0.261.129** preserves pending results and strengthens invocation, catalog,
+and delivery checks without changing those admission settings.
+
 ## Dependencies
 
 - `enable_chat_orchestration` must be on.
@@ -43,9 +58,504 @@ This is a V2 interface feature. The classic interface is unchanged.
   `enable_chat_orchestration_actions` switch. Existing action scope settings and
   governance continue to determine which actions the caller can use.
 
+## Internal dependency contract (M4)
+
+Plan-contract v2 treats **Gather**, **Reason**, and **Render** as server-owned
+purposes, not globally ordered phases. A reviewed finite plan can Gather, Reason,
+Gather again, then Reason. Named result bindings infer dependencies; stable
+topological execution preserves their order without adding an autonomous
+graph-mutation loop or another parallel-agent engine.
+
+Server callers must explicitly pass `contract_version=2` to `plan_request` or
+`normalize_plan`, and construct a matching `RunContext(plan_contract_version=2)`.
+The persisted marker is `planner_contract_version: 2`. Missing markers remain
+legacy v1, and a model cannot select or downgrade the admitted contract.
+Existing capability gates, source access, step/document limits, model budgets,
+and approval/revision ownership remain authoritative.
+
+### Named inputs and prepared outputs
+
+For example, this raw plan asks for an answer from returned document excerpts:
+
+```json
+{
+  "planner_contract_version": 2,
+  "steps": [
+    {
+      "step_id": "search",
+      "capability_id": "document_search",
+      "arguments": {"query": "Which release requirements are still open?"}
+    },
+    {
+      "step_id": "draft",
+      "capability_id": "compose",
+      "arguments": {"instruction": "Explain the open requirements using the named excerpts."},
+      "inputs": {
+        "excerpts": {
+          "binding": {
+            "version": "orchestration-input-binding-v1",
+            "step_id": "search",
+            "output_name": "evidence",
+            "existing_result": null
+          },
+          "allow_partial": false
+        }
+      },
+      "outputs": [{"name": "answer", "kind": "markdown-v1"}]
+    }
+  ],
+  "final_response": {
+    "version": "orchestration-input-binding-v1",
+    "step_id": "draft",
+    "output_name": "answer",
+    "existing_result": null
+  }
+}
+```
+
+The compiler adds the `search` dependency to `draft`; it does not rely on
+incidental sibling notes or artifacts. An admitted existing result instead uses
+`step_id: null`, `output_name: null`, and an exact server-owned `existing_result`
+alias. Raw result descriptors, storage locators, producer identities and file
+permissions cannot be supplied as bindings.
+
+| Capability | Retained outputs |
+| --- | --- |
+| `document_search` | `evidence: evidence-set-v1`, `sources: source-set-v1`, and `prepared: structured-v1`; these describe returned excerpts, not complete source coverage. |
+| `document_analyze` | Narrative `findings: records-v1` and `coverage: structured-v1`; public `records` and a Markdown `report` are optional outputs only when genuinely produced. |
+| `document_compare` | Narrative `comparison: comparison-v1` and `coverage: structured-v1`; a Markdown `report` is optional when available. |
+| `tabular_analyze` | Server-bound native query/transform returns `records` and `coverage`; analysis-only returns `analysis` and `coverage`; combined transformation/analysis returns all three. |
+| `compose` | Explicitly named text, Markdown, records or structured values. There is no default output declaration. |
+| Server-bound external Gather | `prepared: structured-v1` with exact returned content and separately authorized external-source lineage. |
+
+Unknown or disabled producers, nonexistent output names, incompatible kinds,
+cycles, excess work and unavailable sources fail validation. V2 never repairs a
+plan by deleting edges, dropping documents, removing requested outputs or
+trimming steps. Requesting an optional Analyze/Compare output makes its actual
+presence necessary for that step; the executor does not substitute a preview.
+
+### Capability allowlists and existing settings
+
+In version **0.261.127**, admitted v2 plans enforce the saved
+`chat_orchestration_enabled_capabilities` selection even when a caller omits
+its own narrowing. A caller's selection can only narrow that saved selection,
+never broaden it. Missing, `null` or empty selections retain the existing
+meaning of allowing everything that the other feature, authorization and
+initialized-service checks permit. Invalid selection types or blank/non-string
+entries fail explicitly instead of becoming unrestricted access.
+
+A nonempty saved list is an exact allowlist. This includes lists containing
+every legacy capability: there is no reliable way to distinguish an old list
+from an intentional restriction. Administrators must include **Prepare content**
+(`compose`) and **Create a file** (`render_file`) when they want those operations
+in restricted harness plans. The legacy `respond` identifier neither aliases
+nor forces either new operation. If file rendering is excluded, a requested
+file must be rejected rather than silently replaced by prepared text.
+
+The admin capability projection identifies the new operations with
+`plan_contract_version: 2` and their server-owned purpose labels.
+`describe_registry(contract_version=2)` describes this separate inventory with
+no mandatory terminal operation; the default registry metadata and legacy
+terminal-response behavior remain unchanged. Metadata alone grants no
+permission and does not enable rollout. The integrated runtime's
+`functions_orchestration_admission.HARNESS_ADMISSION_READY` is true in
+**0.261.127**, while both orchestration and harness-preview settings remain
+off by default. New v2 plans require both administrator opt-ins.
+
+`test_orchestration_dependency_allowlist.py` covers legacy-only saved lists,
+explicit opt-in, intersecting restrictions, malformed configuration, actual
+rendering-service readiness, versioned metadata and preservation of v1 behavior.
+
+### Explicit composition
+
+`functions_orchestration_composition.adapter_compose` makes one content-generation
+model call for all declared outputs. One text/Markdown output uses the returned
+text directly; multiple outputs require an exact JSON object keyed by the
+declared names. Records require an ordered `columns` schema. Structured values
+may use a self-contained JSON schema or a server-admitted profile with an
+injected validator. The generation prompt receives the selected profiles'
+exact server-supplied JSON definitions, and those definitions count toward its
+input budget; unrelated profiles are not included.
+
+The server can inject the Office catalog's `prepared_slide_deck_v1` profile
+using `get_prepared_slide_deck_schema()` and validate the output value with
+`prepare_generated_slide_deck(value, limits=None, office_limits=None, check=None)`.
+This uses the catalog's exact `schema_version`, `slide_count`, `slides`,
+shape and inch-coordinate contracts; composition does not define another
+slide schema. The helper checks structure, counts and geometry without
+rendering, uploading or making a model call. The original JSON is retained as
+`structured-v1`, not replaced with an Office object. A later authorized export
+source bridge maps it to `structured_value` for the PPTX
+`prepared_slide_deck_v1` profile. Physical text fit and image resolution remain
+the later model-free renderer's responsibility.
+
+`test_orchestration_dependency_runtime.py` covers this exact catalog/helper
+handoff, one-call preparation, retained-value equality and rejection of invalid
+versions, counts, overlapping geometry, ragged tables and non-asset images.
+
+Source-free drafting is allowed and retained with generated origin. Grounded
+drafting reads only named authorized inputs, exhausting collection readers and
+their integrity checks rather than using previews. Inputs must fit the shared
+model budget and the 8 MiB materialization boundary. An unrepresentable input
+fails before generation instead of being clipped or summarized by a hidden
+extra call. Explicitly accepted partial inputs keep their limitations and
+produce partial output.
+
+The current Analyze source-set input requires complete input. Its native
+document coverage cannot certify completeness of an already partial discovery
+set. Only composition advertises `partial_inputs_supported`; requesting partial
+Analyze input is rejected rather than promoting an incomplete set to a complete
+analysis.
+
+Composition performs no retrieval, tool calls, uploads, format inference or
+publication. Report/deck preparation is Reason work whose retained output can
+be passed to a later renderer; it is not an implicit file request.
+
+### Server-bound native computation
+
+Implemented in version: **0.261.127**. V2 native work uses the existing
+`NativeOrchestrationBridge` and persisted native `data_only` policy, not the
+legacy spreadsheet publication adapter. The owner must supply a callable
+`RunContext.native_bridge_for_step(step, context)` returning that bridge for
+the exact approved operation and attempt. Capability discovery and planning
+must receive the same server callback in
+`request_context["native_bridge_for_step"]`. Without this binding, native
+work remains unavailable; a Boolean readiness claim does not admit it.
+
+Arguments use the bridge's existing schema and validators. Query needs
+`native_operation: "query"`, a row-local `query_expression`, explicit `columns`
+and exactly one authorized document ID. Transformation needs explicit columns
+and an executable transformation specification or model-supported schema.
+Analysis-only uses `native_operation: "analysis"` and does not imply source-row
+output. Combined work uses transformation with `task_type: "combined"`.
+The compiler derives the exact required outputs from the selected operation;
+unsupported reductions, missing schema, multiple or mixed sources are not
+silently replaced with a row export.
+
+The bridge receives the full authorized tabular manifest, including its storage
+locator. It constructs the bound native callback from trusted runtime identity,
+model and settings. The runtime requires current-source policy, exhausts full
+native readers through the existing bridge, and binds result receipts to the
+same declaration-scoped fingerprint used by checkpoints. No reader, callback
+or client is persisted. Native execution never falls back to the legacy mixed
+workflow, which can queue publication-default work.
+
+Pending native work remains waiting until an explicit continuation reopens its
+original handle. `resume_native_dependency_step(...)` is a one-shot read/retain
+entrypoint, not a scheduler or polling loop; its exact contract is documented
+under [checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md).
+
+### Server-bound external Gather
+
+Implemented in version: **0.261.127**. External discovery is admitted only when
+all four server callbacks are present in capability request context:
+`external_source_admission`, `external_source_preflight`,
+`capture_external_source_configuration`, and
+`external_source_authorizer`. The runtime obtains the last callback from its
+initialized result service. Booleans or capability settings alone do not admit
+external work; ordinary catalog, audience, role and capability checks still
+apply.
+
+The production factory must bind independently refreshed account and application
+role authority. Request-session roles, persisted run roles and cached account
+state are not substitutes. Until that factory and the actual invocation capture
+are initialized, it must leave these capabilities unavailable. Missing directory
+consent or an identity-service failure is not permission to fall back to saved
+roles. This runtime boundary does not grant directory permissions or change
+application scopes.
+
+The adapter calls `context.external_source_preflight(producer=..., selector=...)`
+after validating the original server selection and before provider, model, HTTP,
+or action effects. The initialized root binds the real synchronous
+`provider.preflight_gather_invocation` operation; success must return exactly
+`None`. A missing or noncallable hook withholds every external capability. The
+hook is authorization-only: it does not attest configuration or replace the
+separate acquisition-support check.
+
+The adapter also invokes its capture preparation/event boundary before
+acquisition effects.
+Inside `capture_external_source_configuration`, the root must first call
+`provider.preflight_gather_acquisition(source_type, producer=producer,
+settings=settings, source=source, selector=selector)`, configured with
+`acquisition_validator=attestor.validate_acquisition`. This single shared
+operation performs fresh authorization and current/actual support checks
+described in [external source access](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md#pre-invocation-authorization-and-support).
+Agent/action selectors remain the original server `catalog_key`/`action_ref`;
+other Gather operations use `None`. Unverifiable support withholds acquisition.
+The separate invocation preflight cannot replace the combined check.
+Neither operation grants a URL, creates a retained
+alias, or replaces conversation, transport, budget and publication guards.
+Retention-time admission remains mandatory but is too late to authorize acquisition.
+
+The four callbacks are ephemeral and never enter checkpoint state or
+fingerprints. Factories must clear inherited preflight/capture/admission bindings when
+the current service has none, and discovery reads the authorizer from that
+current result service. Missing or noncallable bindings withhold v2 external
+capabilities; merely supplying four callables is not proof of supported
+acquisition. Legacy v1 descriptors remain unchanged.
+`test_orchestration_external_gather_runtime.py` covers the four-callback gate,
+separate authorization/capture requirements, and unchanged checkpoint fingerprints.
+
+Bind `capture_external_source_configuration` to the
+[verified root wrapper](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md#verified-root-injection-boundary),
+**not directly to `attestor.capture`**. The wrapper refreshes provider authority
+and the separate support checks before processing each engine event. For
+`source=None` with exactly `("agent", "agent_invoke")` or
+`("action", "action_invoke")` as `(source_type, producer.capability_id)`, it
+returns without calling `attestor.capture`. This preparation runs before
+manifest hydration and downstream credential/model construction; it is not
+configuration evidence and must not satisfy the capture-completeness check.
+Actual engine events repeat the provider checks before reaching
+`attestor.capture` with their original producer, settings, source and selector.
+Do not skip every `source=None` event: other acquisition types have their own
+capture requirements. The linked wrapper is the authoritative composition;
+do not replace it with a direct attestor binding or a readiness-only callback.
+
+`context.external_source_admission(producer=..., prepared=...)` receives the
+exact complete structured value that Gather retention will store. It returns
+server-admitted aliases to typed `ExternalSourceRef` values. The runtime checks
+alias identity and catalog limits, installs those bindings in the result access
+catalog, and persists their aliases with grounded origin. Integration selectors
+must come from the original server configuration capture, not model-authored
+agent names or display labels. The parent factory supplies that closure.
+
+Retention accepts an untyped adapter envelope only after a `completed` or
+`partial` invocation. A `pending` or `waiting` Gather must supply its typed
+pending `TaskResult` and wait identity; a preview cannot become a completed
+result or reach a downstream content-generation step. This distinction is
+covered by `test_orchestration_dependency_runtime.py`.
+
+A genuinely successful external invocation with empty notes, citations and
+evidence still retains its authorized external binding and grounded origin.
+Empty content does not bypass capture or become source-free success, and its
+container completeness does not claim whole-source coverage. Complete and
+partial empty-result lineage survives restart in
+`test_orchestration_external_gather_runtime.py`.
+
+The existing `OrchestrationExternalConfigurationAttestor.selector_for(producer)`
+returns the original selector only after a complete, non-poisoned invocation
+capture. The parent can bind the two-keyword runtime hook without adding a
+selector to the plan or changing the retained content:
+
+```python
+def admit_external_result(*, producer, prepared):
+    return provider.admit_gather_result(
+        producer=producer,
+        prepared=prepared,
+        selector=attestor.selector_for(producer),
+    )
+```
+
+The provider also needs `read_configuration=attestor.current` and
+`configuration_admitter=attestor.for_admission`: current metadata alone is not
+proof of the configuration that actually ran. The acquisition engine supplies
+its actual resolved client, agent or action configuration before invocation;
+the attestor retains only private opaque identity/revision proof. If current
+configuration differs before retention, admission rejects the result rather
+than attributing it to the newer configuration. Model-returned names and a fresh
+post-execution catalog lookup cannot establish that proof.
+`OrchestrationServices.bind_context`
+already carries the admission and capture callbacks onto the context. Directly
+binding `provider.admit_gather_result` does not supply agent/action selectors;
+use the original-capture closure for those operations. This bridge is exercised
+with real acquisition, attestation, retention and restart reads in
+`test_orchestration_external_capture_integration.py`.
+Retained reads after restart use `provider.authorize` and independently refreshed
+`attestor.current` metadata, never `selector_for` or a live capture map as authority.
+
+Returned notes, evidence and display citations are retained without truncation.
+External URLs and citation identifiers are not converted into document IDs or
+implicitly fetched. `reported_external_content` describes what the integration
+returned; it does not claim complete coverage of a remote source. A partial
+Gather result remains partial. Composition retains the upstream result
+references, so later reads reauthorize the original external producer even
+after restart with an empty admission catalog. Revoking source access also
+revokes dependent prepared content; it is not relabeled as source-free content.
+
+### Render admission boundary
+
+The central contract defines `render_file` only for explicit v2 admission.
+It remains unavailable unless the owner injects the actual
+actor/conversation-bound `context.rendering_service`. The central
+adapter supplies the `execute_render_file` service-factory callback and returns
+that exact initialized service; it does not create a client or require another
+factory field. It verifies the current actor/conversation and the exact
+`context.result_service` instance. Discovery receives the service through
+`request_context["rendering_service"]`; a Boolean, dictionary or callable
+readiness claim is not a service.
+This is not an activation of the route, scheduler, retry UI or output service.
+
+A Render step binds exactly one complete named `source`, declares `outputs:[]`,
+and supplies `file_name`, `output_format`, `profile`, and supported `options`.
+The shared export catalog supplies the real format/profile option schemas;
+the compiler also verifies compatibility with the bound result kind. Unsupported
+representations are rejected before producer execution. Render does not create
+a fake `TaskResult` or a consumable named file-data output.
+
+Since **0.261.127**, server callers can further narrow those representations with
+`export_catalog`. `None` retains the shared catalog for compatibility; an explicit
+`[]` admits no Render format/profile pairs. Nonempty selections use the complete
+descriptors returned by `get_generated_file_export_catalog()`, filtering formats
+and their `profiles` without rewriting definitions. Identifiers are `format_id`
+and `profile`. Unknown or duplicate entries, invented source kinds, and changed
+schemas/options are configuration errors, not permission to extend an exporter.
+`resolve_admitted_export_catalog()` returns fresh canonical definitions in shared
+order. This metadata never replaces capability allowlists, service readiness or
+source authorization.
+
+Pass the live server catalog through capability resolution, `plan_request`,
+`normalize_plan`, `validate_plan`, `apply_plan_edits`, and
+`RunContext(export_catalog=...)`. Planning, including an elicitation repair,
+shows only admitted pairs; compilation and execution reject an excluded required
+file rather than removing it or substituting another format. Edits preserve
+named bindings, prepared-output declarations and `final_response`, and a failed
+edit leaves the original plan unchanged. `validate_plan` and `apply_plan_edits`
+also accept an optional `contract_version` matching the saved marker; this is
+a version assertion, not an upgrade/downgrade operation. Composition profile
+schemas remain a separate `composition_profiles` input. Legacy v1 callers ignore
+the additive export catalog.
+
+`test_orchestration_export_catalog_admission.py` covers these boundaries with the
+real compiler, planner and output services, including current-catalog rejection
+before generation and same-attempt waiting continuation without producer replay.
+
+A Render `StepResult` instead carries the output service's public `outputs` descriptors
+and, only after a verified commit, actual artifact cards. An
+`orchestration_output` wait contains no completed artifact. Restoring a saved
+output uses the central read-only bridge over the service's `read`,
+`store.get` and `committed_artifacts` APIs, not its renderer or retry claim.
+The canonical output ID, original producer, retained source, approved work,
+normalized filename, explicit render request and unchanged deadline must all
+match. Cached preview states cannot declare a pending file complete.
+Automatic and manual output retry scheduling remains output-service
+and scheduler work; it never means composing the content again.
+
+### Execution and finalization
+
+Every admitted Gather/Reason adapter executes inside
+`orchestration_file_policy(allow_generated_files=False)`. Private retained
+storage is permitted; downloadable files are not. Only a server-declared Render
+operation can receive publication permission. Read-only output resumption runs
+with publication disabled as well.
+
+`StepResult.task_result` carries a typed `TaskResult`. Complete outputs are
+reusable; partial required work prevents aggregate success. A pending task has
+no completed outputs and must provide a bounded JSON `StepResult.wait` handle.
+Its step and blocked dependents become `waiting`, with no request-thread wait or
+polling loop. A waiting run has `completed_at: null`. The runtime does not
+resubmit an already retained pending producer.
+
+There is no universal terminal `respond` step. `final_response` selects an
+authorized retained text/Markdown value without another model call. Without
+prepared answer text, the runtime returns a deterministic work/delivery-status
+message rather than synthesizing prose. Required failed or pending
+work cannot become successful merely because another step produced text.
+`outputs` and `delivery_facts.files` contain only file outcomes from the actual
+rendering service's `list_public_outputs(run_id)` projection. They are empty
+when there are no file outcomes. `artifacts` comes from
+`committed_artifacts(run_id)`, never incidental context cards or stale step
+summaries. A denied file remains an unavailable outcome without hiding an
+authorized sibling. Model-authored links or delivery claims are not
+authoritative file publication.
+
+Since **0.261.127**, the final answer's `citations` are reconstructed from its
+exact retained result lineage through the initialized result service.
+`read_result_document_citations(context, reference)` rechecks current access
+and follows immutable upstream references; it never selects the most recent
+result or reads incidental sibling notes/citations. Reopening a saved answer
+or an admitted old-attempt reference preserves the same authorized provenance
+without another model call.
+
+An explicitly consumed search `prepared` result retains its actual citation
+IDs, filenames and page locations. Other document-backed inputs contribute
+document-level citations without inventing chunk IDs or page numbers.
+Workspace/conversation scope comes from the authorized source snapshots,
+not citation display metadata. The projection excludes private manifests and
+storage fields and fails rather than truncates if citation metadata exceeds
+the shared 128 KiB descriptor bound. Source-free answers have no document
+citations, and external providers' document-like identifiers are not promoted
+into workspace documents. The finalization owner can use these citations with
+the existing message citation channels and cited-document cache.
+
+Step events keep `type: "step"` and `phase: <status>`, adding the server role and
+typed task state. Run results preserve the familiar legacy keys and add
+`planner_contract_version`, `task_results`, internal `result_outputs` availability,
+`pending_results`, `execution_deadline_at`, `final_response` and
+`delivery_facts`. Private descriptors and handles need an explicit authorized
+browser projection; this change does not wire a new UI or persist the final
+assistant message.
+
+`result_outputs` describes named retained data availability and may contain
+authorized private result references. It is distinct from file-only `outputs`;
+the run SSE event emits only the latter. Routes must apply their authorized
+projection and refresh current file states through the real service rather
+than expose private references or rely on a persisted delivery snapshot.
+
+For durable v2 execution, each saved step updates the run's descriptor-only
+`task_results`, `pending_results` and unchanged `execution_deadline_at` under
+the owning execution lease. This makes current retained references available
+to continuation and catalog readers before finalization. Updating one step
+preserves untouched retained entries; failed tasks are removed from the
+reusable map rather than left looking pending. Content remains in the private
+result store, not these run fields.
+
+### Runtime injection and remaining boundaries
+
+The runtime owner supplies initialized `OrchestrationResults`, the current
+actor/conversation/run/attempt, admitted aliases, a model invoker, and
+`result_guard_token_for_step(step_id)`. That callback must return the actual
+owning lifecycle token; adapters cannot invent one.
+`RunContext.result_producer(step)` creates the trusted producer identity.
+Since **0.261.127**, its `ProducerIdentity.contract_version` comes from the
+capability's server-owned `result_contract_version` string: for example,
+`analyze-final-v1`, `comparison-v1` or `compose-v1`. This is a result-contract
+identifier, not the integer `plan_contract_version` used for runtime dispatch.
+Plan arguments cannot override it.
+Clients, callbacks, credentials and model handles are never checkpoint data.
+The model invoker remains responsible for rejecting provider refusals and
+incomplete completions before returning prepared text.
+
+Since **0.261.127**, the executor also binds
+`result_input_fingerprint_for_step(step_id)` on the adapter's scoped context.
+It returns the original declaration-scoped checkpoint fingerprint, before
+named source sets are expanded into native document IDs. Producers pass this
+unchanged to `persist_task_result(input_fingerprint=...)` for complete or
+partial results; failed diagnostic outputs do not create completion receipts.
+The native bridge retains its existing
+`input_fingerprint_for_step(step, context)` callback interface, bound to the
+same value. Missing or invalid fingerprints fail closed rather than being
+invented from output data.
+
+Before durable producer work, `ExecutionCheckpoints.begin_step` saves a
+guarded, reference-only input checkpoint containing the original producer and
+fingerprint. Recovery can combine that checkpoint with an authenticated
+`recover_task_result` receipt to reuse content committed before a completion
+checkpoint was saved. This does not rerun composition or another producer,
+retag an earlier attempt, or prove that a file was published.
+
+Production result-access callbacks must check current memory audiences and
+integration/agent/action access where relevant, not just document ACLs.
+External Gather is withheld unless the real admission, configuration-capture
+and current-access callbacks are injected. Merely having an `ExternalSourceRef`
+schema does not prove integration access or a Fact Memory audience. URLs, agent
+output and Fact Memory must not be disguised as Analyze documents or relabeled
+as ungrounded generated content. This runtime does not add implicit memory recall.
+
+`tabular_analyze` stays unavailable unless its server bridge factory is
+injected. Its metadata, argument/output compilation and runtime path are
+directly usable with initialized services, but this does not enable route
+admission, durable scheduling or production rollout. Legacy catalog
+availability is unchanged.
+
+Runtime factories, route admission, explicit continuation dispatch, output
+resumption and Render/retry publication, scheduling and UI projection require
+the parent integration. See
+[checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md) for reference-only
+snapshots, reuse authorization and uncertain-commit handling.
+
 ## Architecture
 
-The framework has four phases.
+The default legacy plan-contract framework has four stages.
 
 ### Inputs
 
@@ -302,7 +812,7 @@ step explains why the selected depth fits the request.
 The planner makes this choice before execution. Ordinary search results are not graded
 by a new model call or automatically escalated into research.
 
-### Phases
+### Legacy phases
 
 Every capability declares a `phase`, and the phases are ordered:
 
@@ -721,9 +1231,14 @@ to the front.
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
 | `functional_tests/test_orchestration_model_selection.py` | Manual/default precedence, independent planner connections, authorization, unavailable models, legacy/APIM compatibility, protocol parameters and client ownership |
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
+| `functional_tests/test_orchestration_dependency_runtime.py` | Real v2 compilation, named-result execution, full retained readers, one-call composition, policy, budgets and truthful result states |
+| `functional_tests/test_orchestration_dependency_planner.py` | Explicit version admission, exact declarations, strict failures and legacy planner compatibility |
+| `functional_tests/test_orchestration_dependency_recovery.py` | Actual leases, non-prefix DAG reuse, cross-attempt aliases, current access and uncertain commits |
+| `functional_tests/test_orchestration_dependency_imports.py` | Real cold runtime/composition imports, initialized web/scheduler bootstrap and optimized Python with external network access blocked |
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list; document, web and tool citations use their respective message channels |
+| `functional_tests/test_orchestration_dependency_citations.py` | Actual authorized final-answer citations, source-free/sibling isolation, exact chunk metadata, immutable lineage after restart/retry, workspace scope, revoked sources and bounded citation metadata |
 | `functional_tests/test_orchestration_research_selection.py` | Balanced planning cases, preserved model choices, initial/replan guidance, and capability gates |
 | `functional_tests/test_orchestration_deep_research.py` | Multi-query discovery and review, query bounds, logs-only backup recovery, cancellation, partial/empty results, resolved follow-ups, and user-URL provenance |
 | `functional_tests/test_orchestration_action_catalog.py` | Scoped discovery, existing governance, exact references, secret-free projections and revocation |

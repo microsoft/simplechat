@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.152**
+Updated through version: **0.261.127**
 
 ## Overview
 
@@ -51,6 +51,284 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Completed structured artifacts show only the generated filename, total row count, and `Download`, `View`, and `Add to Workspace` actions. `View` opens a bounded validated preview in a modal, and the stale background handoff prose is hidden after completion.
 - New source-backed runs estimate serialized row size from a bounded source sample, apply the tighter of row and character capacity, and rebalance uneven multi-wave work across configured model concurrency. Completion-driven checkpointing is enabled by default so successful batches become durable while slower siblings are still running.
 
+### Internal computation without file publication
+
+Implemented in version: **0.261.127**. This producer/service boundary supports the
+orchestration work in [#1509](https://github.com/microsoft/simplechat/issues/1509).
+It does not by itself enable orchestration routing or change existing chat and
+workflow publication.
+
+`functions_tabular_analysis.build_native_tabular_compute_callback(...)` binds an
+initialized native engine to a server-owned user, conversation, producer, source
+manifest, and selected model. It does not import a Flask route or construct an
+application to execute a query. The producer contains `user_id`,
+`conversation_id`, `run_id`, `attempt_index`, `step_id`, `capability_id`, and
+`contract_version`; it must identify an enabled step in the owning orchestration
+run. Browser or model arguments must not supply this identity.
+
+Call the returned callback with `plan` and `user_question`, or pass it as
+`durable_execution_callback` to `execute_tabular_plan` with
+`execution_policy="data_only"`. The planner's data-only result is in
+`native_compute_result`, never `generated_output_metadata`. A foreground plan
+is executed rather than returned as successful planning metadata. Admission
+uses the native model/character-aware batch budget and existing inline
+thresholds; larger work returns an owned job for the existing native scheduler.
+
+Both execution modes run the same version-pinned CSV/workbook query replay,
+transformations, batch validation, and checkpoints. Query samples only estimate
+batch size; they are never used as the complete result. The service supports one
+replayable authorized CSV or workbook source. Multiple/mixed sources are refused
+before query/model execution or submission. A foreground row transformation
+requires an executable transformation specification or declared output schema.
+An explicit query additionally requires `native_operation="query"`,
+`query_expression`, and a declared schema. Analysis-only work uses
+`native_operation="analysis"` or a hierarchical-analysis plan. A bare foreground
+aggregate/prose plan is not silently replaced by source rows.
+
+The returned state is `pending`, `completed`, or `failed`; cancellation detected
+before submission returns `cancelled` without a handle. Lost ownership, deleted
+owners, cancellation of an existing owner, source access loss, and screening
+holds refuse access rather than returning usable output. Pending and failed
+states have no reader. An opaque handle contains only `version`, `job_id`, and
+`request_fingerprint`. Persist that handle, not callback or reader objects.
+Deterministic producer identity and atomic creation prevent duplicate jobs;
+changing the executable request or source within the same producer attempt is
+rejected.
+
+After a restart, `open_native_tabular_result(user_id=..., conversation_id=...,
+handle=..., producer=...)` opens the private result without resubmitting work.
+Completion requires `computation_state="complete"` and a validated native result
+manifest, independently of artifact publication. `reader` is the primary output;
+`readers["records"]` and `readers["analysis"]` expose applicable outputs, including
+both for combined work. A reader exposes `kind`, ordered `columns` and `schema`,
+`item_count`, exact `sources`, `coverage`, and `completeness`. Records use
+`iter_records()`; the bounded analysis value uses `read_value(max_bytes=...)` or
+`iter_value_bytes()`. Consumers must exhaust a record iterator before retaining
+it as complete: final count, byte size, and digest checks occur at exhaustion.
+Zero-row records retain their declared schema.
+
+Reads recheck current ACLs, screening, and producer ownership at batch boundaries.
+By default, completed readers allow an authorized historical source snapshot;
+`require_current_sources=True` also requires the original document revision and
+blob ETag. New work and worker continuation always require current sources.
+Cancellation, deletion, changed attempts, and stale worker leases fence further
+checkpointing. Invalid or incomplete output is not computation-ready.
+
+The data-only policy and producer/source binding are persisted in the native
+job and checkpoint metadata. Resume cannot fall back to file publication:
+structured, analysis-only, and combined completion create no managed user files,
+artifact-set commits, upload calls, or artifact cards. Private native input,
+output, and final-summary blobs remain necessary for durable execution.
+Standalone and workflow callers retain the default `execution_policy="publish"`
+behavior. There is no new scheduler, deployment service, or render-registry
+dependency. Native semantic outputs retain the native model's limitations; a
+complete checkpoint is not an independent factual or mathematical review.
+
+### Retaining native computation for orchestration
+
+Implemented in version: **0.261.127** (`application/single_app/config.py`).
+`functions_orchestration_native_results.py` bridges the native service to the
+initialized orchestration result store. It does not register a capability,
+modify an adapter, construct a route context, or schedule continuation; those
+remain parent integration work for #1509.
+
+Create a server-owned binding with `build_native_orchestration_bridge`:
+
+```python
+bridge = build_native_orchestration_bridge(
+    native_operation="transform",
+    task_type="structured_export",
+    source_policy="current",
+)
+```
+
+The default builder is the production `build_native_orchestration_request`.
+It calls the existing `plan_tabular_request` service, then constructs the native
+deliverable contract from the explicitly approved mode and schema. It preserves
+source-order, one-result-per-matching-row validation and transformation rules;
+file-intent heuristics cannot replace the declared schema or request publication.
+The existing native engine performs the actual query, deterministic transforms,
+semantic/hybrid row work, and hierarchical/combined model work.
+
+Server metadata can use `native_orchestration_arguments_schema()` and must also
+apply `validate_native_orchestration_arguments(arguments)`, which reuses the
+native row-local query validator and bounded transformation DSL validator.
+The production bridge performs both checks before model selection or work.
+
+| Argument | Contract |
+|---|---|
+| `question` | Required nonblank instructions, at most 24,000 characters; not executable query syntax. |
+| `document_ids` | Required list containing exactly the authorized source document ID. |
+| `native_operation` | Required `query`, `transform`, or `analysis`. There is no question-only default. |
+| `task_type` | Defaults to `structured_export` for query/transform and `hierarchical_analysis` for analysis. Transform also supports `combined`. |
+| `query_expression` | Required for query; optional row filter for transform/analysis. Uses the existing bounded row-local native grammar. |
+| `columns` | Required for query/transform; 1–50 ordered, unique public column names. Forbidden for analysis. |
+| `transformation_spec` | Optional existing `tabular-transform-v1`/`tabular-transform-v2` spec for transform/combined. Its fields must match `columns`. Without a spec, declared row fields use existing semantic/model processing. |
+| `selected_sheet` | Optional explicit workbook worksheet. CSV requests cannot supply a worksheet. |
+
+Unknown arguments, internal lineage columns, mismatched fields, invalid DSL
+expressions, and operation/task/schema contradictions are refused, not ignored.
+Each request is bounded to 64 KiB of canonical argument JSON. For example:
+
+```python
+arguments = {
+    "document_ids": ["approved-document-id"],
+    "question": "Return matching rows and count all matches.",
+    "native_operation": "query",
+    "query_expression": "amount >= 100",
+    "columns": ["Item_ID", "amount"],
+}
+```
+
+Query returns the complete filtered records, and its exact matching-row count is
+`coverage.outputs.records.actual_count`, checked against `expected_count` after
+full consumption. Zero matches produce zero records and count zero. Native
+replay queries do **not** implement global `sum`, `mean`, grouped reductions, or
+arbitrary Python expressions; those expressions fail before execution. The
+legacy plugin's standalone aggregate methods are not silently invoked as an
+uncheckpointed substitute. Explicit analysis mode can perform existing
+model-supported analysis over the full selected cohort, with its native model
+limitations preserved; it is not advertised as a deterministic aggregation.
+
+For specialized server callers, an optional
+`request_builder(step, context, *, settings, user_id, source_manifest,
+native_operation, task_type, cancel_requested)` returns
+`NativeOrchestrationRequest(plan, user_question)`. It may use an existing trusted
+model-request builder; the default bridge does not guess executable queries or translate
+an aggregate into unmodified source rows. Unsupported multiple/mixed selections
+are refused before this callback or model selection runs. This binding consumes
+one original replayable tabular document, not named retained-result inputs:
+declare `inputs={}`. A nonempty input binding is refused rather than ignored or
+silently replaced with rows from the original document.
+
+By default, model selection uses the already captured `context.gpt_model` and
+`context.model_context`. An optional trusted
+`model_resolver(step, context, *, settings, user_id)` instead returns
+`{"gpt_model": ..., "model_context": ...}`. These runtime dependencies never enter
+the persisted wait handle. The bridge neither imports a Flask route nor creates
+an application/client to select a model.
+
+`bridge.execute(step, context, *, settings, user_id, emit=None,
+cancel_requested=None)` and
+`bridge.resume(step, context, pending_result, *, settings, user_id, emit=None,
+cancel_requested=None)` have adapter/resolver signatures. The equivalent module
+functions are `execute_native_orchestration_step` and
+`resume_native_orchestration_step`, with an additional explicit `binding=bridge`
+keyword. Missing bindings fail closed.
+
+The context must supply the real v2 `result_producer(step)`, initialized
+`result_service`, actual `result_guard_token_for_step(step_id)`, full authorized
+single-source `source_manifest`, and matching user/conversation/run/attempt
+identity. A producer's `contract_version` is its server-selected string result
+contract, not the integer plan version. The bridge prepares the existing result
+fence using the supplied token; it never manufactures a token.
+
+`native_orchestration_output_specs(native_operation, *, task_type=None)` returns
+the exact required `OutputSpec` tuple for server metadata and step declarations:
+
+| Native operation and task | Required named outputs |
+|---|---|
+| `query` or `transform`, `structured_export` | `records` (`records-v1`), `coverage` (`structured-v1`) |
+| `analysis`, `hierarchical_analysis` | `analysis` (`structured-v1`), `coverage` (`structured-v1`) |
+| `transform`, `combined` | `records` (`records-v1`), `analysis` (`structured-v1`), `coverage` (`structured-v1`) |
+
+`task_type` defaults to hierarchical analysis for `analysis`, otherwise structured
+export. Declarations that omit an output, invent an output, or advertise records
+for analysis-only work are rejected. Every actual native reader is retained;
+record iterators pass directly into `NamedOutput` and the guarded generic store.
+Large record collections are not materialized. Native analysis JSON is bounded
+by `max_analysis_bytes` (default and maximum 8 MiB). Its full summary stays in
+the retained analysis value; the step summary is only a presentation of that
+validated result. Coverage contains exact snapshots and native validation
+metadata, not a count inferred from a preview. These are not `analyze-final-v1`
+or `SavedAnalysisInput` conversions.
+
+Pending execution returns a real `StepResult` with status `waiting`,
+`TaskResult(producer, "reason", "pending", ())`, and exactly:
+
+```python
+{"kind": "native_tabular_compute", "handle": native_result["handle"]}
+```
+
+Pass that original typed pending step result to `resume`; decode its `TaskResult`
+through the existing checkpoint codec after a restart. M4 stores the typed task
+and wait separately; the resolver can pass this envelope without generating
+another task or attempt:
+
+```python
+pending_result = {
+    "status": "waiting",
+    "task_result": context.task_results[step["step_id"]],
+    "wait": context.pending_results[step["step_id"]],
+}
+```
+
+Resume validates the same producer/run/attempt, opens the handle once, and never calls the request builder,
+model resolver, native callback factory, or queue. It has no polling loop.
+Repeated pending reads remain waiting with no output. The native scheduler can
+compute while the parent is `waiting`; before retaining a completed result, the
+parent must reactivate the same attempt as `running` and supply its current real
+write guard. An already retained complete task in `context.task_results` is
+reauthorized and reused without another result write.
+
+The default `source_policy="current"` requires current source snapshots.
+`source_policy="snapshot"` permits explicitly retained historical data only when
+the context still names the original trusted snapshot and current ACL/screening
+checks allow it. It does not authorize changed inputs as equivalent. Parent
+checkpoint validation must verify the original declared-input fingerprint before
+resume. The optional trusted `input_fingerprint_for_step(step, context)` binding
+forwards that exact fingerprint as `persist_task_result(input_fingerprint=...)`;
+it is validated before planning and never recomputed by the bridge. Omitting the
+hook preserves the existing receipt-free retention path. Pending tasks never
+commit a completion receipt. With that
+binding, resume also calls the facade's existing `recover_task_result` after
+opening the original completed native handle, so a committed result can be
+reauthorized and reused after restart even without an in-memory task cache.
+The facade fully verifies the stored outputs. The bridge invents neither a
+substitute hash nor a producer-completion recovery algorithm. Recovery before
+adapter dispatch and parent continuation scheduling remain runtime responsibilities.
+Recovery exceptions terminate the resume; only an actually absent receipt permits
+new retention. A failed verification is never treated as an absent result.
+
+Native validation and verified access failures are terminal, with
+repository-standard safe messages and bounded
+`failure.native_code`/`failure.retryable=False` metadata. Revocation, corrupt
+output, invalid handles, canceled/deleted owners, and lost guards are not
+downgraded into previews or indefinite waiting. Native computation and retention
+run under the no-user-files policy; only private native/result-store writes are
+allowed. Rendering uses the parent's existing authorized export-source bridge
+later, with explicit public-column selection.
+
+Operational uncertainty is different from a verified denial. The bridge and its
+v2 callers use `raise_native_orchestration_infrastructure_failure(error)` before
+converting failures into step results. It lazily reuses the shared output-read
+classification: non-hold screening/source-authority and external authority or
+configuration exceptions retain their original identity and public metadata.
+Known transport, Azure, checkpoint-storage and unavailable retained-backend
+failures surface as the existing safe `OutputStorageError`. Explicit causes
+behind authorization wrappers are checked, but an ordinary calculation or
+validation cause is not promoted to infrastructure failure. An unavailable poll,
+receipt read or retention write does not produce a terminal native task, invent
+a successful poll, replace the producer, or clear its original wait. The owning
+runtime retains responsibility for bounded continuation and failure handling.
+
+`functional_tests/test_orchestration_native_results.py` exercises real native
+calculation, full reader retention and the existing export bridge over 30,000
+derived records, analysis-only/combined naming, same-attempt waiting/resumption,
+source and guard fences, corruption refusal, and normal/optimized cold imports.
+Production-default tests also cover native query/counting, deterministic,
+semantic and hybrid transforms, analysis and combined execution, exact schema
+despite file-intent wording, and invalid argument refusal before work. Combined
+requests with entirely deterministic output fields now explicitly tell the
+native model that its structured-row field list is empty; schema discovery
+without a declared schema retains its previous prompt.
+`functional_tests/test_orchestration_native_infrastructure_failures.py` injects
+direct and authorization-wrapped failures into actual job polls, source checks,
+receipt reads and foreground/background retention. It verifies unchanged
+pending identity and guards, complete transformed rows after storage recovery
+without resubmission or publication, genuine-denial/validation controls, and
+lazy classification in network-blocked normal/optimized processes.
+
 ### API Endpoints
 
 - `GET /api/tabular/generated-output/runs/<run_id>` returns the current user's public-safe run status.
@@ -88,6 +366,10 @@ Phase 8 applies the configured acceleration settings only to new runs whose dete
 ### File Structure
 
 - `application/single_app/functions_tabular_generated_exports.py`
+- `application/single_app/functions_native_tabular_compute.py`
+- `application/single_app/functions_native_analysis_results.py`
+- `application/single_app/functions_tabular_analysis.py`
+- `application/single_app/functions_tabular_orchestration.py`
 - `application/single_app/route_backend_chats.py`
 - `application/single_app/background_tasks.py`
 - `application/single_app/functions_simplechat_operations.py`
@@ -105,6 +387,7 @@ The progress card displays current status, completed checkpoint counts, processe
 
 ## Testing and Validation
 
+- Offline native computation, complete 30,000-row derived output, empty schema-preserving output, foreground/durable equivalence, semantic and combined completion, restart-ready readers, ownership/source revocation, stale workers, atomic submission, and zero-publication regression: `functional_tests/test_native_tabular_compute_service.py`. Provider and storage I/O are doubled; the real query, transformation, validation, and checkpoint engine executes.
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
 - Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 3 immutable plan, recovery, shadow comparison, active schema, and checkpoint-integrity regression: `functional_tests/test_tabular_row_orchestration_scale.py`
@@ -161,6 +444,7 @@ The progress card displays current status, completed checkpoint counts, processe
 
 ## Related Version Updates
 
+- The internal native data-only service is documented against `application/single_app/config.py` version **0.261.127**. The parent orchestration integration owns its release/version normalization.
 - `application/single_app/config.py` was updated to version **0.241.057** for queued retry recovery and scheduler scan diagnostics.
 - `application/single_app/config.py` was updated to version **0.241.059** for Phase 3 compact batch packing.
 - `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.

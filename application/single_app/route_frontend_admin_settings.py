@@ -10,6 +10,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from flask import current_app, jsonify, request
+from admin_settings_fields import get_field_definition
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_keyvault_errors import KeyVaultSecretStorageError
@@ -37,6 +38,7 @@ from functions_ai_connection_migration import (
 )
 from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
@@ -76,8 +78,8 @@ from functions_m365_transport import M365ProviderError, normalize_m365_transport
 from functions_orchestration_registry import (
     CAPABILITY_REGISTRY,
     TERMINAL_CAPABILITY_ID,
-    all_capability_ids,
     build_capability_client_projection,
+    capabilities_for_contract,
 )
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
@@ -137,11 +139,6 @@ AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
     'public': 'AzureCloud',
     'usgovernment': 'AzureUSGovernment',
 }
-
-
-def _is_update_version_newer(latest_version, current_version):
-    """Return True only when the discovered release version is newer than the running version."""
-    return compare_versions(latest_version, current_version) == 1
 
 
 def allowed_file(filename, allowed_extensions):
@@ -452,11 +449,22 @@ def get_inbound_mcp_easy_auth_check_base_url():
     return request.host_url
 
 
+def orchestration_admin_capabilities():
+    """Describe both recorded contracts without changing legacy capability metadata."""
+    capabilities = list(CAPABILITY_REGISTRY)
+    known = {capability['id'] for capability in capabilities}
+    capabilities.extend(
+        capability for capability in capabilities_for_contract(2)
+        if capability['id'] not in known
+    )
+    return build_capability_client_projection(capabilities)
+
+
 def normalize_chat_orchestration_settings(form_data, settings=None):
     """Read the Chat Orchestration pane off the admin form.
 
     Kept out of the main POST handler because these values are interdependent in ways a
-    flat dict literal cannot express: the capability list has to keep the terminal
+    flat dict literal cannot express: the capability list keeps the legacy terminal
     capability whatever the administrator ticked, and every bound is clamped rather than
     trusted, since the form is only one of the ways a settings document can be written.
 
@@ -485,12 +493,14 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
                       form_data.get('chat_orchestration_enabled_capabilities') or [])
         if str(value).strip()
     ]
-    known = set(all_capability_ids())
+    known = {
+        option['value'] for option in
+        get_field_definition('chat_orchestration_enabled_capabilities')['options']
+    } | {TERMINAL_CAPABILITY_ID}
     selected = [value for value in selected if value in known]
     if selected and TERMINAL_CAPABILITY_ID not in selected:
         # The pane renders this box checked and disabled, so a browser never posts it.
-        # Adding it back here keeps the stored list executable rather than one that would
-        # make every plan fail validation.
+        # Only legacy answering is mandatory; harness composition/rendering remain optional.
         selected.append(TERMINAL_CAPABILITY_ID)
     # A full selection means the same thing as no opinion, and storing it as an empty list
     # keeps a later capability addition enabled by default instead of silently excluded.
@@ -499,6 +509,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
 
     return {
         'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'enable_chat_orchestration_harness': (
+            form_data.get('enable_chat_orchestration_harness') == 'on'
+        ),
         'enable_chat_orchestration_actions': (
             form_data.get('enable_chat_orchestration_actions') == 'on'
         ),
@@ -679,7 +692,7 @@ def register_route_frontend_admin_settings(bp):
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -1039,56 +1052,10 @@ def register_route_frontend_admin_settings(bp):
 
             # Check for application updates
             current_version = current_app.config['VERSION']
-            update_available = False
-            latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
-            
-            # Only check for updates every 24 hours at most
-            last_check_time = settings.get('last_update_check_time')
-            check_needed = last_check_time is None or (
-                datetime.now(timezone.utc) - 
-                datetime.fromisoformat(last_check_time)
-            ).total_seconds() > 86400  # 24 hours in seconds
-            
-            if check_needed:
-                try:
-                    # Fetch latest release from GitHub
-                    response = requests.get(
-                        "https://github.com/microsoft/simplechat/releases", 
-                        timeout=3
-                    )
-                    if response.status_code == 200:
-                        # Extract the latest version
-                        latest_version = extract_latest_version_from_html(response.text)
-                        
-                        # Store the results in settings for persistence
-                        new_settings = {
-                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
-                            'latest_version_available': latest_version
-                        }
-                        
-                        # Compare with current version
-                        if _is_update_version_newer(latest_version, current_version):
-                            new_settings['update_available'] = True
-                        else:
-                            new_settings['update_available'] = False
-                        
-                        # Update settings to persist these values
-                        if update_settings(new_settings):
-                            settings = get_settings()
-                except Exception as e:
-                    print(f"Error checking for updates: {e}")
-                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
-            
-            # Get the persisted values for template rendering
-            latest_version = settings.get('latest_version_available')
-            update_available = _is_update_version_newer(latest_version, current_version)
-            if settings.get('update_available') != update_available:
-                try:
-                    if update_settings({'update_available': update_available}):
-                        settings = get_settings()
-                except Exception as e:
-                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
+            update_status = get_application_update_status(settings, current_version)
+            latest_version = update_status['latest_version']
+            update_available = update_status['update_available']
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
@@ -1105,6 +1072,7 @@ def register_route_frontend_admin_settings(bp):
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
+            orchestration_capabilities = orchestration_admin_capabilities()
 
             return render_template(
                 'admin_settings.html',
@@ -1120,6 +1088,7 @@ def register_route_frontend_admin_settings(bp):
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
                 update_available=update_available,
+                update_status=update_status,
                 latest_version=latest_version,
                 download_url=download_url,
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),
@@ -1141,10 +1110,10 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
-                orchestration_capabilities=build_capability_client_projection(CAPABILITY_REGISTRY),
+                orchestration_capabilities=orchestration_capabilities,
                 orchestration_selected_capabilities=(
                     settings.get('chat_orchestration_enabled_capabilities')
-                    or [capability['id'] for capability in CAPABILITY_REGISTRY]
+                    or [capability['id'] for capability in orchestration_capabilities]
                 ),
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
@@ -2461,6 +2430,7 @@ def register_route_frontend_admin_settings(bp):
                 return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
                 **m365_settings,
+                **chat_content_form_updates(form_data, settings),
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,

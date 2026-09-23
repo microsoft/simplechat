@@ -1,7 +1,7 @@
 # functions_orchestration_actions.py
 """Bounded knowledge collection with one governed action, without a configured agent.
 
-Version: 0.261.096
+Version: 0.261.127
 """
 
 import asyncio
@@ -10,6 +10,7 @@ import json
 import logging
 import uuid
 from contextlib import nullcontext
+from copy import deepcopy
 
 from agent_execution_context import (
     AgentExecutionCancelled,
@@ -19,6 +20,8 @@ from agent_execution_context import (
 )
 from functions_action_catalog import resolve_action_manifest
 from functions_appinsights import log_event
+from functions_orchestration_invocation_capture import require_invocation_capture
+from functions_orchestration_model_capture import azure_chat_construction_metadata
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     resolve_available_capability_ids,
@@ -46,7 +49,7 @@ def _check_access(settings, catalog, action_ref):
     return selected
 
 
-def _build_action_model(settings, context, user_id):
+def _build_action_model(settings, context, user_id, *, capture_configuration=False):
     # Model and plugin dependencies initialize clients; import them only for a running step.
     from functions_model_endpoint_runtime import (
         build_semantic_kernel_chat_service_for_model,
@@ -85,10 +88,27 @@ def _build_action_model(settings, context, user_id):
         deployment = deployment or next(iter(deployments), None)
         if not deployment or deployment not in deployments:
             raise PermissionError('The selected action model is unavailable.')
-    return build_semantic_kernel_chat_service_for_model(
+    service, protocol = build_semantic_kernel_chat_service_for_model(
         deployment, settings, service_id='orchestration-action',
         model_context=model_context, resolved_model_endpoint=endpoint,
-    )[0]
+    )
+    if not capture_configuration:
+        return service
+
+    connection = (endpoint or {}).get('connection') or {}
+    if endpoint:
+        configured_endpoint = connection.get('endpoint')
+        configured_version = connection.get('openai_api_version') or connection.get('api_version')
+    else:
+        prefix = 'azure_apim_gpt' if settings.get('enable_gpt_apim') else 'azure_openai_gpt'
+        configured_endpoint = settings.get(f'{prefix}_endpoint')
+        configured_version = settings.get(f'{prefix}_api_version')
+    return service, azure_chat_construction_metadata(
+        service, protocol=protocol,
+        provider=(endpoint.get('provider') or 'aoai') if endpoint else 'aoai',
+        configured_endpoint=configured_endpoint, configured_api_version=configured_version,
+        endpoint_id=(endpoint or {}).get('id'), model_id=model_context.get('model_id'),
+    )
 
 
 def _model_usage(messages):
@@ -141,7 +161,9 @@ async def _close_resources(kernel, instances):
             )
 
 
-async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_requested):
+async def invoke_action(
+    action_ref, task, context, *, settings, user_id, cancel_requested, invocation_capture=None,
+):
     """Run only this action's enabled functions and return its findings and invocation scope."""
     # Keep the planner/registry importable without SK and the Azure application bootstrap.
     from semantic_kernel import Kernel
@@ -153,11 +175,14 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
     from agent_delegation_runtime import await_agent_operation
     from functions_settings import get_settings
 
+    invocation_capture = require_invocation_capture(invocation_capture)
     catalog = getattr(context, 'action_catalog', None) or []
     selected = _check_access(settings, catalog, action_ref)
     identity = getattr(context, 'agent_execution_identity', None)
     if identity is None or identity.user_id != user_id or not identity.bridge:
         raise PermissionError('The action execution identity is unavailable.')
+    if invocation_capture is not None and identity.conversation_id != getattr(context, 'conversation_id', None):
+        invocation_capture.refuse()
     if cancel_requested():
         raise AgentExecutionCancelled('Action execution was cancelled.')
 
@@ -177,25 +202,46 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
         identity=identity, caller=reference, budget=budget,
         invocation_id=f'action_{uuid.uuid4().hex}', action_id=selected['id'],
         cancel_requested=cancel_requested,
+        invocation_capture=invocation_capture,
     )
     seen_before = {id(invocation) for invocation in budget.invocations()}
     bridge = identity.bridge(reference) if identity.bridge else nullcontext()
-    with bridge, agent_execution(frame):
+    with bridge, agent_execution(frame) as frame:
+        invocation_capture = frame.invocation_capture
+        if invocation_capture is not None:
+            invocation_capture('action', settings=settings, selector=action_ref)
         current_settings = get_settings()
         _check_access(current_settings, catalog, action_ref)
         manifest = resolve_action_manifest(
             user_id, action_ref, settings=current_settings,
             user_groups=getattr(context, 'active_group_ids', None) or None,
         )
+        if invocation_capture is not None:
+            current_settings = deepcopy(current_settings)
+            manifest = deepcopy(manifest)
         kernel = Kernel()
         loader = create_logged_plugin_loader(kernel)
         history = ChatHistory()
         replies = []
         outputs = []
+        execution_settings = None
+        model_configuration = None
         calls = 0
         failure = None
         call_lock = asyncio.Lock()
         limit = get_max_auto_invoke_attempts(current_settings)
+
+        def capture_manifest(value, observed_settings):
+            invocation_capture(
+                'action', settings=observed_settings,
+                source={
+                    'version': 'orchestration-external-acquisition-v1',
+                    'kind': 'action', 'phase': 'resolved',
+                    'reference': {key: reference[key] for key in ('id', 'scope_type', 'scope_id')},
+                    'manifest': value, 'prepared_manifest': prepared, 'model': model_configuration,
+                },
+                selector=action_ref,
+            )
 
         async def guard_function(invocation, next):
             nonlocal calls, failure
@@ -206,6 +252,8 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                     raise AgentExecutionCancelled('Action execution was cancelled.')
                 if failure is not None:
                     raise failure
+                if invocation_capture is not None:
+                    invocation_capture.require_valid(captured=True)
                 if calls >= limit:
                     failure = ActionExecutionError('The action function-call limit was reached.')
                     raise failure
@@ -218,6 +266,8 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                     )
                     if fresh != manifest:
                         raise ActionExecutionError('The selected action changed during execution.')
+                    if invocation_capture is not None:
+                        capture_manifest(fresh, current)
                     calls += 1
                     await next(invocation)
                 except AgentExecutionCancelled:
@@ -241,6 +291,21 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
 
         try:
             prepared = prepare_action_plugin_manifest(manifest, current_settings)
+            if invocation_capture is not None:
+                service, model_configuration = _build_action_model(
+                    current_settings, context, user_id, capture_configuration=True,
+                )
+                kernel.add_service(service)
+                if model_configuration is None:
+                    invocation_capture.refuse()
+                execution_settings = service.get_prompt_execution_settings_class()(
+                    service_id='orchestration-action', parallel_tool_calls=False, tool_choice='auto',
+                )
+                model_configuration['parameters'] = {
+                    'parallel_tool_calls': execution_settings.parallel_tool_calls,
+                    'tool_choice': execution_settings.tool_choice,
+                }
+                capture_manifest(manifest, current_settings)
             if not loader.load_plugin_from_manifest(prepared, user_id):
                 raise ActionExecutionError('The selected action could not be loaded.')
             functions = kernel.get_list_of_function_metadata({})
@@ -250,8 +315,9 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                 raise AgentExecutionCancelled('Action execution was cancelled.')
             kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, guard_function)
             kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, stop_after_failure)
-            service = _build_action_model(current_settings, context, user_id)
-            kernel.add_service(service)
+            if invocation_capture is None:
+                service = _build_action_model(current_settings, context, user_id)
+                kernel.add_service(service)
             if not getattr(service, 'SUPPORTS_FUNCTION_CALLING', False):
                 raise ActionExecutionError('The selected model does not support action functions.')
             history.add_system_message(
@@ -271,14 +337,17 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                 'task': task,
                 'earlier_findings': [str(note)[:4000] for note in (getattr(context, 'notes', []) or [])[-8:]],
             }))
-            execution_settings = service.get_prompt_execution_settings_class()(
-                service_id='orchestration-action',
-                parallel_tool_calls=False,
-                function_choice_behavior=FunctionChoiceBehavior.Auto(
-                    maximum_auto_invoke_attempts=limit,
-                    filters={'included_plugins': list(kernel.plugins)},
-                ),
+            function_choice = FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=limit,
+                filters={'included_plugins': list(kernel.plugins)},
             )
+            if execution_settings is None:
+                execution_settings = service.get_prompt_execution_settings_class()(
+                    service_id='orchestration-action',
+                    parallel_tool_calls=False, function_choice_behavior=function_choice,
+                )
+            else:
+                execution_settings.function_choice_behavior = function_choice
             replies = await await_agent_operation(
                 service.get_chat_message_contents(history, execution_settings, kernel=kernel), frame,
             )
@@ -286,6 +355,8 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                 raise AgentExecutionCancelled('Action execution was cancelled.')
             if failure is not None:
                 raise failure
+            if invocation_capture is not None:
+                invocation_capture.require_valid(captured=True)
             if not calls or not outputs:
                 raise ActionExecutionError('The action did not return any function results.')
             findings = '\n\n'.join(str(reply) for reply in replies or [] if str(reply).strip())

@@ -37,6 +37,7 @@ import { ParticipantsPanel } from '../../../application/v2_ui/src/components/cha
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
+import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
@@ -99,6 +100,7 @@ function ApprovalPreferenceWorkflow() {
 }
 
 type ComponentName =
+    | 'ModelCatalogManager'
     | 'OrchestrationPlanCard'
     | 'ElicitationCard'
     | 'OrchestrationPlanPanel'
@@ -117,6 +119,7 @@ type ComponentName =
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const components: Record<ComponentName, (props: any) => ReactElement | null> = {
+    ModelCatalogManager,
     OrchestrationPlanCard,
     ElicitationCard,
     OrchestrationPlanPanel,

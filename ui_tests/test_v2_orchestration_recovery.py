@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.105
+Version: 0.261.127
 Implemented in: 0.261.105
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
@@ -247,7 +247,8 @@ def recovery_ui(editor_browser, editor_assets):
         assert not api.errors, api.errors
 
 
-def mount_recovery(page, api, *, saved=False):
+def mount_recovery(page, api, *, saved=False, resume_saved=True):
+    """Mount real components, optionally deferring saved-run recovery to test hydration order."""
     page.goto(editor_tests.ORIGIN + editor_tests.HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     for url in api.assets:
@@ -280,7 +281,7 @@ def mount_recovery(page, api, *, saved=False):
         {"plan": api.plan, "messages": api.messages, "conversation": api.plan["conversation_id"],
          "turn": api.plan["turn_id"], "saved": saved},
     )
-    if saved:
+    if saved and resume_saved:
         page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", api.plan["conversation_id"])
 
 

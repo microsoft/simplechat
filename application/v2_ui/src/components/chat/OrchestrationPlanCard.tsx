@@ -1,6 +1,7 @@
 // OrchestrationPlanCard.tsx
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
+import { OrchestrationOutputs } from './OrchestrationOutputs';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -16,7 +17,7 @@ import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 // is drawn to reflect. See `orchestrationStore.ts` and `InlineImageProposal.tsx`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Eye, ListChecks, Loader2, PenLine, TriangleAlert, X } from 'lucide-react';
+import { Check, Clock3, Eye, ListChecks, Loader2, PenLine, TriangleAlert, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { useChatStore } from '../../stores/chatStore';
 import {
@@ -33,7 +34,9 @@ import {
     applyPlanEdits,
     isPlanRunnable,
     isPlanTerminal,
+    planBindingIssues,
     planRequiresApproval,
+    stepRoleLabel,
     summarizePlan,
 } from '../../lib/orchestrationPlan';
 import {
@@ -41,7 +44,7 @@ import {
     dismissOrchestrationTurn,
     openOrchestrationPlanEditor,
 } from '../../lib/orchestrationController';
-import type { CostClass, OrchestrationPlan } from '../../lib/orchestration';
+import { isOrchestrationRunWaiting, type CostClass, type OrchestrationPlan } from '../../lib/orchestration';
 
 /** Highest cost class among the steps that will run, or null when none carry one. */
 function highestCost(plan: OrchestrationPlan): CostClass | null {
@@ -122,6 +125,7 @@ export function OrchestrationPlanCard({
     // defeat the store's reference equality and re-render this card on every unrelated change.
     const inFlightMap = useOrchestrationStore((state) => state.inFlight);
     const historyMap = useOrchestrationStore((state) => state.history);
+    const recovery = useOrchestrationStore((state) => plan ? state.runRecovery[plan.run_id] : undefined);
     const setDrawerMode = useChatStore((state) => state.setDrawerMode);
     const hasSavedNotice = useChatStore((state) => state.messages.some((message) => {
         const metadata = message.metadata?.orchestration;
@@ -152,10 +156,13 @@ export function OrchestrationPlanCard({
     );
 
     const isTimed = plan?.approval.mode === 'timed' && !held;
+    const waiting = plan?.status === 'waiting' || isOrchestrationRunWaiting(recovery ?? {});
     const awaitingApproval =
         plan !== null &&
         !runInFlight &&
         !historyEntry &&
+        !waiting &&
+        plan.status !== 'running' &&
         !isPlanTerminal(plan) &&
         planRequiresApproval(plan);
 
@@ -165,7 +172,8 @@ export function OrchestrationPlanCard({
     const timeoutSeconds = plan?.approval.timeout_seconds ?? 0;
     const [remainingMs, setRemainingMs] = useState(timeoutSeconds * 1000);
     const expiredRef = useRef(false);
-    const runTimed = awaitingApproval && isTimed && timeoutSeconds > 0;
+    const runTimed = awaitingApproval && isTimed && timeoutSeconds > 0
+        && !runBlocked && Boolean(plan && isPlanRunnable(plan, edits));
 
     useEffect(() => {
         if (!runTimed) {
@@ -204,15 +212,18 @@ export function OrchestrationPlanCard({
     //
     // This is why the card renders from the store rather than from message markdown: there
     // is nothing to clean up when it stops being relevant, it simply stops rendering.
-    if ((historyEntry || isPlanTerminal(plan)) && !runInFlight) {
+    if ((historyEntry || isPlanTerminal(plan)) && !runInFlight && !waiting) {
         if (hasSavedNotice) return null;
-        return <OrchestrationRecoveryNotice conversationId={conversationId}
-            runId={plan.run_id} plan={plan} status={plan.status} />;
+        return <>
+            <OrchestrationRecoveryNotice conversationId={conversationId}
+                runId={plan.run_id} plan={plan} status={plan.status} />
+            <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />
+        </>;
     }
 
     // Running: a compact progress line. The full step list is a click away in the drawer, so this
     // stays a single row rather than duplicating it.
-    if (runInFlight) {
+    if (runInFlight || waiting) {
         const total = summary.step_count;
         let completed = 0;
         for (const step of editedPlan?.steps ?? []) {
@@ -220,17 +231,21 @@ export function OrchestrationPlanCard({
                 continue;
             }
             const status = stepRuntime[step.step_id]?.status;
-            if (status === 'completed' || status === 'skipped') {
+            if (status === 'completed' || status === 'partial' || status === 'skipped') {
                 completed += 1;
             }
         }
+        const currentStep = editedPlan?.steps.find((step) => stepRuntime[step.step_id]?.status === 'running');
+        const progress = waiting ? 'Waiting for results'
+            : plan.planner_contract_version === 2 && currentStep ? stepRoleLabel(currentStep, true) : null;
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
                 <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
                 <OrchestrationRecoveryNotice conversationId={conversationId}
                     runId={plan.run_id} plan={plan} status={plan.status} />
                 <div className="flex items-center gap-2 text-sm">
-                    <Loader2 size={15} className="shrink-0 animate-spin text-accent" />
+                    {waiting ? <Clock3 size={15} className="shrink-0 text-warn" aria-hidden="true" />
+                        : <Loader2 size={15} className="shrink-0 animate-spin text-accent" aria-hidden="true" />}
                     <span className="min-w-0 flex-1 truncate text-text-1" title={summary.intent_summary}>
                         {summary.intent_summary || 'Running the plan'}
                     </span>
@@ -247,6 +262,8 @@ export function OrchestrationPlanCard({
                         Review
                     </GlassButton>
                 </div>
+                {progress ? <p role="status" className="mt-1 text-xs text-text-3">{progress}</p> : null}
+                <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />
             </div>
         );
     }
@@ -256,6 +273,7 @@ export function OrchestrationPlanCard({
     const cost = highestCost(editedPlan ?? plan);
     const runnable = editedPlan ? isPlanRunnable(editedPlan) && !runBlocked : false;
     const repairs = plan.validation.repairs;
+    const bindingIssues = planBindingIssues(plan, edits);
     const remainingSeconds = Math.ceil(remainingMs / 1000);
 
     return (
@@ -295,6 +313,12 @@ export function OrchestrationPlanCard({
                         </ul>
                     </div>
                 </div>
+            ) : null}
+
+            {bindingIssues.length ? (
+                <p role="alert" className="alert mt-2 rounded-xl bg-warn-soft px-2.5 py-2 text-xs text-warn">
+                    Required inputs are unavailable. Open Review to restore the producers or ask the planner to revise their consumers.
+                </p>
             ) : null}
 
             {held ? (

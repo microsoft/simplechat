@@ -1,7 +1,7 @@
 # test_generated_file_saved_record_exports.py
 """
 Functional regression tests for shared exact saved-record exports.
-Version: 0.261.119
+Version: 0.261.126
 Implemented in: 0.261.119
 
 Validate complete deterministic JSON, strict format/type/count boundaries,
@@ -55,8 +55,9 @@ def test_exact_saved_values_order_multiplicity_and_digest():
     source = RecordSource(iter(records), len(records))
     expected = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")
     with render(source, limit=len(expected)) as exported:
+        actual = exported.file_content.read()
         assert isinstance(exported, GeneratedFileExportStream)
-        assert exported.file_content.read() == expected
+        assert actual == expected
         assert exported.record_count == len(records)
         assert exported.content_sha256 == hashlib.sha256(expected).hexdigest()
         assert exported.size_bytes == len(expected)
@@ -65,7 +66,7 @@ def test_exact_saved_values_order_multiplicity_and_digest():
     assert source.reads == 3 and source.checks == 2
 
 
-@pytest.mark.parametrize("count", [0, 1, 100, 101, 10001])
+@pytest.mark.parametrize("count", [0, 1, 100, 101, 10001, 30017])
 def test_every_record_is_streamed_without_a_preview_limit(count):
     source = RecordSource(({"ordinal": index} for index in range(count)), count)
     with render(source) as exported:
@@ -144,7 +145,8 @@ def test_quota_counts_delimiters_and_escaped_bytes():
     with pytest.raises(ValueError, match="size limit"):
         render(RecordSource(records, 2), limit=len(expected) - 1)
     with render(RecordSource([], 0), limit=2) as exported:
-        assert exported.file_content.read() == b"[]"
+        actual = exported.file_content.read()
+        assert actual == b"[]"
     with pytest.raises(ValueError, match="size limit"):
         render(RecordSource([], 0), limit=1)
 

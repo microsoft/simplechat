@@ -2,7 +2,7 @@ model-routing:
   name: "Model routing and endpoints"
   area: "Platform and operations"
   audience: "Admins"
-  summary: "Shares approved AI connections across independent chat, image, and embedding defaults, including compatible custom embedding endpoints."
+  summary: "Shares approved AI connections across chat, image, and embedding defaults, with reusable model profiles and explicit per-step Auto selection in V2 orchestration."
   why: "Use this when a deployment needs API Management in front of model services or multiple endpoint choices for different teams. Keep it simple when one approved endpoint is enough, because endpoint sprawl makes governance and troubleshooting harder."
   default_state: "Mixed"
   admin_tab: ai-models
@@ -11,9 +11,13 @@ model-routing:
     - enable_embedding_apim
     - enable_multi_model_endpoints
   guides:
+    - title: "Choose models for orchestration"
+      url: /guides/model-catalog-routing/
     - title: "Configure AI connections"
       url: /guides/configure-ai-connections/
   reference:
+    - title: "Model Catalog"
+      url: /admin/model-catalog/
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
 chat-file-uploads:
@@ -476,12 +480,14 @@ content-safety:
   name: "Content safety"
   area: "Governance and safety"
   audience: "Admins"
-  summary: "Screens prompts and content through Azure AI Content Safety with optional API Management routing."
-  why: "Use this when prompts, search, image generation, or other AI flows require policy checks before processing. Tune messages and reviewer access carefully so blocked users receive useful guidance without exposing sensitive trigger details."
+  summary: "Checks submitted chat text and optional AI replies through Azure AI Content Safety."
+  why: "Use independent input and output controls to catch harmful chat text. Choose when replies are shown and how scanner outages are handled; administrators can recheck messages that could not be inspected."
   default_state: "Disabled"
   admin_tab: security
   setting_keys:
     - enable_content_safety
+    - enable_content_safety_chat_input
+    - enable_content_safety_chat_output
     - enable_content_safety_apim
   reference:
     - title: "Admin configuration reference"
@@ -490,18 +496,25 @@ content-screening:
   name: "Content screening and document review"
   area: "Governance and safety"
   audience: "Admins and workspace reviewers"
-  summary: "Inspects extracted knowledge with deterministic and optional model checks, holding flagged documents for scoped review."
-  why: "Use this to reduce the risk of sensitive values or document-borne instructions entering workspace knowledge. Reviewers can accept a retained warning or publish a clean derivative; queued scans, failed checks, and retained originals have distinct access rules."
+  summary: "Applies PII, regex, literal, and optional model checks to workspace uploads and selected chat checkpoints."
+  why: "Use document holds for workspace knowledge and optional text checks for submitted messages or AI replies. Keep technical chat-check failures private while giving administrators a queue for rechecking them."
   default_state: "Disabled"
   admin_tab: security
   setting_keys:
     - enable_content_screening
+    - enable_content_screening_workspace_uploads
+    - enable_content_screening_chat_input
+    - enable_content_screening_chat_output
   guides:
     - title: "Screen and review workspace documents"
       url: /guides/review-screened-documents/
+    - title: "Recheck chat content"
+      url: /guides/recheck-chat-content/
   reference:
     - title: "Content screening framework"
       url: /explanation/features/CONTENT_SCREENING_FRAMEWORK/
+    - title: "Chat content checks"
+      url: /explanation/features/CHAT_CONTENT_CHECKS/
 notices-and-terms:
   name: "Notices and terms of use"
   area: "Governance and safety"
@@ -669,6 +682,7 @@ chat-orchestration:
   admin_tab: orchestration
   setting_keys:
     - enable_chat_orchestration
+    - enable_chat_orchestration_harness
     - enable_chat_orchestration_actions
   reference:
     - title: "Orchestration settings"

@@ -159,6 +159,11 @@ def get_model_capability_catalog_records():
     ])
 
 
+def get_model_capability_catalog_sources():
+    """Return evidence references without exposing the mutable catalog cache."""
+    return copy.deepcopy(_load_model_capability_catalog_document().get("sources") or [])
+
+
 def _get_record_field(record, field_name):
     if isinstance(record, Mapping):
         return record.get(field_name)

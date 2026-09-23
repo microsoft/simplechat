@@ -1,7 +1,7 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
-  "schemaVersion": 3,
-  "lastUpdated": "2026-09-19",
+  "schemaVersion": 4,
+  "lastUpdated": "2026-09-21",
   "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
@@ -22,6 +22,7 @@
     "generatesEmbeddings": "Produces embedding vectors. Runtime eligibility additionally requires validated embeddingPolicy metadata and a supported OpenAI-compatible operation; this is not chat or image generation."
   },
   "coverageNotes": [
+    "Schema version 4 adds sourced task-selection profiles reviewed on 2026-09-21. Other models expose capability-derived suitability rather than invented quality scores. This does not re-date or replace the independent token-capacity, image, embedding, or reasoning audits.",
     "The audited OpenAI token-capacity subset starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
@@ -2386,6 +2387,15 @@
     },
     {
       "id": "gpt-5.4-pro",
+      "selectionProfile": {
+        "summary": "Extended reasoning with additional compute for difficult tasks.",
+        "strengths": ["More compute for difficult reasoning"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"reasoning": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.4-pro"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.4 Pro",
       "aliases": [],
@@ -2804,6 +2814,15 @@
     },
     {
       "id": "gpt-5.3-codex",
+      "selectionProfile": {
+        "summary": "Specialized for agentic coding in Codex-style environments.",
+        "strengths": ["Agentic coding"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.3-codex"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.3 Codex",
       "aliases": [],
@@ -3062,6 +3081,15 @@
     },
     {
       "id": "gpt-5.2-codex",
+      "selectionProfile": {
+        "summary": "Coding model for long-horizon agentic development tasks.",
+        "strengths": ["Long-horizon agentic coding"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.2-codex"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.2 Codex",
       "aliases": [],
@@ -3722,6 +3750,15 @@
     },
     {
       "id": "gpt-5.1-codex",
+      "selectionProfile": {
+        "summary": "Coding-focused model for Codex-style environments.",
+        "strengths": ["Agentic coding"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.1-codex"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.1 Codex",
       "aliases": [],
@@ -3857,6 +3894,15 @@
     },
     {
       "id": "gpt-5.1-codex-mini",
+      "selectionProfile": {
+        "summary": "Smaller coding-focused alternative to GPT-5.1-Codex.",
+        "strengths": ["Lower-cost coding tasks"],
+        "limitations": ["Less capable than GPT-5.1-Codex.", "Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "suitable"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.1-codex-mini"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.1 Codex Mini",
       "aliases": [],
@@ -3992,6 +4038,15 @@
     },
     {
       "id": "gpt-5.1-codex-max",
+      "selectionProfile": {
+        "summary": "Coding model intended for long-running agentic work.",
+        "strengths": ["Long-running agentic coding"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5.1-codex-max"]
+      },
       "provider": "openai",
       "displayName": "GPT-5.1 Codex Max",
       "aliases": [],
@@ -4128,6 +4183,14 @@
     },
     {
       "id": "gpt-5",
+      "selectionProfile": {
+        "summary": "Reasoning model for coding and agentic tasks across domains.",
+        "strengths": ["Coding and code understanding", "Multi-step reasoning", "Tool-assisted tasks"],
+        "limitations": ["Publisher capabilities do not prove hosting availability.", "A model strength does not grant access to tools."],
+        "tasks": {"coding": "strong", "reasoning": "strong", "tool_use": "strong"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5"]
+      },
       "provider": "openai",
       "displayName": "GPT-5",
       "aliases": [],
@@ -4268,6 +4331,15 @@
     },
     {
       "id": "gpt-5-pro",
+      "selectionProfile": {
+        "summary": "Additional compute for difficult reasoning tasks.",
+        "strengths": ["Extended reasoning"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path.", "Does not support Code Interpreter."],
+        "tasks": {"reasoning": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5-pro"]
+      },
       "provider": "openai",
       "displayName": "GPT-5 Pro",
       "aliases": [],
@@ -4402,6 +4474,15 @@
     },
     {
       "id": "gpt-5-codex",
+      "selectionProfile": {
+        "summary": "GPT-5 specialized for agentic coding.",
+        "strengths": ["Agentic coding"],
+        "limitations": ["Responses API only; excluded from Auto's Chat Completions execution path."],
+        "tasks": {"coding": "strong"},
+        "chatCompletions": false,
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5-codex"]
+      },
       "provider": "openai",
       "displayName": "GPT-5 Codex",
       "aliases": [],
@@ -4536,6 +4617,14 @@
     },
     {
       "id": "gpt-5-mini",
+      "selectionProfile": {
+        "summary": "A smaller GPT-5 option for well-defined tasks and precise prompts.",
+        "strengths": ["Well-specified tasks", "Publisher-positioned low-latency, high-volume workloads"],
+        "limitations": ["Relative speed and cost depend on the hosting deployment.", "No universal quality ranking is implied."],
+        "tasks": {"general": "suitable"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5-mini"]
+      },
       "provider": "openai",
       "displayName": "GPT-5 Mini",
       "aliases": [],
@@ -4673,6 +4762,14 @@
     },
     {
       "id": "gpt-5-nano",
+      "selectionProfile": {
+        "summary": "Small GPT-5 model positioned for summarization and classification.",
+        "strengths": ["Summarization", "Classification"],
+        "limitations": ["Publisher-relative cost and latency are not measured deployment performance."],
+        "tasks": {"summarization": "strong", "classification": "strong"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://developers.openai.com/api/docs/models/gpt-5-nano"]
+      },
       "provider": "openai",
       "displayName": "GPT-5 Nano",
       "aliases": [],
@@ -5103,6 +5200,14 @@
     },
     {
       "id": "claude-opus-5",
+      "selectionProfile": {
+        "summary": "Claude model positioned for complex agentic coding and enterprise work.",
+        "strengths": ["Complex coding", "Agentic tool use"],
+        "limitations": ["API support, access, and limits must be checked on the actual hosting connection."],
+        "tasks": {"coding": "strong", "tool_use": "strong"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://platform.claude.com/docs/en/models/overview"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 5",
       "aliases": [],
@@ -5185,6 +5290,14 @@
     },
     {
       "id": "claude-sonnet-5",
+      "selectionProfile": {
+        "summary": "Claude model positioned to balance response speed and intelligence.",
+        "strengths": ["General text work", "Image understanding", "Tool use"],
+        "limitations": ["Publisher positioning is not a measured latency guarantee."],
+        "tasks": {"general": "suitable", "vision": "suitable", "tool_use": "suitable"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://platform.claude.com/docs/en/models/overview"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Sonnet 5",
       "aliases": [],
@@ -9410,6 +9523,14 @@
     },
     {
       "id": "gemini-2.5-pro",
+      "selectionProfile": {
+        "summary": "Thinking model for complex code, math, and STEM problems and long-context analysis.",
+        "strengths": ["Reasoning over complex problems", "Analyzing datasets, codebases, and documents"],
+        "limitations": ["Long-context positioning does not establish an exact hosting token budget."],
+        "tasks": {"reasoning": "strong", "coding": "strong", "analysis": "strong", "data_analysis": "strong"},
+        "verifiedAt": "2026-09-21",
+        "sources": ["https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro"]
+      },
       "provider": "google",
       "displayName": "Gemini 2.5 Pro",
       "aliases": [],

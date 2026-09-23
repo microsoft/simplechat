@@ -31,7 +31,7 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import hashlib
@@ -39,21 +39,34 @@ import json
 import logging
 import math
 import uuid
+from copy import deepcopy
 
 from azure.core.exceptions import ServiceRequestError
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
 
 from agent_execution_context import AgentDelegationTimeout
 from functions_appinsights import log_event
+from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_COMPOSE,
+    CAPABILITY_TABULAR_ANALYZE,
+    DEPENDENCY_PLAN_CONTRACT_VERSION,
     PRODUCES_EVIDENCE,
     TERMINAL_CAPABILITY_ID,
+    admitted_export_pairs,
     get_capability,
     get_capability_document_limit,
+    get_capability_result_outputs,
     phase_index,
     required_capability_ids,
     resolve_available_capability_ids,
+)
+from functions_orchestration_result_contracts import (
+    InputBinding, InputSpec, OutputSpec, RecordColumn, ResultContractError,
+    StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 
 ORCHESTRATION_PLAN_CONTRACT_VERSION = 1
@@ -69,6 +82,7 @@ PLAN_STATUS_DRAFT = 'draft'
 PLAN_STATUS_AWAITING_APPROVAL = 'awaiting_approval'
 PLAN_STATUS_APPROVED = 'approved'
 PLAN_STATUS_RUNNING = 'running'
+PLAN_STATUS_WAITING = 'waiting'
 PLAN_STATUS_COMPLETED = 'completed'
 PLAN_STATUS_FAILED = 'failed'
 PLAN_STATUS_CANCELLED = 'cancelled'
@@ -79,6 +93,7 @@ PLAN_STATUSES = (
     PLAN_STATUS_AWAITING_APPROVAL,
     PLAN_STATUS_APPROVED,
     PLAN_STATUS_RUNNING,
+    PLAN_STATUS_WAITING,
     PLAN_STATUS_COMPLETED,
     PLAN_STATUS_FAILED,
     PLAN_STATUS_CANCELLED,
@@ -95,6 +110,8 @@ TERMINAL_PLAN_STATUSES = (
 # Step lifecycle.
 STEP_STATUS_PENDING = 'pending'
 STEP_STATUS_RUNNING = 'running'
+STEP_STATUS_WAITING = 'waiting'
+STEP_STATUS_PARTIAL = 'partial'
 STEP_STATUS_COMPLETED = 'completed'
 STEP_STATUS_FAILED = 'failed'
 STEP_STATUS_SKIPPED = 'skipped'
@@ -103,6 +120,8 @@ STEP_STATUS_CANCELLED = 'cancelled'
 STEP_STATUSES = (
     STEP_STATUS_PENDING,
     STEP_STATUS_RUNNING,
+    STEP_STATUS_WAITING,
+    STEP_STATUS_PARTIAL,
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
     STEP_STATUS_SKIPPED,
@@ -161,6 +180,17 @@ PLAN_MAX_ASSUMPTIONS = 8
 
 class PlanValidationError(ValueError):
     """Raised when a plan cannot be repaired into something safe to run."""
+
+    def __init__(self, message, *, code='plan_invalid'):
+        self.code = code
+        super().__init__(message)
+
+
+def plan_contract_version(plan):
+    version = (plan if isinstance(plan, dict) else {}).get('planner_contract_version', 1)
+    if type(version) is not int or version not in (1, DEPENDENCY_PLAN_CONTRACT_VERSION):
+        raise PlanValidationError('Unsupported orchestration plan contract.', code='plan_version_unsupported')
+    return version
 
 
 def _text(value, limit=None):
@@ -495,6 +525,304 @@ def _order_steps(steps):
     return resolved, cyclic
 
 
+def order_dependency_steps(steps):
+    """Stable topological order, without phase sorting or removal of edges."""
+    pending = list(steps)
+    ordered = []
+    completed = set()
+    while pending:
+        ready = next((
+            step for step in pending if set(step.get('depends_on') or ()).issubset(completed)
+        ), None)
+        if ready is None:
+            raise PlanValidationError('The plan has a cycle or missing dependency.', code='result_binding_cycle')
+        ordered.append(ready)
+        completed.add(ready['step_id'])
+        pending.remove(ready)
+    return ordered
+
+
+def validate_inline_output_schema(schema):
+    """Only self-contained JSON schemas; validation cannot fetch remote definitions."""
+    if type(schema) is not dict or len(canonical_bytes(schema)) > 32768:
+        raise PlanValidationError('The prepared output schema is invalid.')
+    pending = [schema]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if any(key in value for key in ('$ref', '$dynamicRef', '$recursiveRef')):
+                raise PlanValidationError('Prepared output schemas must be self-contained.')
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise PlanValidationError('The prepared output schema is invalid.') from exc
+
+
+def step_input_specs(step):
+    capability = get_capability(step.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+    if capability is None or type(step.get('inputs', {})) is not dict:
+        raise PlanValidationError('The step has invalid named inputs.')
+    accepted = capability['result_input_kinds']
+    if not set(capability.get('required_result_inputs') or ()).issubset(step.get('inputs', {})):
+        raise PlanValidationError('The capability requires an explicit named input.')
+    specs = []
+    for name, value in step.get('inputs', {}).items():
+        if type(value) is not dict or set(value) - {'binding', 'allow_partial'} or 'binding' not in value:
+            raise PlanValidationError('Each named input requires an explicit result binding.')
+        kinds = accepted.get(name, accepted.get('*'))
+        if not kinds:
+            raise PlanValidationError('This capability does not accept that named input.')
+        if value.get('allow_partial') is True and not capability['partial_inputs_supported']:
+            raise PlanValidationError('This capability requires complete named inputs.')
+        specs.append(InputSpec(
+            name, InputBinding.from_dict(value['binding']), tuple(kinds), value.get('allow_partial', False),
+        ))
+    return tuple(specs)
+
+
+def step_result_bindings(step):
+    return StepBindings(
+        step['step_id'], step.get('enabled', True),
+        tuple(OutputSpec(item['name'], item['kind']) for item in step['outputs']),
+        step_input_specs(step), tuple(step.get('depends_on', [])),
+    )
+
+
+def _dependency_outputs(raw, capability, composition_profiles, arguments):
+    required, optional = get_capability_result_outputs(capability, arguments)
+    fixed = [{'name': name, 'kind': kind} for name, kind in required.items()]
+    outputs = raw.get('outputs', fixed)
+    if capability['role'] == 'render':
+        if outputs != []:
+            raise PlanValidationError('Render delivers files, not named retained data outputs.')
+        return []
+    if type(outputs) is not list or not 1 <= len(outputs) <= 32:
+        raise PlanValidationError('Each step must declare its supported named outputs.')
+    if capability['id'] != CAPABILITY_COMPOSE:
+        allowed = {**required, **optional}
+        for output in outputs:
+            if type(output) is not dict or set(output) != {'name', 'kind'}:
+                raise PlanValidationError('The output declaration does not match the producing capability.')
+            OutputSpec(output['name'], output['kind'])
+            if allowed.get(output['name']) != output['kind']:
+                raise PlanValidationError('The output declaration does not match the producing capability.')
+        if not set(required).issubset({output['name'] for output in outputs}):
+            raise PlanValidationError('The output declaration does not match the producing capability.')
+        return deepcopy(outputs)
+    supported = capability['result_output_kinds']
+    for item in outputs:
+        if (
+            type(item) is not dict or set(item) - {'name', 'kind', 'columns', 'schema', 'profile'}
+            or not {'name', 'kind'}.issubset(item)
+        ):
+            raise PlanValidationError('The composition output declaration is invalid.')
+        OutputSpec(item['name'], item['kind'])
+        if item['kind'] not in supported:
+            raise PlanValidationError('The composition output kind is unsupported.')
+        if item['kind'] == 'records-v1':
+            columns = item.get('columns')
+            if type(columns) is not list or not columns:
+                raise PlanValidationError('Records require an explicit ordered column schema.')
+            parsed = tuple(RecordColumn.from_dict(column) for column in columns)
+            if len(parsed) > 256 or len({column.name for column in parsed}) != len(parsed):
+                raise PlanValidationError('The record column schema is invalid.')
+        elif 'columns' in item:
+            raise PlanValidationError('Only records may declare columns.')
+        if 'schema' in item:
+            if item['kind'] != 'structured-v1':
+                raise PlanValidationError('An inline schema requires structured content.')
+            validate_inline_output_schema(item['schema'])
+        if 'profile' in item:
+            if (
+                item['kind'] != 'structured-v1' or type(item['profile']) is not str
+                or item['profile'] not in (composition_profiles or {})
+            ):
+                raise PlanValidationError('The prepared-content profile is unavailable.')
+    return deepcopy(outputs)
+
+
+def _validate_render_requests(steps, existing_results, export_catalog=None):
+    admitted_pairs = admitted_export_pairs(export_catalog) if export_catalog is not None else None
+    renders = [step for step in steps if step['capability_id'] == 'render_file']
+    if not renders:
+        return
+    # The shared registry validates representation compatibility without rendering.
+    from functions_generated_file_exports import GeneratedFileExportError, GeneratedFileExportRequest
+    from functions_generated_export_registry import resolve_generated_file_export_format
+
+    produced = {
+        (step['step_id'], output['name']): output['kind']
+        for step in steps for output in step['outputs']
+    }
+    for step in renders:
+        source = step_input_specs(step)[0].binding
+        kind = (
+            existing_results[source.existing_result].kind if source.existing_result is not None
+            else produced[(source.step_id, source.output_name)]
+        )
+        capability = get_capability('render_file', contract_version=2)
+        arguments = step['arguments']
+        if admitted_pairs is not None and (arguments['output_format'], arguments['profile']) not in admitted_pairs:
+            raise PlanValidationError(
+                'The requested file format and profile are not admitted for this plan.',
+                code='capability_unavailable',
+            )
+        options = deepcopy(arguments.get('options') or {})
+        if 'columns' in options:
+            options['columns'] = tuple(options['columns'])
+        request = GeneratedFileExportRequest(
+            output_format=arguments['output_format'], profile=arguments['profile'], **options,
+        )
+        try:
+            resolve_generated_file_export_format(request, capability['render_source_kinds'][kind])
+        except GeneratedFileExportError as exc:
+            raise PlanValidationError(
+                'The requested file representation does not support its bound source or options.',
+                code='result_kind_incompatible',
+            ) from exc
+
+
+def validate_dependency_plan(
+    plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
+    agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
+    export_catalog=None,
+):
+    """Compile v2 without dropping required work, arguments, outputs, or dependencies."""
+    settings = settings or {}
+    canonical_bytes(composition_profiles or {})
+    try:
+        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
+    except (TypeError, ValueError):
+        max_steps = 8
+    raw_steps = plan.get('steps')
+    if type(raw_steps) is not list or not raw_steps or len(raw_steps) > max_steps:
+        raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
+    if available_capability_ids is None:
+        available_capability_ids = resolve_available_capability_ids(
+            settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+            contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
+            export_catalog=export_catalog,
+        )
+    available = set(available_capability_ids)
+    accepted = []
+    counts = {}
+    fields = {
+        'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
+        'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
+    }
+    try:
+        for raw in raw_steps:
+            if type(raw) is not dict or set(raw) - fields:
+                raise PlanValidationError('The plan contains an invalid step field.')
+            output_name(raw.get('step_id'))
+            capability = get_capability(raw.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+            if capability is None or capability['id'] not in available or capability.get('runtime_unavailable_reason'):
+                raise PlanValidationError('A required capability is unknown or disabled.', code='capability_unavailable')
+            capability_id = capability['id']
+            if 'role' in raw and raw['role'] != capability['role']:
+                raise PlanValidationError('Capability purpose is server-owned.')
+            if any(type(raw.get(key, default)) is not bool for key, default in (('enabled', True), ('optional', False))):
+                raise PlanValidationError('Step enablement and optionality must be booleans.')
+            if type(raw.get('depends_on', [])) is not list:
+                raise PlanValidationError('Dependencies must be a list of step IDs.')
+            counts[capability_id] = counts.get(capability_id, 0) + 1
+            if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
+                raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
+            arguments = raw.get('arguments', {})
+            if type(arguments) is not dict:
+                raise PlanValidationError('Step arguments must be an object.')
+            canonical_bytes(arguments)
+            if not Draft202012Validator(capability['inputs']).is_valid(arguments):
+                raise PlanValidationError('Step arguments do not match the capability contract.')
+            arguments = deepcopy(arguments)
+            if capability_id == CAPABILITY_TABULAR_ANALYZE:
+                # Native query/transform validators run only for explicitly admitted native work.
+                from functions_orchestration_native_results import validate_native_orchestration_arguments
+
+                try:
+                    arguments = validate_native_orchestration_arguments(arguments)
+                except ValueError as exc:
+                    raise PlanValidationError('The native computation arguments are unsupported.') from exc
+            if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
+                raise PlanValidationError('String arguments must not be empty or whitespace.')
+            for name, rule in capability['inputs']['properties'].items():
+                if name not in arguments and 'default' in rule:
+                    arguments[name] = deepcopy(rule['default'])
+            if 'agent_name' in arguments and arguments['agent_name'] not in (agent_names or ()):
+                raise PlanValidationError('The selected agent is unavailable.')
+            if 'action_ref' in arguments and arguments['action_ref'] not in (action_refs or ()):
+                raise PlanValidationError('The selected action is unavailable.')
+            limit = get_capability_document_limit(capability, settings=settings)
+            for name in ('document_ids', 'right_document_ids'):
+                if name in arguments:
+                    if any(not value or value != value.strip() for value in arguments[name]):
+                        raise PlanValidationError('Document IDs must be exact, nonempty identifiers.')
+                    if len(set(arguments[name])) != len(arguments[name]):
+                        raise PlanValidationError('Document selections must not contain duplicates.')
+                    if limit and len(arguments[name]) > limit:
+                        raise PlanValidationError('The complete source selection exceeds the document limit.')
+                    if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
+                        raise PlanValidationError('A required source is unavailable.')
+            if (
+                'left_document_id' in arguments
+                and arguments['left_document_id'] != arguments['left_document_id'].strip()
+            ):
+                raise PlanValidationError('Document IDs must be exact, nonempty identifiers.')
+            if (
+                'left_document_id' in arguments and authorized_document_ids is not None
+                and arguments['left_document_id'] not in authorized_document_ids
+            ):
+                raise PlanValidationError('A required comparison source is unavailable.')
+            if arguments.get('left_document_id') in arguments.get('right_document_ids', []):
+                raise PlanValidationError('A comparison source and its targets must be distinct.')
+            step = {
+                'step_id': raw['step_id'], 'capability_id': capability_id,
+                'title': _text(raw.get('title'), PLAN_MAX_TITLE_LENGTH) or capability['label'],
+                'rationale': _text(raw.get('rationale'), PLAN_MAX_RATIONALE_LENGTH),
+                'arguments': arguments, 'depends_on': list(raw.get('depends_on', [])),
+                'inputs': deepcopy(raw.get('inputs', {})),
+                'outputs': _dependency_outputs(raw, capability, composition_profiles, arguments),
+                'optional': raw.get('optional', False), 'enabled': raw.get('enabled', True),
+                'estimated_cost': capability['cost_class'], 'role': capability['role'],
+                'status': STEP_STATUS_PENDING,
+            }
+            step_input_specs(step)
+            if capability_id == 'document_analyze' and not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                raise PlanValidationError('Analyze requires named sources or a source-set binding.')
+            if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
+                raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+            accepted.append(step)
+        if not any(step['enabled'] for step in accepted):
+            raise PlanValidationError('The plan contains no enabled work.')
+        bindings = [step_result_bindings(step) for step in accepted]
+        dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
+        _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
+        if 'final_response' in plan:
+            final_binding = InputBinding.from_dict(plan['final_response'])
+            validate_input_bindings(
+                [*bindings, StepBindings(
+                    '__final_response__', True, inputs=(
+                        InputSpec('answer', final_binding, ('text-v1', 'markdown-v1'), allow_partial=True),
+                    ),
+                )],
+                existing_results=existing_results, max_steps=max_steps + 1,
+            )
+        for step in accepted:
+            step['depends_on'] = list(dependencies[step['step_id']])
+    except ResultContractError as exc:
+        raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
+    compiled = deepcopy(plan)
+    compiled.update({
+        'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'steps': order_dependency_steps(accepted),
+        'validation': {'ok': True, 'errors': [], 'repairs': []},
+    })
+    return compiled
+
+
 def validate_plan(
     plan,
     settings=None,
@@ -502,6 +830,11 @@ def validate_plan(
     available_capability_ids=None,
     agent_names=None,
     action_refs=None,
+    *,
+    existing_results=None,
+    composition_profiles=None,
+    export_catalog=None,
+    contract_version=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -519,6 +852,17 @@ def validate_plan(
     Returns the plan with ``steps``, ``validation`` and ``status`` settled. Raises
     ``PlanValidationError`` only when nothing runnable survives.
     """
+    version = plan_contract_version(plan)
+    if contract_version is not None and (type(contract_version) is not int or contract_version != version):
+        raise PlanValidationError('The saved plan contract does not match the admitted contract.')
+    if version == DEPENDENCY_PLAN_CONTRACT_VERSION:
+        return validate_dependency_plan(
+            plan, settings=settings, authorized_document_ids=authorized_document_ids,
+            available_capability_ids=available_capability_ids, agent_names=agent_names,
+            action_refs=action_refs, existing_results=existing_results,
+            composition_profiles=composition_profiles,
+            export_catalog=export_catalog,
+        )
     settings = settings if isinstance(settings, dict) else {}
     plan = plan if isinstance(plan, dict) else {}
 
@@ -678,6 +1022,8 @@ def validate_plan(
             'estimated_cost': capability['cost_class'],
             'phase': capability['phase'],
             'status': STEP_STATUS_PENDING,
+            **({'model_task': raw['model_task']} if isinstance(raw.get('model_task'), str) else {}),
+            **({'model_binding': raw['model_binding']} if isinstance(raw.get('model_binding'), dict) else {}),
         })
         used_counts[capability_id] = used_counts.get(capability_id, 0) + 1
 
@@ -904,6 +1250,11 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
 def build_plan_outputs(plan):
     """What the run will produce. Every plan produces an answer; some also produce files."""
     outputs = [{'kind': 'message'}]
+    if plan_contract_version(plan) == DEPENDENCY_PLAN_CONTRACT_VERSION:
+        return outputs + [
+            {'kind': 'retained_result', 'source_step_id': step['step_id'], **deepcopy(output)}
+            for step in plan['steps'] if step.get('enabled', True) for output in step['outputs']
+        ]
     for step in (plan or {}).get('steps') or ():
         if not step.get('enabled', True):
             continue
@@ -926,10 +1277,25 @@ def normalize_plan(
     document_labels=None,
     agent_names=None,
     actions=None,
+    *,
+    contract_version=1,
+    existing_results=None,
+    composition_profiles=None,
+    export_catalog=None,
 ):
     """Turn raw planner output into a complete, validated plan document."""
     settings = settings if isinstance(settings, dict) else {}
     plan = dict(plan) if isinstance(plan, dict) else {}
+    requested_version = plan.get('planner_contract_version', contract_version)
+    if type(requested_version) is not int or requested_version != contract_version:
+        raise PlanValidationError('A model cannot change the admitted plan contract.')
+    plan_contract_version({'planner_contract_version': contract_version})
+
+    # Bindings are server-owned. A planner response cannot authorize a deployment.
+    plan.pop('model_routing', None)
+    for step in plan.get('steps') or []:
+        if isinstance(step, dict):
+            step.pop('model_binding', None)
 
     intent = plan.get('intent') if isinstance(plan.get('intent'), dict) else {}
     complexity = _text(intent.get('complexity')).lower()
@@ -957,7 +1323,7 @@ def normalize_plan(
         'revision': int(plan.get('revision') or 0),
         'conversation_id': conversation_id,
         'user_id': user_id,
-        'planner_contract_version': ORCHESTRATION_PLAN_CONTRACT_VERSION,
+        'planner_contract_version': contract_version,
         'intent': {
             'summary': _text(intent.get('summary'), PLAN_MAX_SUMMARY_LENGTH),
             'complexity': complexity,
@@ -983,6 +1349,10 @@ def normalize_plan(
         action_refs=[
             action.get('action_ref') for action in actions or () if isinstance(action, dict)
         ],
+        existing_results=existing_results,
+        composition_profiles=composition_profiles,
+        export_catalog=export_catalog,
+        contract_version=contract_version,
     )
 
     plan['inputs'] = build_plan_inputs(
@@ -1002,7 +1372,10 @@ def normalize_plan(
     return plan
 
 
-def apply_plan_edits(plan, edits):
+def apply_plan_edits(
+    plan, edits, *, existing_results=None, composition_profiles=None,
+    export_catalog=None, contract_version=None,
+):
     """Apply a user's edits to a plan before it runs.
 
     Only two things are editable, and both narrow the plan rather than widening it:
@@ -1011,8 +1384,16 @@ def apply_plan_edits(plan, edits):
     that never passed the planner's own reasoning or the authorization check that followed
     it. Widening belongs to re-planning, which goes back through validation.
     """
+    if contract_version is not None and (
+        type(contract_version) is not int or contract_version != plan_contract_version(plan)
+    ):
+        raise PlanValidationError('The saved plan contract does not match the admitted contract.')
     if not isinstance(edits, dict):
         return plan
+    dependency_contract = plan_contract_version(plan) == DEPENDENCY_PLAN_CONTRACT_VERSION
+    original = plan
+    if dependency_contract:
+        plan = deepcopy(plan)
 
     disabled = set(_string_list(edits.get('disabled_step_ids')))
     removed_documents = edits.get('removed_document_ids')
@@ -1038,6 +1419,36 @@ def apply_plan_edits(plan, edits):
 
     if edited:
         plan.setdefault('approval', {})['edited'] = True
+    if dependency_contract:
+        try:
+            if not any(step['enabled'] for step in plan['steps']):
+                raise PlanValidationError('The plan contains no enabled work.')
+            for step in plan['steps']:
+                capability = get_capability(step['capability_id'], contract_version=2)
+                if not Draft202012Validator(capability['inputs']).is_valid(step['arguments']):
+                    raise PlanValidationError('This edit leaves a required source unavailable.')
+                if composition_profiles is not None:
+                    _dependency_outputs(step, capability, composition_profiles, step['arguments'])
+                if (
+                    step['enabled'] and step['capability_id'] == 'document_analyze'
+                    and not step['arguments'].get('document_ids') and 'sources' not in step['inputs']
+                ):
+                    raise PlanValidationError('This edit leaves Analyze without a source.')
+            validate_input_bindings(
+                [step_result_bindings(step) for step in plan['steps']], existing_results=existing_results,
+                max_steps=PLAN_HARD_MAX_STEPS,
+            )
+            _validate_render_requests(plan['steps'], existing_results, export_catalog=export_catalog)
+            if plan.get('final_response'):
+                binding = InputBinding.from_dict(plan['final_response'])
+                if binding.step_id and not next(
+                    step['enabled'] for step in plan['steps'] if step['step_id'] == binding.step_id
+                ):
+                    raise PlanValidationError('The selected answer producer cannot be disabled.')
+        except ResultContractError as exc:
+            raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
+        original.update(plan)
+        return original
 
     return plan
 
@@ -1079,10 +1490,20 @@ FAILURE_MESSAGES = {
     'analysis_result_unavailable': 'The saved Analyze result is unavailable. No answer was generated from an incomplete preview.',
     'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
     'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
+    'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
+    'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
+    'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
+    'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
+    'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'dependency_unavailable': 'A required dependency did not complete. This operation was not executed.',
+    'file_publication_not_allowed': 'Gathering and reasoning cannot create downloadable files.',
     'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',
+    'checkpoint_storage_unavailable': 'Saved progress storage is temporarily unavailable. Verification can be retried without repeating completed work.',
     'checkpoint_invalid': 'Saved progress could not be verified. Review the request and create a new plan.',
     'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
     'model_failed': 'The answering model could not complete the reply.',
+    'model_routing_changed': 'The approved model or its capabilities changed. Review a new plan before running.',
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
 }
@@ -1114,6 +1535,8 @@ def safe_failure(value, *, step_id=None, capability_id=None):
 
 def failure_from_exception(exc, *, answering=False, _depth=0):
     """Use types and structured status, never diagnostic prose or model content."""
+    if isinstance(exc, ModelCatalogError):
+        return build_failure('model_routing_changed')
     status = getattr(exc, 'status_code', None)
     if not isinstance(status, int):
         status = getattr(getattr(exc, 'response', None), 'status_code', None)
@@ -1155,6 +1578,8 @@ def build_step_result(
     failure=None,
     saved_analyses=None,
     analysis_consumption=None,
+    task_result=None,
+    wait=None,
 ):
     """The single shape every capability adapter returns.
 
@@ -1188,6 +1613,16 @@ def build_step_result(
         result['saved_analyses'] = [dict(item) for item in saved_analyses]
     if analysis_consumption:
         result['analysis_consumption'] = dict(analysis_consumption)
+    if task_result is not None:
+        if type(task_result) is not TaskResult:
+            raise ResultContractError('result_contract_invalid')
+        result['task_result'] = task_result
+    if wait is not None:
+        if type(wait) is not dict:
+            raise ResultContractError('result_wait_invalid')
+        if len(canonical_bytes(wait)) > 32768:
+            raise ResultContractError('result_wait_invalid')
+        result['wait'] = deepcopy(wait)
     return result
 
 
