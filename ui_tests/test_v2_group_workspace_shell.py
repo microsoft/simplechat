@@ -81,6 +81,9 @@ def test_failed_activation_keeps_previous_page_and_does_not_load_target_resource
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/actions")
     expect(ui.page.get_by_role("combobox", name="Group workspace")).to_have_value("group-a")
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/group/") and entry.query.get("group_id") == ["group-b"]]
+    assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/group-b/actions")], (
+        "A failed activation must not load the target group's native actions."
+    )
 
 
 def test_partial_switch_has_explicit_read_only_recovery_without_replaying_patch(group_ui):
@@ -225,11 +228,13 @@ def test_membership_revocation_clears_the_selected_resources(group_ui):
     ui.active_group = "group-a"
     ui.open("/groups/group-a/actions")
     expect(ui.page.get_by_role("button", name="New Call agent action", exact=True)).to_be_visible()
+    expect(ui.page.locator('[data-testid="workspace-action"]')).not_to_have_count(0)
     ui.denied_groups.add("group-a")
     ui.page.evaluate("window.dispatchEvent(new Event('focus'))")
     expect(ui.page.get_by_role("alert")).to_contain_text("permission")
     expect(ui.page.get_by_role("button", name="New Call agent action", exact=True)).to_have_count(0)
     expect(ui.page.get_by_text("Call group reviewer", exact=True)).to_have_count(0)
+    expect(ui.page.locator('[data-testid="workspace-action"]')).to_have_count(0)
 
 
 def test_group_labels_render_as_text_not_markup(group_ui):
