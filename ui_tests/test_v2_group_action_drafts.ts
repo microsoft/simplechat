@@ -30,7 +30,13 @@ import {
     type EditorWorkspaceScope,
 } from '../application/v2_ui/src/lib/workspaceEditorDrafts';
 
+// A personal handoff returns into the personal agent editor; a group handoff must return into that
+// group's agent editor. `queueCreatedWorkspaceAction` validates the return path against the scope's
+// group id, so a personal path can never seed a group handoff and the reverse. `take` does not
+// validate, so holding one group-a return string constant across every read isolates the scope
+// segment as the sole differentiator of the cache partition under test.
 const RETURN_PATH = '/workspace/agents/agent-under-edit';
+const GROUP_RETURN_PATH = '/groups/group-a/agents/agent-under-edit';
 const PERSONAL: EditorWorkspaceScope = { kind: 'personal' };
 const GROUP_A: EditorWorkspaceScope = { kind: 'group', id: 'group-a' };
 const GROUP_B: EditorWorkspaceScope = { kind: 'group', id: 'group-b' };
@@ -49,21 +55,21 @@ function testGroupDraftNeverLeaksToAnotherGroupOrPersonal(): void {
     seedOwner('owner-1');
     clearWorkspaceEditorDrafts();
     const stored = action('group-a-created');
-    queueCreatedWorkspaceAction(RETURN_PATH, stored, GROUP_A);
+    queueCreatedWorkspaceAction(GROUP_RETURN_PATH, stored, GROUP_A);
 
     // Negative: the same return path in another group, or in personal scope, must not find it.
-    assert.equal(takeCreatedWorkspaceAction(RETURN_PATH, GROUP_B), null,
+    assert.equal(takeCreatedWorkspaceAction(GROUP_RETURN_PATH, GROUP_B), null,
         'A group A handoff must never be taken from group B.');
-    assert.equal(takeCreatedWorkspaceAction(RETURN_PATH, PERSONAL), null,
+    assert.equal(takeCreatedWorkspaceAction(GROUP_RETURN_PATH, PERSONAL), null,
         'A group A handoff must never be taken from personal scope.');
-    assert.equal(takeCreatedWorkspaceAction(RETURN_PATH), null,
+    assert.equal(takeCreatedWorkspaceAction(GROUP_RETURN_PATH), null,
         'A group A handoff must never be taken from the default (personal) scope.');
 
     // Positive control: the group A reader still finds it, so the negatives cannot pass trivially.
-    const taken = takeCreatedWorkspaceAction(RETURN_PATH, GROUP_A);
+    const taken = takeCreatedWorkspaceAction(GROUP_RETURN_PATH, GROUP_A);
     assert.equal(taken?.id, 'group-a-created', 'The group A handoff must be taken from group A.');
     // And it is consumed once, not left to be replayed.
-    assert.equal(takeCreatedWorkspaceAction(RETURN_PATH, GROUP_A), null,
+    assert.equal(takeCreatedWorkspaceAction(GROUP_RETURN_PATH, GROUP_A), null,
         'A handoff must be taken exactly once.');
 }
 
@@ -85,6 +91,14 @@ function testAnInvalidReturnPathIsRejected(): void {
     clearWorkspaceEditorDrafts();
     assert.throws(() => queueCreatedWorkspaceAction('/groups/group-a/documents', action('x'), GROUP_A),
         'Only an agent editor return path may seed a handoff.');
+    // The M4C tightening: the return path must match the scope's group. A personal agent path can
+    // never seed a group handoff, and a group agent path can never seed a personal one.
+    assert.throws(() => queueCreatedWorkspaceAction(RETURN_PATH, action('x'), GROUP_A),
+        'A personal agent path must not seed a group handoff.');
+    assert.throws(() => queueCreatedWorkspaceAction('/groups/group-b/agents/a', action('x'), GROUP_A),
+        'Another group\'s agent path must not seed this group\'s handoff.');
+    assert.throws(() => queueCreatedWorkspaceAction(GROUP_RETURN_PATH, action('x'), PERSONAL),
+        'A group agent path must not seed a personal handoff.');
 }
 
 for (const check of [

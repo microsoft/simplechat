@@ -11,7 +11,7 @@ import { GlassButton } from '../ui/primitives';
 import { AgentField, AgentNotice } from './AgentFields';
 
 export function AgentInstructionsFields({
-    draft, setDraft, actions, catalog, contextError, readOnly,
+    draft, setDraft, actions, catalog, contextError, readOnly, draftInstructions = draftAgentInstructions,
 }: {
     draft: AgentConfiguration;
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
@@ -19,6 +19,9 @@ export function AgentInstructionsFields({
     catalog: AgentKnowledgeCatalog | null;
     contextError: string | null;
     readOnly: boolean;
+    draftInstructions?: (
+        draft: AgentConfiguration, actions: ActionConfiguration[], catalog: AgentKnowledgeCatalog | null, signal?: AbortSignal,
+    ) => Promise<string>;
 }) {
     const textarea = useRef<HTMLTextAreaElement>(null);
     const request = useRef<AbortController | null>(null);
@@ -62,7 +65,7 @@ export function AgentInstructionsFields({
         setError(null);
         const snapshot = draft.instructions;
         try {
-            const instructions = await draftAgentInstructions(draft, actions, catalog, controller.signal);
+            const instructions = await draftInstructions(draft, actions, catalog, controller.signal);
             if (!controller.signal.aborted) {
                 setDraft((current) => withAgentInstructionProposal(current, instructions, snapshot));
                 setConfirmReplace(false);

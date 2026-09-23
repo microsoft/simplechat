@@ -19,12 +19,19 @@ interface ModelFieldsProps {
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
     options: AgentEditorOptions;
     original: AuthoringResource<AgentConfiguration> | null;
+    /**
+     * Whether custom model connections may be configured. Personal scope reads
+     * `allow_user_custom_endpoints`; a group agent editor passes its own
+     * `allow_group_custom_endpoints` so a group page never consults the personal flag. Omitted
+     * keeps the historical personal behaviour byte-identical.
+     */
+    allowCustomEndpoints?: boolean;
 }
 
-function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsProps) {
+function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints }: ModelFieldsProps) {
     const choices = agentModelChoices(options);
     const selected = selectedAgentModel(draft, choices);
-    const customAllowed = options.settings.allow_user_custom_endpoints === true;
+    const customAllowed = allowCustomEndpoints ?? options.settings.allow_user_custom_endpoints === true;
     const [customOpen, setCustomOpen] = useState(Boolean(
         !draft.model_endpoint_id && (draft.azure_openai_gpt_endpoint || draft.azure_openai_gpt_key || draft.enable_agent_gpt_apim),
     ));
@@ -51,7 +58,7 @@ function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsPro
                 <summary className="cursor-pointer text-sm font-medium text-text-2">Custom / legacy connection and APIM</summary>
                 <div className="mt-4 space-y-4">
                     <p className="text-xs text-text-3">A selected endpoint takes precedence. Custom values and stored credentials are retained when you choose a model; they are never copied from app settings.</p>
-                    {!customAllowed ? <AgentNotice>Your administrator has disabled personal custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
+                    {!customAllowed ? <AgentNotice>Your administrator has disabled custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
                     <fieldset disabled={!customAllowed} className="space-y-4">
                     <legend className="sr-only">Custom connection settings</legend>
                     {draft.model_endpoint_id ? (

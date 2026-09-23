@@ -17,6 +17,7 @@ import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
     OWNER_ID, SPA_INDEX, WorkspaceAuthoringFixture, connect_options,  # noqa: F401
+    personal_scope_leak,
 )
 
 
@@ -108,6 +109,13 @@ class PublicWorkspaceFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
+        leak = personal_scope_leak(path, entry.query)
+        if leak:
+            # A public workspace page must never read a personal-scope resource. Record it so
+            # assert_clean() fails rather than the base fixture silently answering it.
+            self.unexpected_requests.append(f"{method} {path} ({leak} from a public page)")
+            self._json(route, {"error": "Personal-scope reads are not available on public pages."}, 500)
+            return
         if path == "/api/public_workspaces" and method == "GET":
             term = entry.query.get("search", [""])[0].lower()
             page = int(entry.query.get("page", ["1"])[0])

@@ -7,11 +7,26 @@ import { agentSelectedActionsContext } from './workspaceAgentActions';
 import { agentText, foundryEndpointMatches, type FoundryDiscoveryRecord } from './workspaceAgentAuthoring';
 import { agentKnowledgeReference, type AgentKnowledgeCatalog } from './workspaceAgentKnowledge';
 
+/**
+ * Which workspace an instruction drafting request speaks for. Personal keeps the historical
+ * `agent_scope: 'user'` spelling with no group; a group draft names its group so the server drafts
+ * against the group's own actions and knowledge rather than the caller's personal ones. Personal
+ * callers pass nothing and their request stays byte-identical.
+ */
+export interface InstructionDraftScope {
+    agentScope: 'user' | 'group';
+    groupId?: string;
+}
+
+export const PERSONAL_INSTRUCTION_SCOPE: InstructionDraftScope = { agentScope: 'user' };
+
 export function agentInstructionRequest(
     draft: AgentConfiguration, actions: ActionConfiguration[], catalog: AgentKnowledgeCatalog | null,
+    scope: InstructionDraftScope = PERSONAL_INSTRUCTION_SCOPE,
 ) {
     return {
-        agent_scope: 'user',
+        agent_scope: scope.agentScope,
+        ...(scope.agentScope === 'group' && scope.groupId ? { group_id: scope.groupId } : {}),
         display_name: draft.display_name,
         description: draft.description,
         brief: agentText(draft._editor_instruction_brief),
@@ -23,10 +38,11 @@ export function agentInstructionRequest(
 
 export async function draftAgentInstructions(
     draft: AgentConfiguration, actions: ActionConfiguration[], catalog: AgentKnowledgeCatalog | null, signal?: AbortSignal,
+    scope: InstructionDraftScope = PERSONAL_INSTRUCTION_SCOPE,
 ): Promise<string> {
     if (draft.agent_type !== 'local') throw new Error('Foundry manages its own instructions.');
     const result = await api.post<{ success: boolean; instructions: string }>(
-        '/api/agents/draft-instructions', agentInstructionRequest(draft, actions, catalog), signal,
+        '/api/agents/draft-instructions', agentInstructionRequest(draft, actions, catalog, scope), signal,
     );
     if (!result.success || typeof result.instructions !== 'string' || !result.instructions.trim()) {
         throw new Error('Instruction drafting returned no instructions.');
