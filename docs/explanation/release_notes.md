@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.133)**
+
+#### New Features
+
+*   **Native Public Workspace Document Management**
+    *   Public workspace documents can now be managed in the native explorer, not just browsed: upload, metadata editing, tags and bulk tagging, permitted downloads, metadata extraction, reprocessing, and revision-aware deletion. Previously every one of these required switching to the classic page.
+    *   Each operation names its workspace directly rather than depending on the account's stored selection, so changing workspaces mid-operation cannot redirect an upload, edit, or deletion, and an older server rejects the request instead of acting in the wrong place.
+    *   Every operation receipt is checked against the workspace that was asked for, so a late or misrouted response cannot be shown as a successful change to the wrong workspace.
+    *   Manager roles keep the content-manager boundary, ordinary members retain read access only, and locked or upload-disabled workspaces keep their existing restrictions. Queued work revalidates permission when it runs rather than trusting the moment it was requested.
+    *   Sharing and generated-artifact approval remain on the classic page and arrive natively in a later release.
+    *   (Ref: `functions_public_document_management.py`, `functions_public_document_policy.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, [V2 Public Document Management](features/V2_PUBLIC_DOCUMENT_MANAGEMENT.md), [Management APIs](features/PUBLIC_DOCUMENT_MANAGEMENT_APIS.md))
+
 ### **(v0.261.132)**
 
 #### New Features

@@ -9,7 +9,7 @@ Public workspace documents can now be managed in the native V2 explorer, not
 just browsed. This extends the read-only surface delivered in M3A.
 
 Sharing and generated-artifact approval remain M3C. The endpoint reference is
-published separately once the backend slice lands in this same milestone.
+[Public Document Management APIs](PUBLIC_DOCUMENT_MANAGEMENT_APIS.md).
 
 ## Purpose and boundaries
 
@@ -142,5 +142,6 @@ reads.
 ## Related
 
 - [V2 Public Document Browsing](V2_PUBLIC_DOCUMENT_BROWSING.md) — the M3A read surface
+- [Public Document Management APIs](PUBLIC_DOCUMENT_MANAGEMENT_APIS.md) — the server endpoints
 - [Public Document Read APIs](PUBLIC_DOCUMENT_READ_APIS.md)
 - [V2 Group Document Management](V2_GROUP_DOCUMENT_MANAGEMENT.md) — the M2B equivalent
