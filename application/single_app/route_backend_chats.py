@@ -25140,13 +25140,16 @@ def register_route_backend_chats(bp):
                                 level=logging.ERROR,
                                 exceptionTraceback=True,
                             )
-                            error_payload = {'error': 'Agent streaming failed. Please try again.'}
                             if isinstance(stream_error, ModelTokenBudgetError):
-                                error_payload = stream_error.payload
-                            elif isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
-                                error_payload = _agent_authentication_required_payload(stream_error)
-                            yield f"data: {json.dumps(error_payload)}\n\n"
-                            return
+                                yield f"data: {json.dumps(stream_error.payload)}\n\n"
+                                return
+                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                                yield f"data: {json.dumps(_agent_authentication_required_payload(stream_error))}\n\n"
+                                return
+                            # The stream-level handler saves any reply already
+                            # streamed and tells the browser whether it was saved.
+                            final_model_used = actual_model_used
+                            raise
                         finally:
                             if agent_stream is not None and hasattr(agent_stream, 'aclose'):
                                 loop.run_until_complete(agent_stream.aclose())
@@ -25863,6 +25866,10 @@ def register_route_backend_chats(bp):
                         )
                         yield f"data: {json.dumps({'error': 'Selected source state changed before final output could be published.', 'conversation_id': conversation_id})}\n\n"
                         return
+                    raise
+                except (M365ApprovalRequired, M365SignInRequired):
+                    # Resumable waits reach the request-level handlers, which
+                    # record them instead of saving an interrupted reply.
                     raise
                 except Exception as e:
                     error_msg = str(e)

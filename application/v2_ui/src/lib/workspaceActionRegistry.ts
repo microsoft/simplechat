@@ -35,9 +35,9 @@ export const SIMPLECHAT_ACTION_CAPABILITIES: ActionCapability[] = [
 export const MSGRAPH_ACTION_CAPABILITIES: ActionCapability[] = [
     { key: 'get_my_profile', label: 'Read my profile', description: 'Read the signed-in user’s Microsoft 365 profile.' },
     { key: 'get_my_timezone', label: 'Read my mailbox timezone', description: 'Read mailbox time zone and time-format settings.' },
-    { key: 'get_my_events', label: 'Read my calendar events', description: 'Read upcoming events for the signed-in user.' },
+    { key: 'get_my_events', label: 'Read my calendar events', description: 'Read and search events in any past or future time range.' },
     { key: 'create_calendar_invite', label: 'Create calendar invites', description: 'Create events, invite group members, and create Teams meetings.' },
-    { key: 'get_my_messages', label: 'Read my mail', description: 'Read recent mail for the signed-in user.' },
+    { key: 'get_my_messages', label: 'Read my mail', description: 'Read and search mail of any age for the signed-in user.' },
     { key: 'mark_message_as_read', label: 'Update message read state', description: 'Mark mail messages as read or unread.' },
     { key: 'send_mail', label: 'Send mail', description: 'Create manual drafts, delayed-delivery drafts, or send mail.' },
     { key: 'search_users', label: 'Search directory users', description: 'Find Microsoft 365 users by name or email prefix.' },

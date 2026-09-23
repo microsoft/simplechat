@@ -1,4 +1,4 @@
-# Microsoft 365 actions and conversation evidence (v0.261.038)
+# Microsoft 365 actions and conversation evidence (v0.261.129)
 
 Implemented in version: **0.261.029**
 
@@ -28,8 +28,12 @@ Chat mail/invitation review cards, current-state recovery, and claimed
 interactive delivery were added in **0.261.038**. See the
 [action-card repair](../fixes/M365_CHAT_ACTION_CARDS_FIX.md).
 
+Mail and calendar history search, and the agent stream context and
+interrupted-reply persistence repair, were added in **0.261.129**. See the
+[stream context and persistence fix](../fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md).
+
 Related version update: `application/single_app/config.py`.
-Associated issue: #1493. Related future work: #954 and #956.
+Associated issues: #1493 and #1523. Related future work: #954 and #956.
 
 ## Overview
 
@@ -92,6 +96,39 @@ SharePoint supports document-library files. Site pages, list rows, on-premises
 SharePoint, and consumer Microsoft accounts are outside this release.
 User instructions can narrow a query to a folder or file; actions have no
 independent site/folder allowlist.
+
+## Mail and calendar history
+
+Implemented in version: **0.261.129**
+
+**Read my mail** and **Read my calendar events** read any period the user's
+mailbox still holds, not only recent mail or upcoming events. Both tools gained
+parameters instead of new capabilities, so existing actions and their saved
+capability choices keep working.
+
+- Mail accepts literal `search` words and a `received_from`/`received_to`
+  range, and can read `all` folders. Words are extracted from the model's text
+  before they reach Microsoft Graph KQL, so operators and field prefixes are
+  dropped. KQL dates are whole days in an unstated time zone, so the query is
+  widened by a day and the exact bounds are applied to each returned message.
+- Calendar always reads `me/calendarView`, which expands recurring meetings.
+  Without a range it reads the next 30 days. `query` words are matched by the
+  plugin, because a calendar view doesn't support Graph search. `order` and
+  `starts_in_range` support reading backward and continuing without repeats.
+- Every result carries `coverage` with `complete` and, when more items exist,
+  `continue_with`: the arguments for the next call. Continuation uses a
+  received or start time cursor plus one look-ahead item, because Graph advises
+  against reusing a skip token in a different request. Items that share the
+  cursor's time are returned by the next call; a tie group larger than `top` is
+  reported in the note rather than silently dropped.
+
+No permission changes: history uses the same delegated `Mail.Read` and
+`Calendars.Read` scopes. The limits are Microsoft 365's: the primary mailbox
+and default calendar only, no permanently deleted or retention-purged items,
+and at most 1,000 results for one mail search. See the
+[Email](../../reference/actions/m365-email.md) and
+[Calendar](../../reference/actions/m365-calendar.md) references for the
+parameter details.
 
 ## Sharing and approvals
 
