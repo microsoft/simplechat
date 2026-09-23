@@ -174,7 +174,7 @@ def editor_secret_paths(record, kind):
     return {path for path in paths if _get(record, path, None) not in (None, "")}
 
 
-def project_editor_record(record, kind, *, global_scope=False):
+def project_editor_record(record, kind, *, global_scope=False, group_scope=False):
     """Project stored configuration without hydrating credentials or leaking Cosmos metadata."""
     result = {key: deepcopy(value) for key, value in record.items() if not key.startswith("_")}
     paths = editor_secret_paths(result, kind)
@@ -191,7 +191,7 @@ def project_editor_record(record, kind, *, global_scope=False):
             if isinstance(status, dict)
         }
     result["is_global"] = global_scope
-    result["is_group"] = False
+    result["is_group"] = group_scope
     if kind == "agents":
         result.setdefault("agent_type", "local")
         result.setdefault("actions_to_load", [])
@@ -204,13 +204,13 @@ def project_editor_record(record, kind, *, global_scope=False):
     return result
 
 
-def editor_resource(record, kind, *, global_scope=False):
-    projected = project_editor_record(record, kind, global_scope=global_scope)
+def editor_resource(record, kind, *, global_scope=False, group_scope=False, read_only=None):
+    projected = project_editor_record(record, kind, global_scope=global_scope, group_scope=group_scope)
     return {
         "record": projected,
         "revision": record.get("_etag") or "",
         "secret_paths": sorted(_pointer(path) for path in editor_secret_paths(projected, kind)),
-        "read_only": global_scope,
+        "read_only": global_scope if read_only is None else bool(read_only),
     }
 
 
@@ -235,7 +235,7 @@ def clear_editor_test_secrets(record, clear_secret_paths):
 
 
 def _container(kind, scope="personal"):
-    if kind not in {"agents", "actions"} or scope not in {"personal", "global"}:
+    if kind not in {"agents", "actions"} or scope not in {"personal", "global", "group"}:
         raise WorkspaceAuthoringValidation("Invalid workspace resource.")
     return getattr(import_module("config"), f"cosmos_{scope}_{kind}_container")
 
@@ -443,13 +443,23 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
     return result
 
 
-def _secret_scope(kind, user_id, record, path):
-    return (record["id"], "agent") if kind == "agents" else (
-        user_id, "action" if path[0] == "auth" else "action-addset",
-    )
+def _secret_scope(kind, user_id, record, path, group_id=None):
+    """Resolve the Key Vault (scope_value, source, scope) for one credential path.
+
+    Group actions store their credentials in the group's Key Vault namespace so a
+    saved group action never writes into the saving member's personal namespace,
+    and so the saved-action test path (which resolves group secrets with
+    ``scope="group"``) can rehydrate them.
+    """
+    if kind == "agents":
+        return (record["id"], "agent", "user")
+    source = "action" if path[0] == "auth" else "action-addset"
+    if group_id:
+        return (group_id, source, "group")
+    return (user_id, source, "user")
 
 
-def _legacy_editor_secret_reference(record, path, kind, user_id, settings):
+def _legacy_editor_secret_reference(record, path, kind, user_id, settings, group_id=None):
     """Recover a legacy stored trigger only from its owned, conventional Key Vault name."""
     unavailable = "A stored secret is unavailable. Re-enter its value."
     if not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
@@ -474,12 +484,12 @@ def _legacy_editor_secret_reference(record, path, kind, user_id, settings):
             secret_name = keyvault._build_plugin_additional_field_secret_name(name, f"mcp-custom-header-{path[2]}")
     if not secret_name:
         raise WorkspaceAuthoringValidation(unavailable)
-    scope_value, source = _secret_scope(kind, user_id, record, path)
+    scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
     try:
-        reference = keyvault.build_full_secret_name(secret_name, scope_value, source, "user")
+        reference = keyvault.build_full_secret_name(secret_name, scope_value, source, kv_scope)
         value = keyvault.resolve_secret_reference_for_context(
-            reference, scope_value=scope_value, scope="user", allowed_sources={source},
-            context_label="owned personal editor credential",
+            reference, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
+            context_label="owned workspace editor credential",
         )
         if not value or _is_placeholder(value) or _is_reference(value):
             raise ValueError("The credential is unavailable.")
@@ -501,14 +511,14 @@ def _supported_storage_paths(record, kind):
     }
 
 
-def _check_stored_references(record, kind, user_id):
+def _check_stored_references(record, kind, user_id, group_id=None):
     keyvault = import_module("functions_keyvault")
     for path in editor_secret_paths(record, kind):
         value = _get(record, path)
         if _is_reference(value):
-            scope_value, source = _secret_scope(kind, user_id, record, path)
+            scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
             if not keyvault.secret_reference_matches_context(
-                value, scope_value=scope_value, scope="user", allowed_sources={source},
+                value, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
             ):
                 raise WorkspaceAuthoringValidation("A stored credential does not belong to this resource.")
 
@@ -532,10 +542,10 @@ def _cleanup_staged_secrets(references):
         )
 
 
-def _stage_editor_secrets(record, kind, user_id, settings, staged):
+def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None):
     """Fresh names isolate failed CAS writes from every credential in a stored manifest."""
     keyvault = import_module("functions_keyvault")
-    _check_stored_references(record, kind, user_id)
+    _check_stored_references(record, kind, user_id, group_id)
     if not settings.get("enable_key_vault_secret_storage", False):
         return
     if not settings.get("key_vault_name"):
@@ -546,29 +556,29 @@ def _stage_editor_secrets(record, kind, user_id, settings, staged):
             continue
         if not isinstance(value, str):
             raise WorkspaceAuthoringValidation("Credentials must be text values.")
-        scope_value, source = _secret_scope(kind, user_id, record, path)
+        scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
         secret_name = f"editor-{uuid.uuid4().hex}"
         reference = keyvault.store_secret_in_key_vault(
-            secret_name, value, scope_value, source=source, scope="user",
+            secret_name, value, scope_value, source=source, scope=kv_scope,
         )
         if not keyvault.secret_reference_matches_context(
-            reference, scope_value=scope_value, scope="user", allowed_sources={source},
+            reference, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
         ):
             raise RuntimeError("Key Vault did not store the credential.")
         staged.append(reference)
         _set(record, path, reference)
 
 
-def _cleanup_replaced_secrets(record, kind, user_id, settings):
+def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None):
     if not record or not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
         return
     keyvault = import_module("functions_keyvault")
     references = set()
     for path in _supported_storage_paths(record, kind):
         value = _get(record, path, None)
-        scope_value, source = _secret_scope(kind, user_id, record, path)
+        scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
         if isinstance(value, str) and keyvault.secret_reference_matches_context(
-            value, scope_value=scope_value, scope="user", allowed_sources={source},
+            value, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
         ):
             references.add(value)
     if not references:
@@ -576,10 +586,17 @@ def _cleanup_replaced_secrets(record, kind, user_id, settings):
     try:
         # Legacy names may be shared after a classic rename. Never delete a reference
         # still used by another owned manifest (including the just-committed one).
-        for stored in _container(kind).query_items(
-            query="SELECT * FROM c WHERE c.user_id = @user_id",
-            parameters=[{"name": "@user_id", "value": user_id}], partition_key=user_id,
-        ):
+        if group_id:
+            still_used = _container(kind, "group").query_items(
+                query="SELECT * FROM c WHERE c.group_id = @group_id",
+                parameters=[{"name": "@group_id", "value": group_id}], partition_key=group_id,
+            )
+        else:
+            still_used = _container(kind).query_items(
+                query="SELECT * FROM c WHERE c.user_id = @user_id",
+                parameters=[{"name": "@user_id", "value": user_id}], partition_key=user_id,
+            )
+        for stored in still_used:
             references.difference_update(value for _, value in _walk(stored) if isinstance(value, str))
         _cleanup_staged_secrets(references)
         if (record.get("metadata") or {}).get("key_vault_secret_reminders"):
@@ -593,7 +610,7 @@ def _cleanup_replaced_secrets(record, kind, user_id, settings):
         )
 
 
-def _sync_editor_reminders(saved, kind, user_id, settings):
+def _sync_editor_reminders(saved, kind, user_id, settings, group_id=None):
     if kind != "actions" or not settings.get("enable_key_vault_secret_storage"):
         return saved
     metadata = saved.get("metadata") or {}
@@ -601,18 +618,20 @@ def _sync_editor_reminders(saved, kind, user_id, settings):
         return saved
     keyvault = import_module("functions_keyvault")
     updated = deepcopy(saved)
+    partition = group_id or user_id
+    scope = "group" if group_id else "personal"
     try:
         # The main CAS already succeeded. In particular, a stale request cannot
         # update expiration on a previously stored credential or reminder inventory.
         for path in _supported_storage_paths(updated, kind):
             reference = _get(updated, path, None)
             if isinstance(reference, str) and keyvault.validate_secret_name_dynamic(reference):
-                scope_value, source = _secret_scope(kind, user_id, updated, path)
-                keyvault._sync_plugin_secret_reminder(updated, path, reference, scope_value, source, "user")
+                scope_value, source, kv_scope = _secret_scope(kind, user_id, updated, path, group_id)
+                keyvault._sync_plugin_secret_reminder(updated, path, reference, scope_value, source, kv_scope)
         sync_status = (updated.get("metadata") or {}).get("key_vault_secret_reminder_sync")
         if sync_status is not None and sync_status != metadata.get("key_vault_secret_reminder_sync"):
-            return _container(kind).patch_item(
-                item=saved["id"], partition_key=user_id,
+            return _container(kind, scope).patch_item(
+                item=saved["id"], partition_key=partition,
                 patch_operations=[{"op": "set", "path": "/metadata/key_vault_secret_reminder_sync", "value": sync_status}],
                 etag=saved["_etag"], match_condition=import_module("azure.core").MatchConditions.IfNotModified,
             )
@@ -626,12 +645,20 @@ def _sync_editor_reminders(saved, kind, user_id, settings):
     return saved
 
 
-def _invalidate_editor_catalog(kind, user_id, operation):
+def _invalidate_editor_catalog(kind, user_id, operation, group_id=None):
     builtins.kernel_reload_needed = True
     try:
-        import_module("functions_chat_bootstrap_cache").bump_chat_bootstrap_user_cache_version(
-            user_id, reason=f"personal_{'agent' if kind == 'agents' else 'action'}_{operation}",
-        )
+        cache = import_module("functions_chat_bootstrap_cache")
+        if group_id:
+            # Group action changes affect every member, so invalidate globally, exactly
+            # as the classic group action save does.
+            cache.bump_chat_bootstrap_global_cache_version(
+                reason=f"group_action_{operation}",
+            )
+        else:
+            cache.bump_chat_bootstrap_user_cache_version(
+                user_id, reason=f"personal_{'agent' if kind == 'agents' else 'action'}_{operation}",
+            )
     except Exception as exc:
         import_module("functions_appinsights").log_event(
             "[CHAT_BOOTSTRAP_CACHE] Unable to invalidate a committed editor change.",
@@ -723,6 +750,225 @@ def delete_editor_record(kind, user_id, record, settings):
         raise
     _cleanup_replaced_secrets(record, kind, user_id, settings)
     _invalidate_editor_catalog(kind, user_id, "deleted")
+
+
+# === Group action editor ===
+# Group actions reuse the personal editor engine above; only the storage scope,
+# governance domain and Key Vault namespace differ. Every helper below threads
+# ``group_id`` into the shared secret and CAS machinery so a group action's
+# credentials live in the group's Key Vault namespace, not the saving member's,
+# and so a stale revision is refused with nothing written — the same contract the
+# personal editor already enforces. Authorization (role and status) is resolved
+# by ``functions_group_action_access`` before any of these run.
+
+def _assert_group_action_access(user_id, group_id, record, settings):
+    """A stored record must belong to this group and pass action-type governance."""
+    if (
+        record.get("group_id") != group_id
+        or record.get("is_global")
+        or record.get("scope") not in (None, "", "group")
+    ):
+        raise LookupError("This resource is unavailable.")
+    import_module("functions_governance").ensure_action_type_access(
+        "governance_group_actions", user_id, record.get("type"), "group",
+    )
+
+
+def read_group_editor_record(user_id, group_id, record_id, settings):
+    """Read one raw group action for the editor, reauthorizing group ownership."""
+    if not isinstance(record_id, str) or not record_id or any(char in record_id for char in "/\\?#"):
+        raise LookupError("This resource is unavailable.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        record = _container("actions", "group").read_item(item=record_id, partition_key=group_id)
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise LookupError("This resource is unavailable.") from exc
+    if record.get("id") != record_id:
+        raise LookupError("This resource is unavailable.")
+    _assert_group_action_access(user_id, group_id, record, settings)
+    return deepcopy(record)
+
+
+def read_group_merged_global_record(user_id, group_id, record_id, settings):
+    """Read one global action a group member may open read-only from a merged list.
+
+    Provided (global) rows appear in a group listing only while the global merge
+    setting is on; this backs the single-record view onto one of them. It raises
+    ``LookupError`` — mapped to 404 — when merge is off, the id is not a global
+    action, or governance denies it, so a group route never opens onto a resource
+    the list would not have shown. ``group_id`` is validated by the caller's read
+    context; it is unused here because a global action has no group partition.
+    """
+    if not settings.get("merge_global_semantic_kernel_with_workspace", False):
+        raise LookupError("This resource is unavailable.")
+    if not isinstance(record_id, str) or not record_id or any(char in record_id for char in "/\\?#"):
+        raise LookupError("This resource is unavailable.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        record = _container("actions", "global").read_item(item=record_id, partition_key=record_id)
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise LookupError("This resource is unavailable.") from exc
+    if record.get("id") != record_id:
+        raise LookupError("This resource is unavailable.")
+    _assert_record_access("actions", user_id, record, settings, global_scope=True)
+    return deepcopy(record)
+
+
+def list_group_editor_records(user_id, group_id, settings):
+    """Return (record, is_global) pairs a member may see: group actions plus, when
+    the merge setting is on, read-only global actions."""
+    governance = import_module("functions_governance")
+    records = []
+    for record in _container("actions", "group").query_items(
+        query="SELECT * FROM c WHERE c.group_id = @group_id",
+        parameters=[{"name": "@group_id", "value": group_id}], partition_key=group_id,
+    ):
+        try:
+            _assert_group_action_access(user_id, group_id, record, settings)
+        except (LookupError, PermissionError):
+            continue
+        records.append((record, False))
+    if settings.get("merge_global_semantic_kernel_with_workspace", False):
+        for record in _container("actions", "global").query_items(
+            query="SELECT * FROM c", enable_cross_partition_query=True,
+        ):
+            try:
+                _assert_record_access("actions", user_id, record, settings, global_scope=True)
+            except (LookupError, PermissionError):
+                continue
+            records.append((record, True))
+    return records
+
+
+def _assert_group_available_name(user_id, group_id, record, existing):
+    name = record.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise WorkspaceAuthoringValidation("A name is required.")
+    if existing and name == existing.get("name"):
+        return
+    matches = _container("actions", "group").query_items(
+        query="SELECT c.id FROM c WHERE c.group_id = @group_id AND c.name = @name",
+        parameters=[{"name": "@group_id", "value": group_id}, {"name": "@name", "value": name}],
+        partition_key=group_id,
+    )
+    if any(match.get("id") != (existing or {}).get("id") for match in matches):
+        raise WorkspaceAuthoringConflict("An item with this name already exists.")
+    globals_matches = _container("actions", "global").query_items(
+        query="SELECT c.id FROM c WHERE STRINGEQUALS(c.name, @name, true)",
+        parameters=[{"name": "@name", "value": name}], enable_cross_partition_query=True,
+    )
+    if next(iter(globals_matches), None):
+        raise WorkspaceAuthoringConflict("An item with this name already exists.")
+
+
+def save_group_editor_record(user_id, group_id, record, existing, settings):
+    """Save one prepared group action manifest with a mandatory conditional write."""
+    if existing:
+        try:
+            current = read_group_editor_record(user_id, group_id, existing["id"], settings)
+        except LookupError as exc:
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
+        if not existing.get("_etag") or existing["_etag"] != current.get("_etag"):
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.")
+    import_module("functions_governance").ensure_action_type_access(
+        "governance_group_actions", user_id, record.get("type"), "group",
+    )
+    delegation = import_module("functions_agent_delegation")
+    record = delegation.validate_agent_action_for_scope(
+        record, user_id=user_id, scope_type="group", scope_id=group_id, settings=settings,
+    )
+    identities = import_module("functions_workspace_identities")
+    identities.validate_action_identity_reference(
+        record, identities.WORKSPACE_IDENTITY_SCOPE_GROUP, group_id,
+    )
+    result = {
+        key: deepcopy(value) for key, value in record.items()
+        if not key.startswith("_") and key not in _MANAGED_FIELDS
+    }
+    now = datetime.now(timezone.utc).isoformat()
+    result.update({
+        "id": existing["id"] if existing else record["id"], "group_id": group_id,
+        "created_at": (existing or {}).get("created_at", now),
+        "created_by": (existing or {}).get("created_by", user_id),
+        "modified_at": now, "modified_by": user_id, "last_updated": now,
+    })
+    staged = []
+    write_started = False
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        _stage_editor_secrets(result, "actions", user_id, settings, staged, group_id)
+        container = _container("actions", "group")
+        write_started = True
+        if existing:
+            saved = container.replace_item(
+                item=existing["id"], body=result, etag=existing["_etag"],
+                match_condition=import_module("azure.core").MatchConditions.IfNotModified,
+            )
+        else:
+            saved = container.create_item(body=result)
+    except Exception as exc:
+        conflict_response = isinstance(exc, exceptions.CosmosHttpResponseError) and (
+            exc.status_code in (409, 412) or (existing is not None and exc.status_code == 404)
+        )
+        if not write_started:
+            _cleanup_staged_secrets(staged)
+        if conflict_response:
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
+        raise
+    saved = _sync_editor_reminders(saved, "actions", user_id, settings, group_id)
+    _cleanup_replaced_secrets(existing, "actions", user_id, settings, group_id)
+    _invalidate_editor_catalog("actions", user_id, "saved", group_id)
+    return saved
+
+
+def delete_group_editor_record(user_id, group_id, record, settings):
+    """Delete one group action with a mandatory conditional write, mirroring personal."""
+    _assert_group_action_access(user_id, group_id, record, settings)
+    if not record.get("_etag"):
+        raise WorkspaceAuthoringConflict("Reload this resource before deleting it.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        _container("actions", "group").delete_item(
+            item=record["id"], partition_key=group_id, etag=record["_etag"],
+            match_condition=import_module("azure.core").MatchConditions.IfNotModified,
+        )
+    except exceptions.CosmosHttpResponseError as exc:
+        if exc.status_code in (404, 412):
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before deleting.") from exc
+        raise
+    _cleanup_replaced_secrets(record, "actions", user_id, settings, group_id)
+    _invalidate_editor_catalog("actions", user_id, "deleted", group_id)
+
+
+def apply_group_action_write(user_id, group_id, existing, body, prepare, settings):
+    """Merge editor intent, validate through ``prepare``, and persist one group action.
+
+    Reuses the personal editor's merge, secret and preservation rules verbatim,
+    resolving stored secret placeholders against the group's Key Vault namespace.
+    """
+    merged = merge_editor_write(
+        existing or {}, body, "actions", creating=existing is None,
+        resolve_stored_placeholder=lambda record, path: _legacy_editor_secret_reference(
+            record, path, "actions", user_id, settings, group_id,
+        ),
+    )
+    if not existing:
+        merged["id"] = str(uuid.uuid4())
+        merged.setdefault("displayName", merged.get("name", ""))
+        merged.setdefault("description", "")
+    proposed = deepcopy(merged)
+    prepared, error = prepare(
+        user_id, group_id, _editor_validation_input("actions", merged, existing), settings, existing,
+    )
+    if error:
+        status = error[1] if isinstance(error, tuple) else 400
+        if status == 403:
+            raise PermissionError("This configuration is unavailable.")
+        raise WorkspaceAuthoringValidation("Invalid action configuration.")
+    if existing:
+        prepared = _preserve_unedited_values(existing, proposed, prepared)
+    _assert_group_available_name(user_id, group_id, prepared, existing)
+    return save_group_editor_record(user_id, group_id, prepared, existing, settings)
 
 
 def _validate_agent_editor_changes(record, existing, settings, user_id):
