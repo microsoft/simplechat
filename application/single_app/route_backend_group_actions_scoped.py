@@ -35,6 +35,7 @@ from functions_group_action_access import (
 )
 from route_backend_plugins import (
     _prepare_group_action_payload,
+    build_action_editor_types,
     get_plugin_types,
     is_action_type_access_allowed,
 )
@@ -132,12 +133,17 @@ def register_route_backend_group_actions_scoped(bp):
         _reject_request_body()
         user_id = get_current_user_id()
         require_group_action_types_context(user_id, group_id)
-        types = get_plugin_types(
+        # Mirror the personal ?view=editor branch: enrich governed discovery into
+        # the editor catalogue the V2 editor renders (auth types and field schemas),
+        # never the raw discovery Response, and keep it out of shared caches.
+        discovered = get_plugin_types(
             allowed_type_filter=lambda action_type: is_action_type_access_allowed(
                 'governance_group_actions', user_id, action_type, 'group',
             ),
         )
-        return jsonify({"types": types}), 200
+        response = jsonify({"types": build_action_editor_types(discovered.get_json())})
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @bp.route('/api/groups/<group_id>/actions/<action_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

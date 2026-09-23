@@ -10,7 +10,7 @@ import re
 from urllib.parse import quote
 
 from functions_file_sync import is_file_sync_enabled_for_group
-from functions_governance import is_action_scope_access_allowed, is_governance_access_allowed
+from functions_governance import is_governance_access_allowed
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -22,7 +22,10 @@ from functions_group_document_policy import (
     group_document_management_operations,
 )
 from functions_group_prompt_policy import group_prompt_management_operations
-from functions_group_action_policy import group_action_management_operations
+from functions_group_action_policy import (
+    group_action_management_operations,
+    group_actions_available,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -101,7 +104,6 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     sync_enabled = manager and is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
 
     agents_configured = group_kernel and bool(settings.get("allow_group_agents", False))
-    actions_configured = agents_configured and bool(settings.get("allow_group_plugins", False))
     endpoints_configured = (
         group_kernel
         and bool(settings.get("allow_group_custom_endpoints", False))
@@ -110,7 +112,7 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     delegation_configured = semantic_kernel and bool(settings.get("allow_group_agents", False))
     delegation_allowed = delegation_configured and is_governance_access_allowed("governance_group_agents", user_id)
     agents_allowed = group_kernel and delegation_allowed
-    actions_allowed = actions_configured and is_action_scope_access_allowed("governance_group_actions", user_id, "group")
+    actions_available, actions_reason = group_actions_available(user_id, settings)
     endpoints_allowed = endpoints_configured and is_governance_access_allowed("governance_group_endpoints", user_id)
     workflows_enabled = is_group_workflows_enabled_for_group(settings, group_id)
 
@@ -133,8 +135,8 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             governance_reason if agents_configured else "Group agents are not enabled.",
         ),
         "actions": section(
-            actions_allowed, automation_manager,
-            governance_reason if actions_configured else "Group actions are not enabled.",
+            actions_available, automation_manager,
+            actions_reason or "Group actions are not enabled.",
         ),
         "endpoints": section(
             endpoints_allowed, role in ("Owner", "Admin"),
@@ -223,7 +225,9 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         },
         "action_management": {
             "schema_version": 1,
-            "operations": group_action_management_operations(group, role, settings),
+            "operations": group_action_management_operations(
+                user_id, group, role, settings, available=actions_available,
+            ),
         },
     }
 

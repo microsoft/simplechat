@@ -162,6 +162,10 @@ def _fake_prepare(user_id, group_id, plugin, settings, existing):
 def environment(monkeypatch):
     settings = {
         "enable_group_workspaces": True,
+        "enable_semantic_kernel": True,
+        "per_user_semantic_kernel": True,
+        "allow_group_agents": True,
+        "allow_group_plugins": True,
         "merge_global_semantic_kernel_with_workspace": False,
         "require_owner_for_group_agent_management": False,
         "enable_key_vault_secret_storage": False,
@@ -316,8 +320,17 @@ def environment(monkeypatch):
             "require_group_action_types_context": access.require_group_action_types_context,
             "update_group_action": access.update_group_action,
             "_prepare_group_action_payload": _fake_prepare,
-            "get_plugin_types": lambda allowed_type_filter=None: [
+            "get_plugin_types": lambda allowed_type_filter=None: jsonify([
                 {"type": "openapi"}, {"type": "sql_schema"},
+            ]),
+            "build_action_editor_types": lambda types: [
+                {
+                    **entry,
+                    "allowed_auth_types": ["identity", "key"],
+                    "additional_fields_schema": {"type": "object"},
+                    "metadata_schema": {"type": "object"},
+                }
+                for entry in types
             ],
             "is_action_type_access_allowed": lambda *args, **kwargs: True,
         }
@@ -580,29 +593,46 @@ def test_read_rejects_a_request_body(environment):
 
 
 # --------------------------------------------------------------------------
-# Action types
+# Action types (a read capability)
 # --------------------------------------------------------------------------
 
-def test_types_are_offered_to_writers_and_refused_to_readers(environment):
-    as_user(environment, "owner")
-    ok = environment.client.get(f"{LIST_PATH}/types")
-    assert ok.status_code == 200
-    assert [entry["type"] for entry in ok.get_json()["types"]] == ["openapi", "sql_schema"]
-    as_user(environment, "member")
+@pytest.mark.parametrize("role", READER_ROLES)
+def test_types_are_offered_to_every_member_role(environment, role):
+    # The V2 collection and details page render type labels for every viewer, so
+    # the catalogue is a read capability, not a write one (M4 §8 B2).
+    as_user(environment, ROLE_USER[role])
+    response = environment.client.get(f"{LIST_PATH}/types")
+    assert response.status_code == 200
+    assert response.headers.get("Cache-Control") == "no-store"
+    types = response.get_json()["types"]
+    assert [entry["type"] for entry in types] == ["openapi", "sql_schema"]
+    # The editor catalogue is enriched, not raw discovery (M4 §8 B1).
+    for entry in types:
+        assert set(entry) >= {"allowed_auth_types", "additional_fields_schema", "metadata_schema"}
+
+
+def test_types_are_refused_to_non_members_and_inactive_groups(environment):
+    as_user(environment, "stranger")
     assert environment.client.get(f"{LIST_PATH}/types").status_code == 403
+    as_user(environment, "owner")
+    assert environment.client.get("/api/groups/inactive-grp/actions/types").status_code == 403
 
 
 # --------------------------------------------------------------------------
 # Global merge (read-only)
 # --------------------------------------------------------------------------
 
+def _seed_global(environment, action_id="g1"):
+    return environment.global_container.create_item({
+        "id": action_id, "name": f"global-{action_id}", "type": "openapi", "is_enabled": True,
+        "endpoint": "https://global.example.test", "auth": {"type": "identity"},
+    })
+
+
 def test_global_actions_are_listed_read_only_when_merge_is_enabled(environment):
     environment.settings["merge_global_semantic_kernel_with_workspace"] = True
     seed_action(environment.group_container, "a1")
-    environment.global_container.create_item({
-        "id": "g1", "name": "global-shared", "type": "openapi", "is_enabled": True,
-        "endpoint": "https://global.example.test", "auth": {"type": "identity"},
-    })
+    _seed_global(environment)
     as_user(environment, "owner")
     body = environment.client.get(LIST_PATH).get_json()
     by_id = {item["id"]: item for item in body["actions"]}
@@ -610,6 +640,99 @@ def test_global_actions_are_listed_read_only_when_merge_is_enabled(environment):
     assert by_id["g1"]["is_global"] is True and by_id["g1"]["is_group"] is False
     # A merged global action carries no group per-item operations.
     assert by_id["g1"]["action_actions"] == []
+
+
+def test_single_read_of_a_merged_global_action_is_read_only(environment):
+    # A provided (global) row a member sees in the list must open, read-only, not 404 (M4 §8 B4).
+    environment.settings["merge_global_semantic_kernel_with_workspace"] = True
+    _seed_global(environment)
+    as_user(environment, "owner")
+    response = environment.client.get(f"{LIST_PATH}/g1")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["read_only"] is True
+    assert body["record"]["is_global"] is True
+    assert body["record"]["action_actions"] == []
+
+
+def test_single_read_of_a_global_id_is_404_when_merge_is_off(environment):
+    environment.settings["merge_global_semantic_kernel_with_workspace"] = False
+    _seed_global(environment)
+    as_user(environment, "owner")
+    assert environment.client.get(f"{LIST_PATH}/g1").status_code == 404
+
+
+def test_writes_on_a_global_id_are_refused(environment):
+    # A global id is not a group action; PATCH and DELETE must refuse and write nothing.
+    environment.settings["merge_global_semantic_kernel_with_workspace"] = True
+    _seed_global(environment)
+    as_user(environment, "owner")
+    update = environment.client.patch(f"{LIST_PATH}/g1", json=write_body('"etag-1"', description="x"))
+    assert update.status_code == 404
+    assert environment.client.delete(f"{LIST_PATH}/g1").status_code == 404
+    assert ("g1", "g1") in environment.global_container.records
+
+
+# --------------------------------------------------------------------------
+# Availability predicate (B3): one gate for the section and all six routes
+# --------------------------------------------------------------------------
+
+AVAILABILITY_FLAGS = ["enable_semantic_kernel", "per_user_semantic_kernel", "allow_group_agents", "allow_group_plugins"]
+
+
+@pytest.mark.parametrize("flag", AVAILABILITY_FLAGS)
+def test_every_route_refuses_when_an_availability_flag_is_off(environment, flag):
+    seed = seed_action(environment.group_container, "a1")
+    environment.settings[flag] = False
+    as_user(environment, "owner")
+    assert environment.client.get(LIST_PATH).status_code == 403
+    assert environment.client.get(f"{LIST_PATH}/a1").status_code == 403
+    assert environment.client.get(f"{LIST_PATH}/types").status_code == 403
+    assert environment.client.post(LIST_PATH, json=write_body(name="x", type="openapi")).status_code == 403
+    assert environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y")).status_code == 403
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+
+
+def test_every_route_refuses_when_governance_denies(environment, monkeypatch):
+    seed = seed_action(environment.group_container, "a1")
+    monkeypatch.setitem(
+        sys.modules, "functions_governance", module_stub(
+            "functions_governance",
+            ensure_action_type_access=Mock(),
+            ensure_global_action_access=Mock(),
+            is_action_scope_access_allowed=Mock(return_value=False),
+        ),
+    )
+    as_user(environment, "owner")
+    assert environment.client.get(LIST_PATH).status_code == 403
+    assert environment.client.get(f"{LIST_PATH}/a1").status_code == 403
+    assert environment.client.get(f"{LIST_PATH}/types").status_code == 403
+    assert environment.client.post(LIST_PATH, json=write_body(name="x", type="openapi")).status_code == 403
+    assert environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="y")).status_code == 403
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+
+
+def test_management_projection_is_empty_when_unavailable(environment):
+    # The context's action_management block and the routes share one predicate, so a
+    # disabled tenant offers no operations rather than advertising management it forbids.
+    from functions_group_action_policy import group_action_management_operations
+    active = environment.groups["group-a"]
+    assert group_action_management_operations("owner", active, "Owner", environment.settings) == [
+        "create", "edit", "delete", "test",
+    ]
+    environment.settings["allow_group_plugins"] = False
+    assert group_action_management_operations("owner", active, "Owner", environment.settings) == []
+
+
+def test_context_and_routes_call_the_same_availability_predicate():
+    # Pin that the context section and the routes both resolve availability through
+    # group_actions_available, so the two can never drift (like the publication pin).
+    import functions_group_action_policy as policy
+    source = (APP_ROOT / "functions_group_action_access.py").read_text(encoding="utf-8")
+    context_source = (APP_ROOT / "functions_workspace_context.py").read_text(encoding="utf-8")
+    assert hasattr(policy, "group_actions_available")
+    assert "group_actions_available" in source
+    assert "group_actions_available" in context_source
 
 
 if __name__ == "__main__":

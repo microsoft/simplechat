@@ -789,6 +789,31 @@ def read_group_editor_record(user_id, group_id, record_id, settings):
     return deepcopy(record)
 
 
+def read_group_merged_global_record(user_id, group_id, record_id, settings):
+    """Read one global action a group member may open read-only from a merged list.
+
+    Provided (global) rows appear in a group listing only while the global merge
+    setting is on; this backs the single-record view onto one of them. It raises
+    ``LookupError`` — mapped to 404 — when merge is off, the id is not a global
+    action, or governance denies it, so a group route never opens onto a resource
+    the list would not have shown. ``group_id`` is validated by the caller's read
+    context; it is unused here because a global action has no group partition.
+    """
+    if not settings.get("merge_global_semantic_kernel_with_workspace", False):
+        raise LookupError("This resource is unavailable.")
+    if not isinstance(record_id, str) or not record_id or any(char in record_id for char in "/\\?#"):
+        raise LookupError("This resource is unavailable.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        record = _container("actions", "global").read_item(item=record_id, partition_key=record_id)
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise LookupError("This resource is unavailable.") from exc
+    if record.get("id") != record_id:
+        raise LookupError("This resource is unavailable.")
+    _assert_record_access("actions", user_id, record, settings, global_scope=True)
+    return deepcopy(record)
+
+
 def list_group_editor_records(user_id, group_id, settings):
     """Return (record, is_global) pairs a member may see: group actions plus, when
     the merge setting is on, read-only global actions."""

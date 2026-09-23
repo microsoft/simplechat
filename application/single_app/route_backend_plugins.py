@@ -49,7 +49,13 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 
 from functions_global_actions import *
 from functions_personal_actions import *
-from functions_group import require_active_group, assert_group_role
+from functions_group import (
+    require_active_group,
+    assert_group_role,
+    find_group_by_id,
+    get_user_role_in_group,
+)
+from functions_group_action_policy import group_action_management_operations
 from functions_group_actions import (
     get_group_actions,
     get_governed_group_actions,
@@ -770,6 +776,30 @@ def _resolve_plugin_secret_context(plugin_manifest, fallback_scope_value, fallba
     return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
+def _resolve_group_for_test(user_id, requested_group_id):
+    """Resolve and authorize the group a group-scoped action test targets.
+
+    When a group action test carries a top-level ``group_id`` it is authoritative
+    for the whole request — saved-action load, identity, origin and secret context
+    — and the active group is never a fallback. The caller must currently hold the
+    ``test`` capability in that group, which routes through one policy predicate:
+    Owner/Admin (Owner-only when governed), an ``active`` status, and the group
+    action availability gate. So a stale active group can never redirect a
+    credentialed test, and a reader can never trigger one.
+    """
+    group_id = str(requested_group_id or "").strip()
+    if not group_id:
+        raise PermissionError("A group is required for this action test.")
+    group = find_group_by_id(group_id)
+    if not group:
+        raise PermissionError("The requested group was not found.")
+    role = get_user_role_in_group(group, user_id)
+    settings = get_settings()
+    if "test" not in group_action_management_operations(user_id, group, role, settings):
+        raise PermissionError("You do not have permission to test this group's actions.")
+    return group_id
+
+
 def _resolve_action_identity_context(data, existing_plugin, user_id):
     """Resolve the authoritative identity scope for an action test or save request."""
     aliases = {
@@ -781,6 +811,10 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
     if requested_value not in aliases:
         raise ValueError("Action scope is invalid.")
     requested_scope = aliases[requested_value]
+    # A top-level group_id makes this an explicit group-targeted test; it is
+    # authoritative and never falls back to the active group. Its presence is the
+    # single switch between the tightened V2 path and unchanged V1 legacy behaviour.
+    requested_group_id = str((data or {}).get("group_id") or "").strip()
     if isinstance(existing_plugin, dict):
         origin = get_action_origin(existing_plugin)
         if origin is None:
@@ -788,40 +822,51 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
         if (data or {}).get("action_scope") and requested_scope != origin.scope_type:
             raise PermissionError("Action scope does not match the existing action.")
         if origin.scope_type == "group":
-            active_group = require_active_group(user_id)
-            if active_group != origin.scope_id:
+            if requested_group_id:
+                target_group = _resolve_group_for_test(user_id, requested_group_id)
+            else:
+                # Legacy (no group_id): the active group, with the Owner/Admin
+                # (Owner-only when governed) edit roles a saved group test needs (M4 §2).
+                target_group = require_active_group(user_id)
+                app_settings = get_settings()
+                allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+                assert_group_role(user_id, target_group, allowed_roles=allowed_roles)
+            if target_group != origin.scope_id:
                 raise PermissionError("Action does not belong to the selected group.")
-            # Testing a saved group action loads its stored credentials, so it is an
-            # editor capability: require the same Owner/Admin (Owner-only when governed)
-            # roles a group edit needs, not the four-role reader set (M4 §2).
-            app_settings = get_settings()
-            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-            assert_group_role(
-                user_id,
-                active_group,
-                allowed_roles=allowed_roles,
-            )
-            return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+            return WORKSPACE_IDENTITY_SCOPE_GROUP, target_group
         if origin.scope_type == "global":
+            if requested_group_id:
+                raise PermissionError("A group cannot be supplied for a non-group action.")
             if "Admin" not in session.get("user", {}).get("roles", []):
                 raise PermissionError("Admin role required for global action identities")
             return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+        if requested_group_id:
+            raise PermissionError("A group cannot be supplied for a non-group action.")
         if origin.scope_id != user_id:
             raise PermissionError("Action does not belong to the current user.")
         return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
 
     if requested_scope == "group":
-        active_group = require_active_group(user_id)
-        assert_group_role(
-            user_id,
-            active_group,
-            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-        )
-        return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+        if requested_group_id:
+            target_group = _resolve_group_for_test(user_id, requested_group_id)
+        else:
+            # Legacy transient group test (V1 sends no group_id): the active group,
+            # with the four-role reader set that predates the V2 tightening.
+            target_group = require_active_group(user_id)
+            assert_group_role(
+                user_id,
+                target_group,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        return WORKSPACE_IDENTITY_SCOPE_GROUP, target_group
     if requested_scope == "global":
+        if requested_group_id:
+            raise PermissionError("A group cannot be supplied for a non-group action.")
         if "Admin" not in session.get("user", {}).get("roles", []):
             raise PermissionError("Admin role required for global action identities")
         return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+    if requested_group_id:
+        raise PermissionError("A group cannot be supplied for a non-group action.")
     return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
 
 
@@ -1166,7 +1211,7 @@ def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scop
     )
 
 
-def _load_existing_plugin_for_test(plugin_context, user_id):
+def _load_existing_plugin_for_test(plugin_context, user_id, requested_group_id=None):
     """Load an existing plugin manifest with Key Vault reference names for edit-time plugin tests."""
     if plugin_context is None:
         return None
@@ -1187,16 +1232,23 @@ def _load_existing_plugin_for_test(plugin_context, user_id):
         return None
 
     if plugin_scope == 'group':
-        active_group = require_active_group(user_id)
-        # A saved group action test loads stored credentials, so it requires the group
-        # edit roles (Owner/Admin, Owner-only when governed), not the reader set (M4 §2).
-        app_settings = get_settings()
-        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-        assert_group_role(
-            user_id,
-            active_group,
-            allowed_roles=allowed_roles,
-        )
+        group_id = str(requested_group_id or "").strip()
+        if group_id:
+            # A group_id makes the target group authoritative: load the saved action
+            # from that group, authorized by the one 'test' capability predicate, and
+            # never from a stale active group.
+            active_group = _resolve_group_for_test(user_id, group_id)
+        else:
+            active_group = require_active_group(user_id)
+            # A saved group action test loads stored credentials, so it requires the group
+            # edit roles (Owner/Admin, Owner-only when governed), not the reader set (M4 §2).
+            app_settings = get_settings()
+            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+            assert_group_role(
+                user_id,
+                active_group,
+                allowed_roles=allowed_roles,
+            )
         plugin = get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
         scope_type, scope_id = "group", active_group
 
@@ -1233,9 +1285,9 @@ def _action_origin_secret_context(origin):
     return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
-def _load_existing_plugin_for_sql_test(plugin_context, user_id):
+def _load_existing_plugin_for_sql_test(plugin_context, user_id, requested_group_id=None):
     """Load an existing plugin manifest with Key Vault reference names for edit-time SQL tests."""
-    return _load_existing_plugin_for_test(plugin_context, user_id)
+    return _load_existing_plugin_for_test(plugin_context, user_id, requested_group_id=requested_group_id)
 
 # === USER PLUGINS ENDPOINTS ===
 @bpap.route('/api/user/plugins', methods=['GET'])
@@ -1439,6 +1491,9 @@ def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing)
         return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
 
     return plugin_to_save, None
+
+
+def _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator=None):
     """Persist one personal action, mapping the storage failures onto HTTP responses."""
     try:
         if legacy_locator:
@@ -2644,7 +2699,7 @@ def discover_mcp_tools():
     )
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id, requested_group_id=payload.get('group_id'))
         if payload.get('clear_secret_paths'):
             existing_plugin = clear_editor_test_secrets(existing_plugin, payload['clear_secret_paths'])
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
@@ -2946,7 +3001,7 @@ def test_sql_connection():
     user_id = get_current_user_id()
 
     try:
-        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id)
+        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
         if data.get('clear_secret_paths'):
             existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
         if editor_call:
@@ -3204,7 +3259,7 @@ def test_cosmos_connection():
         return jsonify({'success': False, 'error': 'Container name is required.'}), 400
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
         if data.get('clear_secret_paths'):
             existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError as exc:
@@ -3349,7 +3404,7 @@ def test_yamcs_connection():
     existing_plugin = None
     if editor_call:
         try:
-            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
             if data.get('clear_secret_paths'):
                 existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
             data = _prepare_editor_yamcs_test_data(data, existing_plugin, user_id)
@@ -3394,7 +3449,7 @@ def test_yamcs_connection():
 
     if not editor_call:
         try:
-            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
             if data.get('clear_secret_paths'):
                 existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
         except PermissionError as exc:
@@ -3634,7 +3689,7 @@ def test_rocksdb_connection():
         return jsonify({'success': False, 'error': "Auth scheme must be one of 'none', 'bearer', or 'api_key'."}), 400
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
         if data.get('clear_secret_paths'):
             existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError:
@@ -3775,7 +3830,7 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
         raise ValueError('Invalid action connection test payload.')
 
     user_id = get_current_user_id()
-    existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id)
+    existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id, requested_group_id=data.get('group_id'))
     if data.get('clear_secret_paths'):
         existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)

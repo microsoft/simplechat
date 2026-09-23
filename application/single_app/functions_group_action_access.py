@@ -30,6 +30,7 @@ from functions_group_action_policy import (
     GROUP_ACTION_READ_STATUSES,
     group_action_actions,
     group_action_management_operations,
+    group_actions_available,
     group_action_write_roles,
 )
 from functions_settings import get_settings
@@ -41,6 +42,7 @@ from functions_workspace_authoring import (
     list_group_editor_records,
     project_editor_record,
     read_group_editor_record,
+    read_group_merged_global_record,
 )
 
 
@@ -89,6 +91,12 @@ def require_group_action_read_context(user_id, group_id):
     allowed, _reason = check_group_status_allows_operation(group, "view")
     if not allowed or group.get("status", "active") not in GROUP_ACTION_READ_STATUSES:
         raise GroupActionError("Actions are unavailable for this group's current status.", 403)
+    # One availability predicate gates the whole surface. A tenant with group
+    # actions off (or a governance-denied user) must see every route refuse,
+    # including the reads, with the shell's own reason text and no data.
+    available, reason = group_actions_available(user_id, get_settings())
+    if not available:
+        raise GroupActionError(reason, 403)
     return group, role
 
 
@@ -106,7 +114,7 @@ def require_group_action_write_context(user_id, group_id, operation):
         assert_group_role(user_id, group_id, allowed_roles=group_action_write_roles(settings))
     except (LookupError, PermissionError) as error:
         raise GroupActionError("You do not have permission to manage this group's actions.", 403) from error
-    if operation not in group_action_management_operations(group, role, settings):
+    if operation not in group_action_management_operations(user_id, group, role, settings):
         raise GroupActionError("This operation is unavailable for the selected group.", 403)
     return group, role, settings
 
@@ -114,18 +122,14 @@ def require_group_action_write_context(user_id, group_id, operation):
 def require_group_action_types_context(user_id, group_id):
     """Resolve (group, role, settings) for the action-type catalog, or raise.
 
-    The type catalog only matters when authoring, so it mirrors the classic
-    ``/api/group/plugins/types`` role gate: a member with a write role in a
-    readable group. It does not require the group to be ``active``, so an editor
-    can still populate its type list while a group is temporarily read-only.
+    Types are a *read* capability: the V2 editor renders type labels for every
+    viewer of the collection and the details page, so the catalog is gated on the
+    same read context as the list — four member roles, a readable status and the
+    one availability predicate — never on a write role. The legacy
+    ``/api/group/plugins/types`` keeps its Owner/Admin gate.
     """
     group, role = require_group_action_read_context(user_id, group_id)
-    settings = get_settings()
-    try:
-        assert_group_role(user_id, group_id, allowed_roles=group_action_write_roles(settings))
-    except (LookupError, PermissionError) as error:
-        raise GroupActionError("You do not have permission to manage this group's actions.", 403) from error
-    return group, role, settings
+    return group, role, get_settings()
 
 
 def group_action_error_response(exc):
@@ -139,27 +143,39 @@ def group_action_error_response(exc):
     return editor_error_response(exc)
 
 
-def _writer_can_manage(group, role, settings):
-    return bool(group_action_management_operations(group, role, settings))
+def _writer_can_manage(user_id, group, role, settings):
+    return bool(group_action_management_operations(user_id, group, role, settings))
 
 
-def _project_group_action(record, group, role, settings, *, is_global):
+def _project_group_action(record, user_id, group, role, settings, *, is_global):
     """Project one stored record for the group list, with fresh per-item actions."""
     projected = project_editor_record(
         record, "actions", global_scope=is_global, group_scope=not is_global,
     )
     projected["action_actions"] = (
-        [] if is_global else group_action_actions(projected, group, role, settings)
+        [] if is_global else group_action_actions(projected, user_id, group, role, settings)
     )
     return projected
 
 
-def _group_action_resource(record, group, role, settings, *, read_only):
+def _group_action_resource(record, user_id, group, role, settings, *, read_only):
     """Wrap one stored record in the editor resource envelope with fresh actions."""
     resource = editor_resource(record, "actions", group_scope=True, read_only=read_only)
     resource["record"]["action_actions"] = group_action_actions(
-        resource["record"], group, role, settings,
+        resource["record"], user_id, group, role, settings,
     )
+    return resource
+
+
+def _global_group_action_resource(record):
+    """Wrap one merged global action as a read-only row of the group view.
+
+    A provided (global) action a member sees in a merged list opens onto this
+    read-only detail: it is not a group action, so it advertises no per-item
+    operations and can never be edited or deleted through the group route.
+    """
+    resource = editor_resource(record, "actions", global_scope=True, read_only=True)
+    resource["record"]["action_actions"] = []
     return resource
 
 
@@ -167,7 +183,7 @@ def list_group_actions(user_id, group_id):
     group, role = require_group_action_read_context(user_id, group_id)
     settings = get_settings()
     resources = [
-        _project_group_action(record, group, role, settings, is_global=is_global)
+        _project_group_action(record, user_id, group, role, settings, is_global=is_global)
         for record, is_global in list_group_editor_records(user_id, group_id, settings)
     ]
     return {"actions": resources}, 200
@@ -176,22 +192,29 @@ def list_group_actions(user_id, group_id):
 def get_group_action(user_id, group_id, action_id):
     group, role = require_group_action_read_context(user_id, group_id)
     settings = get_settings()
-    record = read_group_editor_record(user_id, group_id, action_id, settings)
-    read_only = not _writer_can_manage(group, role, settings)
-    return _group_action_resource(record, group, role, settings, read_only=read_only), 200
+    try:
+        record = read_group_editor_record(user_id, group_id, action_id, settings)
+    except LookupError:
+        # A provided (global) row from a merged list opens read-only through the
+        # group route; when the id is not a merged global action this re-raises
+        # LookupError, which the boundary maps to 404.
+        global_record = read_group_merged_global_record(user_id, group_id, action_id, settings)
+        return _global_group_action_resource(global_record), 200
+    read_only = not _writer_can_manage(user_id, group, role, settings)
+    return _group_action_resource(record, user_id, group, role, settings, read_only=read_only), 200
 
 
 def create_group_action(user_id, group_id, body, prepare):
     group, role, settings = require_group_action_write_context(user_id, group_id, "create")
     saved = apply_group_action_write(user_id, group_id, None, body, prepare, settings)
-    return _group_action_resource(saved, group, role, settings, read_only=False), 201
+    return _group_action_resource(saved, user_id, group, role, settings, read_only=False), 201
 
 
 def update_group_action(user_id, group_id, action_id, body, prepare):
     group, role, settings = require_group_action_write_context(user_id, group_id, "edit")
     existing = read_group_editor_record(user_id, group_id, action_id, settings)
     saved = apply_group_action_write(user_id, group_id, existing, body, prepare, settings)
-    return _group_action_resource(saved, group, role, settings, read_only=False), 200
+    return _group_action_resource(saved, user_id, group, role, settings, read_only=False), 200
 
 
 def delete_group_action(user_id, group_id, action_id):
