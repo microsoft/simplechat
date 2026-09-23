@@ -14,6 +14,7 @@ and network access is prohibited.
 """
 
 import importlib.util
+import itertools
 import json
 import re
 import socket
@@ -41,6 +42,17 @@ from test_support.versioning import assert_app_version_at_least
 
 LIST_PATH = "/api/groups/group-a/agents"
 MASK = "***REDACTED***"
+
+
+def _load_real_submission_predicate():
+    """Load only the real agent-template submission predicate, no heavy imports."""
+    namespace = {}
+    execute_functions(
+        "functions_agent_templates.py",
+        {"agent_template_submission_decision"},
+        namespace,
+    )
+    return namespace["agent_template_submission_decision"]
 
 
 class AgentContainer:
@@ -248,9 +260,14 @@ def environment(monkeypatch):
             "functions_ai_connections",
             filter_model_endpoints_by_capability=lambda endpoints, preserve_empty=False: endpoints,
         ))
-        scoped.setitem(sys.modules, "functions_appinsights", module_stub(
-            "functions_appinsights", log_event=Mock(),
-        ))
+        appinsights = module_stub("functions_appinsights", log_event=Mock())
+        scoped.setitem(sys.modules, "functions_appinsights", appinsights)
+        activity = module_stub(
+            "functions_activity_logging",
+            log_agent_creation=Mock(), log_agent_update=Mock(), log_agent_deletion=Mock(),
+            log_action_creation=Mock(), log_action_update=Mock(), log_action_deletion=Mock(),
+        )
+        scoped.setitem(sys.modules, "functions_activity_logging", activity)
         scoped.setitem(sys.modules, "functions_keyvault", module_stub(
             "functions_keyvault",
             redact_plugin_secret_values=lambda record: record,
@@ -270,6 +287,20 @@ def environment(monkeypatch):
         ))
         scoped.setitem(sys.modules, "json_schema_validation", module_stub(
             "json_schema_validation", load_schema=lambda name: {},
+        ))
+
+        # The group agent options builder consults the real template submission
+        # predicate; load only that pure function so the harness exercises the
+        # shipped gate logic without the module's Cosmos/notification imports.
+        templates_namespace = {}
+        execute_functions(
+            "functions_agent_templates.py",
+            {"agent_template_submission_decision"},
+            templates_namespace,
+        )
+        scoped.setitem(sys.modules, "functions_agent_templates", module_stub(
+            "functions_agent_templates",
+            agent_template_submission_decision=templates_namespace["agent_template_submission_decision"],
         ))
 
         # --- lazily-imported group option/knowledge service seams ---------
@@ -369,6 +400,7 @@ def environment(monkeypatch):
             settings=settings, groups=groups, group_container=group_container,
             global_container=global_container, access=access, app=app,
             client=app.test_client(), cache=cache, governance=governance,
+            activity=activity, appinsights=appinsights,
         )
         as_user(env, "owner")
         yield env
@@ -766,6 +798,69 @@ def test_agent_options_rejects_query_and_body(environment):
 
 
 # --------------------------------------------------------------------------
+# B7 (M4C §11): the group templates panel's submit affordance must obey the
+# exact gate the submit route enforces. The options flag is pinned against the
+# real predicate the route also delegates to, across the full flag matrix.
+# --------------------------------------------------------------------------
+
+_SUBMISSION_DECISION = _load_real_submission_predicate()
+
+
+@pytest.mark.parametrize(
+    "gallery,allow_agents,allow_submission,admin",
+    list(itertools.product((True, False), repeat=4)),
+)
+def test_agent_template_submission_flag_pins_the_route_gate(
+    environment, gallery, allow_agents, allow_submission, admin,
+):
+    environment.settings["enable_agent_template_gallery"] = gallery
+    environment.settings["allow_user_agents"] = allow_agents
+    environment.settings["agent_templates_allow_user_submission"] = allow_submission
+    roles = ("User", "Admin") if admin else ("User",)
+    as_user(environment, "owner", roles=roles)
+    body = environment.client.get(OPTIONS_PATH).get_json()
+    expected, _reason = _SUBMISSION_DECISION(environment.settings, admin)
+    assert body["settings"]["agent_template_submission_allowed"] is expected
+
+
+def test_agent_template_submission_flag_matches_route_messages():
+    # The predicate's three ordered reasons are exactly the route's 403 strings.
+    assert _SUBMISSION_DECISION({}, False) == (False, "Agent template gallery is disabled.")
+    assert _SUBMISSION_DECISION(
+        {"enable_agent_template_gallery": True}, False,
+    ) == (False, "Agent creation is disabled for your workspace.")
+    assert _SUBMISSION_DECISION(
+        {"enable_agent_template_gallery": True, "allow_user_agents": True,
+         "agent_templates_allow_user_submission": False}, False,
+    ) == (False, "Template submissions are disabled for users.")
+    # Admin bypasses the last two gates but never the gallery switch.
+    assert _SUBMISSION_DECISION(
+        {"enable_agent_template_gallery": True}, True,
+    ) == (True, None)
+    assert _SUBMISSION_DECISION({}, True) == (False, "Agent template gallery is disabled.")
+    # Submissions default to enabled when the key is absent.
+    assert _SUBMISSION_DECISION(
+        {"enable_agent_template_gallery": True, "allow_user_agents": True}, False,
+    ) == (True, None)
+
+
+def test_route_and_group_builder_delegate_to_one_submission_predicate():
+    # The options flag can only equal the route's gate decision if both surfaces
+    # call the same predicate. Pin that shared delegation structurally, so the
+    # matrix above cannot silently drift into testing two independent copies.
+    route_source = (APP_ROOT / "route_backend_agent_templates.py").read_text(encoding="utf-8")
+    builder_source = (APP_ROOT / "functions_workspace_authoring.py").read_text(encoding="utf-8")
+    submit = route_source.split("def submit_agent_template", 1)[1].split("\ndef ", 1)[0]
+    assert "agent_template_submission_decision(" in submit
+    builder = builder_source.split("def build_group_agent_editor_options", 1)[1].split("\ndef ", 1)[0]
+    assert "agent_template_submission_decision(" in builder
+    assert "agent_template_submission_allowed" in builder
+    # The personal builder must stay untouched: no submission flag there.
+    personal = builder_source.split("def build_agent_editor_options", 1)[1].split("\ndef ", 1)[0]
+    assert "agent_template_submission_allowed" not in personal
+
+
+# --------------------------------------------------------------------------
 # Agent knowledge: assigned-knowledge catalogue for the named group
 # --------------------------------------------------------------------------
 
@@ -925,6 +1020,115 @@ def test_context_and_routes_call_the_same_availability_predicate():
     assert hasattr(policy, "group_agents_available")
     assert "group_agents_available" in access_source
     assert "group_agents_available" in context_source
+
+
+# --------------------------------------------------------------------------
+# B1: activity logging for committed writes
+# --------------------------------------------------------------------------
+
+def test_create_logs_agent_creation_with_group_scope(environment):
+    as_user(environment, "owner")
+    created = environment.client.post(LIST_PATH, json=create_body(name="logged-create"))
+    assert created.status_code == 201
+    agent_id = created.get_json()["record"]["id"]
+    environment.activity.log_agent_creation.assert_called_once()
+    kwargs = environment.activity.log_agent_creation.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a"
+    assert kwargs["agent_id"] == agent_id and kwargs["agent_name"] == "logged-create"
+    environment.activity.log_agent_update.assert_not_called()
+    environment.activity.log_agent_deletion.assert_not_called()
+
+
+def test_update_logs_agent_update_with_group_scope(environment):
+    seed = seed_agent(environment.group_container, "a1")
+    as_user(environment, "owner")
+    response = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="edited"))
+    assert response.status_code == 200
+    environment.activity.log_agent_update.assert_called_once()
+    kwargs = environment.activity.log_agent_update.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a"
+    assert kwargs["agent_id"] == "a1"
+
+
+def test_delete_logs_agent_deletion_with_group_scope(environment):
+    seed_agent(environment.group_container, "a1")
+    as_user(environment, "owner")
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 200
+    environment.activity.log_agent_deletion.assert_called_once()
+    kwargs = environment.activity.log_agent_deletion.call_args.kwargs
+    assert kwargs["scope"] == "group" and kwargs["group_id"] == "group-a"
+    assert kwargs["agent_id"] == "a1"
+
+
+def test_a_raising_logger_never_fails_a_committed_write(environment):
+    # The write has already committed; a logging failure is downgraded to a
+    # WARNING and the response is unaffected (mirrors personal_editor_response).
+    environment.activity.log_agent_creation.side_effect = RuntimeError("logger down")
+    as_user(environment, "owner")
+    created = environment.client.post(LIST_PATH, json=create_body(name="still-created"))
+    assert created.status_code == 201
+    agent_id = created.get_json()["record"]["id"]
+    assert ("group-a", agent_id) in environment.group_container.records
+    warning = [
+        call for call in environment.appinsights.log_event.call_args_list
+        if call.args and "[WORKSPACE_ACTIVITY]" in str(call.args[0])
+    ]
+    assert warning, "A logging failure must emit the WORKSPACE_ACTIVITY warning."
+
+
+@pytest.mark.parametrize("role", NON_WRITER_ROLES)
+def test_a_refused_write_logs_nothing(environment, role):
+    seed = seed_agent(environment.group_container, "a1")
+    # 403 (role), 409 (stale) and 400 (bad create) must each record no activity.
+    as_user(environment, ROLE_USER[role])
+    assert environment.client.post(LIST_PATH, json=create_body(name="x")).status_code == 403
+    assert environment.client.delete(f"{LIST_PATH}/a1").status_code == 403
+    as_user(environment, "owner")
+    environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="first"))
+    conflict = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="second"))
+    assert conflict.status_code == 409
+    assert environment.client.post(LIST_PATH, json={"updates": {"name": "no-id"}}).status_code == 400
+    environment.activity.log_agent_creation.assert_not_called()
+    environment.activity.log_agent_deletion.assert_not_called()
+    # Exactly one committed update (the first PATCH) was logged.
+    assert environment.activity.log_agent_update.call_count == 1
+
+
+# --------------------------------------------------------------------------
+# B4: stored document carries the group agent flags
+# --------------------------------------------------------------------------
+
+def test_created_group_agent_document_stores_is_group_flags(environment):
+    as_user(environment, "owner")
+    created = environment.client.post(LIST_PATH, json=create_body(name="shaped"))
+    assert created.status_code == 201
+    agent_id = created.get_json()["record"]["id"]
+    stored = environment.group_container.records[("group-a", agent_id)]
+    assert stored["is_global"] is False and stored["is_group"] is True
+
+
+def test_updated_group_agent_document_keeps_is_group_flags(environment):
+    seed = seed_agent(environment.group_container, "a1")
+    as_user(environment, "owner")
+    response = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="edited"))
+    assert response.status_code == 200
+    stored = environment.group_container.records[("group-a", "a1")]
+    assert stored["is_global"] is False and stored["is_group"] is True
+
+
+def test_v1_shaped_group_agent_keeps_flags_through_the_first_v2_edit(environment):
+    # The legacy save_group_agent writes is_group True / is_global False. The first
+    # V2 edit does a whole-document replace_item and save_group_editor_record builds
+    # its body without the managed fields, so without B4 that first save would strip
+    # the flags the runtime consumers branch on. Seed the exact V1 shape and confirm
+    # the edit preserves both flags rather than dropping them.
+    seed = seed_agent(environment.group_container, "a1", is_group=True, is_global=False)
+    assert seed["is_group"] is True and seed["is_global"] is False
+    as_user(environment, "owner")
+    response = environment.client.patch(f"{LIST_PATH}/a1", json=write_body(seed["_etag"], description="edited"))
+    assert response.status_code == 200
+    stored = environment.group_container.records[("group-a", "a1")]
+    assert stored["is_group"] is True and stored["is_global"] is False
 
 
 if __name__ == "__main__":

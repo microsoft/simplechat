@@ -41,6 +41,7 @@ from functions_workspace_authoring import (
     editor_error_response,
     editor_resource,
     list_group_editor_records,
+    log_committed_group_editor_change,
     project_editor_record,
     read_group_editor_record,
     read_group_merged_global_record,
@@ -249,6 +250,7 @@ def get_group_agent(user_id, group_id, agent_id):
 def create_group_agent(user_id, group_id, body, prepare):
     group, role, settings = require_group_agent_write_context(user_id, group_id, "create")
     saved = apply_group_agent_write(user_id, group_id, None, body, prepare, settings)
+    log_committed_group_editor_change("agents", user_id, group_id, saved, "creation")
     return _group_agent_resource(saved, user_id, group, role, settings, read_only=False), 201
 
 
@@ -256,6 +258,7 @@ def update_group_agent(user_id, group_id, agent_id, body, prepare):
     group, role, settings = require_group_agent_write_context(user_id, group_id, "edit")
     existing = read_group_editor_record("agents", user_id, group_id, agent_id, settings)
     saved = apply_group_agent_write(user_id, group_id, existing, body, prepare, settings)
+    log_committed_group_editor_change("agents", user_id, group_id, saved, "update")
     return _group_agent_resource(saved, user_id, group, role, settings, read_only=False), 200
 
 
@@ -263,4 +266,5 @@ def delete_group_agent_record(user_id, group_id, agent_id):
     _group, _role, settings = require_group_agent_write_context(user_id, group_id, "delete")
     existing = read_group_editor_record("agents", user_id, group_id, agent_id, settings)
     delete_group_editor_record("agents", user_id, group_id, existing, settings)
+    log_committed_group_editor_change("agents", user_id, group_id, existing, "deletion")
     return {"success": True}, 200

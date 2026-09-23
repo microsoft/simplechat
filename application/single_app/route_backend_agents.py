@@ -1042,10 +1042,10 @@ def draft_agent_instructions():
                     user_id, str(draft_group_id),
                     allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
                 )
-            except LookupError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except (PermissionError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 403
+            except LookupError:
+                return jsonify({'error': 'The selected group was not found.'}), 404
+            except (PermissionError, ValueError):
+                return jsonify({'error': 'You do not have access to the selected group.'}), 403
             available, reason = group_agents_available(user_id, settings)
             if not available:
                 return jsonify({'error': reason}), 403

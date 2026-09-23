@@ -947,6 +947,13 @@ def save_group_editor_record(kind, user_id, group_id, record, existing, settings
         "created_by": (existing or {}).get("created_by", user_id),
         "modified_at": now, "modified_by": user_id, "last_updated": now,
     })
+    if kind == "agents":
+        # ``is_global``/``is_group`` are managed fields the projection strips, but
+        # runtime consumers (agent_execution_context, functions_agent_scope,
+        # functions_assigned_knowledge, functions_group_workflows) branch on the
+        # stored flag, so a group agent must carry the same shape the legacy
+        # ``save_group_agent`` writes. Group actions store neither (M4C §8 B4).
+        result.update({"is_global": False, "is_group": True})
     staged = []
     write_started = False
     exceptions = import_module("azure.cosmos.exceptions")
@@ -1278,6 +1285,36 @@ def personal_editor_response(kind, user_id, prepare, record_id=None, *, migrate=
         return editor_error_response(exc)
 
 
+def log_committed_group_editor_change(kind, user_id, group_id, stored, operation):
+    """Record a committed group editor write, mirroring ``personal_editor_response``.
+
+    Only the immutable ``/api/groups/<group_id>/(agents|actions)`` write handlers
+    call this, and only after the conditional Cosmos write has committed, so a
+    refused write (400/403/409) is never logged. A logging failure never fails the
+    write: the underlying ``functions_activity_logging`` helpers already swallow
+    their own errors, but a raising logger (a stub, or a future signature change)
+    is caught here and downgraded to a WARNING, exactly as the personal editor does.
+
+    ``operation`` is ``"creation"``, ``"update"`` or ``"deletion"``. ``scope`` is
+    always ``"group"`` and the group is the path group, never the active group.
+    """
+    activity = import_module("functions_activity_logging")
+    prefix = "agent" if kind == "agents" else "action"
+    event = getattr(activity, f"log_{prefix}_{operation}")
+    try:
+        event(
+            user_id=user_id, scope="group", group_id=group_id,
+            **{f"{prefix}_id": stored.get("id", ""), f"{prefix}_name": stored.get("name", "")},
+            **({"agent_display_name": stored.get("display_name", "")} if prefix == "agent" and operation != "deletion" else {}),
+            **({"action_type": stored.get("type", "")} if prefix == "action" and operation != "deletion" else {}),
+        )
+    except Exception as exc:
+        import_module("functions_appinsights").log_event(
+            "[WORKSPACE_ACTIVITY] Unable to record a committed editor change.",
+            level=logging.WARNING, extra={"error_type": type(exc).__name__},
+        )
+
+
 def build_secret_reminder_defaults(settings):
     """The tenant-level Key Vault reminder defaults both editor option builders share.
 
@@ -1410,6 +1447,17 @@ def build_group_agent_editor_options(user_id, group_id, settings, model_endpoint
         "key_vault_secret_expiration_require_expiration": reminder_options["require_expiration"],
     })
     governance = import_module("functions_governance")
+    # The V2 group templates panel needs the submit affordance to obey the exact
+    # gate the submit route enforces, so it never shows a button that then 403s.
+    # This mirrors the classic canSubmitTemplate() check (M4C §11).
+    from flask import session as _session, has_request_context as _has_request_context
+    templates_module = import_module("functions_agent_templates")
+    is_admin = bool(
+        _has_request_context() and "Admin" in ((_session.get("user") or {}).get("roles") or [])
+    )
+    safe["agent_template_submission_allowed"] = templates_module.agent_template_submission_decision(
+        settings, is_admin,
+    )[0]
     if safe.get("allow_group_custom_endpoints"):
         try:
             governance.ensure_governance_access("governance_group_endpoints", user_id)
