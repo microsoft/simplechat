@@ -23,7 +23,7 @@ routes never read `activePublicWorkspaceOid`.
 | Method and path | Returns |
 |---|---|
 | `GET /api/public-workspaces/W/documents` | `documents`, `page`, `page_size`, `total_count`, `file_downloads_enabled`, `needs_legacy_update_check` |
-| `GET /api/public-workspaces/W/documents/facets` | `total`, `untagged`, `processing`, `errors`, `recent`, `by_tag`, `by_classification` |
+| `GET /api/public-workspaces/W/documents/facets` | `total`, `untagged`, `processing`, `errors`, `recent`, `shared_with_me` (always `0`), `by_tag`, `by_classification` |
 | `GET /api/public-workspaces/W/documents/tags` | `tags` of `{name, count, color}` |
 | `GET /api/public-workspaces/W/documents/D` | document metadata and processing progress |
 | `GET /api/public-workspaces/W/documents/D/versions` | `document_id`, `public_workspace_id`, `revision_family_id`, `versions` |
@@ -68,8 +68,20 @@ set and retain the workspace's tag definitions and safe colors, including unused
 definitions with count zero.
 
 There is no `shared` place filter. Public workspaces have no cross-workspace
-share relationship in this slice, and the client's facet validator omits
-`shared_with_me` so no Shared place can appear.
+share relationship, so there is no Shared place.
+
+Facets still include a `shared_with_me` count, because public and group
+workspaces share one facet builder. For a public workspace it is always `0`:
+every document returned already belongs to the workspace being read, so none is
+counted as shared in from elsewhere. The client does not rely on the key — its
+public facet validator omits it and its place logic offers a Shared place only
+for a count above zero — so the Shared place stays hidden either way.
+
+`file_downloads_enabled` in the list response reports whether this user may
+download from this workspace. It is derived from the same policy that decides
+whether the workspace context advertises `download`: a manager role, a
+workspace status that permits downloads, and the workspace download setting.
+Ordinary members always receive `false`.
 
 ## Authorization
 
@@ -112,13 +124,21 @@ registration for every document route file, including this one.
 URL), `role`, `status`, `can_manage_workspace`, `sections`,
 `document_permissions`, and `document_queries`.
 
-`document_management`, `document_collaboration`, and `native_delegation` are
-**absent** in M3A rather than empty; they arrive with M3B and M3C. There is no
-`document_read` capability block — read capability is expressed by the context
-resolving plus `document_permissions.can_view`, exactly as for groups.
+`document_management`, `document_collaboration`, and `native_delegation` were
+absent in M3A rather than empty. `document_management` arrived with M3B and
+`document_collaboration` with M3C; `native_delegation` remains absent. There is
+no `document_read` capability block — read capability is expressed by the
+context resolving plus `document_permissions.can_view`, exactly as for groups.
 
-`document_actions` is carried per document in the list and detail responses and
-is an empty array in this read-only slice.
+`document_actions` and `document_collaboration_actions` are carried per document
+in the list and detail responses, computed fresh from the user's current
+permissions on every request. The explorer only offers an action that appears
+in these lists, so they are the per-document gate for every operation.
+
+> In the read-only M3A release `document_actions` was a fixed empty list, which
+> was correct while there was nothing to act on. It was not updated when M3B
+> added operations, which left every public per-document action unavailable
+> until it was fixed in M3C.
 
 `logo_url` uses the pre-existing underscore route,
 `/api/public_workspaces/<id>/logo?v=<version>`. New immutable routes are

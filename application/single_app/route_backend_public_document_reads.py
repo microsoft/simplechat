@@ -20,10 +20,12 @@ from content_screening.contracts import ScreeningError
 from functions_authentication import *
 from functions_settings import *
 from functions_appinsights import log_event
+from functions_settings import get_settings, is_public_workspace_file_download_enabled
 from functions_public_document_access import (
     PublicDocumentReadError,
     require_public_document_read_context,
 )
+from functions_public_document_policy import public_document_management_operations
 from functions_public_document_reads import (
     PUBLIC_DOCUMENT_LIST_QUERY_PARAMS,
     PUBLIC_DOCUMENT_NO_QUERY_PARAMS,
@@ -111,11 +113,17 @@ def register_route_backend_public_document_reads(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         _reject_public_read_body()
         validate_public_read_query(request.args, PUBLIC_DOCUMENT_LIST_QUERY_PARAMS)
-        require_public_document_read_context(user_id, workspace_id)
+        workspace, role = require_public_document_read_context(user_id, workspace_id)
         g.public_document_read_ids = [workspace_id]
         documents = load_public_document_browser_documents(user_id, workspace_id)
         payload = query_public_document_list(documents, workspace_id, request.args)
-        payload["file_downloads_enabled"] = False
+        # Derived from the same policy the workspace context advertises, so the
+        # list flag and `document_management.operations` cannot disagree.
+        settings = get_settings()
+        payload["file_downloads_enabled"] = "download" in public_document_management_operations(
+            workspace, role, settings,
+            download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
+        )
         return jsonify(payload), 200
 
     @bp.route('/api/public-workspaces/<workspace_id>/documents/facets', methods=['GET'])

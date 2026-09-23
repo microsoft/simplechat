@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.135)**
+
+#### Bug Fixes
+
+*   **Public Workspace Download Flag Reported Downloads as Disabled**
+    *   Fixed the public workspace document list reporting `file_downloads_enabled: false` for every user, including managers of workspaces where downloads are enabled. The value was fixed at `false` in the read-only browsing release, when there was nothing to download, and was not updated when downloads were added.
+    *   The native explorer was not affected, because it decides whether to offer downloads from the workspace's advertised operations and each document's own action list. Other consumers of the API would have been told downloads were off.
+    *   The flag is now derived from the same policy that decides whether the workspace advertises downloads, so the two cannot disagree.
+    *   (Ref: `route_backend_public_document_reads.py`, `public_document_management_operations`, `test_public_document_read_apis.py`)
+
 ### **(v0.261.134)**
 
 #### New Features

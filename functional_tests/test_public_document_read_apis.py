@@ -511,6 +511,29 @@ def test_single_document_is_top_level_and_actionable(environment):
     assert "documents" not in payload
 
 
+@pytest.mark.parametrize("oid, downloads, expected", [
+    ("reader", True, False),    # ordinary members never download, whatever the setting
+    ("manager", True, True),    # a manager in a download-enabled workspace
+    ("manager", False, False),  # the workspace setting still gates managers
+    ("owner", True, True),
+    ("admin", True, True),
+])
+def test_list_file_downloads_flag_is_derived_from_policy(environment, oid, downloads, expected):
+    """`file_downloads_enabled` follows real policy, not a read-only-era constant.
+
+    M3A hardcoded this to False because there was no download route. M3B added
+    downloads but the constant stayed, so the list said downloads were off even
+    where policy allowed them. The V2 explorer happens not to read this field for
+    public scope, but any other consumer of the API would be misled.
+    """
+    login(environment, oid)
+    environment.downloads = downloads
+
+    payload = get(environment).get_json()
+
+    assert payload["file_downloads_enabled"] is expected
+
+
 def test_manager_document_actions_are_wired_from_real_authorization(environment):
     # Managers see real per-document management verbs computed fresh per request.
     # This pins that the projector wires get_public_document_actions rather than
