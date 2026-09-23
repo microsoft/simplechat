@@ -25,9 +25,11 @@ from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
     is_group_workspace_file_download_enabled,
+    is_public_workspace_file_download_enabled,
 )
 from functions_workspace_branding import get_workspace_logo_metadata, normalize_workspace_hero_color
 from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
+from functions_public_document_policy import public_document_management_operations
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
@@ -245,6 +247,7 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         view_allowed = False
         status_reason = "This workspace's status is not recognized. Contact an administrator."
     active = status == "active"
+    manager = role in PUBLIC_CONTENT_MANAGER_ROLES
 
     def section(enabled, can_manage=False, reason="This section is not available for public workspaces yet."):
         available = bool(view_allowed and enabled)
@@ -297,11 +300,22 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         "document_permissions": {
             "can_view": bool(view_allowed),
             "can_chat": bool(view_allowed and check_public_workspace_status_allows_operation(workspace, "chat")[0]),
-            # Mutations and downloads are not delivered by the M3A read-only slice.
-            "can_upload": False,
-            "can_edit": False,
-            "can_delete": False,
-            "can_download": False,
+            "can_upload": bool(manager and active),
+            "can_edit": bool(manager and active),
+            "can_delete": bool(
+                manager and view_allowed
+                and check_public_workspace_status_allows_operation(workspace, "delete")[0]
+            ),
+            "can_download": bool(
+                manager and view_allowed and is_public_workspace_file_download_enabled(settings, workspace)
+            ),
+        },
+        "document_management": {
+            "schema_version": 1,
+            "operations": public_document_management_operations(
+                workspace, role, settings,
+                download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
+            ),
         },
         "document_queries": {
             "sort_fields": [
