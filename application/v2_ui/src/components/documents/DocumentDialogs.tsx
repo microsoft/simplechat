@@ -579,7 +579,7 @@ export function OperationFeedback({
         <p className="font-medium">{title}</p>
         <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
             {errors.map((error, index) => {
-                const id = 'document_id' in error ? error.document_id : `vocabulary:${error.group_id}`;
+                const id = 'document_id' in error ? error.document_id : `vocabulary:${error.group_id ?? error.public_workspace_id}`;
                 const document = documents.find((record) => String(record.id ?? record.document_id) === id);
                 return <li key={`${id}:${index}`} className="break-words">
                     {'document_id' in error ? document?.file_name || id : 'Tag vocabulary'}: {error.message || error.error || 'The operation was not confirmed.'}

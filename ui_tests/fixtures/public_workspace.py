@@ -1,12 +1,13 @@
 # public_workspace.py
 """
-Closed HTTP fixtures for the real V2 read-only public workspace shell.
-Version: 0.261.132
+Closed HTTP fixtures for the real V2 public workspace shell.
+Version: 0.261.133
 Implemented in: 0.261.132
 
-The public surface mirrors the group shell but is read-only: it never advertises
-document management, collaboration or native delegation, and every document read
-carries its workspace id in the request path rather than an active selection.
+The public surface mirrors the group shell. In M3A it is read-only; from M3B a
+manager role can be granted document management. It never advertises collaboration
+or native delegation, and every document read or operation carries its workspace id
+in the request path rather than an active selection.
 """
 
 import copy
@@ -19,6 +20,7 @@ from ui_tests.fixtures.workspace_authoring import (
 )
 
 
+PUBLIC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "agents": "automation", "actions": "automation", "workflows": "automation",
@@ -26,13 +28,14 @@ SECTION_GROUPS = {
 }
 
 
-def public_context(identifier, name, *, status="active", viewer=OWNER_ID):
+def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
     readable = status not in ("inactive", "unknown")
+    manager = role in PUBLIC_MANAGER_ROLES
     sections = {
         section: {
             "group": group, "enabled": readable,
             "reason": None if readable else "This public workspace is inactive.",
-            "can_manage": False,
+            "can_manage": manager and readable,
         }
         for section, group in SECTION_GROUPS.items()
     }
@@ -44,12 +47,14 @@ def public_context(identifier, name, *, status="active", viewer=OWNER_ID):
             "owner": {"display_name": f"{name} owner", "email": "owner@example.test"},
             "hero_color": "#0078d4", "logo_url": None,
         },
-        "role": "User", "status": status, "can_manage_workspace": False,
+        "role": role, "status": status, "can_manage_workspace": manager and readable,
         "sections": sections,
         "document_permissions": {
-            "can_view": readable, "can_chat": readable,
-            "can_upload": False, "can_edit": False,
-            "can_delete": False, "can_download": False,
+            "can_view": readable, "can_chat": readable and status != "locked",
+            "can_upload": manager and status == "active",
+            "can_edit": manager and status in ("active", "upload_disabled"),
+            "can_delete": manager and status in ("active", "upload_disabled"),
+            "can_download": readable,
         },
         "document_queries": {
             "sort_fields": [

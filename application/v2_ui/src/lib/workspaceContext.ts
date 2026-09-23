@@ -64,9 +64,10 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
 }
 
 /**
- * The read-only public workspace context (M3A). Mirrors the group context field-for-field
- * except it never advertises document_management, document_collaboration or native_delegation,
- * which stay out of scope until later milestones.
+ * The public workspace context. Mirrors the group context field-for-field. In M3B it advertises
+ * document_management when the viewer may manage documents, but document_collaboration and
+ * native_delegation stay absent (their sharing/delegation surfaces are out of scope until M3C):
+ * absence means "not available", never "empty set".
  */
 export interface PublicWorkspaceContext extends WorkspaceAvailability {
     schema_version: 1;
@@ -96,6 +97,10 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
         sort_fields: string[];
         facets: boolean;
         places: boolean;
+    };
+    document_management?: {
+        schema_version: number;
+        operations: string[];
     };
 }
 

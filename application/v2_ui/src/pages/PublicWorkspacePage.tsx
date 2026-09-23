@@ -1,17 +1,20 @@
 // PublicWorkspacePage.tsx
 //
-// The read-only V2 public workspace surface (M3A). It mirrors GroupWorkspacePage but is
-// deliberately simpler: public documents are immutable to the viewer, so there is no dirty
-// state, no leave-blocker, and no activate/reconcile handshake. Every read carries the
-// workspace id in its path, so PUBLIC_WORKSPACES.setActive is fired only as a non-blocking
-// courtesy that keeps the classic surface and chat scoping in step -- it never gates a read.
+// The V2 public workspace surface. It mirrors GroupWorkspacePage but is deliberately simpler:
+// there is no activate/reconcile handshake, because every read and every operation carries the
+// workspace id in its immutable path. PUBLIC_WORKSPACES.setActive is fired only as a non-blocking
+// courtesy that keeps the classic surface and chat scoping in step -- it never gates a read,
+// navigation, or a document operation. From M3B the explorer can mutate documents, so the page
+// tracks the explorer's dirty/busy state to warn before leaving with unsaved edits, but that
+// state is never allowed to gate setActive.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowUpRight, Globe, LayoutGrid, Loader2, Lock } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
 import { PublicWorkspacePicker } from '../components/workspace/PublicWorkspacePicker';
+import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
 import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
@@ -43,10 +46,21 @@ export function PublicWorkspacePage() {
     const [notice, setNotice] = useState('');
     const [retry, setRetry] = useState(0);
     const [logoFailed, setLogoFailed] = useState(false);
+    const [dirty, setDirty] = useState(false);
+    const [resourceBusy, setResourceBusy] = useState(false);
+    const dirtyRef = useRef(false);
+    const busyRef = useRef(false);
     const initialization = useRef<{ key: string; promise: Promise<unknown> } | null>(null);
-    // Read-only surface: the explorer reports busy/dirty only for mutations that are never
-    // available here, so nothing needs to gate on them.
-    const reportDocumentBusy = useCallback((_busy: boolean) => { /* read-only: nothing to gate */ }, []);
+    dirtyRef.current = dirty;
+    busyRef.current = resourceBusy;
+    // The explorer reports busy/dirty for the M3B management operations. These gate only the
+    // leave-blocker and the beforeunload warning, never setActive, reads, or the operations.
+    const reportDocumentDirty = useCallback((value: boolean) => { dirtyRef.current = value; setDirty(value); }, []);
+    const reportDocumentBusy = useCallback((value: boolean) => { busyRef.current = value; setResourceBusy(value); }, []);
+
+    const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+        (dirtyRef.current || busyRef.current)
+        && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search));
 
     useEffect(() => {
         if (!workspaceId && !hasDocumentLink && enabled && activeWorkspaceId) {
@@ -118,7 +132,16 @@ export function PublicWorkspacePage() {
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
     useEffect(() => {
         setNotice('');
+        setDirty(false);
+        setResourceBusy(false);
     }, [viewerId]);
+
+    useEffect(() => {
+        if (!dirty && !resourceBusy) return;
+        const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+        window.addEventListener('beforeunload', beforeUnload);
+        return () => window.removeEventListener('beforeunload', beforeUnload);
+    }, [dirty, resourceBusy]);
 
     const selectWorkspace = useCallback((id: string) => {
         setNotice('');
@@ -222,7 +245,7 @@ export function PublicWorkspacePage() {
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <PublicDocumentsSection context={context}
                                     interactionDisabled={false} onOpenClassic={() => openClassic(CLASSIC_WORKSPACE_HREF)}
-                                    onDirtyChange={() => { /* read-only: no dirty state */ }} onBusyChange={reportDocumentBusy}
+                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy}
                                     linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
                                     onClearLinkedDocument={clearDocumentLink} />
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description="You do not have access to this public workspace's documents." />
@@ -235,6 +258,13 @@ export function PublicWorkspacePage() {
                             )}
                 </div>
             ) : !error ? <EmptyState title="Workspace details unavailable" description="Select another public workspace or refresh workspace details." /> : null}
+            {blocker.state === 'blocked' ? <WorkspaceLeavePrompt
+                saving={resourceBusy}
+                onStay={() => { if (blocker.state === 'blocked') blocker.reset(); }}
+                onDiscard={() => {
+                    setDirty(false);
+                    if (blocker.state === 'blocked') blocker.proceed();
+                }} /> : null}
         </WorkspaceShell>
     );
 }

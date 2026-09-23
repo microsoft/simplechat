@@ -50,7 +50,9 @@ export interface DocumentUploadOutcome {
 
 export interface TagVocabularyError {
     stage: 'vocabulary';
-    group_id: string;
+    /** Group-scoped vocabulary failures carry group_id; public-scoped ones carry public_workspace_id. */
+    group_id?: string;
+    public_workspace_id?: string;
     error: string;
     message?: string;
 }
@@ -101,9 +103,13 @@ export function documentOperationAllowed(
         if (!documentId(document) || generatedArtifactRestriction(document)) return false;
         if (scope.kind === 'personal') return isScreeningAvailable(document);
         if (!Array.isArray(document.document_actions) || !document.document_actions.includes(operation)) return false;
-        const owned = document.group_id === scope.id && document.shared_approval_status === 'owner';
-        const incoming = Boolean(document.group_id) && document.group_id !== scope.id
-            && document.shared_group_active_id === scope.id && document.shared_approval_status === 'approved';
+        const owned = scope.kind === 'public'
+            ? document.public_workspace_id === scope.id
+            : document.group_id === scope.id && document.shared_approval_status === 'owner';
+        const incoming = scope.kind === 'public'
+            ? false
+            : Boolean(document.group_id) && document.group_id !== scope.id
+                && document.shared_group_active_id === scope.id && document.shared_approval_status === 'approved';
         if (operation === 'delete') return owned;
         if (!isScreeningAvailable(document)) return false;
         if (operation === 'download') return owned || incoming;
@@ -194,10 +200,10 @@ export function normalizeTagColor(color: string): string {
 }
 
 function inspectTagMutation(response: unknown, scope: DocumentReadScope, creating = false, expectedName?: string): TagMutationOutcome {
-    const group = scope.kind === 'group';
-    if (!isRecord(response) || (group && creating && (!isRecord(response.tag)
+    const native = scope.kind !== 'personal';
+    if (!isRecord(response) || (native && creating && (!isRecord(response.tag)
         || typeof response.tag.name !== 'string' || !response.tag.name.trim() || typeof response.tag.color !== 'string'))
-        || (group && !creating && (!Array.isArray(response.success) || !Array.isArray(response.errors)
+        || (native && !creating && (!Array.isArray(response.success) || !Array.isArray(response.errors)
             || typeof response.vocabulary_retained !== 'boolean' || !Number.isInteger(response.documents_updated)
             || Number(response.documents_updated) < 0))) {
         throw new Error('The server did not confirm the tag change. Refresh before retrying.');
@@ -205,18 +211,21 @@ function inspectTagMutation(response: unknown, scope: DocumentReadScope, creatin
     const tag = isRecord(response.tag) && typeof response.tag.name === 'string'
         ? { name: response.tag.name, color: typeof response.tag.color === 'string' ? normalizeTagColor(response.tag.color) : undefined }
         : undefined;
-    if (group && expectedName && (!tag || tag.name !== expectedName)) {
+    if (native && expectedName && (!tag || tag.name !== expectedName)) {
         throw new Error('The tag acknowledgement does not match the requested name. Refresh before retrying.');
     }
     const errors: TagOperationError[] = [];
     for (const error of Array.isArray(response.errors) ? response.errors : []) {
         if (isRecord(error) && error.stage === 'vocabulary') {
-            if (scope.kind !== 'group' || error.group_id !== scope.id || 'document_id' in error
+            const vocabIdentity = scope.kind === 'public' ? error.public_workspace_id : error.group_id;
+            if (scope.kind === 'personal' || vocabIdentity !== scope.id || 'document_id' in error
                 || typeof error.error !== 'string' || !error.error
                 || (error.message !== undefined && typeof error.message !== 'string')) {
                 throw new Error('The tag vocabulary error does not match this workspace. Refresh before retrying.');
             }
-            errors.push({ stage: 'vocabulary', group_id: scope.id, error: error.error, message: error.message });
+            errors.push(scope.kind === 'public'
+                ? { stage: 'vocabulary', public_workspace_id: scope.id, error: error.error, message: error.message }
+                : { stage: 'vocabulary', group_id: scope.id, error: error.error, message: error.message });
         } else errors.push(...operationErrors([error]));
     }
     const success: Array<{ document_id: string; tags: string[] }> = [];
@@ -271,8 +280,13 @@ function deletePayload(options: DocumentDeleteOptions) {
 }
 
 function createOperations(scope: DocumentReadScope, supported: ReadonlySet<DocumentOperation>): DocumentOperationAdapter {
-    const group = scope.kind === 'group';
-    const base = group ? `/api/groups/${encodeURIComponent(requireWorkspaceId(scope.id))}/documents` : '/api/documents';
+    const native = scope.kind !== 'personal';
+    const scopeField = scope.kind === 'public' ? 'public_workspace_id' : 'group_id';
+    const base = scope.kind === 'group'
+        ? `/api/groups/${encodeURIComponent(requireWorkspaceId(scope.id))}/documents`
+        : scope.kind === 'public'
+            ? `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(scope.id))}/documents`
+            : '/api/documents';
     const allows = (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) =>
         documentOperationAllowed(scope, supported, operation, documents);
     const requireOperation = (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => {
@@ -282,7 +296,7 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
         requireOperation(operation, documents);
         return [...new Set(documents.map(documentId))];
     };
-    const groupRequest = async (method: string, path: string, body?: unknown, statuses = [200, 207]) => {
+    const nativeRequest = async (method: string, path: string, body?: unknown, statuses = [200, 207]) => {
         const response = await requestWithStatus<unknown>(path, { method, body });
         if (!statuses.includes(response.status) || !isRecord(response.data) || response.data.error
             || (response.status === 207 && (!Array.isArray(response.data.errors) || response.data.errors.length === 0))) {
@@ -309,7 +323,7 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
             files.forEach((file) => data.append('file', file));
             let result: unknown;
             try {
-                if (group) {
+                if (native) {
                     const response = await uploadFileWithStatus<unknown>(`${base}/upload`, data);
                     if (![200, 201, 202, 207].includes(response.status) || !isRecord(response.data)
                         || !Array.isArray(response.data.errors)
@@ -333,11 +347,11 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
         editMetadata: async (document, changes) => {
             requireOperation('edit_metadata', [document]);
             validateMetadata(changes);
-            if (scope.kind === 'group') {
+            if (native) {
                 const response = await requestWithStatus<unknown>(`${base}/${encodeURIComponent(documentId(document))}`, { method: 'PATCH', body: changes });
                 const result = response.data;
                 const fields = Object.keys(changes);
-                if (!isRecord(result) || result.document_id !== documentId(document) || result.group_id !== scope.id
+                if (!isRecord(result) || result.document_id !== documentId(document) || result[scopeField] !== scope.id
                     || typeof result.message !== 'string' || result.error
                     || !Array.isArray(result.updated_fields) || result.updated_fields.length !== fields.length
                     || !fields.every((field) => Array.isArray(result.updated_fields) && result.updated_fields.includes(field))
@@ -358,13 +372,13 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
             if (!['add_tags', 'remove_tags', 'set_tags'].includes(action)) throw new Error('Choose a supported tag operation.');
             const normalized = [...new Set(tags.map(validateTagName))];
             if (!normalized.length && action !== 'set_tags') throw new Error('Choose at least one tag.');
-            return batchOutcome(ids, 'success', () => group
-                ? groupRequest('POST', `${base}/bulk-tag`, { document_ids: ids, action, tags: normalized })
-                : bulkTagPersonalDocuments(ids, action, tags), group);
+            return batchOutcome(ids, 'success', () => native
+                ? nativeRequest('POST', `${base}/bulk-tag`, { document_ids: ids, action, tags: normalized })
+                : bulkTagPersonalDocuments(ids, action, tags), native);
         },
         deleteDocuments: async (documents, options) => {
             const ids = idsFor('delete', documents);
-            if (!group) {
+            if (!native) {
                 return batchOutcome(ids, 'deleted', () => bulkDeletePersonalDocuments(ids, options));
             }
             const payload = deletePayload(options);
@@ -373,7 +387,7 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
                 if (payload.conversation_linked_delete_confirmed) params.set('conversation_linked_delete_confirmed', 'true');
                 if (payload.file_sync_delete_action) params.set('file_sync_delete_action', payload.file_sync_delete_action);
                 try {
-                    const result = await groupRequest('DELETE', `${base}/${encodeURIComponent(ids[0])}?${params}`, undefined, [200]);
+                    const result = await nativeRequest('DELETE', `${base}/${encodeURIComponent(ids[0])}?${params}`, undefined, [200]);
                     if (typeof result.message !== 'string' || result.deleted_mode !== options.deleteMode
                         || !Array.isArray(result.deleted_document_ids)
                         || !result.deleted_document_ids.every((id) => typeof id === 'string' && id)
@@ -390,11 +404,11 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
                     throw cause;
                 }
             }
-            return batchOutcome(ids, 'deleted', () => groupRequest('POST', `${base}/bulk-delete`, { document_ids: ids, ...payload }), true);
+            return batchOutcome(ids, 'deleted', () => nativeRequest('POST', `${base}/bulk-delete`, { document_ids: ids, ...payload }), true);
         },
         download: async (documents) => {
             const ids = idsFor('download', documents);
-            if (!group) return ids.length === 1 ? downloadPersonalDocument(ids[0]) : downloadPersonalDocuments(ids);
+            if (!native) return ids.length === 1 ? downloadPersonalDocument(ids[0]) : downloadPersonalDocuments(ids);
             const response = await fetch(apiUrl(ids.length === 1
                 ? `${base}/${encodeURIComponent(ids[0])}/download` : `${base}/download`), {
                 method: ids.length === 1 ? 'GET' : 'POST', credentials: CREDENTIALS_MODE,
@@ -407,22 +421,22 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
         },
         extractMetadata: async (documents) => {
             const ids = idsFor('extract_metadata', documents);
-            return batchOutcome(ids, 'queued', () => group
-                ? groupRequest('POST', `${base}/extract_metadata`, { document_ids: ids }, [200, 202, 207]) : extractPersonalDocumentMetadata(ids), group);
+            return batchOutcome(ids, 'queued', () => native
+                ? nativeRequest('POST', `${base}/extract_metadata`, { document_ids: ids }, [200, 202, 207]) : extractPersonalDocumentMetadata(ids), native);
         },
         reprocess: async (documents, mode) => {
             const ids = idsFor('reprocess', documents);
             if (!['read', 'layout'].includes(mode)) throw new Error('Choose a supported extraction mode.');
-            return batchOutcome(ids, 'queued', () => group
-                ? groupRequest('POST', `${base}/reprocess_extraction`, { document_ids: ids, extraction_mode: mode }, [200, 202, 207])
-                : reprocessPersonalDocumentExtraction(ids, mode), group);
+            return batchOutcome(ids, 'queued', () => native
+                ? nativeRequest('POST', `${base}/reprocess_extraction`, { document_ids: ids, extraction_mode: mode }, [200, 202, 207])
+                : reprocessPersonalDocumentExtraction(ids, mode), native);
         },
         createTag: (name, color) => {
             const tagName = validateTagName(name);
             const normalizedColor = color === undefined ? undefined : normalizeTagColor(color);
-            return tagMutation(() => group
-                ? groupRequest('POST', `${base}/tags`, { tag_name: tagName, ...(normalizedColor ? { color: normalizedColor } : {}) }, [201])
-                : createPersonalDocumentTag(name, normalizedColor), true, group ? tagName : undefined);
+            return tagMutation(() => native
+                ? nativeRequest('POST', `${base}/tags`, { tag_name: tagName, ...(normalizedColor ? { color: normalizedColor } : {}) }, [201])
+                : createPersonalDocumentTag(name, normalizedColor), true, native ? tagName : undefined);
         },
         updateTag: (name, changes) => {
             const tagName = tagTargetName(name);
@@ -431,14 +445,14 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
                 ...(changes.color !== undefined ? { color: normalizeTagColor(changes.color) } : {}),
             };
             if (!Object.keys(body).length) throw new Error('Change the tag name or colour before saving.');
-            return tagMutation(() => group
-                ? groupRequest('PATCH', `${base}/tags/${encodeURIComponent(tagName)}`, body) : updatePersonalDocumentTag(name, body),
-            false, group ? body.new_name ?? tagName : undefined);
+            return tagMutation(() => native
+                ? nativeRequest('PATCH', `${base}/tags/${encodeURIComponent(tagName)}`, body) : updatePersonalDocumentTag(name, body),
+            false, native ? body.new_name ?? tagName : undefined);
         },
         deleteTag: (name) => {
             const tagName = tagTargetName(name);
-            return tagMutation(() => group
-                ? groupRequest('DELETE', `${base}/tags/${encodeURIComponent(tagName)}`) : deletePersonalDocumentTag(name));
+            return tagMutation(() => native
+                ? nativeRequest('DELETE', `${base}/tags/${encodeURIComponent(tagName)}`) : deletePersonalDocumentTag(name));
         },
     };
 }
@@ -455,12 +469,15 @@ export function createGroupDocumentOperations(
 }
 
 /**
- * Public workspaces are read-only in M3A. The empty supported set means every mutation gate
- * (documentOperationAllowed / requireOperation) refuses, so no write endpoint is ever reached.
+ * Public workspace document operations (M3B). The management block is a server hint that names
+ * the operations the viewer may attempt; the empty set (read-only, or an unrecognised block)
+ * leaves every mutation gate refusing so no write endpoint is reached. Absence never falls back
+ * to personal or group behaviour -- the scope is always public, so every URL and receipt check
+ * targets the immutable /api/public-workspaces/<id>/documents family.
  */
 export function createPublicDocumentOperations(
-    scope: Extract<DocumentReadScope, { kind: 'public' }>,
+    scope: Extract<DocumentReadScope, { kind: 'public' }>, management: unknown,
 ): DocumentOperationAdapter {
     if (scope.kind !== 'public') throw new Error('Public operations require an explicit public workspace scope.');
-    return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, new Set());
+    return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management));
 }

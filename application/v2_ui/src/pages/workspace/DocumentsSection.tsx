@@ -84,8 +84,9 @@ export function PublicDocumentsSection({
         context.scope.id, context.workspace.name, context.document_queries,
     ), [context.scope.id, context.workspace.name, context.document_queries]);
     const operations = useMemo(() => createPublicDocumentOperations(
-        { kind: 'public', id: context.scope.id, name: context.workspace.name },
-    ), [context.scope.id, context.workspace.name]);
+        { kind: 'public', id: context.scope.id, name: context.workspace.name }, context.document_management,
+    ), [context.scope.id, context.workspace.name, context.document_management]);
+    const canChange = [...operations.supported].some((operation) => operation !== 'download');
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-2">
@@ -97,7 +98,9 @@ export function PublicDocumentsSection({
                         <span className="hidden sm:inline">Browse in</span> Classic<ArrowUpRight size={14} />
                     </GlassButton>
                 </div>
-                <p className="mt-0.5 text-sm text-text-3">Read-only browsing for this public workspace.</p>
+                <p className="mt-0.5 text-sm text-text-3">{canChange
+                    ? 'Manage public files. Each action follows current document permissions.'
+                    : 'Read-only browsing for this public workspace.'}</p>
             </div>
             <div className="min-h-0 flex-1">
                 <DocumentExplorer reader={reader} operations={operations}
