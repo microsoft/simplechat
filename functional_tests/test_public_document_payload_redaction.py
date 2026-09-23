@@ -141,16 +141,44 @@ def test_collaboration_state_is_never_serialized_into_a_document_payload():
     assert set(payload) == set(SAFE_FIELDS)
 
 
-def test_group_projection_does_not_keep_its_own_privacy_pop_list():
-    """Privacy belongs in PRIVATE_DOCUMENT_FIELDS, not in one projection."""
-    reads_source = (APP_DIR / "functions_group_document_reads.py").read_text(encoding="utf-8")
+PROJECTION_READ_MODULES = (
+    "functions_group_document_reads.py",
+    "functions_public_document_reads.py",
+)
 
-    for field in ("document_share_details", "generated_artifact_source_blob_path",
-                  "generated_artifact_publication_receipt_id"):
+PROJECTION_PRIVATE_FIELDS = (
+    "document_share_details",
+    "generated_artifact_source_blob_path",
+    "generated_artifact_publication_receipt_id",
+    "group_document_collaboration_operation",
+    "public_document_collaboration_operation",
+    "group_document_projection_writer",
+    "public_document_projection_writer",
+)
+
+
+@pytest.mark.parametrize("module", PROJECTION_READ_MODULES)
+def test_group_projection_does_not_keep_its_own_privacy_pop_list(module):
+    """Privacy belongs in PRIVATE_DOCUMENT_FIELDS, not in one projection.
+
+    Originally guarded only the group reads module, where M2C shipped a local
+    pop-list that ``get_document`` bypassed. The public reads module gained
+    collaboration fields in M3C, so it is guarded the same way.
+    """
+    reads_source = (APP_DIR / module).read_text(encoding="utf-8")
+
+    for field in PROJECTION_PRIVATE_FIELDS:
         assert f'"{field}"' not in reads_source, (
-            f"{field} is redacted only in functions_group_document_reads.py; add it to "
+            f"{field} is redacted only in {module}; add it to "
             "PRIVATE_DOCUMENT_FIELDS so every caller of public_document_payload is covered"
         )
+
+
+def test_every_projection_private_field_is_globally_private():
+    """The guard above is only meaningful if each field really is private."""
+    missing = [field for field in PROJECTION_PRIVATE_FIELDS if field not in PRIVATE_DOCUMENT_FIELDS]
+
+    assert missing == [], f"not in PRIVATE_DOCUMENT_FIELDS: {missing}"
 
 
 def test_share_rosters_stay_serializable_for_the_surfaces_that_render_them():

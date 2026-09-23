@@ -2,6 +2,30 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.134)**
+
+#### New Features
+
+*   **Native Public Workspace Artifact Approval**
+    *   When someone asks to publish a generated artifact into a public workspace, reviewers can now approve, reject, or withdraw the request in the native explorer instead of switching to the classic page.
+    *   Each decision is tied to the version of the request the reviewer actually saw. If the document changed in the meantime, the reviewer's input is kept and they are asked to refresh before deciding.
+    *   Only the original requester can withdraw a request, and doing so grants no authority over anyone else's.
+    *   Content screening holds are never released early by an approval; approval only starts screening on the new document.
+    *   (Ref: `functions_public_document_publication.py`, `route_backend_public_document_collaboration.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Public Artifact Approval](features/V2_PUBLIC_ARTIFACT_APPROVAL.md), [Artifact Approval APIs](features/PUBLIC_DOCUMENT_ARTIFACT_APPROVAL_APIS.md))
+
+#### Bug Fixes
+
+*   **Public Workspace Document Actions Were Unavailable**
+    *   Fixed public workspace documents offering no per-document actions against a real backend. Delete, download, metadata editing, extraction, reprocessing, and bulk tagging were all unavailable, although upload and tag management worked.
+    *   The server returned an empty action list left over from the read-only browsing release, and the explorer only offers actions that list contains. It now computes each document's actions from the user's current permissions.
+    *   The failure blocked actions rather than allowing them, so no data was exposed and every operation was still authorized on the server.
+    *   (Ref: `functions_public_document_reads.py`, `get_public_document_actions`, `test_document_action_hint_seam.py`)
+
+#### Known Limitations
+
+*   **Public Workspace Sharing Is Not Yet Available**
+    *   Public workspace documents cannot yet be shared into other workspaces. The search index used by public workspaces has no field for shared access, so adding it requires an index schema change and a migration for existing deployments. Public workspaces show no share controls until that work is done.
+
 ### **(v0.261.133)**
 
 #### New Features
