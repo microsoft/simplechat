@@ -65,8 +65,9 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
 
 /**
  * The public workspace context. Mirrors the group context field-for-field. In M3B it advertises
- * document_management when the viewer may manage documents, but document_collaboration and
- * native_delegation stay absent (their sharing/delegation surfaces are out of scope until M3C):
+ * document_management when the viewer may manage documents; in M3C it also advertises
+ * document_collaboration for the generated-artifact (publication) review surface. native_delegation
+ * and cross-workspace sharing stay absent (public workspaces have no delegation or share surface):
  * absence means "not available", never "empty set".
  */
 export interface PublicWorkspaceContext extends WorkspaceAvailability {
@@ -99,6 +100,10 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
         places: boolean;
     };
     document_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    document_collaboration?: {
         schema_version: number;
         operations: string[];
     };

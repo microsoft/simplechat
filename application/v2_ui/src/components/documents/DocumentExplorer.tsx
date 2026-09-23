@@ -169,7 +169,8 @@ export function DocumentExplorer({
         <div role="alert"><EmptyState title="Document management scope does not match"
             description="Refresh this workspace before managing documents." /></div>
     );
-    if (collaboration && (reader.scope.kind !== 'group' || collaboration.scope.id !== reader.scope.id)) return (
+    if (collaboration && (reader.scope.kind === 'personal'
+        || collaboration.scope.kind !== reader.scope.kind || collaboration.scope.id !== reader.scope.id)) return (
         <div role="alert"><EmptyState title="Document collaboration scope does not match"
             description="Refresh this workspace before reviewing documents." /></div>
     );

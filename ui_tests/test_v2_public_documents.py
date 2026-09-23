@@ -1,16 +1,18 @@
 # test_v2_public_documents.py
 """
-Production-SPA coverage for native V2 public workspace document browsing (M3A) and
-management (M3B).
-Version: 0.261.133
+Production-SPA coverage for native V2 public workspace document browsing (M3A),
+management (M3B) and generated-artifact approval (M3C).
+Version: 0.261.134
 Implemented in: 0.261.132
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
 permits a document write: the M3A surface is strictly read-only. The M3B management
 fixture allows writes only on the immutable /api/public-workspaces/<id>/documents
-family. Every read and operation carries its workspace id in the request path, so
-selecting a public workspace can never leak into a personal or group read or write.
+family. M3C adds publication (generated-artifact) decisions on that same immutable
+family, still with no cross-workspace sharing, so the Shared place stays absent.
+Every read and operation carries its workspace id in the request path, so selecting
+a public workspace can never leak into a personal or group read or write.
 """
 
 import copy
@@ -27,6 +29,10 @@ from playwright.sync_api import expect
 from ui_tests.fixtures.public_document_management import (
     DOCUMENT_ACTIONS, OPERATIONS, delete_result, metadata_result,  # noqa: F401
     operation_path, public_management_ui, tag_result, tag_vocabulary_conflict,
+)
+from ui_tests.fixtures.public_document_collaboration import (
+    COLLABORATION_OPERATIONS, collaboration_receipt, public_collaboration_ui,  # noqa: F401
+    publication,
 )
 from ui_tests.fixtures.public_documents import (
     NUMERIC_SORT_FIELDS, SORT_FIELDS, connect_options, document,  # noqa: F401
@@ -879,5 +885,338 @@ def test_management_layout_and_dialogs_in_both_themes(public_management_ui, them
     ui.assert_no_overflow()
     ui.page.screenshot(path=str(MANAGEMENT_SCREENSHOTS / f"{label}-edit.png"), full_page=True)
     dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_have_count(0)
+    assert not ui.operation_requests
+
+
+# --- M3C public generated-artifact approval ----------------------------------
+# Publication decisions extend the same explorer and immutable operation family.
+# They reuse the group review dialog, so a reviewer moving between public and group
+# workspaces cannot tell them apart. Public workspaces have no cross-workspace
+# sharing in this milestone, so the review dialog exposes only publication
+# decisions and the Shared place never appears. Every decision carries its public
+# workspace id in the request path, never an active selection.
+REVIEW_SCREENSHOTS = Path(os.environ.get(
+    "SIMPLECHAT_UI_SCREENSHOTS", str(Path(__file__).parent / "artifacts" / "public-review"),
+))
+REVIEW_TITLE = "Document review"
+
+
+def review_dialog(ui):
+    return ui.page.get_by_role("dialog", name=REVIEW_TITLE, exact=True)
+
+
+def review_control(ui, identifier, workspace_id="pub-a"):
+    record = ui.record(identifier, workspace_id)
+    name = record.get("title") or record["file_name"]
+    return document_row(ui, identifier, workspace_id).get_by_role("button", name=f"Review {name}", exact=True)
+
+
+def publication_path(identifier, workspace_id="pub-a"):
+    return f"/api/public-workspaces/{workspace_id}/documents/{identifier}/publication"
+
+
+def open_review(ui, identifier="pending-publication", workspace_id="pub-a"):
+    with ui.page.expect_response(response_for("GET", publication_path(identifier, workspace_id))) as read:
+        review_control(ui, identifier, workspace_id).click()
+    read.value.finished()
+    dialog = review_dialog(ui)
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_role("button", name="Refresh review details", exact=True)).to_be_enabled()
+    return dialog
+
+
+def refresh_review(ui, identifier="pending-publication", workspace_id="pub-a"):
+    with ui.page.expect_response(response_for("GET", publication_path(identifier, workspace_id))) as read:
+        review_dialog(ui).get_by_role("button", name="Refresh review details", exact=True).click()
+    read.value.finished()
+    return read.value
+
+
+def confirm(ui, label):
+    review_dialog(ui).get_by_role("button", name=label, exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name=f"Confirm {label.lower()}", exact=True)
+    expect(dialog).to_be_visible()
+    return dialog
+
+
+def changed_state(ui, identifier="pending-publication", workspace_id="pub-a", **changes):
+    return {**copy.deepcopy(ui.review_state(identifier, workspace_id)), **copy.deepcopy(changes)}
+
+
+def test_publication_approval_queues_processing_and_targets_the_immutable_workspace(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # Approval records a decision and queues processing; it never claims completed work and
+    # never releases the still-restricted generated artifact for ordinary management.
+    open_management(ui, "pub-a")
+    state = ui.review_state("pending-publication")
+    dialog = open_review(ui, "pending-publication")
+    expect(dialog).to_contain_text("Publishing colleague")
+    held = changed_record(
+        ui, "pending-publication", generated_artifact_promotion_status="approved",
+        document_actions=[], document_collaboration_actions=["inspect"],
+    )
+    reply = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=state["etag"], status=202,
+        response=collaboration_receipt("pending-publication", "approve_artifact", "approved", status="queued"),
+        records=[held], publication_after=changed_state(
+            ui, "pending-publication", etag='"publication:queued"',
+            publication=publication(status="approved"),
+        ),
+    )
+    perform(ui, reply, dialog.get_by_role("button", name="Approve publication", exact=True).click)
+    expect(dialog.get_by_role("status").filter(has_text="Processing is queued, not complete")).to_be_visible()
+    dialog.get_by_role("button", name="Done", exact=True).click()
+    assert ui.operation_requests[-1].path == operation_path("pending-publication/artifact/approve", "pub-a")
+    assert ui.record("pending-publication")["generated_artifact_promotion_status"] == "approved"
+    assert not ui.record("pending-publication")["document_actions"]
+    assert ui.active_workspace == "pub-a"
+
+
+def test_reject_publication_requires_confirmation_and_records_the_decision(public_collaboration_ui):
+    ui = public_collaboration_ui
+    open_management(ui, "pub-a")
+    dialog = open_review(ui, "pending-publication")
+    confirmation = confirm(ui, "Reject publication")
+    expect(confirmation).to_contain_text("Revision 3")
+    assert not ui.operation_requests
+    reply = ui.queue_decision(
+        "pending-publication", "reject_artifact",
+        expected_etag=ui.review_state("pending-publication")["etag"],
+        response=collaboration_receipt("pending-publication", "reject_artifact", "rejected"),
+        records=[changed_record(
+            ui, "pending-publication", generated_artifact_promotion_status="rejected",
+            document_collaboration_actions=["inspect"],
+        )],
+        publication_after=changed_state(
+            ui, "pending-publication", etag='"publication:rejected"',
+            publication=publication(status="rejected"),
+        ),
+    )
+    perform(ui, reply, confirmation.get_by_role("button", name="Reject publication", exact=True).click)
+    expect(confirmation).to_have_count(0)
+    expect(dialog.get_by_role("status").filter(has_text="Decision confirmed.")).to_be_visible()
+    expect(dialog).to_contain_text("Result: rejected")
+    assert set(ui.operation_requests[0].body) == {"expected_etag"}
+    assert ui.active_workspace == "pub-a"
+
+
+def test_only_the_requester_can_cancel_a_pending_publication(public_collaboration_ui):
+    ui = public_collaboration_ui
+    open_management(ui, "pub-a")
+    # A non-requester sees approve and reject, never cancel.
+    non_requester = open_review(ui, "pending-publication")
+    expect(non_requester.get_by_role("button", name="Cancel publication request", exact=True)).to_have_count(0)
+    non_requester.get_by_role("button", name="Done", exact=True).click()
+    expect(non_requester).to_have_count(0)
+    # The requester may withdraw their own request, behind a confirmation.
+    dialog = open_review(ui, "requested-publication")
+    expect(dialog).to_contain_text("(you)")
+    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_have_count(0)
+    confirmation = confirm(ui, "Cancel publication request")
+    reply = ui.queue_decision(
+        "requested-publication", "cancel_artifact",
+        expected_etag=ui.review_state("requested-publication")["etag"],
+        response=collaboration_receipt("requested-publication", "cancel_artifact", "cancelled"),
+        records=[changed_record(
+            ui, "requested-publication", generated_artifact_promotion_status="cancelled",
+            document_collaboration_actions=["inspect"],
+        )],
+        publication_after=changed_state(
+            ui, "requested-publication", etag='"publication:cancelled"',
+            publication=publication(requester=True, status="cancelled"),
+        ),
+    )
+    perform(ui, reply, confirmation.get_by_role("button", name="Cancel publication request", exact=True).click)
+    expect(confirmation).to_have_count(0)
+    expect(dialog.get_by_role("status").filter(has_text="Decision confirmed.")).to_be_visible()
+    expect(dialog).to_contain_text("Result: cancelled")
+
+
+def test_approval_failed_is_recorded_approval_with_deliberate_resume(public_collaboration_ui):
+    ui = public_collaboration_ui
+    ui.page.clock.install()
+    open_management(ui, "pub-a")
+    dialog = open_review(ui, "pending-publication")
+    initial = copy.deepcopy(ui.review_state("pending-publication"))
+    failed_state = changed_state(
+        ui, "pending-publication", etag='"publication:handoff-failed"',
+        publication=publication(status="approval_failed", actions=["approve_artifact"]),
+    )
+    partial = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=initial["etag"], status=207,
+        response=collaboration_receipt(
+            "pending-publication", "approve_artifact", "approval_failed", status="partial",
+            errors=[{"stage": "queue", "code": "handoff_failed",
+                     "message": "Approval recorded; the processing handoff needs reconciliation."}],
+        ),
+        records=[changed_record(
+            ui, "pending-publication", generated_artifact_promotion_status="approval_failed",
+            document_collaboration_actions=["inspect", "approve_artifact"],
+        )],
+        publication_after=failed_state,
+    )
+    perform(ui, partial, dialog.get_by_role("button", name="Approve publication", exact=True).click)
+    expect(dialog.get_by_role("alert").filter(has_text="processing handoff needs reconciliation")).to_be_visible()
+    expect(dialog.get_by_text("Approval was recorded, but its processing handoff needs reconciliation.", exact=True)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Resume approved publication", exact=True)).to_be_disabled()
+    ui.page.clock.fast_forward(10000)
+    assert len(ui.operation_requests) == 1
+    refresh_review(ui, "pending-publication")
+    retry = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=failed_state["etag"], status=202,
+        response=collaboration_receipt("pending-publication", "approve_artifact", "approved", status="queued"),
+        publication_after=changed_state(
+            ui, "pending-publication", etag='"publication:resumed"',
+            publication=publication(status="approved"),
+        ),
+    )
+    perform(ui, retry, dialog.get_by_role("button", name="Resume approved publication", exact=True).click)
+    expect(dialog.get_by_role("status").filter(has_text="Processing is queued, not complete")).to_be_visible()
+    assert [entry.body["expected_etag"] for entry in ui.operation_requests] == [initial["etag"], failed_state["etag"]]
+
+
+def test_stale_etag_keeps_the_dialog_and_requires_explicit_refresh_before_retry(public_collaboration_ui):
+    ui = public_collaboration_ui
+    ui.page.clock.install()
+    open_management(ui, "pub-a")
+    dialog = open_review(ui, "pending-publication")
+    initial = copy.deepcopy(ui.review_state("pending-publication"))
+    newer = changed_state(ui, "pending-publication", etag='"publication:concurrent-change"')
+    rejected = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=initial["etag"], status=409,
+        response={"error": "review_changed", "message": "Refresh the changed publication state."},
+        publication_after=newer,
+    )
+    perform(ui, rejected, dialog.get_by_role("button", name="Approve publication", exact=True).click)
+    expect(dialog.get_by_role("alert")).to_contain_text("Your input is kept")
+    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_be_disabled()
+    ui.page.clock.fast_forward(10000)
+    assert len(ui.operation_requests) == 1
+    refresh_review(ui, "pending-publication")
+    retry = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=newer["etag"], status=202,
+        response=collaboration_receipt("pending-publication", "approve_artifact", "approved", status="queued"),
+        publication_after=changed_state(
+            ui, "pending-publication", etag='"publication:retried"',
+            publication=publication(status="approved"),
+        ),
+    )
+    perform(ui, retry, dialog.get_by_role("button", name="Approve publication", exact=True).click)
+    expect(dialog.get_by_role("status").filter(has_text="Processing is queued, not complete")).to_be_visible()
+    assert [entry.body["expected_etag"] for entry in ui.operation_requests] == [initial["etag"], newer["etag"]]
+
+
+def test_missing_or_unknown_collaboration_handshake_hides_review(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # An absent or unrecognised handshake is an interface hint, never an authorization: the
+    # review affordance disappears rather than degrading into a partially enabled state.
+    for handshake in (None, {"schema_version": 99, "operations": list(COLLABORATION_OPERATIONS)}):
+        if handshake is None:
+            ui.workspaces["pub-a"].pop("document_collaboration")
+        else:
+            ui.workspaces["pub-a"]["document_collaboration"] = handshake
+        open_management(ui, "pub-a")
+        expect(review_control(ui, "pending-publication")).to_have_count(0)
+        expect(review_control(ui, "requested-publication")).to_have_count(0)
+        assert_no_shared_place(ui)
+        assert not ui.operation_requests
+
+
+def test_per_document_collaboration_actions_gate_the_review_affordance(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # withheld-document carries an empty inline document_collaboration_actions while the
+    # workspace context still advertises the operations. The gate is per document, so no
+    # review affordance appears for it even though the handshake is present.
+    assert ui.record("withheld-document")["document_collaboration_actions"] == []
+    open_management(ui, "pub-a")
+    expect(review_control(ui, "pending-publication")).to_be_visible()
+    expect(review_control(ui, "withheld-document")).to_have_count(0)
+    assert not ui.operation_requests
+
+
+def test_refused_set_active_leaves_a_publication_decision_working(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # M3C pin: active state stays non-load-bearing on purpose. A refused or failed setActive
+    # must leave a publication *decision* fully functional, because every decision targets the
+    # immutable workspace path rather than the courtesy active selection.
+    ui.set_active_failures.add("pub-b")
+    open_management(ui, "pub-a")
+    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
+    expect(details_button(ui, "same-document", "pub-b")).to_be_visible()
+    attempted = [entry for entry in ui.writes if entry.path == "/api/public_workspaces/setActive"]
+    assert attempted and attempted[-1].body == {"workspaceId": "pub-b"}
+    assert ui.active_workspace == "pub-a"
+    state = ui.review_state("pending-publication", "pub-b")
+    dialog = open_review(ui, "pending-publication", "pub-b")
+    reply = ui.queue_decision(
+        "pending-publication", "approve_artifact", expected_etag=state["etag"], status=202,
+        workspace_id="pub-b",
+        response=collaboration_receipt(
+            "pending-publication", "approve_artifact", "approved",
+            public_workspace_id="pub-b", status="queued",
+        ),
+        records=[changed_record(
+            ui, "pending-publication", "pub-b", generated_artifact_promotion_status="approved",
+            document_actions=[], document_collaboration_actions=["inspect"],
+        )],
+        publication_after=changed_state(
+            ui, "pending-publication", "pub-b", etag='"publication:pub-b:queued"',
+            publication=publication(status="approved"),
+        ),
+    )
+    perform(ui, reply, dialog.get_by_role("button", name="Approve publication", exact=True).click)
+    expect(dialog.get_by_role("status").filter(has_text="Processing is queued, not complete")).to_be_visible()
+    assert ui.operation_requests[-1].path == operation_path("pending-publication/artifact/approve", "pub-b")
+    assert ui.active_workspace == "pub-a"
+
+
+def test_shared_place_stays_absent_while_publication_review_is_live(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # The M3C invariant, pinned positively: enabling publication review must not resurrect a
+    # cross-workspace share relationship. Review is fully available, yet facets omit
+    # shared_with_me, so no Shared place, no Share and no personal Save view control appears,
+    # and the explorer never requests a shared place.
+    open_management(ui, "pub-a")
+    expect(review_control(ui, "pending-publication")).to_be_visible()
+    assert_no_shared_place(ui)
+    expect(filters(ui).get_by_role("button", name=re.compile(r"^Shared"))).to_have_count(0)
+    shared_reads = [
+        entry for entry in list_requests(ui)
+        if "shared" in entry.query.get("place", [""])[0]
+    ]
+    assert not shared_reads, f"A shared place was requested for a public workspace: {shared_reads}"
+    facets_response = next(
+        payload for url, payload in ui.responses
+        if urlsplit(url).path == "/api/public-workspaces/pub-a/documents/facets"
+    )
+    assert "shared_with_me" not in facets_response
+    assert not ui.operation_requests
+
+
+@pytest.mark.parametrize("theme,width,height,label", [
+    ("light", 1440, 900, "dl"), ("dark", 1440, 900, "dd"),
+    ("light", 390, 844, "ml"), ("dark", 390, 844, "md"),
+])
+def test_review_dialog_layout_in_both_themes(public_collaboration_ui, theme, width, height, label):
+    ui = public_collaboration_ui
+    open_management(ui, "pub-a", theme=theme, width=width, height=height)
+    assert_no_shared_place(ui)
+    dialog = open_review(ui, "pending-publication")
+    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_be_enabled()
+    expect(dialog.get_by_role("button", name="Reject publication", exact=True)).to_be_enabled()
+    ui.assert_no_overflow()
+    card = dialog.locator(".glass-modal")
+    dialog_bounds = card.bounding_box()
+    assert dialog_bounds and dialog_bounds["x"] >= 0 and dialog_bounds["width"] <= width
+    assert dialog_bounds["y"] >= 0 and dialog_bounds["y"] + dialog_bounds["height"] <= height + 1
+    fits = card.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    assert fits is True
+    expect(ui.page.locator("html")).to_have_css("color-scheme", theme)
+    REVIEW_SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    ui.page.screenshot(path=str(REVIEW_SCREENSHOTS / f"{label}-review.png"), full_page=True)
+    dialog.get_by_role("button", name="Done", exact=True).click()
     expect(dialog).to_have_count(0)
     assert not ui.operation_requests

@@ -15,6 +15,10 @@ export const DOCUMENT_COLLABORATION_OPERATIONS = [
 export type DocumentCollaborationOperation = typeof DOCUMENT_COLLABORATION_OPERATIONS[number];
 export type CollaborationMutation = Exclude<DocumentCollaborationOperation, 'inspect'>;
 export type GroupDocumentScope = Extract<DocumentReadScope, { kind: 'group' }>;
+export type PublicDocumentScope = Extract<DocumentReadScope, { kind: 'public' }>;
+// Both native workspace kinds share one collaboration adapter shape. Public advertises only the
+// publication (generated-artifact) decisions; cross-workspace sharing stays out of scope until M3D.
+export type NativeCollaborationScope = GroupDocumentScope | PublicDocumentScope;
 export type DocumentRelationship = 'owner' | 'not_approved' | 'approved' | 'removed' | 'denied';
 
 export interface CollaborationGroup {
@@ -74,7 +78,7 @@ export interface CollaborationTargets {
 }
 
 export interface DocumentCollaborationAdapter {
-    scope: GroupDocumentScope;
+    scope: NativeCollaborationScope;
     supported: ReadonlySet<DocumentCollaborationOperation>;
     allows: (operation: DocumentCollaborationOperation, document: WorkspaceDocument | null, state?: DocumentCollaborationState) => boolean;
     read: (document: WorkspaceDocument, signal?: AbortSignal) => Promise<DocumentCollaborationState>;
@@ -100,6 +104,29 @@ function isNullableString(value: unknown): value is string | null {
 function isGroup(value: unknown): value is CollaborationGroup {
     return isRecord(value) && typeof value.id === 'string' && Boolean(value.id)
         && typeof value.name === 'string' && typeof value.description === 'string';
+}
+
+const PUBLICATION_STATUSES = [
+    'pending_approval', 'approved', 'approval_failed', 'rejected', 'cancelled', 'unavailable',
+] as const;
+
+function parsePublication(raw: unknown): DocumentPublicationReview {
+    if (!isRecord(raw) || typeof raw.status !== 'string'
+        || !(PUBLICATION_STATUSES as readonly string[]).includes(raw.status)
+        || typeof raw.is_requester !== 'boolean' || !isNullableString(raw.requested_by_user_id)
+        || !isNullableString(raw.requested_by_display_name) || !isNullableString(raw.requested_at)) {
+        throw new Error('The publication request could not be verified. Use classic review or refresh.');
+    }
+    const publicationActions = operationList(raw.actions);
+    if (!publicationActions) throw new Error('The publication permissions could not be verified.');
+    if (raw.status === 'unavailable' && publicationActions.some((action) => action !== 'inspect')) {
+        throw new Error('An unavailable publication cannot grant a decision.');
+    }
+    return {
+        status: raw.status, is_requester: raw.is_requester,
+        requested_by_user_id: raw.requested_by_user_id, requested_by_display_name: raw.requested_by_display_name,
+        requested_at: raw.requested_at, actions: publicationActions,
+    };
 }
 
 export function parseDocumentCollaborationState(
@@ -138,26 +165,7 @@ export function parseDocumentCollaborationState(
             approval_status: recipient.approval_status,
         });
     }
-    let publication: DocumentPublicationReview | null = null;
-    if (value.publication !== null) {
-        const raw = value.publication;
-        if (!isRecord(raw) || typeof raw.status !== 'string'
-            || !['pending_approval', 'approved', 'approval_failed', 'rejected', 'cancelled', 'unavailable'].includes(raw.status)
-            || typeof raw.is_requester !== 'boolean' || !isNullableString(raw.requested_by_user_id)
-            || !isNullableString(raw.requested_by_display_name) || !isNullableString(raw.requested_at)) {
-            throw new Error('The publication request could not be verified. Use classic review or refresh.');
-        }
-        const publicationActions = operationList(raw.actions);
-        if (!publicationActions) throw new Error('The publication permissions could not be verified.');
-        if (raw.status === 'unavailable' && publicationActions.some((action) => action !== 'inspect')) {
-            throw new Error('An unavailable publication cannot grant a decision.');
-        }
-        publication = {
-            status: raw.status, is_requester: raw.is_requester,
-            requested_by_user_id: raw.requested_by_user_id, requested_by_display_name: raw.requested_by_display_name,
-            requested_at: raw.requested_at, actions: publicationActions,
-        };
-    }
+    const publication = value.publication === null ? null : parsePublication(value.publication);
     requireWorkspaceId(value.owner_group.id);
     return {
         schema_version: 1, group_id: groupId, document_id: id, document_version: value.document_version,
@@ -183,10 +191,12 @@ const RESULT_STATES: Record<CollaborationMutation, readonly string[]> = {
 };
 
 export function parseCollaborationReceipt(
-    value: unknown, httpStatus: number, groupId: string, id: string,
+    value: unknown, httpStatus: number, scope: NativeCollaborationScope, id: string,
     operation: CollaborationMutation, targetGroupId?: string,
 ): CollaborationReceipt {
-    if (!isRecord(value) || value.schema_version !== 1 || value.group_id !== groupId || value.document_id !== id
+    const workspaceId = requireWorkspaceId(scope.id);
+    const identityKey = scope.kind === 'public' ? 'public_workspace_id' : 'group_id';
+    if (!isRecord(value) || value.schema_version !== 1 || value[identityKey] !== workspaceId || value.document_id !== id
         || value.action !== operation || typeof value.state !== 'string' || !RESULT_STATES[operation].includes(value.state)
         || (targetGroupId ? value.target_group_id !== targetGroupId : Object.hasOwn(value, 'target_group_id'))
         || !Array.isArray(value.errors)) {
@@ -207,7 +217,7 @@ export function parseCollaborationReceipt(
         return { stage: error.stage, code: error.code, message: error.message };
     });
     return {
-        schema_version: 1, group_id: groupId, document_id: id, action: operation,
+        schema_version: 1, group_id: workspaceId, document_id: id, action: operation,
         ...(targetGroupId ? { target_group_id: targetGroupId } : {}),
         status: status === 'partial' ? 'partial' : status === 'queued' ? 'queued' : status === 'unchanged' ? 'unchanged' : 'applied',
         state: value.state, errors,
@@ -324,7 +334,7 @@ export function createDocumentCollaboration(
                 method: operation === 'unshare' || operation === 'remove_share' ? 'DELETE' : 'POST',
                 body: { expected_etag: state.etag, ...(operation === 'share' ? { target_group_id: targetGroupId } : {}) },
             });
-            const confirmed = parseCollaborationReceipt(response.data, response.status, groupId, id, operation, targetGroupId);
+            const confirmed = parseCollaborationReceipt(response.data, response.status, scope, id, operation, targetGroupId);
             if (operation === 'share' && state.recipients.some((recipient) =>
                 recipient.id === targetGroupId && recipient.approval_status === 'approved') && confirmed.state !== 'approved') {
                 throw new Error('The receipt would reset an existing approval. Refresh sharing state before continuing.');
@@ -338,12 +348,109 @@ export function createDocumentCollaboration(
     };
 }
 
-export function collaborationFailure(cause: unknown): string {
+/**
+ * Parse the slim public /publication state into the shared collaboration shape. Public workspaces
+ * expose only the generated-artifact decision, so the sharing-specific fields are synthesized as an
+ * owned, recipient-free relationship. The immutable-target identity check mirrors the group reader:
+ * a payload that does not carry the requested public_workspace_id and document id is refused.
+ */
+export function parsePublicPublicationState(
+    value: unknown, workspaceId: string, id: string, workspaceName: string,
+): DocumentCollaborationState {
+    if (!isRecord(value) || value.schema_version !== 1 || value.public_workspace_id !== workspaceId || value.document_id !== id
+        || typeof value.document_version !== 'number' || !Number.isInteger(value.document_version) || value.document_version < 1
+        || typeof value.etag !== 'string' || !value.etag.trim()) {
+        throw new Error('The publication details do not identify this workspace and document. Refresh before making a decision.');
+    }
+    const publication = value.publication === null || value.publication === undefined
+        ? null : parsePublication(value.publication);
+    const artifactActions = publication
+        ? publication.actions.filter((action) => action.endsWith('_artifact'))
+        : [];
+    requireWorkspaceId(workspaceId);
+    return {
+        schema_version: 1, group_id: workspaceId, document_id: id, document_version: value.document_version,
+        etag: value.etag, owner_group: { id: workspaceId, name: workspaceName },
+        relationship: 'owner', actions: ['inspect', ...artifactActions],
+        recipients: [], publication,
+    };
+}
+
+/**
+ * Public collaboration adapter: publication (generated-artifact) decisions only. Cross-workspace
+ * sharing is deliberately unsupported here (M3D), so the sharing operations always deny and the
+ * repair/targets paths raise. Every decision is immutable-target against the workspace in the path.
+ */
+export function createPublicDocumentCollaboration(
+    scope: PublicDocumentScope, capability: unknown,
+): DocumentCollaborationAdapter {
+    if (scope.kind !== 'public') throw new Error('Public collaboration requires an explicit public workspace.');
+    const workspaceId = requireWorkspaceId(scope.id);
+    const supported = advertisedDocumentCollaboration(capability);
+    const documentPath = (id: string) =>
+        `/api/public-workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(requireWorkspaceId(id))}`;
+    const allows = (operation: DocumentCollaborationOperation, document: WorkspaceDocument | null, state?: DocumentCollaborationState) => {
+        if (!document) return false;
+        const id = documentId(document);
+        if (!id || !supported.has(operation) || !Array.isArray(document.document_collaboration_actions)
+            || !document.document_collaboration_actions.includes(operation)
+            || document.public_workspace_id !== workspaceId) return false;
+        if (operation === 'share' || operation === 'unshare' || operation === 'approve_share' || operation === 'remove_share') return false;
+        if (!state) return operation === 'inspect';
+        if (state.group_id !== workspaceId || state.document_id !== id || !state.etag.trim() || !state.actions.includes(operation)) return false;
+        if (operation === 'inspect') return true;
+        if (operation.endsWith('_artifact')) {
+            return Boolean(state.publication?.actions.includes(operation)
+                && (operation !== 'approve_artifact' || document.is_current_version !== false)
+                && (operation !== 'cancel_artifact' || state.publication.is_requester));
+        }
+        return false;
+    };
+    const requireAllowed = (operation: DocumentCollaborationOperation, document: WorkspaceDocument | null, state?: DocumentCollaborationState) => {
+        if (!allows(operation, document, state)) throw new Error('This publication action is not currently permitted for this workspace and document.');
+    };
+    return {
+        scope: { ...scope, id: workspaceId }, supported, allows,
+        read: async (document, signal) => {
+            requireAllowed('inspect', document);
+            const id = documentId(document);
+            const response = await requestWithStatus<unknown>(`${documentPath(id)}/publication`, { signal });
+            if (response.status !== 200) throw new Error('Publication details are not available. Refresh or use classic review.');
+            return parsePublicPublicationState(response.data, workspaceId, id, scope.name);
+        },
+        readRepair: async () => {
+            throw new Error('Public workspaces have no access-removal cleanup to repair.');
+        },
+        targets: async () => {
+            throw new Error('Public workspaces do not share revisions with recipient workspaces.');
+        },
+        mutate: async (document, state, operation, targetGroupId, repairReceipt) => {
+            requireAllowed(operation, document, state);
+            if (targetGroupId !== undefined) throw new Error('Public publication decisions do not accept a recipient override.');
+            if (repairReceipt) throw new Error('Public publication decisions do not accept a repair receipt.');
+            if (!operation.endsWith('_artifact')) throw new Error('Public workspaces support only publication decisions.');
+            const id = document ? documentId(document) : state.document_id;
+            const base = documentPath(id);
+            const paths: Partial<Record<CollaborationMutation, string>> = {
+                approve_artifact: `${base}/artifact/approve`,
+                reject_artifact: `${base}/artifact/reject`,
+                cancel_artifact: `${base}/artifact/cancel`,
+            };
+            const response = await requestWithStatus<unknown>(paths[operation]!, {
+                method: 'POST', body: { expected_etag: state.etag },
+            });
+            return parseCollaborationReceipt(response.data, response.status, scope, id, operation);
+        },
+    };
+}
+
+export function collaborationFailure(cause: unknown, scopeKind: 'group' | 'public' = 'group'): string {
+    const place = scopeKind === 'public' ? 'workspace' : 'group';
     if (cause instanceof ApiError && (cause.status === 409 || cause.status === 412)) {
         return 'The document or decision changed. Your input is kept. Refresh review details before deciding again.';
     }
     if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
-        return 'This document or review is no longer available to you in this group. Refresh to confirm its status.';
+        return `This document or review is no longer available to you in this ${place}. Refresh to confirm its status.`;
     }
     return cause instanceof Error ? cause.message : 'The decision was not confirmed. Refresh its status before retrying.';
 }

@@ -13,7 +13,7 @@ import { ScreeningWorkspaceControls } from '../../components/screening/Screening
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { createGroupDocumentReader, createPublicDocumentReader } from '../../lib/documentReadAdapter';
 import { createGroupDocumentOperations, createPublicDocumentOperations } from '../../lib/documentOperations';
-import { createDocumentCollaboration } from '../../lib/documentCollaboration';
+import { createDocumentCollaboration, createPublicDocumentCollaboration } from '../../lib/documentCollaboration';
 import type { GroupWorkspaceContext, PublicWorkspaceContext } from '../../lib/workspaceContext';
 import { GlassButton } from '../../components/ui/primitives';
 
@@ -86,6 +86,9 @@ export function PublicDocumentsSection({
     const operations = useMemo(() => createPublicDocumentOperations(
         { kind: 'public', id: context.scope.id, name: context.workspace.name }, context.document_management,
     ), [context.scope.id, context.workspace.name, context.document_management]);
+    const collaboration = useMemo(() => createPublicDocumentCollaboration(
+        { kind: 'public', id: context.scope.id, name: context.workspace.name }, context.document_collaboration,
+    ), [context.scope.id, context.workspace.name, context.document_collaboration]);
     const canChange = [...operations.supported].some((operation) => operation !== 'download');
 
     return (
@@ -103,7 +106,7 @@ export function PublicDocumentsSection({
                     : 'Read-only browsing for this public workspace.'}</p>
             </div>
             <div className="min-h-0 flex-1">
-                <DocumentExplorer reader={reader} operations={operations}
+                <DocumentExplorer reader={reader} operations={operations} collaboration={collaboration}
                     canChat={context.document_permissions.can_chat}
                     interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
                     onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}

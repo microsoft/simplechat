@@ -75,6 +75,9 @@ export function DocumentCollaborationDialog({
     onBusyChange: (busy: boolean) => void;
     onChanged: (receipt: CollaborationReceipt) => Promise<void>;
 }) {
+    const scopeKind = adapter.scope.kind;
+    const isGroupScope = scopeKind === 'group';
+    const scopeNoun = isGroupScope ? 'group' : 'workspace';
     const [review, setReview] = useState<ReviewSnapshot | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -144,8 +147,8 @@ export function DocumentCollaborationDialog({
             setReview(null);
             if (cause instanceof ApiError && cause.status === 404) {
                 setGone(true);
-                if (!receiptRef.current) setError('The requested document or review no longer exists, or is not available in this group.');
-            } else setError(collaborationFailure(cause));
+                if (!receiptRef.current) setError(`The requested document or review no longer exists, or is not available in this ${scopeNoun}.`);
+            } else setError(collaborationFailure(cause, scopeKind));
             return null;
         } finally {
             if (!controller.signal.aborted && mounted.current) setLoading(false);
@@ -173,7 +176,7 @@ export function DocumentCollaborationDialog({
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted && mounted.current) {
                 setTargets(null);
-                setSearchError(collaborationFailure(cause));
+                setSearchError(collaborationFailure(cause, scopeKind));
             }
         }).finally(() => {
             if (!controller.signal.aborted && mounted.current) setSearching(false);
@@ -216,7 +219,7 @@ export function DocumentCollaborationDialog({
                 );
             } catch (cause) {
                 if (mounted.current) {
-                    setError(collaborationFailure(cause));
+                    setError(collaborationFailure(cause, scopeKind));
                     setNeedsRefresh(true);
                 }
                 return;
@@ -291,24 +294,30 @@ export function DocumentCollaborationDialog({
     ) : null;
 
     return <>
-        <Modal title="Document sharing and review" size="lg" onClose={close}
+        <Modal title={isGroupScope ? 'Document sharing and review' : 'Document review'} size="lg" onClose={close}
             description={`${adapter.scope.name}: ${fileName}`}
             footer={<GlassButton size="sm" variant="ghost" disabled={busy} onClick={close}>Done</GlassButton>}>
             <div className="space-y-4">
                 <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-text-2">
-                    <dt>Selected group</dt><dd className="break-words">{adapter.scope.name} ({adapter.scope.id})</dd>
+                    <dt>Selected {scopeNoun}</dt><dd className="break-words">{adapter.scope.name} ({adapter.scope.id})</dd>
                     <dt>Document</dt><dd className="break-all">{id}</dd>
                     {state ? <>
-                        <dt>Source owner</dt><dd className="break-words">{state.owner_group.name} ({state.owner_group.id})</dd>
+                        {isGroupScope ? <>
+                            <dt>Source owner</dt><dd className="break-words">{state.owner_group.name} ({state.owner_group.id})</dd>
+                        </> : null}
                         <dt>Revision</dt><dd>{state.document_version}</dd>
-                        <dt>Relationship</dt><dd>{state.relationship === 'owner' ? 'Owned by this group' : state.relationship === 'not_approved' ? 'Incoming share awaiting approval'
-                            : state.relationship === 'approved' ? 'Approved incoming share' : `Access ${state.relationship}; cleanup review only`}</dd>
+                        {isGroupScope ? <>
+                            <dt>Relationship</dt><dd>{state.relationship === 'owner' ? 'Owned by this group' : state.relationship === 'not_approved' ? 'Incoming share awaiting approval'
+                                : state.relationship === 'approved' ? 'Approved incoming share' : `Access ${state.relationship}; cleanup review only`}</dd>
+                        </> : null}
                     </> : null}
                 </dl>
-                <p className="text-xs text-text-3">Sharing and approval apply to this exact document and revision. They do not clear content-screening holds or promise immediately searchable content.</p>
+                <p className="text-xs text-text-3">{isGroupScope
+                    ? 'Sharing and approval apply to this exact document and revision. They do not clear content-screening holds or promise immediately searchable content.'
+                    : 'Publication approval applies to this exact document and revision. It does not clear content-screening holds or promise immediately searchable content.'}</p>
                 {outcome}
                 {error ? <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
-                {gone ? <p role="status" className="text-sm text-text-2">This document or request is no longer available in this group.{receipt ? ' The confirmed outcome above is retained.' : ''}</p> : null}
+                {gone ? <p role="status" className="text-sm text-text-2">This document or request is no longer available in this {scopeNoun}.{receipt ? ' The confirmed outcome above is retained.' : ''}</p> : null}
                 {interactionDisabled ? <p role="status" className="text-sm text-text-3">Workspace access is being confirmed. Your input is kept; decisions are paused.</p> : null}
                 <GlassButton size="sm" disabled={busy || loading || interactionDisabled} onClick={() => void loadReview()}>
                     <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />Refresh review details
@@ -335,7 +344,7 @@ export function DocumentCollaborationDialog({
                             ))}
                         </div>
                     </section> : null}
-                    {state.relationship !== 'owner' ? <section className="space-y-2 border-t border-edge pt-3">
+                    {isGroupScope && (state.relationship !== 'owner' ? <section className="space-y-2 border-t border-edge pt-3">
                         <h3 className="text-sm font-semibold text-text-1">Access for {adapter.scope.name}</h3>
                         <p className="text-xs text-text-3">A recipient decision changes only this group's access, not the source owner's files or other groups' grants.</p>
                         <div className="flex flex-wrap gap-2">
@@ -421,7 +430,7 @@ export function DocumentCollaborationDialog({
                             <GlassButton size="sm" variant="primary" disabled={!selected || !allows('share')}
                                 onClick={() => { if (selected) choose('share', selected); }}>Share with group</GlassButton>
                         </section> : null}
-                    </>}
+                    </>)}
                     {!state.actions.some((operation) => operation !== 'inspect') ? <p className="text-xs text-text-3">
                         No collaboration decision is currently available. Use classic review if reconciliation is required.
                     </p> : null}
