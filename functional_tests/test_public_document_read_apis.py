@@ -93,6 +93,12 @@ class PublicReadOnlyContainer:
                 if str(record.get("public_workspace_id")) == str(owner)
                 and record.get(field) == values["@family_identity"]
             ]
+        elif "@public_workspace_id" in values:
+            owner = values["@public_workspace_id"]
+            records = [
+                deepcopy(record) for record in self.records.values()
+                if str(record.get("public_workspace_id")) == str(owner)
+            ]
         else:
             raise AssertionError("A public source query must be explicitly scoped.")
         if self.after_query:
@@ -286,12 +292,18 @@ def environment(monkeypatch):
             "_has_persisted_blob_reference", "_normalize_document_enhanced_citations",
             "normalize_tag", "sanitize_tags_for_filter", "normalize_tag_color", "get_safe_tag_color",
             "get_default_tag_color", "get_workspace_tag_definitions", "build_workspace_tags_from_counts",
+            "validate_tags", "validate_tag_color",
         }, document_namespace)
+        # The M3B-extended access module imports these blob/name helpers at module
+        # load; read paths never invoke them, so lightweight seams satisfy the import.
+        document_namespace.setdefault("_blob_exists", Mock(return_value=True))
+        document_namespace.setdefault("is_pdf_or_image_file_name", lambda name: str(name or "").lower().endswith(".pdf"))
         scoped.setitem(sys.modules, "functions_documents", module_stub("functions_documents", **document_namespace))
 
         # Resolve screening only after replacing application bootstrap dependencies.
         from content_screening import access as screening_access
 
+        load_real_module(scoped, "functions_public_document_policy")
         env.access = load_real_module(scoped, "functions_public_document_access")
         env.reads = load_real_module(scoped, "functions_public_document_reads")
         route = load_real_module(scoped, "route_backend_public_document_reads")
@@ -309,6 +321,9 @@ def environment(monkeypatch):
             state["user"] = {"oid": env.actor, "roles": ["User"]}
         env.client = client
         env.app = app
+        env.config = config
+        env.scoped_monkeypatch = scoped
+        env.document_helpers = document_namespace
         yield env
         network.assert_not_called()
 
