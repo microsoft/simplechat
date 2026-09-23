@@ -47,6 +47,8 @@ Document admission retains its separate fail-closed hold-and-review behavior.
 
 Submitted text is checked before ordinary message publication and answering/planning work. Normal, agent, retry/edit, saved-analysis, document-action, collaboration, and orchestration chat paths use the shared checkpoints. Reply checks inspect complete assembled text, including patterns split across stream chunks. Retained partial replies also require a decision.
 
+Since **0.261.131**, Gather / Reason / Render harness replies use the output checkpoint inside the headless publisher, so web streams and scheduler continuations are covered, including model-free file-status republication. A removed reply publishes only the safety notice, without citations or file cards, and later publication never overwrites an administrator's retraction. Run history hides that run's files while a check-before-display reply is pending or after removal; the private file records are not deleted.
+
 Azure analysis uses windows of at most **10,000 Unicode code points**, 500-code-point overlap, a 32-window cap, and an inspection deadline. Every tail is included. Incomplete coverage is not a pass. See the [Azure Analyze Text contract](https://learn.microsoft.com/en-us/rest/api/contentsafety/text-operations/analyze-text?view=rest-contentsafety-2024-09-01).
 
 `functions_chat_content_review.py` binds later rechecks to the stored content fingerprint and Cosmos revision. A retracted reply retains its identity and safe thread information, but ordinary history contains a replacement notice rather than the rejected body. Stale writers, replay sessions, shared mirrors, message inspectors, processing notes, and transcript exports respect that authoritative decision.
@@ -84,6 +86,6 @@ Rechecks are per record, not scheduled corpus-wide rescans. Correct failing scan
 
 ## Validation
 
-Functional coverage includes `test_chat_content_checks.py`, `test_chat_content_review.py`, `test_chat_content_streaming.py`, `test_chat_content_orchestration.py`, existing screening/model/settings suites, and `test_v2_chat_content_checks.mjs`. Browser coverage in `ui_tests/test_chat_content_checks.py` exercises real classic and V2 controls, stream readers and the React store, and the admin recheck workflow with synthetic data.
+Functional coverage includes `test_chat_content_checks.py`, `test_chat_content_review.py`, `test_chat_content_streaming.py`, `test_chat_content_orchestration.py`, `test_orchestration_harness_chat_checks.py`, existing screening/model/settings suites, and `test_v2_chat_content_checks.mjs`. Browser coverage in `ui_tests/test_chat_content_checks.py` exercises real classic and V2 controls, stream readers and the React store, and the admin recheck workflow with synthetic data.
 
 The main cases cover master/child combinations, deterministic findings, long/Unicode text, quiet allow-unchecked behavior, held versus provisional replies, stale revisions, authoritative replacements, shared mirrors, and preservation of document holds.

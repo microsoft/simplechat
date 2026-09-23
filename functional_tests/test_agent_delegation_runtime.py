@@ -1,7 +1,7 @@
 # test_agent_delegation_runtime.py
 """Executable delegation runtime regression tests.
 
-Version: 0.261.129
+Version: 0.261.131
 Implemented in: 0.261.093
 
 Real execution contexts, runtime, plugin and activity logger run against mock
@@ -10,13 +10,15 @@ providers. No Azure credentials or live model requests are used.
 
 import asyncio
 import contextvars
+from copy import deepcopy
+from dataclasses import replace
 import importlib
 import inspect
 import json
 import logging
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from flask import Flask, g, session
@@ -79,6 +81,167 @@ def authorize_graph(runtime, monkeypatch, graph):
 
     monkeypatch.setattr(runtime, "resolve_delegation_call", resolve)
     return calls
+
+
+@pytest.fixture
+def captured_local(runtime, monkeypatch):
+    from semantic_kernel import Kernel
+
+    capture_types = importlib.import_module("functions_orchestration_invocation_capture")
+    canonical = agent("A", _etag="actual-revision", instructions="Actual stored instructions.")
+    state = SimpleNamespace(
+        canonical=canonical, captures=[], calls=[], built_settings=[],
+        settings={"enable_semantic_kernel": True}, refuse=False,
+    )
+    kernel = Kernel()
+
+    class LocalAgent:
+        azure_endpoint = "https://actual-model.invalid"
+        deployment_name = "actual-deployment"
+        api_version = "2024-10-21"
+        instructions = "Actual resolved instructions."
+
+        async def invoke(self, messages):
+            state.calls.append("model")
+            return "Full agent response."
+
+    state.agent = LocalAgent()
+
+    def build(target, settings):
+        state.built_settings.append(deepcopy(settings))
+        return kernel, state.agent
+
+    def capture(source_type, **kwargs):
+        state.captures.append((source_type, deepcopy(kwargs)))
+        if state.refuse:
+            return False
+        kwargs["settings"]["enable_semantic_kernel"] = False
+
+    state.resolve = Mock(side_effect=lambda *args, **kwargs: deepcopy(canonical))
+    monkeypatch.setattr(runtime, "resolve_delegation_agent", state.resolve)
+    monkeypatch.setattr(runtime, "_build_local_agent", build)
+    state.capture_types = capture_types
+    state.capture = capture_types.OrchestrationInvocationCapture(capture)
+    state.identity = runtime.contexts.ExecutionIdentity("user-1", "conversation")
+    state.runtime = runtime
+    state.kernel = kernel
+    return state
+
+
+def test_local_agent_cannot_replace_loader_owned_proof_with_outer_observations(captured_local):
+    state = captured_local
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(state.runtime.invoke_scoped_agent(
+            agent("A", instructions="Stale catalog instructions."), "Task",
+            identity=state.identity, budget=state.runtime.contexts.DelegationBudget(),
+            settings=state.settings, invocation_capture=state.capture,
+        ))
+    assert state.captures
+    assert all(kind == "agent" and value["source"] is None for kind, value in state.captures)
+    assert all(value["selector"] == "personal:user-1:A" for _, value in state.captures)
+    assert state.built_settings == []
+    assert state.settings["enable_semantic_kernel"] is True
+    assert state.calls == []
+    assert state.runtime.contexts.current_agent_execution() is None
+
+
+def test_agent_capture_refusal_stops_model_execution(captured_local):
+    state = captured_local
+    state.refuse = True
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(state.runtime.invoke_scoped_agent(
+            state.canonical, "Task", identity=state.identity,
+            budget=state.runtime.contexts.DelegationBudget(),
+            settings=state.settings, invocation_capture=state.capture,
+        ))
+    assert state.calls == []
+    state.resolve.assert_not_called()
+    assert state.runtime.contexts.current_agent_execution() is None
+
+
+def test_captured_dynamic_child_is_refused_before_resolution_or_invocation(captured_local, monkeypatch):
+    state = captured_local
+    resolve = Mock(side_effect=AssertionError("An undeclared child must not be resolved."))
+    monkeypatch.setattr(state.runtime, "resolve_delegation_call", resolve)
+    root = replace(
+        frame(state.runtime), invocation_capture=state.capture, invocation_settings=state.settings,
+    )
+
+    async def run():
+        with state.runtime.contexts.agent_execution(root):
+            return await state.runtime.call_agent("undeclared-child", "Task")
+
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(run())
+    resolve.assert_not_called()
+    assert root.budget.attempts == 0
+    assert state.calls == []
+    assert state.runtime.contexts.current_agent_execution() is None
+
+
+@pytest.mark.parametrize("entry", ["scoped", "target"])
+def test_active_capture_cannot_be_omitted_by_direct_agent_entrypoints(captured_local, entry):
+    state = captured_local
+    legacy = state.runtime.contexts.AgentExecutionFrame(
+        state.identity, state.canonical, state.runtime.contexts.DelegationBudget(),
+    )
+    root = replace(legacy, invocation_capture=state.capture, invocation_settings=state.settings)
+
+    async def run():
+        with state.runtime.contexts.agent_execution(root):
+            if entry == "scoped":
+                return await state.runtime.invoke_scoped_agent(
+                    state.canonical, "Task", identity=state.identity, budget=legacy.budget,
+                )
+            return await state.runtime.execute_target(state.canonical, "Task", "", legacy)
+
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(run())
+    state.resolve.assert_not_called()
+    assert state.built_settings == state.calls == []
+    assert state.captures == []
+    assert legacy.budget.attempts == 0
+
+
+@pytest.mark.parametrize("field", ["user_id", "conversation_id"])
+def test_direct_agent_target_cannot_rebind_the_active_capture_owner(captured_local, field):
+    state = captured_local
+    root = state.runtime.contexts.AgentExecutionFrame(
+        state.identity, state.canonical, state.runtime.contexts.DelegationBudget(),
+        invocation_capture=state.capture, invocation_settings=state.settings,
+    )
+    changed = replace(root, identity=replace(state.identity, **{field: "another-owner"}))
+
+    async def run():
+        with state.runtime.contexts.agent_execution(root):
+            return await state.runtime.execute_target(state.canonical, "Task", "", changed)
+
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(run())
+    assert state.built_settings == state.calls == state.captures == []
+
+
+@pytest.mark.parametrize("change", ["action", "workflow", "assigned_knowledge"])
+def test_uncaptured_agent_dependencies_fail_before_loading(captured_local, monkeypatch, change):
+    state = captured_local
+    if change == "action":
+        state.canonical["actions_to_load"] = ["separately-resolved-action"]
+    elif change == "workflow":
+        state.canonical["agent_type"] = "foundry_workflow"
+    else:
+        monkeypatch.setattr(
+            sys.modules["functions_assigned_knowledge"], "build_assigned_knowledge_runtime_filters",
+            lambda target: {"has_workspace_knowledge": True},
+        )
+    with pytest.raises(state.capture_types.OrchestrationInvocationCaptureError):
+        asyncio.run(state.runtime.invoke_scoped_agent(
+            state.canonical, "Task", identity=state.identity,
+            budget=state.runtime.contexts.DelegationBudget(),
+            settings=state.settings, invocation_capture=state.capture,
+        ))
+    assert state.built_settings == []
+    assert all(value["source"] is None for _, value in state.captures)
+    assert state.calls == []
 
 
 def test_discovery_and_tool_surface_have_no_provider_calls(runtime):
@@ -367,6 +530,61 @@ def test_foundry_targets_await_correct_async_adapter_without_parent_uploads(runt
     assert "conversation_id" not in kwargs["metadata"] and "user_id" not in kwargs["metadata"]
     assert kwargs["metadata"]["delegation_invocation_id"] == root.budget.root_id
     assert [message.content for message in kwargs["message_history"]] == ["task"]
+
+
+def test_foundry_capture_uses_actual_resolved_configuration_before_remote_execution(runtime, monkeypatch):
+    capture_module = importlib.import_module("functions_orchestration_invocation_capture")
+    target = agent("B", agent_type="aifoundry", other_settings={"azure_ai_foundry": {"agent_id": "stale"}})
+    resolved = {
+        **deepcopy(target), "max_completion_tokens": 2048,
+        "other_settings": {"azure_ai_foundry": {"agent_id": "actual", "endpoint": "https://actual.invalid"}},
+    }
+    captures = []
+    invocations = []
+
+    def capture(source_type, **kwargs):
+        assert invocations == []
+        if kwargs["source"] is None:
+            return
+        captures.append((source_type, deepcopy(kwargs)))
+        kwargs["source"]["resolved_config"]["other_settings"]["azure_ai_foundry"]["agent_id"] = "mutation"
+
+    async def execute(**kwargs):
+        invocations.append(kwargs)
+        return SimpleNamespace(message="remote answer", model="actual-model", citations=[], metadata={})
+
+    monkeypatch.setitem(sys.modules, "foundry_agent_runtime", module(
+        "foundry_agent_runtime", execute_foundry_agent=execute, execute_new_foundry_agent=execute,
+        execute_foundry_workflow_agent=execute,
+    ))
+    monkeypatch.setitem(sys.modules, "semantic_kernel_loader", module(
+        "semantic_kernel_loader", resolve_agent_config=lambda *_args, **_kwargs: deepcopy(resolved),
+    ))
+    root = replace(
+        frame(runtime, target), invocation_capture=capture_module.OrchestrationInvocationCapture(capture),
+        invocation_settings={},
+    )
+
+    async def run():
+        with runtime.contexts.agent_execution(root):
+            return await runtime.execute_target(target, "task", "", root)
+
+    result = asyncio.run(run())
+    assert result["response"] == "remote answer"
+    source_type, captured = captures[0]
+    assert source_type == "agent"
+    assert captured["selector"] == "personal:user-1:B"
+    assert captured["source"] == {
+        "version": "orchestration-external-acquisition-v1", "kind": "agent", "phase": "resolved",
+        "reference": {"id": "B", "scope_type": "personal", "scope_id": "user-1"},
+        "resolved_config": resolved,
+    }
+    assert invocations[0]["foundry_settings"] == resolved["other_settings"]["azure_ai_foundry"]
+    assert invocations[0]["invocation_capture"] is root.invocation_capture
+    assert invocations[0]["invocation_source_type"] == "agent"
+    assert invocations[0]["invocation_selector"] == captured["selector"]
+    assert "invocation_source" not in invocations[0]
+    assert target["other_settings"]["azure_ai_foundry"]["agent_id"] == "stale"
 
 
 def test_foundry_consent_failure_is_not_replaced_with_app_credentials(runtime, monkeypatch):

@@ -188,6 +188,7 @@ from functions_source_review import (
     build_deep_research_ledger_markdown,
     build_deep_research_query_plan,
     build_research_search_prompt,
+    capture_research_planner_configuration,
     compact_deep_research_result_for_metadata,
     compact_source_review_result_for_metadata,
     extract_urls_from_text,
@@ -28438,12 +28439,21 @@ def perform_research_web_searches(
     deep_research_planner_model=None,
     cancel_requested=None,
     on_query_progress=None,
+    invocation_capture=None,
 ):
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
     query_results = []
     query_plan = {}
 
+    def capture_planner():
+        capture_research_planner_configuration(
+            settings=settings, planner_client=deep_research_planner_client,
+            planner_model=deep_research_planner_model, invocation_capture=invocation_capture,
+        )
+
+    if invocation_capture is not None:
+        capture_planner()
     raise_if_mixed_source_cancelled(cancel_requested, phase='research_query_planning')
     if deep_research_enabled:
         query_plan = build_deep_research_query_plan(
@@ -28484,6 +28494,12 @@ def perform_research_web_searches(
             search_label = f"Deep Research query {query_index}/{total_queries}"
         messages_start = len(system_messages_for_augmentation)
         citations_start = len(web_search_citations_list)
+        invocation_kwargs = {}
+        if invocation_capture is not None:
+            capture_planner()
+            invocation_kwargs = {
+                "invocation_capture": invocation_capture, "invocation_source_type": "deep_research",
+            }
         success = perform_web_search(
             settings=settings,
             conversation_id=conversation_id,
@@ -28500,7 +28516,12 @@ def perform_research_web_searches(
             web_search_citations_list=web_search_citations_list,
             web_search_runs_list=web_search_runs,
             search_context_label=search_label,
+            **invocation_kwargs,
         )
+        if invocation_capture is not None:
+            if success is not True:
+                invocation_capture.refuse()
+            capture_planner()
         query_results.append({
             'query_index': query_index,
             'success': success is not False,
@@ -28531,6 +28552,8 @@ def perform_web_search(
     web_search_citations_list,
     web_search_runs_list=None,
     search_context_label=None,
+    invocation_capture=None,
+    invocation_source_type="web",
 ):
     debug_print("[WEB_SEARCH] ========== ENTERING perform_web_search ==========")
     debug_print(f"[WEB_SEARCH] Parameters received:")
@@ -28648,15 +28671,21 @@ def perform_web_search(
         debug_print(f"[WEB_SEARCH]   foundry_settings keys: {list(foundry_settings.keys())}")
         debug_print(f"[WEB_SEARCH]   global_settings type: {type(settings)}")
 
+        invocation_kwargs = {
+            "invocation_capture": invocation_capture, "invocation_source_type": invocation_source_type,
+        } if invocation_capture is not None else {}
         result = asyncio.run(
             execute_foundry_agent(
                 foundry_settings=foundry_settings,
                 global_settings=settings,
                 message_history=message_history,
                 metadata={k: v for k, v in foundry_metadata.items() if v is not None},
+                **invocation_kwargs,
             )
         )
     except FoundryAgentInvocationError as exc:
+        if invocation_capture is not None:
+            invocation_capture.require_valid(captured=True)
         log_event(
             f"[WEB_SEARCH] Foundry agent invocation failed: {exc}",
             extra={
@@ -28675,6 +28704,8 @@ def perform_web_search(
         record_web_search_run(False, 'foundry_invocation_error', error=str(exc))
         return False  # Search failed
     except Exception as exc:
+        if invocation_capture is not None:
+            invocation_capture.require_valid(captured=True)
         log_event(
             f"[WEB_SEARCH] Unexpected error invoking Foundry agent: {exc}",
             extra={

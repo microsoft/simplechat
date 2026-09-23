@@ -30,6 +30,7 @@ import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { AnalysisResult } from './AnalysisResult';
 import { MessageActions } from './MessageActions';
 import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
+import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
@@ -63,6 +64,8 @@ import {
     resolveReplyContext,
 } from '../../lib/sharedMessage';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
+import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
+import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
@@ -260,12 +263,15 @@ function ReplyQuote({ context }: { context: { display_name?: string; preview?: s
  * said after it, so being unable to look at it means checking the assistant's answers
  * against something you cannot see.
  *
- * It stays inert in two cases, because the endpoint behind it would fail rather than
- * explain. `/api/get_file_content` reads the *personal* conversations container and requires
+ * An uploaded file stays inert in two cases, because the endpoint behind it would fail
+ * rather than explain. `/api/get_file_content` reads the *personal* conversations container and requires
  * the caller to own the conversation, so a shared conversation — whose messages live
  * elsewhere under different ids — always 404s. It is also gated on `enable_user_workspace`,
  * so on a tenant with the workspace disabled it 403s. A control that cannot succeed is worse
  * than no control.
+ *
+ * Orchestration history markers are also inert: only a matching committed output
+ * descriptor can supply their download, not the marker or an uploaded-file preview.
  */
 function FileMessage({ message }: { message: ChatMessage }) {
     const chatWidth = useUiStore((state) => state.chatWidth);
@@ -281,12 +287,15 @@ function FileMessage({ message }: { message: ChatMessage }) {
     const own = isOwnMessage(message, currentUserId);
     const [previewOpen, setPreviewOpen] = useState(false);
 
-    const fileName = shared.filename || 'Attached file';
+    const orchestrationFile = message.metadata?.generated_artifact_origin === 'orchestration_retained_output';
+    const unavailable = orchestrationFile && message.content_unavailable === true;
+    const fileName = unavailable ? 'Generated file unavailable'
+        : shared.filename || (orchestrationFile ? 'Generated file' : 'Attached file');
     // The upload's own id, which is the message id for a file message. Both it and the
     // conversation are needed to fetch the content.
     const fileId = String(message.id ?? '').trim();
     const conversationId = String(message.conversation_id ?? '').trim();
-    const openable = Boolean(fileId && conversationId && workspaceEnabled && !collaborative);
+    const openable = Boolean(fileId && conversationId && workspaceEnabled && !collaborative && !orchestrationFile);
 
     const body = (
         <>
@@ -325,7 +334,15 @@ function FileMessage({ message }: { message: ChatMessage }) {
                 </div>
             )}
 
-            {previewOpen && (
+            {orchestrationFile && (
+                <p role={unavailable ? 'status' : undefined}
+                    className={clsx(bubbleWidthClass(chatWidth), 'mt-1 px-1 text-xs text-text-3')}>
+                    {unavailable ? message.content || 'This generated file is currently unavailable.'
+                        : 'Use the matching committed output card for downloads.'}
+                </p>
+            )}
+
+            {previewOpen && openable && (
                 <ChatFilePreview
                     conversationId={conversationId}
                     fileId={fileId}
@@ -431,7 +448,15 @@ function MessageBubbleInner({
      * same pass — a finished durable run leaves behind a holding sentence that the artifacts
      * have made untrue.
      */
-    const artifacts = useMemo(() => readGeneratedArtifacts(message.metadata), [message.metadata]);
+    const artifacts = useMemo(() => readGeneratedArtifacts({
+        ...message, ...message.metadata,
+    }), [message]);
+    const orchestration = useMemo(
+        () => normalizeOrchestrationAttempt(message.metadata?.orchestration), [message.metadata?.orchestration],
+    );
+    const liveOutputs = useOrchestrationStore((state) =>
+        orchestration.run_id ? state.runRecovery[orchestration.run_id]?.outputs : undefined);
+    const managedOutputs = orchestration.outputs !== undefined || liveOutputs !== undefined;
     const hasSavedAnalysis = message.metadata?.saved_analysis != null;
     const savedAnalysis = useMemo(() => readSavedAnalysis(message.metadata), [message.metadata]);
     const analysisKey = savedAnalysis ? `${savedAnalysis.conversation_id}:${savedAnalysis.message_id}:${savedAnalysis.result_sha256}` : '';
@@ -455,7 +480,8 @@ function MessageBubbleInner({
             store.clearAnalysisResultContext();
         }
     }, [analysisUnavailable, masks.fullyMasked, masks.ranges.length, savedAnalysis, message.id, message.role, message.conversation_id]);
-    const artifactCards = artifacts.map((artifact, index) => (
+    const artifactCards = artifacts.filter((artifact) =>
+        !managedOutputs || !isOrchestrationOutputArtifact(artifact)).map((artifact, index) => (
         <GeneratedArtifactCard
             key={artifact.artifact_message_id || artifact.document_id || artifact.export_run_id || `artifact-${index}`}
             artifact={artifact}
@@ -656,6 +682,11 @@ function MessageBubbleInner({
                             conversationId={message.conversation_id}
                             metadata={message.metadata?.orchestration}
                         />
+                        {orchestration.run_id && masks.ranges.length === 0 ? (
+                            <OrchestrationOutputs conversationId={message.conversation_id}
+                                runId={orchestration.run_id} metadata={message.metadata?.orchestration}
+                                artifacts={artifacts} />
+                        ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
                         {hasSavedAnalysis && (masks.ranges.length > 0 ? (

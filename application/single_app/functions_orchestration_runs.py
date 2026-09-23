@@ -21,7 +21,7 @@ rather than trusting the key.
 Shaped and styled after ``functions_personal_workflows.py`` so the run/step CRUD reads the
 same as the workflow-run CRUD it sits beside.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import hashlib
@@ -42,8 +42,10 @@ from functions_appinsights import log_event
 from functions_orchestration_context import ConversationContextError, LEDGER_MAX_ANSWERED_QUESTIONS
 from functions_orchestration_schema import (
     PLAN_STATUS_DRAFT,
+    PlanValidationError,
     new_run_id,
     new_step_id,
+    plan_contract_version,
     summarize_plan,
     safe_failure,
 )
@@ -235,6 +237,15 @@ def create_orchestration_run(
         raise ValueError('conversation_id is required to create an orchestration run')
     if not user_id:
         raise ValueError('user_id is required to create an orchestration run')
+    try:
+        contract_version = plan_contract_version(plan)
+        if (
+            isinstance(turn_context, dict) and 'planner_contract_version' in turn_context
+            and plan_contract_version(turn_context) != contract_version
+        ):
+            raise PlanValidationError('The turn admission context does not match the plan.')
+    except PlanValidationError as exc:
+        raise ConversationContextError('The saved plan contract could not be matched to this turn.') from exc
 
     run_id = plan.get('run_id') or new_run_id()
     if str(run_id).startswith((PENDING_TURN_PREFIX, 'elicitation_')):
@@ -272,6 +283,7 @@ def create_orchestration_run(
         'user_id': user_id,
         'turn_index': _coerce_int(turn_index, 0),
         'plan': plan,
+        'planner_contract_version': contract_version,
         'plan_summary': summary,
         'status': plan.get('status') or PLAN_STATUS_DRAFT,
         'created_at': now,
@@ -295,10 +307,14 @@ def create_orchestration_run(
         'answered_questions', 'conversation_context', 'request_resolution',
         'resolved_message', 'planning_token_usage', 'original_seeds', 'prompt_selection',
         'memory_audience', 'memory_scope',
+        'result_aliases',
     ):
         if isinstance(turn_context, dict) and key in turn_context:
-            record[key] = turn_context[key]
-    protected = {'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at'}
+            record[key] = deepcopy(turn_context[key])
+    protected = {
+        'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at',
+        'planner_contract_version', 'result_aliases',
+    }
     record.update({
         key: value for key, value in (initial_updates or {}).items()
         if key not in protected
@@ -398,6 +414,13 @@ def _publish_replanned_run(record, expected_previous_run, *, idempotent=False):
     ):
         if key in previous:
             record[key] = deepcopy(previous[key])
+    try:
+        if plan_contract_version(previous['plan']) != record['planner_contract_version']:
+            raise PlanValidationError('Replanning cannot change the saved plan contract.')
+    except PlanValidationError as exc:
+        raise ConversationContextError('Replanning cannot change the saved plan contract.') from exc
+    if 'result_aliases' not in record and 'result_aliases' in previous:
+        record['result_aliases'] = deepcopy(previous['result_aliases'])
     record['turn_index'] = previous.get('turn_index', 0)
     record['revision_root_run_id'] = previous.get('revision_root_run_id') or previous['id']
     record['parent_run_id'] = previous['id']

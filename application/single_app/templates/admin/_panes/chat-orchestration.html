@@ -22,6 +22,21 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Adds an orchestration mode to the V2 chat composer. The classic interface is unaffected."></i>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_orchestration_harness"
+                            name="enable_chat_orchestration_harness"
+                            aria-describedby="chat-orchestration-harness-help"
+                            {% if settings.enable_chat_orchestration_harness is sameas true %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration_harness">
+                            Gather / Reason / Render harness (preview)
+                        </label>
+                        <div class="form-text" id="chat-orchestration-harness-help">
+                            Off by default. Requires Chat Orchestration and server rollout readiness. Opts new plans into retained results and explicit file-rendering tasks instead of legacy orchestration. Existing capability permissions, model access and token, time and step budgets still apply. Turning this off stops only new harness plans; saved plans, results and files keep their recorded version and authorized read/recovery access.
+                        </div>
+                    </div>
                     <div class="alert alert-info small mb-0">
                         <i class="bi bi-info-circle me-1"></i>
                         Available in the V2 interface only.
@@ -108,7 +123,7 @@
                         Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled. An empty selection also means every otherwise-enabled capability. Use an action still requires Enable Action Access.
                     </p>
                     <p class="text-muted small">
-                        Answering is always available. A plan has to end somewhere.
+                        Legacy plans always keep Answering available. In admitted harness plans, Prepare content and Create a file are separately controlled; the harness still publishes the final delivery status.
                     </p>
 
                     {% for capability in orchestration_capabilities or [] %}

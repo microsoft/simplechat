@@ -10,7 +10,7 @@ import builtins
 import os
 from copy import deepcopy
 from content_screening.access import guard_chat_service
-from agent_execution_context import execution_user_id as get_execution_user_id
+from agent_execution_context import current_agent_execution, execution_user_id as get_execution_user_id
 from openai import AsyncOpenAI
 from azure.core.exceptions import AzureError
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -19,6 +19,7 @@ from semantic_kernel import Kernel
 from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.filters import FilterTypes
 from semantic_kernel.core_plugins import HttpPlugin
 from semantic_kernel_plugins.time_plugin import TimePlugin
 from semantic_kernel_plugins.wait_plugin import WaitPlugin
@@ -43,7 +44,7 @@ from functions_model_capabilities import (
     project_model_budget_metadata,
     resolve_model_token_budget,
 )
-from functions_model_budget_runtime import build_model_budget_arguments
+from functions_model_budget_runtime import build_model_budget_arguments, prepare_model_execution_settings
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -58,6 +59,12 @@ from model_endpoint_clients import (
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationCaptureError, require_invocation_capture,
+)
+from functions_orchestration_model_capture import (
+    azure_chat_construction_metadata, local_agent_configuration, local_agent_model_parameters,
+)
 from functions_action_manifest import (
     McpConfigurationError,
     McpStdioRemovedError,
@@ -1247,8 +1254,15 @@ def load_core_plugins_only(kernel: Kernel, settings):
         log_event(f"[SK_LOADER] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
 
 # =================== Semantic Kernel Initialization ===================
-def load_agent_core_plugins(kernel: Kernel, settings):
+def load_agent_core_plugins(kernel: Kernel, settings, *, invocation_capture=None):
     """Load the normal enabled agent core tools without any stored action manifests."""
+    active = current_agent_execution()
+    capture = invocation_capture if invocation_capture is not None else (
+        active.invocation_capture if active is not None else None
+    )
+    if capture is not None:
+        # Implicit search/embedding/core tools have no complete prepared-manifest proof.
+        require_invocation_capture(capture).refuse()
     load_plugins_for_kernel(kernel, [], settings, mode_label="agent-core")
 
 
@@ -1339,7 +1353,51 @@ def _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.
     return filter_governed_global_actions_for_user(user_id, global_manifests)
 
 
-def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None, allow_agent_actions=False):
+def _require_captured_agent_plugins(plugin_manifests, plugin_names):
+    """Admit only fully described, non-delegating inline OpenAPI bindings."""
+    if (
+        type(plugin_names) is not list or not plugin_names
+        or any(type(name) is not str or not name for name in plugin_names)
+        or len(set(plugin_names)) != len(plugin_names)
+        or len({manifest.get("name") for manifest in plugin_manifests}) != len(plugin_manifests)
+        or any(
+            sum(name in (manifest.get("id"), manifest.get("name")) for manifest in plugin_manifests) != 1
+            for name in plugin_names
+        )
+    ):
+        raise OrchestrationInvocationCaptureError()
+    for manifest in plugin_manifests:
+        origin = get_action_origin(manifest)
+        spec = manifest.get("openapi_spec_content")
+        if not spec and isinstance(manifest.get("additionalFields"), dict):
+            spec = manifest["additionalFields"].get("openapi_spec_content")
+        if (
+            origin is None or origin.action_id != manifest.get("id")
+            or resolve_action_type(manifest) != "openapi"
+            or type(spec) is not dict or not spec
+            or manifest.get("dependencies")
+        ):
+            raise OrchestrationInvocationCaptureError()
+        pending = [(spec, 0)]
+        while pending:
+            value, depth = pending.pop()
+            if depth > 64:
+                raise OrchestrationInvocationCaptureError()
+            if isinstance(value, dict):
+                reference = value.get("$ref")
+                if reference is not None and (
+                    type(reference) is not str or not reference.startswith("#/")
+                ):
+                    raise OrchestrationInvocationCaptureError()
+                pending.extend((child, depth + 1) for child in value.values())
+            elif isinstance(value, list):
+                pending.extend((child, depth + 1) for child in value)
+
+
+def load_agent_specific_plugins(
+    kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None,
+    agent_other_settings=None, allow_agent_actions=False, *, before_plugins_load=None,
+):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -1405,7 +1463,12 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         debug_print(f"[SK_LOADER] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
         debug_print(f"[SK_LOADER] Plugin names to load: {[manifest.get('name') for manifest in plugin_manifests]}")
 
-        plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
+        if before_plugins_load is not None:
+            _require_captured_agent_plugins(plugin_manifests, plugin_names)
+            plugin_manifests = [prepare_action_plugin_manifest(manifest, settings) for manifest in plugin_manifests]
+            before_plugins_load(plugin_manifests)
+        else:
+            plugin_manifests = _prepare_plugin_manifests_for_runtime(plugin_manifests, settings)
         
         if not plugin_manifests:
             print(f"[SK_LOADER] Warning: No plugin manifests found for names/IDs: {plugin_names}")
@@ -1421,6 +1484,11 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         
         successful_count = sum(1 for success in results.values() if success)
         total_count = len(results)
+        if before_plugins_load is not None and (
+            set(results) != {manifest["name"] for manifest in plugin_manifests}
+            or not all(results.values())
+        ):
+            raise OrchestrationInvocationCaptureError()
         
         print(f"[SK_LOADER] Logged plugin loader results: {successful_count}/{total_count} successful")
         if results:
@@ -1447,10 +1515,14 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         else:
             print(f"[SK_LOADER] Logged plugin loader completed successfully: {successful_count}/{total_count}")
+        if before_plugins_load is not None:
+            return plugin_manifests
         
     except (M365PolicyError, ImportError):
         raise
     except Exception as e:
+        if before_plugins_load is not None:
+            raise
         log_event(
             f"[SK_LOADER][Error] Error in agent-specific plugin loading: {e}",
             extra={"error": str(e), "mode": mode_label, "user_id": user_id, "plugin_names": plugin_names},
@@ -2029,7 +2101,10 @@ def _has_agent_delegation_actions(agent_cfg, settings, user_id):
     return any(manifest.get("type") == "agent" and manifest.get("id") in action_ids for manifest in manifests)
 
 
-def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None, execution_user_id=None):
+def load_single_agent_for_kernel(
+    kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global",
+    group_scope_id=None, execution_user_id=None, *, invocation_capture=None,
+):
     """
     DRY helper to load a single agent (default agent) for the kernel.
     - context_obj: g (per-user) or builtins (global)
@@ -2037,6 +2112,43 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     - mode_label: 'per-user' or 'global' (for logging)
     Returns: kernel, agent_objs // dict (name->agent) or None
     """
+    capture_reference = None
+    capture_selector = None
+    captured_plugins = []
+    model_configuration = None
+    captured_arguments = None
+    captured_function_choice = None
+    constructed_client = None
+    captured_budget = None
+    active = current_agent_execution()
+    if active is not None and active.invocation_capture is not None and (
+        invocation_capture is not active.invocation_capture
+        or execution_user_id != active.identity.user_id
+    ):
+        active.invocation_capture.refuse()
+    if invocation_capture is not None:
+        invocation_capture = require_invocation_capture(invocation_capture)
+        if type(execution_user_id) is not str or not execution_user_id or kernel.plugins or kernel.services:
+            invocation_capture.refuse()
+        settings = deepcopy(settings)
+        agent_cfg = deepcopy(agent_cfg)
+        # Scope resolution is deferred until the running owner supplies its private hook.
+        from functions_agent_delegation import agent_reference
+        from functions_assigned_knowledge import build_assigned_knowledge_runtime_filters
+
+        capture_reference = agent_reference(agent_cfg, execution_user_id)
+        capture_selector = (
+            f"{capture_reference['scope_type']}:{capture_reference['scope_id']}:{capture_reference['id']}"
+        )
+        invocation_capture("agent", settings=settings, selector=capture_selector)
+        if kernel.plugins or kernel.services:
+            invocation_capture.refuse()
+        filters = build_assigned_knowledge_runtime_filters(agent_cfg)
+        if (
+            agent_cfg.get("agent_type", "local") != "local"
+            or filters and (filters.get("has_workspace_knowledge") or filters.get("web_sources"))
+        ):
+            invocation_capture.refuse()
     print(f"[SK_LOADER] load_single_agent_for_kernel starting - agent: {agent_cfg.get('name')}, mode: {mode_label}")
     log_event(f"[SK_LOADER] load_single_agent_for_kernel starting - agent: {agent_cfg.get('name')}, mode: {mode_label}", level=logging.INFO)
     
@@ -2046,11 +2158,23 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     agent_objs = {}
     resolved_execution_user = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
     delegation_enabled = _has_agent_delegation_actions(agent_cfg, settings, resolved_execution_user)
+    if invocation_capture is not None and delegation_enabled:
+        invocation_capture.refuse()
     if delegation_enabled:
         kernel = Kernel()
         load_agent_core_plugins(kernel, settings)
     agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id, execution_user_id=execution_user_id)
     agent_config["reasoning_effort"] = agent_cfg.get("reasoning_effort", agent_config.get("reasoning_effort"))
+    if invocation_capture is not None and (
+        agent_config.get("token_provider") is not None
+        or (agent_config.get("model_provider") or "aoai") != "aoai"
+        or agent_config.get("agent_type", "local") != "local"
+        or type(agent_config.get("instructions")) is not str
+        or "{{" in agent_config.get("instructions", "") or "}}" in agent_config.get("instructions", "")
+    ):
+        invocation_capture.refuse()
+    if invocation_capture is not None:
+        captured_budget = build_agent_model_budget(agent_config, settings)
     agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
@@ -2133,6 +2257,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             )
             chat_service = create_chat_completion_service()
         if not chat_service:
+            if invocation_capture is not None:
+                invocation_capture.refuse()
             log_event(
                 f"[SK_LOADER] Chat completion service could not be created for agent: {agent_config['name']} ({mode_label})",
                 {
@@ -2144,16 +2270,47 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 exceptionTraceback=True,
             )
             return None, None
+        if invocation_capture is not None:
+            kernel.add_service(chat_service)
+            constructed_client = chat_service.client
+            model_configuration = azure_chat_construction_metadata(
+                chat_service, protocol=resolve_agent_endpoint_protocol(agent_config),
+                provider=agent_config.get("model_provider") or "aoai",
+                configured_endpoint=agent_config.get("endpoint"),
+                configured_api_version=agent_config.get("api_version"),
+                endpoint_id=agent_config.get("model_endpoint_id"), model_id=agent_config.get("model_id"),
+            )
         if should_apply_prompt_settings(agent_config, settings):
             if agent_config.get('max_completion_tokens', -1) > 0:
                 print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+        unwrapped_service = chat_service
         chat_service = wrap_workflow_chat_service(
             chat_service,
-            build_agent_model_budget(agent_config, settings),
+            captured_budget if invocation_capture is not None else build_agent_model_budget(agent_config, settings),
             provider=agent_config.get("model_provider") or "aoai",
         )
-        kernel.add_service(guard_chat_service(chat_service))
+        if invocation_capture is not None and chat_service is not unwrapped_service:
+            invocation_capture.refuse()
+        if invocation_capture is None:
+            kernel.add_service(guard_chat_service(chat_service))
+        else:
+            guard_chat_service(chat_service)
+        if invocation_capture is not None:
+            if model_configuration is None or not isinstance(chat_service, AzureChatCompletion):
+                invocation_capture.refuse()
+            captured_arguments = build_agent_budget_arguments(
+                chat_service, agent_config, captured_budget,
+            )
+            prepared_settings, _ = prepare_model_execution_settings(
+                captured_arguments.execution_settings[service_id], captured_budget,
+                tools_enabled=bool(agent_config.get("actions_to_load")),
+            )
+            captured_arguments.execution_settings[service_id] = prepared_settings
+            model_configuration["parameters"] = local_agent_model_parameters(captured_arguments, service_id)
+            captured_function_choice = FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings),
+            )
         log_event(
             f"[SK_LOADER] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
             {
@@ -2167,6 +2324,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             level=logging.INFO
         )
     else:
+        if invocation_capture is not None:
+            invocation_capture.refuse()
         print(f"[SK_LOADER] Model endpoint config INVALID for {agent_config['name']}:")
         print(f"  - AzureChatCompletion available: {bool(AzureChatCompletion)}")
         print(f"  - OpenAIChatCompletion available: {bool(OpenAIChatCompletion)}")
@@ -2189,6 +2348,36 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         print(f"[SK_LOADER] Returning None, None for agent {agent_config['name']} due to invalid config")
         return None, None
     if LoggingChatCompletionAgent and chat_service:
+        def capture_configuration(prepared_plugins):
+            if chat_service.client is not constructed_client:
+                invocation_capture.refuse()
+            existing_plugins = tuple(kernel.plugins.items())
+            current_model = azure_chat_construction_metadata(
+                chat_service, protocol=model_configuration["protocol"],
+                provider=model_configuration["provider"],
+                configured_endpoint=agent_config["endpoint"], configured_api_version=agent_config["api_version"],
+                endpoint_id=agent_config.get("model_endpoint_id"), model_id=agent_config.get("model_id"),
+            )
+            if current_model != {**model_configuration, "parameters": {}}:
+                invocation_capture.refuse()
+            observed_model = deepcopy(model_configuration)
+            if prepared_plugins:
+                observed_model["parameters"]["tool_choice"] = captured_function_choice.type_.value
+            invocation_capture(
+                "agent", settings=settings, selector=capture_selector,
+                source={
+                    "version": "orchestration-external-acquisition-v1",
+                    "kind": "agent", "phase": "resolved", "reference": capture_reference,
+                    "resolved_config": local_agent_configuration(
+                        agent_config, instructions=agent_config["instructions"],
+                        maximum_auto_invoke_attempts=captured_function_choice.maximum_auto_invoke_attempts,
+                    ),
+                    "prepared_plugins": prepared_plugins, "model": observed_model,
+                },
+            )
+            if chat_service.client is not constructed_client or tuple(kernel.plugins.items()) != existing_plugins:
+                invocation_capture.refuse()
+
         print(f"[SK_LOADER] Creating LoggingChatCompletionAgent for {agent_config['name']}...")
         # Load agent-specific plugins into the kernel before creating the agent
         if agent_config.get("actions_to_load"):
@@ -2206,16 +2395,25 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             resolved_user_id = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
             group_id = agent_config.get("group_id") if agent_is_group else None
             print(f"[SK_LOADER] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
-            load_agent_specific_plugins(
-                kernel,
-                agent_config["actions_to_load"],
-                settings,
-                plugin_mode,
-                user_id=resolved_user_id,
-                group_id=group_id,
-                agent_other_settings=agent_config.get("other_settings"),
-                allow_agent_actions=delegation_enabled,
-            )
+            plugin_kwargs = {"before_plugins_load": capture_configuration} if invocation_capture is not None else {}
+            try:
+                prepared_plugins = load_agent_specific_plugins(
+                    kernel,
+                    agent_config["actions_to_load"],
+                    settings,
+                    plugin_mode,
+                    user_id=resolved_user_id,
+                    group_id=group_id,
+                    agent_other_settings=agent_config.get("other_settings"),
+                    allow_agent_actions=delegation_enabled,
+                    **plugin_kwargs,
+                )
+            except Exception as exc:
+                if invocation_capture is not None:
+                    invocation_capture.fail(exc)
+                raise
+            if invocation_capture is not None:
+                captured_plugins = prepared_plugins
 
             # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
             try:
@@ -2258,8 +2456,15 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                     level=logging.WARNING,
                 )
 
+        if invocation_capture is not None:
+            if (
+                set(kernel.plugins) != {manifest["name"] for manifest in captured_plugins}
+                or any(not plugin.functions for plugin in kernel.plugins.values())
+            ):
+                invocation_capture.refuse()
+            capture_configuration(captured_plugins)
         try:
-            model_budget = build_agent_model_budget(agent_config, settings)
+            model_budget = captured_budget if invocation_capture is not None else build_agent_model_budget(agent_config, settings)
             kwargs = {
                 "name": agent_config["name"],
                 "instructions": agent_config["instructions"],
@@ -2273,13 +2478,47 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
                 "model_token_budget": model_budget,
-                "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
-                "function_choice_behavior": FunctionChoiceBehavior.Auto(
-                    maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
+                "arguments": (
+                    captured_arguments if invocation_capture is not None
+                    else build_agent_budget_arguments(chat_service, agent_config, model_budget)
+                ),
+                "function_choice_behavior": (
+                    captured_function_choice if invocation_capture is not None
+                    else FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings))
                 )
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
+            if invocation_capture is not None:
+                if agent_obj.instructions != agent_config["instructions"]:
+                    invocation_capture.refuse()
+                capture_configuration(captured_plugins)
+                invocation_capture.require_valid(captured=True)
+                bound_plugins = tuple(kernel.plugins.items())
+
+                def validate_acquisition():
+                    try:
+                        invocation_capture.require_valid(captured=True)
+                        if (
+                            chat_service.client is not constructed_client or agent_obj.service is not chat_service
+                            or agent_obj.instructions != agent_config["instructions"]
+                            or tuple(kernel.plugins.items()) != bound_plugins
+                            or local_agent_model_parameters(agent_obj.arguments, service_id)
+                            != model_configuration["parameters"]
+                        ):
+                            invocation_capture.refuse()
+                        capture_configuration(captured_plugins)
+                    except Exception as exc:
+                        invocation_capture.fail(exc)
+
+                async def guard_acquired_function(invocation, next):
+                    validate_acquisition()
+                    await next(invocation)
+                    validate_acquisition()
+
+                # The existing service guard also covers automatic tool-call continuations.
+                guard_chat_service(chat_service, source_validator=validate_acquisition)
+                kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, guard_acquired_function)
             
             agent_objs[agent_config["name"]] = agent_obj
             print(f"[SK_LOADER] Successfully created agent {agent_config['name']}")
@@ -2298,6 +2537,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         except M365PolicyError:
             raise
         except Exception as e:
+            if invocation_capture is not None:
+                invocation_capture.fail(e)
             print(f"[SK_LOADER] EXCEPTION creating agent {agent_config['name']}: {e}")
             log_event(
                 f"[SK_LOADER] Failed to initialize ChatCompletionAgent for agent: {agent_config['name']} ({mode_label}): {e}",
@@ -2308,6 +2549,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             print(f"[SK_LOADER] Returning None, None due to agent creation exception")
             return None, None
     else:
+        if invocation_capture is not None:
+            invocation_capture.refuse()
         print(f"[SK_LOADER] Cannot create agent - LoggingChatCompletionAgent available: {bool(LoggingChatCompletionAgent)}, chat_service available: {bool(chat_service)}")
         log_event(
             f"[SK_LOADER] ChatCompletionAgent or AzureChatCompletion not available for agent: {agent_config['name']} ({mode_label})",

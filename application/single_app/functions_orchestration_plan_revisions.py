@@ -5,7 +5,7 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.104
+Version: 0.261.129
 """
 
 import hashlib
@@ -22,8 +22,14 @@ from azure.cosmos import exceptions
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
 from functions_orchestration_events import merge_reasoning_adjustments
-from functions_orchestration_registry import required_capability_ids
-from functions_orchestration_schema import apply_plan_edits, summarize_plan
+from functions_orchestration_registry import (
+    required_capability_ids, resolve_admitted_export_catalog,
+)
+from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef
+from functions_orchestration_schema import (
+    PlanValidationError, apply_plan_edits, plan_contract_version, summarize_plan,
+)
+from functions_orchestration_timing import initial_execution_deadline
 
 
 EDIT_CLAIM_SECONDS = 900
@@ -41,6 +47,7 @@ _CONTEXT_FIELDS = (
     'seeds', 'answered_questions', 'request_resolution', 'resolved_message',
     'planning_token_usage', 'prompt_selection', 'edit_user_urls',
     'reasoning_adjustments', 'memory_audience', 'memory_scope',
+    'planner_contract_version', 'result_aliases',
 )
 _IMMUTABLE_FIELDS = (
     'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id',
@@ -50,12 +57,12 @@ _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
     'steps', 'inputs', 'outputs', 'validation', 'edit_version',
-    'model_routing',
+    'final_response', 'model_routing',
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
     'optional', 'enabled', 'estimated_cost', 'phase', 'status',
-    'model_task', 'model_binding',
+    'role', 'inputs', 'outputs', 'model_task', 'model_binding',
 )
 _QUESTION_FIELDS = (
     'elicitation_id', 'contract_version', 'run_id', 'revision', 'message',
@@ -84,6 +91,75 @@ class PlanRevisionError(ValueError):
         self.code = code
         self.status_code = status_code
         self.current_run_id = current_run_id
+
+
+def plan_revision_contract_version(plan, context=None):
+    """Use the saved plan's contract, never the rollout setting for new plans."""
+    try:
+        version = plan_contract_version(plan)
+        if (
+            isinstance(context, dict) and 'planner_contract_version' in context
+            and plan_contract_version(context) != version
+        ):
+            raise PlanValidationError('The saved admission context does not match the plan.')
+    except PlanValidationError as exc:
+        raise PlanRevisionError(
+            'The saved plan contract could not be matched. Your current plan is unchanged.',
+            code='plan_changed',
+        ) from exc
+    return version
+
+
+def resolve_revision_result_aliases(record, user_id, *, result_alias_resolver=None):
+    """Reauthorize server-stored wire aliases without accepting browser descriptors.
+
+    ``result_alias_resolver(record)`` must reopen every stored reference against
+    current actor/conversation/source access and return ``dict[str, ResultRef]``.
+    Its result must exactly match the stored catalog; missing, added, or replaced
+    aliases fail instead of silently changing an existing plan's inputs.
+    """
+    values = record.get('result_aliases', {})
+    try:
+        if type(values) is not dict:
+            raise ResultContractError('result_reference_untrusted')
+        if not values:
+            return {}
+        expected = {}
+        for alias, value in values.items():
+            InputBinding(existing_result=alias)
+            reference = ResultRef.from_dict(value)
+            if (
+                reference.producer.user_id != user_id
+                or reference.producer.conversation_id != record.get('conversation_id')
+            ):
+                raise ResultContractError('result_reference_untrusted')
+            expected[alias] = reference
+        if not callable(result_alias_resolver):
+            raise ResultContractError('result_reference_untrusted')
+        resolved = result_alias_resolver(deepcopy(record))
+        if (
+            type(resolved) is not dict or set(resolved) != set(expected)
+            or any(type(reference) is not ResultRef for reference in resolved.values())
+            or resolved != expected
+        ):
+            raise ResultContractError('result_reference_untrusted')
+    except (ResultContractError, PermissionError) as exc:
+        raise PlanRevisionError(
+            'A saved result is no longer available. Your current plan is unchanged.',
+            code='source_changed',
+        ) from exc
+    return dict(resolved)
+
+
+def resolve_revision_export_catalog(export_catalog):
+    """Validate current server admission without saving a permission snapshot.
+
+    Preserve operational CapabilityResolutionError failures for the caller;
+    malformed server metadata is not changed user input or denied source access.
+    """
+    if export_catalog is None:
+        return None
+    return resolve_admitted_export_catalog(export_catalog)
 
 
 def _now():
@@ -646,6 +722,9 @@ def _new_revision(record, document, turn_context, chat, instruction, origin):
         raise _invalid('A validated plan is required.')
     if origin not in ('ai', 'restore'):
         raise _invalid('Invalid revision origin.')
+    contract_version = plan_revision_contract_version(record['plan'], record)
+    if plan_revision_contract_version(document, turn_context) != contract_version:
+        raise _invalid('A revision cannot change the saved plan contract.')
     identity = json.dumps([
         record['conversation_id'], record['user_id'], record['id'],
         record['edit_claim']['submission_id'],
@@ -687,6 +766,7 @@ def _new_revision(record, document, turn_context, chat, instruction, origin):
     for key in _CONTEXT_FIELDS:
         if isinstance(turn_context, dict) and key in turn_context:
             result[key] = deepcopy(turn_context[key])
+    result['planner_contract_version'] = contract_version
     return result
 
 
@@ -771,9 +851,15 @@ def release_plan_revision(claim):
 
 def claim_plan_run(
     run_id, user_id, conversation_id, *, plan_id=None, expected_version=None,
-    edits=None, conversation_context=None,
+    edits=None, conversation_context=None, result_alias_resolver=None,
+    export_catalog=None, composition_profiles=None, settings=None,
 ):
-    """Atomically turn a current pre-execution plan into the one executable run."""
+    """Atomically turn a current pre-execution plan into the one executable run.
+
+    Optional catalogs and profiles describe current server admission, not saved
+    permissions. They validate the frozen plan before any execution lease write.
+    V2 start and deadline use server settings and share that same conditional write.
+    """
     record = read_revision_run(run_id, user_id, conversation_id)
     if record.get('checkpoints_deleted') or record.get('latest_attempt_run_id'):
         raise PlanRevisionError('This execution is no longer current.', code='already_run')
@@ -790,8 +876,18 @@ def claim_plan_run(
     overlay = _normalize_edits(
         record['plan'], edits if edits is not None else record.get('edit_narrowing'),
     )
-    plan = apply_plan_edits(deepcopy(record['plan']), overlay)
-    now = _now().isoformat()
+    contract_version = plan_revision_contract_version(record['plan'], record)
+    existing_results = resolve_revision_result_aliases(
+        record, user_id, result_alias_resolver=result_alias_resolver,
+    ) if contract_version == 2 else None
+    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
+    plan = apply_plan_edits(
+        deepcopy(record['plan']), overlay, existing_results=existing_results,
+        contract_version=contract_version, export_catalog=admitted_catalog,
+        composition_profiles=composition_profiles if contract_version == 2 else None,
+    )
+    started_at = _now()
+    now = started_at.isoformat()
     plan['status'] = 'running'
     plan['approval'] = {
         **(plan.get('approval') or {}), 'state': 'approved',
@@ -811,6 +907,8 @@ def claim_plan_run(
         'execution_lease': lease_fields(), 'recovery_version': uuid.uuid4().hex,
         'attempt_index': record.get('attempt_index') or 1,
     })
+    if contract_version == 2:
+        updates['execution_deadline_at'] = initial_execution_deadline(started_at, settings)
     if conversation_context is not None:
         if not isinstance(conversation_context, dict):
             raise _invalid('Invalid conversation context.')

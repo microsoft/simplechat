@@ -30,6 +30,7 @@ class ScreeningError(Exception):
 
     code = "screening_error"
     status_code = 503
+    retryable = True
     public_message = "Content screening could not complete. The document remains unavailable."
 
     def __init__(self, message=None, *, code=None):
@@ -41,11 +42,13 @@ class ScreeningError(Exception):
 class ScreeningValidationError(ScreeningError, ValueError):
     code = "invalid_screening_request"
     status_code = 400
+    retryable = False
     public_message = "The content screening request is invalid."
 
 
 class ScreeningConfigurationError(ScreeningError):
     code = "screening_configuration_required"
+    retryable = False
     public_message = "Content screening requires a valid policy and configured Enhanced Citations."
 
 
@@ -79,13 +82,30 @@ class ScreeningCitationsRequiredError(ScreeningConfigurationError):
 class ScreeningConflictError(ScreeningError):
     code = "screening_revision_conflict"
     status_code = 409
+    retryable = False
     public_message = "The document or review changed. Refresh it before trying again."
 
 
 class DocumentHeldError(ScreeningError):
     code = "document_under_review"
     status_code = 409
+    retryable = False
     public_message = "This document is unavailable until content screening and review are complete."
+
+
+class SourceAuthorityUnavailableError(ScreeningError):
+    """Current source authority could not be reached; no access decision was made."""
+
+    code = "source_authority_unavailable"
+    public_message = "Current source access could not be verified because an authority service is unavailable. Try again."
+
+
+class SourceAuthorityUnverifiedError(ScreeningError):
+    """Authority returned malformed data or has a non-transient configuration failure."""
+
+    code = "source_authority_unverified"
+    retryable = False
+    public_message = "Current source access could not be verified. The source authority requires attention."
 
 
 def hash_payload(value: Any) -> str:

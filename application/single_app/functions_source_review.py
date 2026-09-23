@@ -24,6 +24,7 @@ from bs4 import BeautifulSoup
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_orchestration_invocation_capture import require_invocation_capture
 
 
 SOURCE_REVIEW_USER_AGENT = "SimpleChat-SourceReview/1.0"
@@ -529,6 +530,33 @@ def has_deep_research_app_role(user_roles: Any) -> bool:
 def get_deep_research_config(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Return Deep Research settings clamped by the same safety ceilings as Source Review."""
     return get_source_review_config(settings)
+
+
+def capture_research_planner_configuration(*, settings, planner_client, planner_model, invocation_capture):
+    """Attest the actual research constructor only for non-model planning profiles."""
+    capture = require_invocation_capture(invocation_capture)
+    if capture is None:
+        return
+
+    # These owners depend on Source Review; load them only after application initialization.
+    from functions_orchestration_external_configuration import (
+        EXTERNAL_ACQUISITION_VERSION, is_research_acquisition_profile_supported,
+    )
+    from functions_orchestration_models import OrchestrationModelError, get_planner_acquisition_configuration
+
+    try:
+        if not is_research_acquisition_profile_supported(settings):
+            capture.refuse()
+        configuration = get_planner_acquisition_configuration(planner_client)
+        if type(planner_model) is not str or planner_model != configuration["deployment"]:
+            raise OrchestrationModelError()
+        source = {
+            "version": EXTERNAL_ACQUISITION_VERSION, "kind": "planner", "phase": "resolved",
+            "model": configuration,
+        }
+    except Exception as exc:
+        capture.fail(exc)
+    capture("deep_research", settings=settings, source=source)
 
 
 def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[str, Any]:
@@ -1189,8 +1217,11 @@ def perform_source_review(
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
     additional_seed_urls: Optional[List[str]] = None,
+    invocation_capture=None,
 ) -> Dict[str, Any]:
     """Synchronously run bounded Source Review for chat routes."""
+    capture = require_invocation_capture(invocation_capture) if invocation_capture is not None else None
+    capture_kwargs = {"invocation_capture": capture} if capture is not None else {}
     try:
         return asyncio.run(perform_source_review_async(
             settings=settings,
@@ -1207,14 +1238,21 @@ def perform_source_review(
             include_direct_user_urls=include_direct_user_urls,
             url_access_authorization_prechecked=url_access_authorization_prechecked,
             additional_seed_urls=additional_seed_urls,
+            **capture_kwargs,
         ))
     except RuntimeError as runtime_error:
+        if capture is not None:
+            capture.fail(runtime_error)
         log_event(
             "[SOURCE_REVIEW] Source Review could not start because an event loop is already running.",
             extra={"conversation_id": conversation_id, "user_id": user_id, "error": str(runtime_error)},
             level=logging.WARNING,
         )
         return _empty_source_review_result(user_message, "event_loop_unavailable")
+    except Exception as exc:
+        if capture is not None:
+            capture.fail(exc)
+        raise
 
 
 async def perform_source_review_async(
@@ -1233,8 +1271,19 @@ async def perform_source_review_async(
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
     additional_seed_urls: Optional[List[str]] = None,
+    invocation_capture=None,
 ) -> Dict[str, Any]:
     """Fetch, parse, and package bounded web evidence for a chat request."""
+    capture = require_invocation_capture(invocation_capture) if invocation_capture is not None else None
+
+    def capture_planner():
+        capture_research_planner_configuration(
+            settings=settings, planner_client=source_review_planner_client,
+            planner_model=source_review_planner_model, invocation_capture=capture,
+        )
+
+    if capture is not None:
+        capture_planner()
     source_settings = get_source_review_config(settings)
     direct_user_url_limit = get_url_access_max_urls(url_access_context, settings)
     if url_access_only:
@@ -1333,6 +1382,8 @@ async def perform_source_review_async(
                 continue
             visited_urls.add(current_url)
 
+            if capture is not None:
+                capture_planner()
             page_result = await _fetch_source_page(
                 session=session,
                 url=current_url,
@@ -1343,6 +1394,8 @@ async def perform_source_review_async(
                 parent_url=current_item.get("parent_url"),
                 reason=current_item.get("reason"),
             )
+            if capture is not None:
+                capture_planner()
             if page_result.get("status") == "reviewed":
                 result["pages"].append(_compact_page_for_evidence(page_result))
                 if _should_follow_links(page_result, source_settings, current_item.get("depth", 0)):

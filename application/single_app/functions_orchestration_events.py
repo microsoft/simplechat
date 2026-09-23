@@ -30,7 +30,7 @@ the same thing:
     plan card ticks specific steps by id, and reverse-engineering that from prose would be
     guesswork.
 
-Version: 0.261.104
+Version: 0.261.127
 """
 
 import json
@@ -297,9 +297,12 @@ def build_conversation_metadata_event(conversation_id, title=''):
     })
 
 
-def build_plan_event(plan):
+def build_plan_event(plan, *, export_catalog=None):
     """Terminal frame of the plan endpoint: here is what I intend to do."""
-    return serialize_sse({'type': EVENT_TYPE_PLAN, 'plan': plan, 'done': True})
+    return serialize_sse({
+        'type': EVENT_TYPE_PLAN, 'plan': plan, 'done': True,
+        **({'export_catalog': export_catalog} if export_catalog is not None else {}),
+    })
 
 
 def build_elicitation_event(elicitation):
@@ -326,7 +329,7 @@ def build_step_event(step_id, status, summary='', step_index=None, capability_id
     payload.update({
         key: execution[key] for key in (
             'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
-            'model_binding',
+            'role', 'outputs', 'model_binding',
         ) if key in execution
     })
     return serialize_sse(payload)
@@ -372,6 +375,7 @@ def build_run_done_event(
     recovery=None,
     message_saved=True,
     finalization_status=None,
+    outputs=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -394,6 +398,7 @@ def build_run_done_event(
         'agent_citations': list(agent_citations or ()),
         'augmented': bool(citations or web_citations or agent_citations),
         'generated_artifacts': list(artifacts or ()),
+        **({'outputs': outputs} if outputs is not None else {}),
         'orchestration': plan_summary or {},
         'status': status,
         'outcome': outcome or status,

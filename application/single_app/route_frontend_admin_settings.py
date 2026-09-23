@@ -10,6 +10,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from flask import current_app, jsonify, request
+from admin_settings_fields import get_field_definition
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_keyvault_errors import KeyVaultSecretStorageError
@@ -77,8 +78,8 @@ from functions_m365_transport import M365ProviderError, normalize_m365_transport
 from functions_orchestration_registry import (
     CAPABILITY_REGISTRY,
     TERMINAL_CAPABILITY_ID,
-    all_capability_ids,
     build_capability_client_projection,
+    capabilities_for_contract,
 )
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
@@ -448,11 +449,22 @@ def get_inbound_mcp_easy_auth_check_base_url():
     return request.host_url
 
 
+def orchestration_admin_capabilities():
+    """Describe both recorded contracts without changing legacy capability metadata."""
+    capabilities = list(CAPABILITY_REGISTRY)
+    known = {capability['id'] for capability in capabilities}
+    capabilities.extend(
+        capability for capability in capabilities_for_contract(2)
+        if capability['id'] not in known
+    )
+    return build_capability_client_projection(capabilities)
+
+
 def normalize_chat_orchestration_settings(form_data, settings=None):
     """Read the Chat Orchestration pane off the admin form.
 
     Kept out of the main POST handler because these values are interdependent in ways a
-    flat dict literal cannot express: the capability list has to keep the terminal
+    flat dict literal cannot express: the capability list keeps the legacy terminal
     capability whatever the administrator ticked, and every bound is clamped rather than
     trusted, since the form is only one of the ways a settings document can be written.
 
@@ -481,12 +493,14 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
                       form_data.get('chat_orchestration_enabled_capabilities') or [])
         if str(value).strip()
     ]
-    known = set(all_capability_ids())
+    known = {
+        option['value'] for option in
+        get_field_definition('chat_orchestration_enabled_capabilities')['options']
+    } | {TERMINAL_CAPABILITY_ID}
     selected = [value for value in selected if value in known]
     if selected and TERMINAL_CAPABILITY_ID not in selected:
         # The pane renders this box checked and disabled, so a browser never posts it.
-        # Adding it back here keeps the stored list executable rather than one that would
-        # make every plan fail validation.
+        # Only legacy answering is mandatory; harness composition/rendering remain optional.
         selected.append(TERMINAL_CAPABILITY_ID)
     # A full selection means the same thing as no opinion, and storing it as an empty list
     # keeps a later capability addition enabled by default instead of silently excluded.
@@ -495,6 +509,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
 
     return {
         'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'enable_chat_orchestration_harness': (
+            form_data.get('enable_chat_orchestration_harness') == 'on'
+        ),
         'enable_chat_orchestration_actions': (
             form_data.get('enable_chat_orchestration_actions') == 'on'
         ),
@@ -1055,6 +1072,7 @@ def register_route_frontend_admin_settings(bp):
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
+            orchestration_capabilities = orchestration_admin_capabilities()
 
             return render_template(
                 'admin_settings.html',
@@ -1092,10 +1110,10 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
-                orchestration_capabilities=build_capability_client_projection(CAPABILITY_REGISTRY),
+                orchestration_capabilities=orchestration_capabilities,
                 orchestration_selected_capabilities=(
                     settings.get('chat_orchestration_enabled_capabilities')
-                    or [capability['id'] for capability in CAPABILITY_REGISTRY]
+                    or [capability['id'] for capability in orchestration_capabilities]
                 ),
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']

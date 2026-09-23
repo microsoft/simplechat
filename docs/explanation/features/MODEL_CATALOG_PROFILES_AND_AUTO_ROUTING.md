@@ -9,6 +9,10 @@ deployments. Classic and React V2 share an administrator editor for built-in
 profiles, custom profiles, favorites, priority, and connection association.
 Only V2 orchestration adds explicit per-step Auto routing. Regular chat remains
 manual; existing planner overrides and delegated agents retain their own bindings.
+Since **0.261.131**, an Auto request stays on the standard orchestration contract
+even when the Gather / Reason / Render preview is admitted, because only that step
+executor enforces these bindings. Dependency planning rejects Auto explicitly, and a
+dependency plan carrying bindings fails closed before model setup.
 
 Dependencies are the existing settings store, AI Connections authorization,
 orchestration planner/executor/checkpoints, local Bootstrap assets, and the V2

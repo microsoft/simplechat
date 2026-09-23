@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.127.** Chat checkpoints were added in 0.261.127. Enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.131.** Orchestration harness integration with chat checkpoints was implemented in 0.261.131. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
@@ -60,6 +60,27 @@ Personal owners and group/public workspace Owners, Admins, and DocumentManagers 
 Reviewers can accept findings with a reason, remove a page or segment, remove an exact span, change or clear structured data, keep the document held, or delete it. Edits are checked against the content hash, source location, and review revision; stale decisions require a refresh.
 
 A clean-looking retry does not silently erase an unresolved finding. Review expiry, a disabled feature, or a changed rule is not an approval.
+
+### Retained-result authority failures
+
+**Implemented in version: 0.261.127** for [#1509](https://github.com/microsoft/simplechat/issues/1509); version tracking remains in `application\single_app\config.py`.
+
+A temporary Cosmos or authority-service outage is not evidence that a previously authorized source was revoked or placed under review. Retained orchestration results use a strict server-owned access path so discovery and output retries fail explicitly instead of silently omitting those results. The path still reads current document metadata, permissions and screening release proof; it never uses a saved manifest or cached positive decision as authority.
+
+| Outcome | Strict service behavior |
+| --- | --- |
+| Transport timeout, connection failure, HTTP 408/429 or 5xx | `SourceAuthorityUnavailableError`, code `source_authority_unavailable`, `retryable=True`. |
+| Malformed authority response or a nontransient backend/configuration failure | `SourceAuthorityUnverifiedError`, code `source_authority_unverified`, `retryable=False`. |
+| Existing typed screening error | Preserve its type and stable code; configuration/validation/conflict errors are not retryable. |
+| Current denial, missing document, known hold, invalid release proof or snapshot conflict | Continue to refuse access; no fallback to retained content or a model. |
+
+Bootstrap owners bind `resolve_orchestration_source_manifest(requested_sources, user_id, ...)` and `read_orchestration_source_metadata(document_id, user_id, group_id=None, public_workspace_id=None)` from `functions_orchestration_source_access.py`. The resolver accepts the existing mixed-source selection, conversation, active-scope and cancellation arguments. `OrchestrationResultAccess.authorize_sources` uses the strict helper for fresh manifest and metadata checks, including injected runtime readers. Strict search resolution bypasses the legacy document reader's `None`-on-error fallback without changing ordinary search or workflow defaults.
+
+The additive `assert_document_available(..., strict_errors=True)` and `assert_evidence_available(..., strict_errors=True)` APIs are server-only choices, not request settings. A headless owner that catches source errors must wrap its entire source decision/model phase in `with strict_source_authority():`; nested checks retain the first failure until that operation ends. Flask requests additionally retain the existing request-local model fence. Independent operations do not share a global failure flag.
+
+Only `public_message`, `code`, `retryable` and `status_code` are suitable for public error responses. Do not serialize exception strings, causes or SDK diagnostics. Legacy screening/search callers outside this explicit path keep their existing fail-closed behavior.
+
+Importing the source-access contracts does not import telemetry, settings or configuration owners. Runtime failure reporting resolves `log_event` only after recording the model fence; import-order checks cover both normal and optimized Python without provider access.
 
 ## Clean derivatives
 
@@ -115,6 +136,8 @@ Enabled-empty policy coverage also exercises first activation, save/reload witho
 
 The core cases include a last-page finding, complete window coverage, regex deadlines, strict model responses, sticky review holds, authorization, revision conflicts, safe derivatives, and recovery from partial publication.
 
-The document adapter covers workspace knowledge, including chat files handed off to a workspace. **0.261.127** adds [chat text checkpoints]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) that reuse its global baseline without changing document holds or workspace review. Chat-only attachment screening, outbound web-search preflight, and agent-to-agent message inspection remain outside these checkpoints.
+`functional_tests\test_orchestration_source_access.py` exercises strict metadata and scope-service failures, the real mixed-source/search resolver, retained-result discovery and reopen, unchanged legacy defaults, caught-error model fences, concurrent scope isolation and network-blocked cold imports in normal and optimized Python. `test_content_screening_access.py` continues to cover the original default-mode sanitization and model-fallback fence.
+
+The document adapter covers workspace knowledge, including chat files handed off to a workspace. **0.261.127** adds [chat text checkpoints]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) that reuse its global baseline without changing document holds or workspace review. Since **0.261.131**, Gather / Reason / Render orchestration replies use the same output checkpoint before publication, including model-free delivery. Chat-only attachment screening, outbound web-search preflight, and agent-to-agent message inspection remain outside these checkpoints.
 
 Formatting-based hidden-text detection and layout-preserving PDF/Office redaction remain separate work. Neither regex nor a model guarantees that all sensitive information or prompt injection will be found. Previously downloaded content and requests already sent to a provider cannot be recalled.

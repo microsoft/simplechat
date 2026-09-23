@@ -1,7 +1,7 @@
 # test_orchestration_action_runtime.py
 """Functional coverage for isolated multi-function action execution.
 
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.098
 
 Runs the real Semantic Kernel auto-invocation loop and function filters with a
@@ -18,8 +18,10 @@ import typing
 from contextlib import nullcontext
 from copy import deepcopy
 from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+from openai.types.chat import ChatCompletion
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel import Kernel
 from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
@@ -62,6 +64,7 @@ def runtime(monkeypatch):
         state.manifest = {**state.action, 'auth': {'api_key': 'PRIVATE_CONFIG'}}
         state.context = SimpleNamespace(
             action_catalog=[state.action], active_group_ids=[], token_usage={}, notes=[],
+            user_id='actor', conversation_id='conversation',
             agent_execution_identity=contexts.ExecutionIdentity(
                 'actor', 'conversation', bridge=lambda reference: nullcontext(),
             ),
@@ -127,7 +130,15 @@ def runtime(monkeypatch):
             service_id='orchestration-action', deployment_name='test-model',
             endpoint='https://example.invalid', api_key='not-a-real-key', api_version='2024-10-21',
         )
-        monkeypatch.setattr(service_module, '_build_action_model', lambda *args: state.service)
+        state.model_configuration = {
+            'provider': 'aoai', 'protocol': 'azure_openai', 'endpoint': 'https://example.invalid',
+            'api_version': '2024-10-21', 'deployment': 'test-model', 'endpoint_id': None, 'model_id': None,
+            'parameters': {},
+        }
+        state.real_completion = AzureChatCompletion._inner_get_chat_message_contents
+        monkeypatch.setattr(service_module, '_build_action_model', lambda *args, capture_configuration=False: (
+            (state.service, deepcopy(state.model_configuration)) if capture_configuration else state.service
+        ))
 
         async def reply(self, history, settings):
             state.requests.append(str(history))
@@ -158,10 +169,12 @@ def tool_message(*tickets, function='tickets-lookup'):
     )
 
 
-async def execute(state):
+async def execute(state, *, invocation_capture=None):
+    capture_kwargs = {'invocation_capture': invocation_capture} if invocation_capture is not None else {}
     return await state.runtime.invoke_action(
         state.action['action_ref'], 'Look up the tickets.', state.context,
         settings=state.settings, user_id='actor', cancel_requested=lambda: state.cancelled,
+        **capture_kwargs,
     )
 
 
@@ -180,6 +193,244 @@ def test_multiple_function_calls_load_one_action_and_accumulate_findings(runtime
     assert runtime.service.client.is_closed()
     assert runtime.contexts.current_agent_execution() is None
     assert all('PRIVATE_CONFIG' not in request for request in runtime.requests)
+
+
+def test_capture_observes_actual_prepared_manifest_before_work_and_each_call(runtime, monkeypatch):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    captured = []
+    prepared_values = []
+
+    def prepare(manifest, settings):
+        prepared = {**deepcopy(manifest), 'runtime_endpoint': 'https://actual.invalid'}
+        prepared_values.append(prepared)
+        return prepared
+
+    def capture(source_type, *, settings, source, selector):
+        if source is None:
+            assert runtime.loads == runtime.requests == runtime.prepared == []
+            return
+        captured.append((source_type, deepcopy(settings), deepcopy(source), selector))
+        if len(captured) == 1:
+            assert runtime.loads == []
+            assert runtime.requests == []
+        settings['max_auto_invoke_attempts'] = 0
+        source['prepared_manifest']['id'] = 'replacement'
+        source['manifest']['auth']['api_key'] = 'replacement'
+        return {'private_callback_result': 'MUST_NOT_REACH_MODEL'}
+
+    monkeypatch.setattr(sys.modules['semantic_kernel_loader'], 'prepare_action_plugin_manifest', prepare)
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    runtime.replies = [tool_message('42', '43')]
+    result = asyncio.run(execute(runtime, invocation_capture=state))
+
+    assert len(captured) == 3
+    assert all(item[0] == 'action' and item[3] == runtime.action['action_ref'] for item in captured)
+    assert all(item[2]['manifest'] == runtime.manifest for item in captured)
+    assert all(item[2]['prepared_manifest']['runtime_endpoint'] == 'https://actual.invalid' for item in captured)
+    assert all(item[2]['kind'] == 'action' and item[2]['phase'] == 'resolved' for item in captured)
+    assert all(item[2]['model']['parameters'] == {
+        'parallel_tool_calls': False, 'tool_choice': 'auto',
+    } for item in captured)
+    assert prepared_values[0]['id'] == 'tickets'
+    assert runtime.manifest['auth']['api_key'] == 'PRIVATE_CONFIG'
+    assert runtime.settings['max_auto_invoke_attempts'] == 5
+    assert result['calls'] == 2
+    assert 'private_callback_result' not in result
+    assert all('MUST_NOT_REACH_MODEL' not in request for request in runtime.requests)
+    assert runtime.contexts.current_agent_execution() is None
+
+
+def test_capture_parameters_match_actual_sdk_requests(runtime, monkeypatch):
+    captures = importlib.import_module('functions_orchestration_invocation_capture')
+    monkeypatch.setattr(AzureChatCompletion, '_inner_get_chat_message_contents', runtime.real_completion)
+    observed = []
+    requests = []
+
+    async def complete(**kwargs):
+        requests.append(deepcopy(kwargs))
+        message = {
+            'role': 'assistant',
+            'content': 'The requested ticket is open.' if len(requests) > 1 else None,
+        }
+        if len(requests) == 1:
+            message['tool_calls'] = [{
+                'id': 'lookup-ticket', 'type': 'function',
+                'function': {'name': 'tickets-lookup', 'arguments': '{"ticket":"42"}'},
+            }]
+        return ChatCompletion.model_validate({
+            'id': f'completion-{len(requests)}', 'object': 'chat.completion', 'created': 1,
+            'model': 'test-model',
+            'choices': [{
+                'index': 0, 'finish_reason': 'tool_calls' if len(requests) == 1 else 'stop',
+                'message': message,
+            }],
+        })
+
+    monkeypatch.setattr(runtime.service.client.chat.completions, 'create', complete)
+
+    def capture(source_type, **kwargs):
+        if kwargs['source'] is not None:
+            observed.append(deepcopy(kwargs['source']['model']))
+
+    capture_state = captures.OrchestrationInvocationCapture(capture)
+    result = asyncio.run(execute(runtime, invocation_capture=capture_state))
+    assert result['calls'] == 1 and runtime.calls == [('42', 'actor')]
+    assert len(requests) == 2
+    for request in requests:
+        parameters = {
+            key: value for key, value in request.items() if key not in ('model', 'messages', 'tools', 'stream')
+        }
+        assert all(source['parameters'] == parameters for source in observed)
+        assert all(source['deployment'] == request['model'] for source in observed)
+        assert request['stream'] is False
+        assert request['tools'][0]['function']['name'] == 'tickets-lookup'
+    assert runtime.service.client.is_closed()
+
+
+@pytest.mark.parametrize('failure_mode', ['false', 'exception'])
+def test_capture_failure_prevents_plugin_and_model_execution(runtime, failure_mode):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+
+    def capture(*args, **kwargs):
+        if failure_mode == 'exception':
+            raise RuntimeError('PRIVATE_CAPTURE_FAILURE')
+        return False
+
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError) as caught:
+        asyncio.run(execute(runtime, invocation_capture=state))
+    assert 'PRIVATE_' not in str(caught.value)
+    assert runtime.loads == []
+    assert runtime.calls == []
+    assert runtime.requests == []
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        state.require_valid()
+
+
+@pytest.mark.parametrize('refused_capture', [2, 3])
+def test_capture_refusal_is_sticky_when_sdk_contains_tool_errors(runtime, refused_capture):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    captures = []
+
+    def capture(*args, **kwargs):
+        if kwargs.get('source') is None:
+            return
+        captures.append(kwargs['selector'])
+        return len(captures) < refused_capture
+
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    runtime.replies = [tool_message('42', '43')]
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        asyncio.run(execute(runtime, invocation_capture=state))
+    assert runtime.calls == ([] if refused_capture == 2 else [('42', 'actor')])
+    assert len(runtime.requests) == 1
+    assert runtime.instances[0].closed
+    assert runtime.service.client.is_closed()
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        state.require_valid(captured=True)
+
+
+def test_preflight_denial_precedes_settings_resolution_preparation_and_model_construction(runtime, monkeypatch):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    operations = []
+    for owner, name in (
+        (sys.modules['functions_settings'], 'get_settings'),
+        (sys.modules['semantic_kernel_loader'], 'prepare_action_plugin_manifest'),
+        (runtime.runtime, 'resolve_action_manifest'),
+        (runtime.runtime, '_build_action_model'),
+    ):
+        operation = Mock(side_effect=AssertionError('Denied preflight must not start producer work.'))
+        monkeypatch.setattr(owner, name, operation)
+        operations.append(operation)
+    preparations = []
+
+    def deny(source_type, **kwargs):
+        preparations.append((source_type, kwargs))
+        return False
+
+    capture = capture_module.OrchestrationInvocationCapture(deny)
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        asyncio.run(execute(runtime, invocation_capture=capture))
+    assert len(preparations) == 1
+    assert preparations[0][0] == 'action'
+    assert preparations[0][1]['selector'] == runtime.action['action_ref']
+    assert preparations[0][1]['source'] is None
+    for operation in operations:
+        operation.assert_not_called()
+    assert runtime.loads == [] and runtime.requests == []
+
+
+@pytest.mark.parametrize('failed_event', [1, 2, 3, 4])
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_safe_authority_failures_survive_real_tool_loop_containment(runtime, failed_event, cancelled):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+
+    class ServiceError(capture_module.OrchestrationInvocationServiceError):
+        def __init__(self, code='authority_timeout'):
+            self.code = code
+            self.retryable = True
+            super().__init__('The authority could not be verified.')
+
+    class CancelledError(capture_module.OrchestrationInvocationCancelledError):
+        def __init__(self):
+            super().__init__('The authority check was cancelled.')
+
+    error_type = CancelledError if cancelled else ServiceError
+    events = []
+
+    def capture(*args, **kwargs):
+        events.append(kwargs['source'])
+        if len(events) == failed_event:
+            raise error_type()
+
+    runtime.replies = [tool_message('42', '43')]
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    with pytest.raises(error_type) as caught:
+        asyncio.run(execute(runtime, invocation_capture=state))
+    assert runtime.calls == ([('42', 'actor')] if failed_event == 4 else [])
+    assert len(runtime.requests) == (1 if failed_event >= 3 else 0)
+    if failed_event >= 2:
+        assert runtime.service.client.is_closed()
+    if failed_event >= 3:
+        assert runtime.instances[0].closed
+    if not cancelled:
+        assert caught.value.code == 'authority_timeout' and caught.value.retryable
+    with pytest.raises(error_type):
+        state.require_valid(captured=True)
+
+
+def test_each_action_call_captures_fresh_settings_not_only_initial_configuration(runtime):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    revisions = []
+    runtime.settings['source_revision'] = 'original'
+
+    def capture(*args, **kwargs):
+        if kwargs.get('source') is None:
+            return
+        revision = kwargs['settings']['source_revision']
+        revisions.append(revision)
+        return revision == 'original'
+
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    runtime.replies = [tool_message('42', '43')]
+    runtime.after_call = lambda: runtime.settings.update(source_revision='changed')
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        asyncio.run(execute(runtime, invocation_capture=state))
+    assert revisions == ['original', 'original', 'changed']
+    assert runtime.calls == [('42', 'actor')]
+    assert len(runtime.requests) == 1
+    assert runtime.instances[0].closed
+
+
+def test_capture_refuses_an_execution_bridge_from_another_conversation(runtime):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    state = capture_module.OrchestrationInvocationCapture(lambda *args, **kwargs: None)
+    runtime.context.conversation_id = 'another-conversation'
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        asyncio.run(execute(runtime, invocation_capture=state))
+    assert runtime.loads == []
+    assert runtime.calls == []
+    assert runtime.requests == []
 
 
 def test_batched_calls_cannot_exceed_function_budget(runtime):
@@ -304,11 +555,81 @@ def test_model_context_never_accepts_client_credentials_or_actor_overrides(runti
         'user_id': 'another-user', 'active_group_ids': ['untrusted-group'],
     }
     runtime.context.active_group_ids = ['selected-group']
-    assert runtime.build_model(runtime.settings, runtime.context, 'actor') is selected_service
+    model = runtime.build_model(runtime.settings, runtime.context, 'actor')
+    assert model is selected_service
     assert observed == [{
         'endpoint_id': 'selected-endpoint', 'model_id': 'selected-model',
         'user_id': 'actor', 'active_group_ids': ['selected-group'],
     }]
+
+
+def test_model_capture_observes_actual_constructed_transport_and_factory_protocol(runtime, monkeypatch):
+    endpoint = {
+        'id': 'selected-endpoint', 'provider': 'aoai',
+        'connection': {'endpoint': 'https://example.invalid', 'api_version': '2024-10-21'},
+    }
+    selections = []
+
+    def resolve(settings, context, *, authorize):
+        selections.append((deepcopy(context), authorize))
+        return deepcopy(endpoint)
+
+    monkeypatch.setitem(sys.modules, 'functions_model_endpoint_runtime', module(
+        'functions_model_endpoint_runtime', resolve_model_endpoint_from_context=resolve,
+        build_semantic_kernel_chat_service_for_model=lambda *args, **kwargs: (runtime.service, 'azure_openai'),
+    ))
+    runtime.context.model_context = {
+        'endpoint_id': 'selected-endpoint', 'model_id': 'selected-model', 'model_deployment': 'selection-label',
+        'endpoint': 'https://untrusted.invalid', 'api_version': 'untrusted', 'auth': {'api_key': 'untrusted'},
+    }
+    model, configuration = runtime.build_model(
+        runtime.settings, runtime.context, 'actor', capture_configuration=True,
+    )
+    assert model is runtime.service
+    assert configuration == {
+        'provider': 'aoai', 'protocol': 'azure_openai', 'endpoint': 'https://example.invalid/',
+        'api_version': '2024-10-21', 'deployment': 'test-model',
+        'endpoint_id': 'selected-endpoint', 'model_id': 'selected-model', 'parameters': {},
+    }
+    assert len(selections) == 1 and selections[0][1] is True
+    assert 'auth' not in selections[0][0] and 'endpoint' not in selections[0][0]
+    assert runtime.requests == []
+
+
+@pytest.mark.parametrize('fault', ['unknown_protocol', 'implicit_endpoint', 'implicit_api_version', 'changed_api_version'])
+def test_model_capture_refuses_unknown_or_implicit_construction(runtime, monkeypatch, fault):
+    connection = {'endpoint': 'https://example.invalid', 'api_version': '2024-10-21'}
+    if fault == 'implicit_endpoint':
+        connection.pop('endpoint')
+    elif fault == 'implicit_api_version':
+        connection.pop('api_version')
+    elif fault == 'changed_api_version':
+        connection['api_version'] = '2025-01-01-preview'
+    endpoint = {'id': 'selected-endpoint', 'provider': 'aoai', 'connection': connection}
+    protocol = 'unattested-protocol' if fault == 'unknown_protocol' else 'azure_openai'
+    monkeypatch.setitem(sys.modules, 'functions_model_endpoint_runtime', module(
+        'functions_model_endpoint_runtime',
+        resolve_model_endpoint_from_context=lambda *args, **kwargs: deepcopy(endpoint),
+        build_semantic_kernel_chat_service_for_model=lambda *args, **kwargs: (runtime.service, protocol),
+    ))
+    runtime.context.model_context = {'endpoint_id': 'selected-endpoint', 'model_id': 'selected-model'}
+    model, configuration = runtime.build_model(
+        runtime.settings, runtime.context, 'actor', capture_configuration=True,
+    )
+    assert model is runtime.service and configuration is None
+    assert runtime.requests == []
+
+
+def test_unsupported_model_capture_closes_client_before_plugin_or_model_work(runtime):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    runtime.model_configuration = None
+    observed = []
+    capture = capture_module.OrchestrationInvocationCapture(lambda *args, **kwargs: observed.append(kwargs))
+    with pytest.raises(capture_module.OrchestrationInvocationCaptureError):
+        asyncio.run(execute(runtime, invocation_capture=capture))
+    assert len(observed) == 1 and observed[0]['source'] is None
+    assert runtime.loads == [] and runtime.requests == []
+    assert runtime.service.client.is_closed()
 
 
 def test_unavailable_selected_model_does_not_fall_back(runtime, monkeypatch):

@@ -1,7 +1,7 @@
 # functions_workflow_result_store.py
 """
 Private, immutable persistence for workflow, chat, and orchestration results.
-Version: 0.261.107
+Version: 0.261.127
 Implemented in: 0.261.106
 
 Callers must authorize the current workflow/chat/orchestration context and
@@ -24,6 +24,16 @@ with the real assistant message ID as run_id. Orchestration records use
 'orchestration_analysis_result_chunk' there with their real run_id and step_id.
 None of these payloads enter the message feed or orchestration UI step list.
 
+Generic orchestration results reuse that same private run/step namespace and
+mandatory lifecycle fence. Digest-keyed commits resolve their transport references
+server-side; they do not claim the strict analyze-final-v1 result contract.
+V2 runners can obtain a lease-bound view with ``for_orchestration_execution``.
+This checks current execution ownership for writes, pending control reads, and
+receipt/payload reads without changing immutable records or unbound legacy reads.
+Claim-aware orchestration lifecycles additionally reject token-only writes. Their
+execution_claim_id can advance while the native producer's original token stays
+unchanged; historical authorized readers and independent native leases are unaffected.
+
 References contain only storage, schema_version (the storage format, not the
 envelope contract), sha256, size_bytes, and chunk_count. Paths are reconstructed
 from hashed identities. JSON is canonical ASCII, so page offsets count serialized
@@ -36,13 +46,22 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
+from copy import copy
+from dataclasses import dataclass
+from typing import Callable
 
 from azure.core import MatchConditions
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
 from azure.cosmos import exceptions as cosmos_exceptions
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from azure.storage.blob import ContentSettings
 
+from functions_orchestration_result_contracts import (
+    RESULT_MANIFEST_VERSION,
+    RESULT_RECEIPT_VERSION,
+    canonical_digest,
+    result_receipt_binding,
+)
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_identity import workflow_execution_id, workflow_node_identity
 
@@ -51,6 +70,7 @@ RESULT_RECORD_TYPE = "workflow_result_chunk"
 CHAT_RESULT_RECORD_TYPE = "chat_analysis_result_chunk"
 ORCHESTRATION_RESULT_RECORD_TYPE = "orchestration_analysis_result_chunk"
 ANALYSIS_CONTROL_RECORD_TYPE = "analysis_work_unit_checkpoint"
+ORCHESTRATION_RESULT_COMMIT_KEY = "orchestration-task-result-v1"
 RESULT_MEDIA_TYPE = "application/json"
 DEFAULT_MAX_RESULT_SIZE_MB = 500
 MAX_COSMOS_CHUNK_BYTES = 256 * 1024
@@ -62,6 +82,13 @@ _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 class WorkflowResultIntegrityError(ValueError):
     """Stored identity, metadata, or payload does not match the expected result."""
+
+
+class OrchestrationResultConflictError(WorkflowResultIntegrityError):
+    code = "orchestration_result_commit_collision"
+
+    def __init__(self):
+        super().__init__("A different result is already committed for this producer and input.")
 
 
 class WorkflowResultTooLargeError(ValueError):
@@ -334,6 +361,51 @@ def _workflow_execution_guard(identity, execution=None):
     return execution
 
 
+@dataclass(frozen=True)
+class _OrchestrationResultExecution:
+    user_id: str
+    conversation_id: str
+    run_id: str
+    token: str
+    attempt_index: int
+    read: Callable[[], dict]
+    claim_id: str | None
+
+    def check(self, identity, *, writable=False):
+        if identity.get("scope_type") != "orchestration":
+            return False
+        current = self.read()
+        if (
+            type(current) is not dict
+            or any(current.get(key) != value for key, value in (
+                ("id", self.run_id), ("run_id", self.run_id), ("user_id", self.user_id),
+                ("conversation_id", self.conversation_id), ("attempt_index", self.attempt_index),
+            ))
+            or type(current.get("planner_contract_version")) is not int
+            or current["planner_contract_version"] != 2
+            or type(current.get("plan")) is not dict
+            or type(current["plan"].get("planner_contract_version")) is not int
+            or current["plan"]["planner_contract_version"] != 2
+            or (current.get("execution_lease") or {}).get("token") != self.token
+            or (current.get("execution_lease") or {}).get("claim_id") != self.claim_id
+            or current.get("checkpoints_deleted") or current.get("outputs_deleted")
+            or current.get("superseded_by_run_id") or current.get("latest_attempt_run_id")
+            or identity.get("user_id") != self.user_id or identity.get("conversation_id") != self.conversation_id
+            or current.get("status") not in {"running", "waiting", "completed", "failed", "cancelled"}
+        ):
+            raise AnalysisWorkUnitConflictError()
+        if writable and (
+            identity.get("run_id") != self.run_id or current["status"] != "running"
+            or current.get("cancellation_requested_at")
+            or not any(
+                step.get("step_id") == identity.get("step_id") and step.get("enabled") is True
+                for step in (current.get("plan") or {}).get("steps") or []
+            )
+        ):
+            raise AnalysisWorkUnitConflictError()
+        return identity.get("run_id") == self.run_id
+
+
 class WorkflowResultStore:
     """Dependency-injected store; clients may be real SDK clients or isolated fakes.
 
@@ -360,12 +432,93 @@ class WorkflowResultStore:
             raise ValueError("The configured workflow result Blob container name is required.")
         self.container = container
         self._workflow_execution = _active_workflow_execution()
+        self._orchestration_execution = None
         self.blob_client = blob_client
         self.blob_container_name = blob_container_name
         self.max_size_bytes = _positive_integer(max_size_bytes, "Result size limit")
         self.chunk_size_bytes = _positive_integer(chunk_size_bytes, "Cosmos chunk size")
         if self.chunk_size_bytes > MAX_COSMOS_CHUNK_BYTES:
             raise ValueError("Workflow result chunks exceed the Cosmos payload bound.")
+
+    def for_orchestration_execution(
+        self, user_id, conversation_id, run_id, *, guard_token, check_execution,
+    ):
+        """Return an independent V2 execution view; never retag an older caller's store.
+
+        The owning runner calls this after its real initial or continuation claim,
+        before producer work or pending/receipt reads, supplying its lease read
+        callback. Unbound legacy stores and independently leased native children
+        keep their existing behavior.
+        """
+        scope = _orchestration_scope(user_id, conversation_id, run_id)
+        token = _identifier(guard_token)
+        if not callable(check_execution):
+            raise AnalysisWorkUnitConflictError()
+        current = check_execution()
+        if (
+            type(current) is not dict or type(current.get("attempt_index")) is not int
+            or current["attempt_index"] < 1
+        ):
+            raise AnalysisWorkUnitConflictError()
+        claim_id = (current.get("execution_lease") or {}).get("claim_id")
+        if claim_id is not None:
+            claim_id = _identifier(claim_id)
+        execution = _OrchestrationResultExecution(
+            user_id, conversation_id, run_id, token, current["attempt_index"], check_execution, claim_id,
+        )
+        execution.check(scope)
+        scoped = copy(self)
+        scoped._orchestration_execution = execution
+        return scoped
+
+    def bind_orchestration_execution(
+        self, user_id, conversation_id, run_id, *, guard_token, check_execution,
+    ):
+        """Bind an actual initial/resumed parent claim and its producer fences.
+
+        Active runners call this before capability, alias, pending or receipt
+        reads, supplying the verified owning lease's read method. Only lifecycle
+        metadata is prepared/adopted; immutable results and native child guards
+        are not rewritten. The original store remains a separate historical view.
+        """
+        scoped = self.for_orchestration_execution(
+            user_id, conversation_id, run_id,
+            guard_token=guard_token, check_execution=check_execution,
+        )
+        execution = scoped._orchestration_execution
+        current = check_execution()
+        if (
+            type(current) is not dict
+            or any(current.get(key) != value for key, value in (
+                ("id", run_id), ("user_id", user_id), ("conversation_id", conversation_id),
+                ("attempt_index", execution.attempt_index),
+            ))
+            or (current.get("execution_lease") or {}).get("token") != execution.token
+            or (current.get("execution_lease") or {}).get("claim_id") != execution.claim_id
+        ):
+            raise AnalysisWorkUnitConflictError()
+        for step in current["plan"]["steps"]:
+            if step["enabled"] and step["role"] != "render":
+                present = scoped.rollover_orchestration_result_guard(
+                    user_id, conversation_id, run_id, step["step_id"],
+                    guard_token=execution.token, check_execution=check_execution,
+                )
+                stopped = any(
+                    row.get("step_id") == step["step_id"] and row.get("status") in {"failed", "cancelled"}
+                    for row in current.get("execution_steps") or []
+                )
+                if not present and not stopped:
+                    scoped.prepare_orchestration_result(
+                        user_id, conversation_id, run_id, step["step_id"], guard_token=execution.token,
+                    )
+        scoped._check_orchestration_execution(_orchestration_scope(user_id, conversation_id, run_id))
+        return scoped
+
+    def _check_orchestration_execution(self, identity, *, writable=False):
+        execution = self._orchestration_execution
+        if execution is None:
+            return None
+        return execution if execution.check(identity, writable=writable) else None
 
     def _serialize(self, result):
         if not isinstance(result, dict):
@@ -451,8 +604,210 @@ class WorkflowResultStore:
             guard_token=guard_token, require_analysis_guard=require_analysis_guard,
         )
 
+    def prepare_orchestration_result(self, user_id, conversation_id, run_id, step_id, *, guard_token):
+        """Register an authorized producer using the existing execution/deletion fence."""
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        token = _identifier(guard_token)
+        guard = self._analysis_guard(identity, writable=True, token=token)
+        if guard is not None:
+            return {"binding": dict(identity)}
+        return self.prepare_analysis_attempt(identity, token=token)
+
+    def rollover_orchestration_result_guard(
+        self, user_id, conversation_id, run_id, step_id, *, guard_token, check_execution,
+    ):
+        """Adopt an existing orchestration fence under the actual parent claim.
+
+        The initialized orchestration owner supplies its real lease's read method.
+        The claim epoch fences parent work independently of the stable native token.
+        Completed payloads, receipts, work-unit claims and native child executions
+        are never changed. Missing guards remain missing until normal preparation;
+        already stopped guards of terminal steps remain stopped.
+        Workflow and chat lifecycle methods retain their original behavior.
+        """
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        token = _identifier(guard_token)
+        if not callable(check_execution):
+            raise AnalysisWorkUnitConflictError()
+        claimed = check_execution()
+        if type(claimed) is not dict:
+            raise AnalysisWorkUnitConflictError()
+        claim_id = (claimed.get("execution_lease") or {}).get("claim_id")
+        if claim_id is not None:
+            claim_id = _identifier(claim_id)
+        if self._orchestration_execution is not None:
+            self._check_orchestration_execution(identity, writable=True)
+            unbound = copy(self)
+            unbound._orchestration_execution = None
+            return unbound.rollover_orchestration_result_guard(
+                user_id, conversation_id, run_id, step_id,
+                guard_token=token, check_execution=check_execution,
+            )
+
+        def checked_run():
+            current = check_execution()
+            if (
+                not isinstance(current, dict)
+                or any(current.get(key) != value for key, value in (
+                    ("id", run_id), ("user_id", user_id), ("conversation_id", conversation_id),
+                ))
+                or type(current.get("planner_contract_version")) is not int
+                or current["planner_contract_version"] != 2
+                or (current.get("execution_lease") or {}).get("token") != token
+                or (current.get("execution_lease") or {}).get("claim_id") != claim_id
+                or (
+                    claim_id is not None
+                    and (current.get("continuation_submission") or {}).get("claim_id") != claim_id
+                )
+                or current.get("checkpoints_deleted") or current.get("outputs_deleted")
+                or current.get("superseded_by_run_id") or current.get("cancellation_requested_at")
+                or current.get("status") not in {"running", "waiting"}
+                or current.get("latest_attempt_run_id")
+                or not any(
+                    step.get("step_id") == step_id and step.get("enabled") is True
+                    for step in (current.get("plan") or {}).get("steps") or []
+                )
+            ):
+                raise AnalysisWorkUnitConflictError()
+            return current
+
+        for _ in range(8):
+            current = checked_run()
+            guard = self._analysis_guard(identity)
+            if guard is None:
+                checked_run()
+                return False
+            if guard.get("deleted") or guard.get("successor"):
+                raise AnalysisWorkUnitConflictError()
+            if guard.get("stopped"):
+                if not any(
+                    row.get("step_id") == step_id and row.get("status") in {"failed", "cancelled"}
+                    for row in current.get("execution_steps") or []
+                ):
+                    raise AnalysisWorkUnitConflictError()
+                checked_run()
+                return False
+            if not guard.get("token"):
+                raise AnalysisWorkUnitConflictError()
+            if (
+                guard.get("token") == token and "execution_claim_id" in guard
+                and guard["execution_claim_id"] == claim_id
+            ):
+                checked_run()
+                return True
+            replacement = {key: value for key, value in guard.items() if not key.startswith("_")}
+            replacement.update(token=token, execution_claim_id=claim_id, write_id=uuid.uuid4().hex)
+            checked_run()
+            try:
+                self.container.replace_item(
+                    item=guard["id"], body=replacement, etag=guard["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            except cosmos_exceptions.CosmosAccessConditionFailedError:
+                continue
+            except (AzureError, TimeoutError, ConnectionError):
+                checked_run()
+                saved = self._analysis_guard(identity)
+                if (
+                    saved is None or saved.get("token") != token
+                    or "execution_claim_id" not in saved or saved["execution_claim_id"] != claim_id
+                    or saved.get("deleted") or saved.get("stopped") or saved.get("successor")
+                ):
+                    raise
+            checked_run()
+            return True
+        raise AnalysisWorkUnitConflictError()
+
+    def commit_orchestration_result(
+        self, user_id, conversation_id, run_id, step_id, reference, *, guard_token,
+        producer=None, input_fingerprint=None,
+    ):
+        """Commit a private digest-addressed manifest pointer, never a downloadable file."""
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        reference, manifest = self._read_manifest(identity, reference)
+        if manifest.get("analysis_fenced") is not True:
+            raise WorkflowResultIntegrityError("An orchestration result requires its lifecycle fence.")
+        key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{reference['sha256']}"
+        row = {
+            **identity, "id": _analysis_control_id(identity, "final", key),
+            "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+            "record_kind": "final", "key": key, "reference": reference,
+        }
+        if producer is None and input_fingerprint is None:
+            self._write_analysis_record(identity, row, token=guard_token, immutable=True)
+            return
+        binding = result_receipt_binding(producer, input_fingerprint)
+        _require_fields(producer.to_dict(), {
+            key: identity[key] for key in ("user_id", "conversation_id", "run_id", "step_id")
+        })
+        payload = self._load(identity, reference)
+        _require_fields(payload, {
+            "version": RESULT_MANIFEST_VERSION,
+            "producer": binding["producer"], "input_fingerprint": input_fingerprint,
+        })
+        if payload.get("status") not in {"complete", "partial"}:
+            raise WorkflowResultIntegrityError("Only terminal results can have an orchestration receipt.")
+        receipt_key = f"{RESULT_RECEIPT_VERSION}:{canonical_digest(binding)}"
+        receipt = {
+            **identity, "id": _analysis_control_id(identity, "final", receipt_key),
+            "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+            "record_kind": "final", "key": receipt_key, "binding": binding, "reference": reference,
+        }
+        self._write_analysis_record(
+            identity, receipt, token=guard_token, immutable=True, companions=(row,),
+        )
+
+    def load_orchestration_result_receipt(self, producer, input_fingerprint):
+        """Read one exact producer/input commit; only a missing receipt returns None."""
+        binding = result_receipt_binding(producer, input_fingerprint)
+        identity = _orchestration_identity(
+            producer.user_id, producer.conversation_id, producer.run_id, producer.step_id,
+        )
+        guard = self._analysis_guard(identity)
+        if guard is not None and guard.get("deleted"):
+            raise AnalysisWorkUnitConflictError("analysis_work_deleted")
+        key = f"{RESULT_RECEIPT_VERSION}:{canonical_digest(binding)}"
+        row = self._analysis_control(identity, "final", key)
+        if row is None:
+            guard = self._analysis_guard(identity)
+            if guard is not None and guard.get("deleted"):
+                raise AnalysisWorkUnitConflictError("analysis_work_deleted")
+            return None
+        self._analysis_guard(identity, required=True)
+        _require_fields(row, {"binding": binding})
+        _require_fields(row["binding"]["producer"], binding["producer"])
+        reference = _validate_reference(row.get("reference"))
+        commit_key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{reference['sha256']}"
+        committed = self.read_analysis_checkpoint(identity, "final", commit_key)
+        _require_fields(committed, {"reference": reference})
+        manifest = self._load(identity, reference)
+        _require_fields(manifest, {
+            "version": RESULT_MANIFEST_VERSION,
+            "producer": binding["producer"], "input_fingerprint": input_fingerprint,
+        })
+        if self._orchestration_execution is not None:
+            self._analysis_guard(identity, required=True)
+        return reference["sha256"], manifest
+
+    def load_committed_orchestration_result(self, user_id, conversation_id, run_id, step_id, manifest_sha256):
+        """Resolve storage only from a producer-bound immutable server commit."""
+        if not isinstance(manifest_sha256, str) or not _DIGEST_PATTERN.fullmatch(manifest_sha256):
+            raise WorkflowResultIntegrityError("The orchestration result digest is invalid.")
+        identity = _orchestration_identity(user_id, conversation_id, run_id, step_id)
+        key = f"{ORCHESTRATION_RESULT_COMMIT_KEY}:{manifest_sha256}"
+        row = self.read_analysis_checkpoint(identity, "final", key)
+        if row is None:
+            raise WorkflowResultIntegrityError("The orchestration result has not been committed.")
+        reference = _validate_reference(row.get("reference"))
+        if reference["sha256"] != manifest_sha256:
+            raise WorkflowResultIntegrityError("The orchestration result commit does not match.")
+        return self._load(identity, reference)
+
     def _save(self, identity, result, *, guard_token=None, require_analysis_guard=False):
         """Persist using a validated result binding, with identical I/O."""
+        execution_scope = self._check_orchestration_execution(identity, writable=True)
+        if execution_scope is not None:
+            require_analysis_guard = True
         payload = self._serialize(result)
         execution = _workflow_execution_guard(identity, self._workflow_execution)
         guard = self._analysis_guard(
@@ -527,6 +882,7 @@ class WorkflowResultStore:
         return dict(reference)
 
     def _read_manifest(self, identity, reference):
+        self._check_orchestration_execution(identity)
         reference = _validate_reference(reference)
         manifest = self.container.read_item(
             item=_record_id(identity, reference, "manifest"), partition_key=identity["run_id"],
@@ -547,18 +903,36 @@ class WorkflowResultStore:
         return reference, manifest
 
     def _analysis_guard(self, identity, *, required=False, writable=False, token=None):
+        execution = self._check_orchestration_execution(identity, writable=writable)
         item_id = _analysis_control_id(identity, "lifecycle")
         try:
             guard = self.container.read_item(item=item_id, partition_key=identity["run_id"])
         except CosmosResourceNotFoundError:
+            self._check_orchestration_execution(identity, writable=writable)
             if required:
                 raise AnalysisWorkUnitConflictError("analysis_work_missing") from None
             return None
+        self._check_orchestration_execution(identity, writable=writable)
         _require_fields(guard, {
             **identity, "id": item_id, "type": ANALYSIS_CONTROL_RECORD_TYPE,
             "item_type": ANALYSIS_CONTROL_RECORD_TYPE, "record_kind": "lifecycle",
         })
+        if execution is not None and (
+            guard.get("deleted")
+            or (guard.get("token") != execution.token and (writable or not guard.get("stopped")))
+            or (
+                not guard.get("stopped") and "execution_claim_id" in guard
+                and guard["execution_claim_id"] != execution.claim_id
+            )
+            or (token is not None and token != execution.token)
+        ):
+            raise AnalysisWorkUnitConflictError()
         if writable:
+            if (
+                identity.get("scope_type") == "orchestration"
+                and "execution_claim_id" in guard and execution is None
+            ):
+                raise AnalysisWorkUnitConflictError()
             if guard.get("deleted"):
                 raise AnalysisWorkUnitConflictError("analysis_work_deleted")
             if guard.get("stopped"):
@@ -574,19 +948,34 @@ class WorkflowResultStore:
         return guard
 
     def _analysis_control(self, identity, kind, key=""):
+        if self._orchestration_execution is not None and identity.get("scope_type") == "orchestration":
+            self._analysis_guard(identity)
         item_id = _analysis_control_id(identity, kind, key)
         try:
             row = self.container.read_item(item=item_id, partition_key=identity["run_id"])
         except CosmosResourceNotFoundError:
+            if self._orchestration_execution is not None and identity.get("scope_type") == "orchestration":
+                self._analysis_guard(identity)
             return None
         _require_fields(row, {
             **identity, "id": item_id, "type": ANALYSIS_CONTROL_RECORD_TYPE,
             "item_type": ANALYSIS_CONTROL_RECORD_TYPE, "record_kind": kind, "key": key,
         })
+        if self._orchestration_execution is not None and identity.get("scope_type") == "orchestration":
+            self._analysis_guard(identity, required=True)
         return row
 
-    def _write_analysis_record(self, identity, record, *, token, immutable=False, previous=None):
+    def _write_analysis_record(self, identity, record, *, token, immutable=False, previous=None, companions=()):
         """Fence a bounded control/payload write in the existing run-items partition."""
+        if companions:
+            if not immutable or previous is not None or type(companions) is not tuple or len(companions) != 1:
+                raise ValueError("A companion requires one immutable same-partition commit.")
+            _require_fields(companions[0], {
+                **identity, "type": ANALYSIS_CONTROL_RECORD_TYPE, "item_type": ANALYSIS_CONTROL_RECORD_TYPE,
+                "record_kind": "final",
+            })
+            if companions[0]["id"] == record["id"]:
+                raise WorkflowResultIntegrityError("Result commit identities must be distinct.")
         for _ in range(8):
             guard = self._analysis_guard(identity, required=True, writable=True, token=token)
             replacement = {key: value for key, value in guard.items() if not key.startswith("_")}
@@ -602,6 +991,7 @@ class WorkflowResultStore:
                 if not previous.get("_etag"):
                     raise WorkflowResultIntegrityError("Analysis claim is missing its conditional-write version.")
                 operations.append(("replace", (record["id"], record), {"if_match_etag": previous["_etag"]}))
+            operations.extend(("create", (companion,)) for companion in companions)
             execution = _workflow_execution_guard(identity, self._workflow_execution)
             if execution is not None:
                 operations = execution.fence_batch(operations)
@@ -609,6 +999,7 @@ class WorkflowResultStore:
                 self.container.execute_item_batch(
                     batch_operations=operations, partition_key=identity["run_id"],
                 )
+                self._check_orchestration_execution(identity, writable=True)
                 return
             except (cosmos_exceptions.CosmosBatchOperationError, cosmos_exceptions.CosmosHttpResponseError) as exc:
                 if exc.status_code == 412:
@@ -618,8 +1009,19 @@ class WorkflowResultStore:
                     if latest.get("_etag") == previous.get("_etag"):
                         continue
                 if immutable and exc.status_code == 409:
-                    saved = self.container.read_item(item=record["id"], partition_key=identity["run_id"])
-                    _require_fields(saved, record)
+                    for expected in (record, *companions):
+                        try:
+                            saved = self.container.read_item(item=expected["id"], partition_key=identity["run_id"])
+                        except CosmosResourceNotFoundError:
+                            if not companions:
+                                raise
+                            raise WorkflowResultIntegrityError("The immutable result commit is incomplete.") from None
+                        if companions and expected is record:
+                            _require_fields(saved, {key: value for key, value in expected.items() if key != "reference"})
+                            _require_fields(saved["binding"]["producer"], record["binding"]["producer"])
+                            if _validate_reference(saved.get("reference")) != record["reference"]:
+                                raise OrchestrationResultConflictError()
+                        _require_fields(saved, expected)
                     self._analysis_guard(identity, required=True, writable=True, token=token)
                     _workflow_execution_guard(identity, self._workflow_execution)
                     return
@@ -630,14 +1032,22 @@ class WorkflowResultStore:
 
     def _write_analysis_lifecycle(self, record, *, previous=None):
         """Admit first-use guards and request registration behind the run fence."""
+        orchestration = self._check_orchestration_execution(record, writable=True)
+        if orchestration is not None and record.get("token") != orchestration.token:
+            raise AnalysisWorkUnitConflictError()
+        if orchestration is not None:
+            record = {**record, "execution_claim_id": orchestration.claim_id}
         execution = _workflow_execution_guard(record, self._workflow_execution)
         if execution is None:
             if previous is None:
-                return self.container.create_item(body=record)
-            return self.container.replace_item(
-                item=record["id"], body=record, etag=previous["_etag"],
-                match_condition=MatchConditions.IfNotModified,
-            )
+                saved = self.container.create_item(body=record)
+            else:
+                saved = self.container.replace_item(
+                    item=record["id"], body=record, etag=previous["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            self._check_orchestration_execution(record, writable=True)
+            return saved
         operation = (
             ("create", (record,)) if previous is None else
             ("replace", (record["id"], record), {"if_match_etag": previous["_etag"]})
@@ -866,6 +1276,12 @@ class WorkflowResultStore:
                     return
                 if token is not None and guard.get("token") != token:
                     raise AnalysisWorkUnitConflictError()
+                if (
+                    token is not None and identity.get("scope_type") == "orchestration"
+                    and "execution_claim_id" in guard
+                    and self._check_orchestration_execution(identity) is None
+                ):
+                    raise AnalysisWorkUnitConflictError()
                 stopped = {key: value for key, value in guard.items() if not key.startswith("_")}
                 stopped.update(token=None, stopped=True, stop_reason=reason)
             else:
@@ -952,6 +1368,7 @@ class WorkflowResultStore:
                 pass
 
     def _read_chunk(self, identity, reference, manifest, index):
+        self._check_orchestration_execution(identity)
         record_id = _record_id(identity, reference, "chunk", index)
         record = self.container.read_item(item=record_id, partition_key=identity["run_id"])
         size = min(manifest["chunk_size_bytes"], reference["size_bytes"] - index * manifest["chunk_size_bytes"])
@@ -969,6 +1386,7 @@ class WorkflowResultStore:
         payload = payload.encode("ascii")
         if len(payload) != size or _sha256(payload) != record.get("payload_sha256"):
             raise WorkflowResultIntegrityError("Stored workflow result chunk size or digest does not match.")
+        self._check_orchestration_execution(identity)
         return payload
 
     def load(self, workflow, run_id, task_id, reference, **selectors):
@@ -994,6 +1412,7 @@ class WorkflowResultStore:
             )
         payload = bytearray()
         for chunk in chunks:
+            self._check_orchestration_execution(identity)
             payload.extend(chunk)
             if len(payload) > reference["size_bytes"]:
                 raise WorkflowResultIntegrityError("Stored workflow result size does not match.")
@@ -1004,6 +1423,7 @@ class WorkflowResultStore:
             raise WorkflowResultIntegrityError("Stored workflow result is not a valid JSON envelope.") from None
         if not isinstance(result, dict):
             raise WorkflowResultIntegrityError("Stored workflow result is not a JSON object.")
+        self._check_orchestration_execution(identity)
         return result
 
     def read_page(self, workflow, run_id, task_id, reference, *, offset=0, limit=DEFAULT_PAGE_BYTES, **selectors):
@@ -1059,6 +1479,7 @@ class WorkflowResultStore:
             content = payload.decode("ascii")
         except UnicodeDecodeError:
             raise WorkflowResultIntegrityError("Stored workflow result page is not canonical JSON bytes.") from None
+        self._check_orchestration_execution(identity)
         return {
             "content": content,
             "offset": offset,

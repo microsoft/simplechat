@@ -1,6 +1,10 @@
 // OrchestrationRunView.tsx
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
+import { OrchestrationResultBindings } from './OrchestrationResultBindings';
+import { OrchestrationExportCatalog } from './OrchestrationExportCatalog';
+import { OrchestrationPlannedFile } from './OrchestrationPlannedFile';
+import { OrchestrationOutputs } from './OrchestrationOutputs';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -32,24 +36,28 @@ import {
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     DOCUMENT_ARRAY_FIELDS,
+    describeInputBinding,
+    groupStepsForDisplay,
     orderStepsForDisplay,
+    planBindingIssues,
     planRequiresApproval,
+    stepDisableExplanation,
     stepDocumentIds,
+    stepRoleLabel,
     stepRemovableDocumentIds,
     TERMINAL_CAPABILITY_ID,
 } from '../../lib/orchestrationPlan';
-import { ORCHESTRATION_PHASES } from '../../lib/orchestration';
 import type {
     CostClass,
     Json,
     OrchestrationPlan,
     PlanEdits,
-    OrchestrationPhase,
     OrchestrationPlanAction,
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
 import { useDocumentTitles } from '../../lib/documentTitles';
+import { plannedFileSpecification, type OrchestrationExportFormat } from '../../lib/orchestrationExports';
 
 const PREVIEW_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
 const PREVIEW_RUNTIME: StepRuntimeMap = {};
@@ -57,6 +65,8 @@ const PREVIEW_RUNTIME: StepRuntimeMap = {};
 const statusTone: Record<StepStatus, string> = {
     pending: 'bg-surface-3 text-text-3',
     running: 'bg-accent-soft text-accent',
+    waiting: 'bg-warn-soft text-warn',
+    partial: 'bg-warn-soft text-warn',
     completed: 'bg-ok-soft text-ok',
     failed: 'bg-danger-soft text-danger',
     skipped: 'bg-surface-3 text-text-3',
@@ -67,13 +77,6 @@ const costTone: Record<CostClass, string> = {
     low: 'text-text-3',
     medium: 'text-warn',
     high: 'text-danger',
-};
-
-/** The heading shown above each phase's steps. Presentation copy, so it lives with the view. */
-const phaseLabels: Record<OrchestrationPhase, string> = {
-    knowledge: 'Gathering knowledge',
-    reasoning: 'Reasoning',
-    output: 'Creating',
 };
 
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
@@ -116,12 +119,15 @@ export function OrchestrationRunView({
     turnId,
     previewPlan,
     previewRuntime,
+    exportCatalog,
 }: {
     conversationId: string;
     turnId: string;
     /** A display-only plan; history previews never replace the live execution target. */
     previewPlan?: OrchestrationPlan;
     previewRuntime?: StepRuntimeMap;
+    /** A supplied server catalog takes precedence over the saved run/editor projection. */
+    exportCatalog?: readonly OrchestrationExportFormat[];
 }) {
     const storedPlan = useOrchestrationStore((state) => selectPlan(state, conversationId, turnId));
     const storedEdits = useOrchestrationStore((state) => selectEdits(state, conversationId, turnId));
@@ -131,6 +137,7 @@ export function OrchestrationRunView({
     const canEdit = useOrchestrationStore((state) => selectCanEditPlan(state, conversationId, turnId));
     const editor = useOrchestrationStore((state) => selectPlanEditor(state, conversationId, turnId));
     const plan = previewPlan ?? storedPlan;
+    const savedRun = useOrchestrationStore((state) => plan ? state.runRecovery[plan.run_id] : undefined);
     const edits = previewPlan ? PREVIEW_EDITS : storedEdits;
     const stepRuntime = previewPlan ? previewRuntime ?? PREVIEW_RUNTIME : storedRuntime;
     const disableStep = useOrchestrationStore((state) => state.disableStep);
@@ -142,7 +149,7 @@ export function OrchestrationRunView({
     );
 
     const orderedSteps = useMemo(
-        () => (plan ? orderStepsForDisplay(plan.steps) : []),
+        () => (plan ? orderStepsForDisplay(plan.steps, plan.planner_contract_version) : []),
         [plan],
     );
 
@@ -197,54 +204,10 @@ export function OrchestrationRunView({
         [orderedSteps],
     );
 
-    // Steps grouped under their phase, in run order, so the list reads as "gather, then answer"
-    // rather than as a flat sequence. A step's phase is resolved from the capability menu when the
-    // plan does not carry one itself, so an older or persisted plan still groups correctly; a step
-    // whose phase cannot be resolved trails the known phases under no heading rather than vanishing
-    // from a plan the user is meant to be able to audit. The running number follows display order,
-    // so the steps still read 1..n across the groups.
-    const phaseGroups = useMemo(() => {
-        const phaseByCapability = new Map<string, string>();
-        for (const capability of capabilities ?? []) {
-            phaseByCapability.set(capability.id, capability.phase);
-        }
-        const resolvePhase = (step: OrchestrationStep): string =>
-            step.phase ?? phaseByCapability.get(step.capability_id) ?? '';
-
-        const buckets = new Map<string, OrchestrationStep[]>();
-        for (const step of orderedSteps) {
-            const resolved = resolvePhase(step);
-            const key = (ORCHESTRATION_PHASES as string[]).includes(resolved) ? resolved : '';
-            const list = buckets.get(key) ?? [];
-            list.push(step);
-            buckets.set(key, list);
-        }
-
-        const groups: Array<{
-            key: string;
-            label: string | null;
-            steps: Array<{ step: OrchestrationStep; number: number }>;
-        }> = [];
-        let counter = 0;
-        const pushGroup = (key: string, label: string | null, steps?: OrchestrationStep[]) => {
-            if (!steps || steps.length === 0) {
-                return;
-            }
-            groups.push({
-                key,
-                label,
-                steps: steps.map((step) => {
-                    counter += 1;
-                    return { step, number: counter };
-                }),
-            });
-        };
-        for (const phase of ORCHESTRATION_PHASES) {
-            pushGroup(phase, phaseLabels[phase], buckets.get(phase));
-        }
-        pushGroup('_unclassified', null, buckets.get(''));
-        return groups;
-    }, [orderedSteps, capabilities]);
+    const stepGroups = useMemo(
+        () => plan ? groupStepsForDisplay(plan, capabilities) : [],
+        [plan, capabilities],
+    );
 
     if (!plan) {
         return (
@@ -260,9 +223,13 @@ export function OrchestrationRunView({
     const editable = planRequiresApproval(plan) && !readOnly && !previewPlan && canEdit
         && !editor?.loading && !editor?.submitting && !editor?.state?.busy && !editor?.state?.pending;
     const disabledStepIds = new Set(edits.disabled_step_ids);
+    const bindingIssues = planBindingIssues(plan, edits);
+    const dependencyPlan = plan.planner_contract_version === 2;
 
     const renderStep = (step: OrchestrationStep, displayNumber: number) => {
         const isTerminal = step.capability_id === TERMINAL_CAPABILITY_ID;
+        const roleLabel = dependencyPlan ? stepRoleLabel(step) : null;
+        const disableExplanation = stepDisableExplanation(plan, step.step_id);
         const isAction = step.capability_id === 'action_invoke';
         const actionRef = (step.arguments as Record<string, unknown>).action_ref;
         const selectedAction = typeof actionRef === 'string' ? planInputActions.get(actionRef) : undefined;
@@ -275,7 +242,10 @@ export function OrchestrationRunView({
         const documents = step.capability_id === 'document_search' && explicitDocuments.length === 0
             ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
             : explicitDocuments;
-        const args = readableArguments(step);
+        const fileSpecification = dependencyPlan ? plannedFileSpecification(step) : null;
+        const args = readableArguments(step).filter(([key]) =>
+            !fileSpecification || !['file_name', 'output_format', 'profile', 'options'].includes(key),
+        );
         // A step can defer its documents to whatever an earlier step finds, so it may have
         // none of its own to show.
         const documentsFromStep = String(
@@ -287,6 +257,8 @@ export function OrchestrationRunView({
         return (
             <li
                 key={step.step_id}
+                data-step-id={step.step_id}
+                aria-label={`Step ${displayNumber}: ${step.title}`}
                 className={clsx(
                     'rounded-xl border border-edge p-3 transition-opacity',
                     willRun ? 'bg-surface-2' : 'bg-surface-sunken opacity-60',
@@ -304,6 +276,11 @@ export function OrchestrationRunView({
                             <span className="rounded-full bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-text-3">
                                 {isAction ? 'Use an action' : step.capability_id}
                             </span>
+                            {roleLabel ? (
+                                <span className="rounded-full border border-edge px-1.5 py-0.5 text-[11px] text-text-2">
+                                    {roleLabel}
+                                </span>
+                            ) : null}
                             <span className={clsx('text-[11px]', costTone[step.estimated_cost])}>
                                 {step.estimated_cost}
                             </span>
@@ -313,7 +290,7 @@ export function OrchestrationRunView({
                                     statusTone[status],
                                 )}
                             >
-                                {status}
+                                {status === 'running' && roleLabel ? stepRoleLabel(step, true) : status}
                             </span>
                             {stepRuntime[step.step_id]?.reused ? (
                                 <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">
@@ -356,13 +333,16 @@ export function OrchestrationRunView({
                                         <dt className="shrink-0 font-mono text-text-3">
                                             {key}
                                         </dt>
-                                        <dd className="min-w-0 truncate text-text-2" title={value}>
+                                        <dd className={clsx('min-w-0 text-text-2', dependencyPlan ? 'whitespace-pre-wrap break-all' : 'truncate')} title={value}>
                                             {value}
                                         </dd>
                                     </div>
                                 ))}
                             </dl>
                         ) : null}
+
+                        <OrchestrationPlannedFile plan={plan} step={step} />
+                        <OrchestrationResultBindings plan={plan} step={step} />
 
                         {documents.length > 0 ? (
                             <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -473,12 +453,17 @@ export function OrchestrationRunView({
                             ) : editable ? (
                                 <Toggle
                                     checked={willRun}
+                                    disabled={dependencyPlan && Boolean((willRun && disableExplanation) || !step.enabled)}
                                     onChange={(next) =>
                                         next
                                             ? enableStep(conversationId, turnId, step.step_id)
                                             : disableStep(conversationId, turnId, step)
                                     }
-                                    label={willRun ? 'Will run' : 'Skipped'}
+                                    label={dependencyPlan ? `Run ${step.title}` : willRun ? 'Will run' : 'Skipped'}
+                                    description={dependencyPlan
+                                        ? !step.enabled ? 'Disabled in the saved plan. Use Ask planner to change it.'
+                                        : willRun ? disableExplanation ?? undefined : 'Explicitly skipped in this plan edit.'
+                                        : undefined}
                                 />
                             ) : (
                                 <span className="text-[11px] text-text-3">
@@ -506,6 +491,11 @@ export function OrchestrationRunView({
             ) : null}
             <div>
                 <p className="text-sm font-medium text-text-1">{plan.intent.summary}</p>
+                {dependencyPlan ? (
+                    <p className="mt-1 text-xs text-text-3">
+                        Tasks follow their dependencies in the saved execution order. Roles can repeat.
+                    </p>
+                ) : null}
                 {plan.assumptions.length > 0 ? (
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-text-3">
                         {plan.assumptions.map((assumption, index) => (
@@ -515,14 +505,36 @@ export function OrchestrationRunView({
                 ) : null}
             </div>
 
-            {phaseGroups.map((group) => (
+            {dependencyPlan && plan.final_response !== undefined ? (
+                <p className="break-words text-xs text-text-2" aria-label="Final chat response binding">
+                    <strong>Final chat response:</strong> {describeInputBinding(plan, plan.final_response)}
+                </p>
+            ) : null}
+            {bindingIssues.length ? (
+                <div role="alert" className="alert rounded-xl border border-warn/30 bg-warn-soft p-3 text-xs text-warn">
+                    <p className="font-medium">Review required inputs before running</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {bindingIssues.map((issue) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                </div>
+            ) : null}
+            {dependencyPlan ? (
+                <OrchestrationExportCatalog
+                    catalog={exportCatalog ?? (editor?.state?.plan.run_id === plan.run_id
+                        ? editor.state.export_catalog : undefined) ?? savedRun?.export_catalog}
+                    conversationId={conversationId} runId={plan.run_id}
+                />
+            ) : null}
+            <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />
+
+            {stepGroups.map((group) => (
                 <section key={group.key} className="space-y-2">
                     {group.label ? (
-                        <p className="px-0.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+                        <h3 className="px-0.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
                             {group.label}
-                        </p>
+                        </h3>
                     ) : null}
-                    <ol className="space-y-2">
+                    <ol className="space-y-2" start={group.steps[0].number}>
                         {group.steps.map(({ step, number }) => renderStep(step, number))}
                     </ol>
                 </section>

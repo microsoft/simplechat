@@ -12,6 +12,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
 
+from content_screening import access as screening_access
 from content_screening.access import (
     PROVENANCE_FIELD,
     assert_document_available,
@@ -20,7 +21,10 @@ from content_screening.access import (
     document_provenance,
     guard_model_callable,
     public_document_payload,
+    raise_source_authority_error,
+    strict_source_authority_enabled,
 )
+from content_screening.contracts import SourceAuthorityUnverifiedError
 from config import (
     CLIENTS,
     cognitive_services_scope,
@@ -87,12 +91,22 @@ def _get_user_accessible_group_ids(user_id):
         return []
 
     try:
+        groups = get_user_groups(user_id)
+        if strict_source_authority_enabled() and (
+            not isinstance(groups, list) or any(
+                not isinstance(group, dict) or not isinstance(group.get("id"), str) or not group["id"].strip()
+                for group in groups
+            )
+        ):
+            raise SourceAuthorityUnverifiedError()
         return normalize_search_id_list([
             group.get("id")
-            for group in get_user_groups(user_id)
+            for group in groups
             if group.get("id")
         ])
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             f"[SEARCH_SERVICE] Failed to resolve authorized group ids: {exc}",
             extra={"user_id": user_id},
@@ -122,8 +136,15 @@ def _resolve_active_group_ids(user_id, active_group_ids=None, fallback_to_member
 
 def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
     try:
-        visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
+        visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        if strict_source_authority_enabled() and (
+            not isinstance(visible_ids, list) or any(not isinstance(value, str) or not value for value in visible_ids)
+        ):
+            raise SourceAuthorityUnverifiedError()
+        visible_workspace_ids = normalize_search_id_list(visible_ids)
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             f"[SEARCH_SERVICE] Failed to resolve visible public workspace ids: {exc}",
             extra={"user_id": user_id},
@@ -278,6 +299,8 @@ def _authorize_chat_upload_conversation(user_id, conversation_id):
     except CosmosResourceNotFoundError:
         return False
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             "[SEARCH_SERVICE] Failed to authorize chat upload conversation.",
             extra={"exception_type": type(exc).__name__},
@@ -287,6 +310,11 @@ def _authorize_chat_upload_conversation(user_id, conversation_id):
         )
         return False
 
+    if strict_source_authority_enabled() and (
+        not isinstance(conversation_item, dict) or conversation_item.get("id") != normalized_conversation_id
+        or not isinstance(conversation_item.get("user_id"), str)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
     return str(conversation_item.get("user_id") or "").strip() == normalized_user_id
 
 
@@ -341,6 +369,8 @@ def _resolve_chat_upload_context(
     except CosmosResourceNotFoundError:
         return None
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             "[SEARCH_SERVICE] Failed to resolve authorized chat upload context.",
             extra={"exception_type": type(exc).__name__},
@@ -350,6 +380,11 @@ def _resolve_chat_upload_context(
         )
         return None
 
+    if strict_source_authority_enabled() and (
+        not isinstance(message_item, dict) or message_item.get("id") != normalized_document_id
+        or not isinstance(message_item.get("role"), str)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
     role_name = str(message_item.get("role") or "").strip().lower()
     metadata = message_item.get("metadata", {}) or {}
     is_uploaded_image = role_name == "image" and bool(
@@ -415,8 +450,26 @@ def _resolve_chat_upload_context(
     }
 
 
+def _read_strict_document_context(document_id, user_id, group_id=None, public_workspace_id=None):
+    """Probe current authority without the legacy document reader's None-on-error fallback."""
+    try:
+        return screening_access._read_authorized_document(
+            document_id, user_id, group_id, public_workspace_id,
+            scope_type="personal" if group_id is None and public_workspace_id is None else None,
+        )
+    except PermissionError:
+        return None
+    except LookupError as error:
+        if type(error) is LookupError:
+            return None
+        raise_source_authority_error(error)
+    except Exception as error:
+        raise_source_authority_error(error)
+
+
 def _resolve_personal_document_context(document_id, user_id):
-    personal_document = get_document_record(
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
+    personal_document = reader(
         user_id=user_id,
         document_id=document_id,
     )
@@ -432,8 +485,9 @@ def _resolve_personal_document_context(document_id, user_id):
 
 
 def _resolve_group_document_context(document_id, user_id, authorized_group_ids, context_validator=None):
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
     for group_id in authorized_group_ids or []:
-        group_document = get_document_record(
+        group_document = reader(
             user_id=user_id,
             document_id=document_id,
             group_id=group_id,
@@ -459,8 +513,9 @@ def _resolve_public_document_context(
     authorized_public_workspace_ids,
     context_validator=None,
 ):
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
     for public_workspace_id in authorized_public_workspace_ids or []:
-        public_document = get_document_record(
+        public_document = reader(
             user_id=user_id,
             document_id=document_id,
             public_workspace_id=public_workspace_id,

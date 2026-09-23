@@ -4,7 +4,7 @@ title: "Choose models for orchestration"
 description: "Use explicit per-step Auto selection or pin a model while keeping ordinary chat selections separate."
 section: "Guides"
 audience: user
-version: "0.261.126"
+version: "0.261.131"
 ---
 
 # Choose models for orchestration
@@ -21,6 +21,11 @@ and publish usable connections with suitable catalog profiles.
 
 This is not the **Auto** approval preference: approval controls whether a plan
 runs automatically; model Auto controls which model each step uses.
+
+When an administrator enables the **Gather / Reason / Render harness (preview)**,
+Auto requests still use standard orchestration, where these per-step bindings are
+enforced. Since **0.261.131**, harness plans require a specific model selection;
+the server never shows harness bindings that its executor would not apply.
 
 ## Select and review
 

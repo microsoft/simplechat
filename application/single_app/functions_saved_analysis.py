@@ -948,6 +948,25 @@ class SavedAnalysisInput:
     def recheck(self):
         self.access = self.reauthorize()
 
+    def read_report_text(self):
+        """Read the complete retained text output, never the presentation preview."""
+        self.recheck()
+        output = (self.manifest.get("outputs") or {}).get("text") or {}
+        reference = output.get("result_ref")
+        if output.get("kind") != "text" or not isinstance(reference, Mapping):
+            raise ValueError("The saved analysis has no complete report text.")
+        section = self.load(reference)
+        if (
+            not isinstance(section, Mapping)
+            or section.get("contract_version") != self.manifest.get("contract_version")
+            or section.get("producer") != self.manifest.get("identity")
+            or section.get("output_name") != "text" or section.get("kind") != "text"
+            or not isinstance(section.get("value"), str)
+        ):
+            raise ValueError("The saved report text does not match its analysis result.")
+        self.recheck()
+        return section["value"]
+
     def metadata(self):
         validation = public_analysis_validation(self.manifest.get("validation"))
         coverage = self.manifest.get("coverage") or {}

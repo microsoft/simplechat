@@ -40,6 +40,7 @@ from functions_public_workspaces import get_user_visible_public_workspace_ids_fr
 from functions_collaboration import build_conversation_participation_context
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
 from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
+from functions_orchestration_artifacts import is_orchestration_artifact_source
 from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
     assert_generated_chat_artifact_is_published_for_user,
@@ -243,11 +244,17 @@ def _serve_chat_artifact_download(user_id, conversation_id, message_id):
             raise LookupError('The artifact content changed.')
 
         file_name = (active_document or {}).get('file_name') or _resolve_generated_artifact_file_name(current)
-        content_type = {
-            '.csv': 'text/csv; charset=utf-8',
-            '.md': 'text/markdown; charset=utf-8',
-            '.json': 'application/json',
-        }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
+        if active_document is None and is_orchestration_artifact_source(
+            (current.get('metadata') or {}).get('generated_artifact_source'),
+        ):
+            authorized = authorize_generated_artifact_source(user_id, current)
+            content_type = authorized['descriptor']['media_type']
+        else:
+            content_type = {
+                '.csv': 'text/csv; charset=utf-8',
+                '.md': 'text/markdown; charset=utf-8',
+                '.json': 'application/json',
+            }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
         response = Response(
             iter(lambda: content.read(65536), b'') if streamed else content,
             content_type=content_type, headers={

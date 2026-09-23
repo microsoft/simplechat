@@ -805,8 +805,9 @@ export interface NavGroup<TItem> {
 export interface OrchestrationCapability {
     id: string;
     label: string;
-    /** The phase this capability runs in (knowledge, reasoning, output). A string because the registry is server-owned. */
-    phase: string;
+    /** Only legacy descriptors carry phases; v2 descriptors carry server-owned roles instead. */
+    phase?: string;
+    role?: string;
     summary: string;
     cost: 'low' | 'medium' | 'high';
     terminal: boolean;

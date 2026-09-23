@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.115
+Version: 0.261.127
 Implemented in: 0.261.102
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
@@ -342,10 +342,15 @@ class EditorApi:
                     self.revise(route, editor, body, behavior)
             elif operation == "steps":
                 route.fulfill(json={"steps": []})
-            elif self.delay_preview:
-                self.waiting.append(lambda: route.fulfill(json={"run": {"plan": record}}))
             else:
-                route.fulfill(json={"run": {"plan": record}})
+                payload = {"run": {
+                    "run_id": record["run_id"], "conversation_id": record["conversation_id"],
+                    "turn_id": record["turn_id"], "status": record["status"], "plan": copy.deepcopy(record),
+                }}
+                if self.delay_preview:
+                    self.waiting.append(lambda: route.fulfill(json=payload))
+                else:
+                    route.fulfill(json=payload)
             return
         if path == "/favicon.ico":
             route.fulfill(status=204)

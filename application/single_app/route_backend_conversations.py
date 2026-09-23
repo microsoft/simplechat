@@ -3,6 +3,9 @@
 import logging
 import math
 import re
+from functools import partial
+
+from azure.core.exceptions import AzureError
 
 from content_screening.access import build_available_document_response, public_history_messages
 from content_screening.contracts import ScreeningError
@@ -74,6 +77,15 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 from functions_orchestration_recovery import cleanup_conversation_checkpoints
+from functions_orchestration_artifacts import (
+    ORCHESTRATION_ARTIFACT_KEY_PREFIX,
+    ORCHESTRATION_ARTIFACT_KIND,
+    is_orchestration_artifact_source,
+)
+from functions_orchestration_external_configuration import ExternalConfigurationServiceError
+from functions_orchestration_external_identity import ExternalIdentityServiceError
+from functions_orchestration_output_store import OutputError, OutputStorageError
+from functions_orchestration_result_contracts import ResultContractError
 from functions_saved_analysis import (
     cleanup_chat_analysis_conversation,
     cleanup_chat_analysis_messages,
@@ -81,6 +93,30 @@ from functions_saved_analysis import (
     sanitize_saved_analysis_messages,
 )
 from utils_cache import invalidate_personal_search_cache
+
+
+def _is_retained_orchestration_file(message):
+    """Leave retained file records and bytes to conditional output cleanup."""
+    if not isinstance(message, dict) or message.get('role') != 'file':
+        return False
+    metadata = message.get('metadata')
+    if not isinstance(metadata, dict):
+        return False
+    key = metadata.get('generated_artifact_idempotency_key')
+    return (
+        is_orchestration_artifact_source(metadata.get('generated_artifact_source'))
+        or metadata.get('generated_artifact_origin') == ORCHESTRATION_ARTIFACT_KIND
+        or isinstance(key, str) and key.startswith(ORCHESTRATION_ARTIFACT_KEY_PREFIX)
+    )
+
+
+def _enroll_retained_orchestration_outputs(user_id, conversation_id, run_id):
+    """Initialize deletion-only resources only for admitted retained outputs."""
+    # Legacy conversations must not construct harness clients during deletion.
+    from functions_orchestration_bootstrap import build_orchestration_cleanup_service
+
+    return build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup(run_id)
+
 
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
@@ -1097,7 +1133,22 @@ def register_route_backend_conversations(bp):
 
             all_items = sanitize_saved_analysis_messages(all_items, user_id)
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
-            all_items = public_history_messages(all_items, user_id)
+            try:
+                all_items = public_history_messages(all_items, user_id)
+            except (
+                ScreeningError, OutputError, OutputStorageError, ResultContractError,
+                ExternalIdentityServiceError, ExternalConfigurationServiceError,
+                AzureError, TimeoutError, ConnectionError,
+            ) as error:
+                log_event(
+                    '[ORCHESTRATION_RUNS] Current file history could not be verified.',
+                    extra={'conversation_id': conversation_id, 'error_type': type(error).__name__},
+                    level=logging.ERROR,
+                )
+                return jsonify({
+                    'error': 'Current file status is unavailable.',
+                    'code': 'output_status_unavailable',
+                }), 503
 
             messages = hydrate_image_messages(
                 all_items,
@@ -1524,6 +1575,8 @@ def register_route_backend_conversations(bp):
                 lambda: _authorize_personal_conversation_read(user_id, conversation_id),
                 message_container=cosmos_messages_container,
                 conversation_container=cosmos_conversations_container,
+                output_cleanup=partial(_enroll_retained_orchestration_outputs, user_id, conversation_id),
+                retain_committed=archiving_enabled,
             )
         except Exception as exc:
             log_event(
@@ -1553,6 +1606,8 @@ def register_route_backend_conversations(bp):
             partition_key=conversation_id
         ))
         cleanup_chat_analysis_conversation(conversation_id, conversation_item.get('user_id'), results)
+        direct_messages = [message for message in results if not _is_retained_orchestration_file(message)]
+        direct_message_ids = {message['id'] for message in direct_messages}
 
         if delete_workspace_document_ids:
             try:
@@ -1580,7 +1635,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
+            delete_blob_backed_chat_message_files(direct_messages, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1588,7 +1643,8 @@ def register_route_backend_conversations(bp):
                 archived_doc["archived_at"] = datetime.utcnow().isoformat()
                 cosmos_archived_messages_container.upsert_item(archived_doc)
 
-            cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
+            if doc['id'] in direct_message_ids:
+                cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
 
         # Archive/delete thoughts for conversation
         user_id_for_thoughts = conversation_item.get('user_id')
@@ -1664,6 +1720,8 @@ def register_route_backend_conversations(bp):
                     lambda: _authorize_personal_conversation_read(user_id, conversation_id),
                     message_container=cosmos_messages_container,
                     conversation_container=cosmos_conversations_container,
+                    output_cleanup=partial(_enroll_retained_orchestration_outputs, user_id, conversation_id),
+                    retain_committed=archiving_enabled,
                 )
                 
                 # Archive if enabled
@@ -1689,9 +1747,13 @@ def register_route_backend_conversations(bp):
                     partition_key=conversation_id
                 ))
                 cleanup_chat_analysis_conversation(conversation_id, user_id, messages)
+                direct_messages = [
+                    message for message in messages if not _is_retained_orchestration_file(message)
+                ]
+                direct_message_ids = {message['id'] for message in direct_messages}
 
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
+                    delete_blob_backed_chat_message_files(direct_messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:
@@ -1699,7 +1761,8 @@ def register_route_backend_conversations(bp):
                         archived_message["archived_at"] = datetime.utcnow().isoformat()
                         cosmos_archived_messages_container.upsert_item(archived_message)
                     
-                    cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
+                    if message['id'] in direct_message_ids:
+                        cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
 
                 # Archive/delete thoughts for conversation
                 if archiving_enabled:

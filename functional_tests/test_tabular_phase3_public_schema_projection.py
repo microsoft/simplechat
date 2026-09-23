@@ -2,7 +2,7 @@
 # test_tabular_phase3_public_schema_projection.py
 """
 Functional test for Phase 3 public schema projection and passthrough safety.
-Version: 0.250.201
+Version: 0.261.127
 Implemented in: 0.250.173; request-order and unchanged-copy guard compatibility updated in 0.250.182; exhaustive Markdown updated in 0.250.201
 
 This test ensures generated tabular artifacts expose only the persisted public
@@ -76,6 +76,7 @@ def load_tabular_export_namespace(checkpoint_rows):
         "_get_tabular_run_internal_checkpoint_schema",
         "_get_tabular_run_serialized_public_schema",
         "_write_ordered_output_stream",
+        "iter_tabular_output_records",
         "_build_structured_export_preview_rows",
     }
     selected_nodes = [
