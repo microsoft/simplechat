@@ -337,6 +337,39 @@ class ApiRequest:
     body: object
 
 
+def personal_scope_leak(path, query):
+    """Classify a request from a shared-workspace (group or public) page as a personal-scope leak.
+
+    A group or public workspace page must resolve every side resource through a scoped route. Any
+    read of a personal resource that reaches a shared-workspace fixture is a leak by definition, so
+    the fixture records it and refuses to answer rather than silently serving personal data -- the
+    base fixture answers these routes for personal pages, which is exactly why two personal reads
+    once passed every group suite. `/api/user/settings` is the shared theme and preference store,
+    not personal workspace data, so it is the sole `/api/user` exemption. The classification is a
+    short human-readable reason, or None when the request is not a personal-scope read.
+    """
+    if path.startswith("/api/user/") and path != "/api/user/settings":
+        return "personal user resource"
+    if path.startswith("/api/file-sync/personal/"):
+        return "personal file-sync source"
+    if path.startswith("/api/workspace-identities/personal/"):
+        return "personal identity list"
+    if path == "/api/plugins/mcp/preconfigurations":
+        return "personal MCP preconfigurations"
+    # Personal prompts and personal documents are the caller's own workspace resources; a shared
+    # page reaches them only through a scoped route (`/api/groups/<g>/...`, `/api/group_documents`,
+    # `/api/public-workspaces/<id>/documents`), never these personal prefixes.
+    if path == "/api/prompts" or path.startswith("/api/prompts/"):
+        return "personal prompts"
+    if path == "/api/documents" or path.startswith("/api/documents/"):
+        return "personal documents"
+    if query.get("agent_scope") == ["personal"]:
+        return "personal agent scope"
+    if query.get("scope") == ["personal"]:
+        return "personal scope"
+    return None
+
+
 class WorkspaceAuthoringFixture:
     """A closed synthetic server, not a replacement implementation of the UI."""
 

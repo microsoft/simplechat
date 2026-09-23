@@ -79,6 +79,15 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group agent management hint (M4C). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit or delete group agents, computed from role and status
+     * exactly like action_management. Absence means "read-only", never an empty grant.
+     */
+    agent_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

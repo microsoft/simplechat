@@ -138,7 +138,8 @@ export function queueCreatedWorkspaceAction(
     action: ActionConfiguration,
     workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
 ): void {
-    if (!agentEditorReturnPath(returnPath)) throw new Error('Invalid agent editor return path.');
+    const groupId = workspaceScope.kind === 'group' ? workspaceScope.id : undefined;
+    if (!agentEditorReturnPath(returnPath, groupId)) throw new Error('Invalid agent editor return path.');
     createdActions.set(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]), action);
     syncDraftUnloadProtection();
 }

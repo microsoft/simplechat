@@ -26,7 +26,10 @@ import { GroupTagsSection } from './workspace/TagsSection';
 import { GroupPromptsSection } from './workspace/PromptsSection';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
+import { AgentsSection } from './workspace/AgentsSection';
+import { AgentEditorPage } from './workspace/AgentEditorPage';
 import { createGroupActionWorkbench } from '../lib/actionWorkbench';
+import { createGroupAgentWorkbench } from '../lib/agentWorkbench';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -140,11 +143,12 @@ export function GroupWorkspacePage() {
         return {
             id, label, icon, group, blurb: GROUP_SECTION_BLURBS[id],
             availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' || id === 'prompts' ? undefined
+                : id === 'agents' ? (context?.sections.agents.enabled ? undefined : 'Classic')
                 : id === 'actions' ? (context?.sections.actions.enabled ? undefined
                     : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
                 : 'Classic',
         };
-    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled]);
+    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
@@ -164,6 +168,19 @@ export function GroupWorkspacePage() {
             ? createGroupActionWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.action_management)
             : null,
         [context?.scope.id, context?.workspace.name, context?.sections.actions.enabled, context?.action_management],
+    );
+    // Native group agents render only when the workspace advertises the Agents section as available
+    // (context.sections.agents.enabled), which requires the group agent capability. A read-only
+    // member has an available section with an empty agent_management hint, so they still get the
+    // native read-only collection. When the section is unavailable it falls through to Classic. The
+    // agent editor's action candidates and "New action" handoff reuse the group action adapter, or
+    // stay dark when group actions are unavailable -- never falling back to a personal action.
+    const nativeAgents = Boolean(ready && section === 'agents' && selected?.enabled && context.sections.agents.enabled);
+    const groupAgentAdapter = useMemo(
+        () => context?.sections.agents.enabled
+            ? createGroupAgentWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.agent_management, groupActionAdapter)
+            : null,
+        [context?.scope.id, context?.workspace.name, context?.sections.agents.enabled, context?.agent_management, groupActionAdapter],
     );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
@@ -278,7 +295,7 @@ export function GroupWorkspacePage() {
 
     const error = notice || state.error;
     return (
-        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts || nativeActions}>
+        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts || nativeActions || nativeAgents}>
             {error ? <div role="alert" className="mb-4 space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
                 <p>{error}</p>
                 {state.needsReconciliation ? <GlassButton size="sm" disabled={state.loading || state.activating} onClick={() => void recover()}>Refresh workspace selection</GlassButton>
@@ -307,7 +324,7 @@ export function GroupWorkspacePage() {
                     action={<a href="/profile?tab=groups" className="text-sm text-accent underline">Find or manage your groups in classic</a>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
-                    className={nativeDocuments || nativePrompts || nativeActions ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+                    className={nativeDocuments || nativePrompts || nativeActions || nativeAgents ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
                     {!section ? (
                         <>
                             <dl className="space-y-2 text-sm text-text-2">
@@ -358,6 +375,10 @@ export function GroupWorkspacePage() {
                                             allowManage={context.native_delegation.can_manage} interactionDisabled={accessUnconfirmed}
                                             onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
                                     </>
+                                ) : section === 'agents' && resourceId && groupAgentAdapter ? (
+                                    <AgentEditorPage adapter={groupAgentAdapter} />
+                                ) : section === 'agents' && !resourceId && groupAgentAdapter ? (
+                                    <div className="min-h-0 flex-1"><AgentsSection actionsEnabled={groupAgentAdapter.canCreateActions} adapter={groupAgentAdapter} /></div>
                                 ) : section === 'prompts' && !resourceId ? (
                                     <GroupPromptsSection context={context} />
                                 ) : (

@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { useBlocker, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Lock, Save } from 'lucide-react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
-import { agentEditorReturnPath, isRecord } from '../../lib/workspaceAuthoring';
+import { isActionEditorNewPath, isAgentEditorPath, isRecord } from '../../lib/workspaceAuthoring';
 
 export interface WorkspaceEditorSection {
     id: string;
@@ -76,11 +76,11 @@ export function WorkspaceEditorFrame({
         if (currentEditorTransition && state.workspaceEditorSaved === true
             && (nextLocation.pathname === backTo || /^\/workspace\/(?:agents|actions)(?:\/|$)/.test(nextLocation.pathname))) return false;
         if (currentEditorTransition && state.preserveWorkspaceDraft === true) {
-            const goingToAction = nextLocation.pathname === '/workspace/actions/new' &&
-                agentEditorReturnPath(currentLocation.pathname) &&
+            const goingToAction = isActionEditorNewPath(nextLocation.pathname) &&
+                isAgentEditorPath(currentLocation.pathname) &&
                 new URLSearchParams(nextLocation.search).get('returnTo') === currentLocation.pathname;
-            const returningToAgent = currentLocation.pathname === '/workspace/actions/new' &&
-                agentEditorReturnPath(nextLocation.pathname) &&
+            const returningToAgent = isActionEditorNewPath(currentLocation.pathname) &&
+                isAgentEditorPath(nextLocation.pathname) &&
                 new URLSearchParams(currentLocation.search).get('returnTo') === nextLocation.pathname;
             if (goingToAction || returningToAgent) return false;
         }

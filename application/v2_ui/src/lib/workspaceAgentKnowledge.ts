@@ -52,7 +52,23 @@ export const USER_KNOWLEDGE_ACTIONS = ['search', 'analyze', 'compare'] as const;
 export const KNOWLEDGE_LIMITS = { documents: 200, tags: 50, sources: 50, urls: 50 };
 
 export async function fetchAgentKnowledgeCatalog(signal?: AbortSignal): Promise<AgentKnowledgeCatalog> {
-    const response = await api.get<AgentKnowledgeCatalog>('/api/agents/assigned-knowledge/catalog?agent_scope=personal', signal);
+    return validateAgentKnowledgeCatalog(
+        await api.get<AgentKnowledgeCatalog>('/api/agents/assigned-knowledge/catalog?agent_scope=personal', signal),
+    );
+}
+
+/**
+ * The group's own assigned-knowledge catalogue, read from the group-scoped route so a group agent
+ * never pulls the caller's personal sources. The route takes no query -- the group is in the path --
+ * and the shape is validated exactly like the personal catalogue, throwing on drift.
+ */
+export async function fetchGroupAgentKnowledgeCatalog(groupId: string, signal?: AbortSignal): Promise<AgentKnowledgeCatalog> {
+    return validateAgentKnowledgeCatalog(
+        await api.get<AgentKnowledgeCatalog>(`/api/groups/${encodeURIComponent(groupId)}/agent-knowledge`, signal),
+    );
+}
+
+function validateAgentKnowledgeCatalog(response: AgentKnowledgeCatalog): AgentKnowledgeCatalog {
     if (!response || !Array.isArray(response.sources) || !Array.isArray(response.documents) || !Array.isArray(response.tags)) {
         throw new Error('The assigned knowledge catalogue returned an invalid response.');
     }
@@ -144,11 +160,15 @@ export function selectedKnowledgeSources(config: AgentKnowledgeConfiguration): s
     ];
 }
 
-export function toggleAgentKnowledgeSource(draft: AgentConfiguration, source: AgentKnowledgeSource, enabled: boolean): AgentConfiguration {
+export function toggleAgentKnowledgeSource(
+    draft: AgentConfiguration, source: AgentKnowledgeSource, enabled: boolean,
+    allowedScopes: readonly string[] = ['personal', 'public'],
+): AgentConfiguration {
     const config = readAgentKnowledge(draft);
-    if (!['personal', 'public'].includes(source.scope)) throw new Error('Personal agents can assign only authorized personal and public sources.');
+    if (!allowedScopes.includes(source.scope)) throw new Error('This agent can assign only its authorized knowledge sources.');
     const scopes = { ...config.scopes };
     if (source.scope === 'personal') scopes.personal = enabled;
+    else if (source.scope === 'group') scopes.group_ids = toggleString(scopes.group_ids, source.id, enabled);
     else scopes.public_workspace_ids = toggleString(scopes.public_workspace_ids, source.id, enabled);
     return updateAgentKnowledge(draft, { scopes });
 }

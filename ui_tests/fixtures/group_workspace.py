@@ -20,7 +20,8 @@ import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
     OWNER_ID, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
-    _editor_candidate, _set_pointer, action_record, connect_options,  # noqa: F401
+    _editor_candidate, _set_pointer, action_record, agent_record, connect_options,  # noqa: F401
+    editor_options, personal_scope_leak,
 )
 
 
@@ -76,6 +77,114 @@ def action_management(role, status):
     return {"schema_version": 1, "operations": []}
 
 
+# The native group agent model, mirrored from the M4C backend so both the shell fixture and the
+# dedicated agent fixture answer create, edit and delete identically. `agent_actions` is the
+# read-only per-agent projection: `edit`/`delete` gate the affordances and a conditional write, and
+# `chat` gates the use-in-chat link. It is never accepted back in a write.
+AGENT_OPERATIONS = ("create", "edit", "delete")
+AGENT_ACTIONS = ("edit", "delete", "chat")
+
+# A group agent may carry a single inline custom-connection credential, stored under this pointer.
+# The projector masks it and the editor round-trips the mask, exactly as an action's /auth/key.
+AGENT_SECRET_POINTER = "/other_settings/connection/api_key"
+
+
+def agent_secret_paths(record):
+    """The secret pointers a seeded or saved agent registers -- its connection key, when present."""
+    value = record.get("other_settings", {}).get("connection", {}).get("api_key")
+    return [AGENT_SECRET_POINTER] if isinstance(value, str) and value and value != SECRET_MASK else []
+
+
+def group_agent(group_id, identifier, name, *, actions=AGENT_ACTIONS, **overrides):
+    """One group agent as the group projector returns it before masking."""
+    record = agent_record(
+        identifier,
+        name=name.lower().replace(" ", "-"),
+        display_name=name,
+        description=f"Group assistant for {name}.",
+        actions_to_load=[],
+    )
+    record.pop("user_id", None)
+    record.update({
+        "group_id": group_id,
+        "is_group": True,
+        "is_global": False,
+        "agent_actions": list(actions),
+    })
+    record.update(copy.deepcopy(overrides))
+    return record
+
+
+def agent_management(role, status):
+    """The agent management hint, computed from policy exactly like `action_management`."""
+    if role in WRITER_ROLES and status == "active":
+        return {"schema_version": 1, "operations": list(AGENT_OPERATIONS)}
+    return {"schema_version": 1, "operations": []}
+
+
+GROUP_FOUNDRY_ENDPOINT_ID = "group-foundry-connection"
+GLOBAL_FOUNDRY_ENDPOINT_ID = "global-foundry-connection"
+
+
+def group_agent_options(group_id, *, can_author=True, template_submission=True):
+    """The group agent editor options.
+
+    Derived from the shared editor options but carrying no personal endpoint permissions: every
+    `allow_user_*` / `allow_personal_*` flag is dropped and replaced with the group-scoped
+    custom-endpoint flag, so the editor's custom-connection controls read the group's own policy and
+    the options response proves it came from the group route rather than a personal-scope read.
+
+    A member cannot author, so the server withholds every model endpoint and the read-only editor
+    shows neutral "Uses a configured model" copy rather than personal authoring guidance. A manager
+    additionally receives two Foundry connections that prove the discovery gate: a group-scoped one
+    whose discovery route resolves the account's active group -- for which the editor offers no
+    discovery -- and a global one with no group dependency, for which discovery is kept.
+
+    `agent_template_submission_allowed` is always present, computed server-side for the caller, so
+    the group template panel gates on it rather than on the absent personal submission flag.
+    """
+    options = copy.deepcopy(editor_options())
+    settings = options["settings"]
+    for key in list(settings):
+        if key.startswith("allow_user_") or key.startswith("allow_personal_"):
+            settings.pop(key)
+    settings["allow_group_custom_endpoints"] = True
+    settings["agent_template_submission_allowed"] = bool(can_author and template_submission)
+    if not can_author:
+        options["model_endpoints"] = []
+        return options
+    options["model_endpoints"].extend([
+        {"id": GROUP_FOUNDRY_ENDPOINT_ID, "name": "Group Foundry connection", "provider": "aifoundry",
+         "enabled": True, "scope": "group", "connection": {}, "models": []},
+        {"id": GLOBAL_FOUNDRY_ENDPOINT_ID, "name": "Global Foundry connection", "provider": "aifoundry",
+         "enabled": True, "scope": "global", "connection": {}, "models": []},
+    ])
+    return options
+
+
+def group_agent_knowledge_catalog(group_id):
+    """The group's own assigned-knowledge catalogue: group and public sources, never personal."""
+    return {
+        "sources": [
+            {"scope": "group", "id": group_id, "label": "This group's workspace"},
+            {"scope": "public", "id": "public-handbook", "label": "Published handbook"},
+        ],
+        "documents": [
+            {
+                "id": f"{group_id}-brief", "title": "Group review brief",
+                "file_name": "group-brief.pdf", "scope": "group", "source_id": group_id,
+                "source_name": "This group's workspace", "tags": ["Finance"],
+            },
+            {
+                "id": "public-guide", "title": "Public review guide",
+                "file_name": "review-guide.pdf", "scope": "public", "source_id": "public-handbook",
+                "source_name": "Published handbook", "tags": ["Finance", "Operations"],
+            },
+        ],
+        "tags": [{"name": "Finance", "count": 2}, {"name": "Operations", "count": 1}],
+    }
+
+
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID):
     manager = role in ("Owner", "Admin", "DocumentManager")
     automation = role in ("Owner", "Admin")
@@ -103,6 +212,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "role": role, "status": status, "can_manage_workspace": automation,
         "sections": sections,
         "action_management": action_management(role, status),
+        "agent_management": agent_management(role, status),
         "native_delegation": {
             "group": "automation", "enabled": readable,
             "reason": None if readable else "This group is inactive.",
@@ -135,6 +245,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "group-b": group_context("group-b", "Read-only group", role="User"),
         }
         self.denied_groups = set()
+        # Groups whose server-computed template-submission gate is off despite a manager viewer, so a
+        # manager who still sees no submit button is proven, not just an incidental member read-only.
+        self.template_submission_denied = set()
+        # The submission decision of the last group options served, so a POST /api/agent-templates
+        # from a group page whose gate is off is recorded as unexpected rather than answered.
+        self._template_submission_allowed = True
         self.delegation_manage = True
         self.group_actions = {}
         self.group_agents = {}
@@ -145,6 +261,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_actions = {}
         self.native_secret_paths = {}
         self.native_revisions = {}
+        # Native group agent state, again kept apart from the legacy `group_agents` delegation store
+        # that feeds the Call agent manager. Agents allocate their own created counter and revisions.
+        self.created_agent_counter = 0
+        self.native_agents = {}
+        self.native_agent_secret_paths = {}
+        self.native_agent_revisions = {}
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -172,6 +294,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 group_action(group_id, f"{group_id}-connector", "Shared connector",
                              auth={"type": "none"}),
             ])
+            # One native agent per group so the production Agents page also renders a real
+            # collection. It stays distinct from the legacy "Local caller" delegation agent, so no
+            # locator matches in both the native list and the Call agent manager.
+            self._seed_agents(group_id, [
+                group_agent(group_id, f"{group_id}-assistant", "Group assistant"),
+            ])
 
     def _bootstrap(self):
         payload = super()._bootstrap()
@@ -198,20 +326,43 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
-        if path in ("/api/user/agent/settings", "/api/plugins/mcp/preconfigurations"):
-            # A group workspace page must never read personal-scope settings or personal MCP
-            # preconfigurations. The M4 group editor reads its reminder defaults from
-            # /api/groups/<group_id>/action-options and omits preconfigurations entirely, so either
-            # call reaching the fixture from a group page is a personal-scope leak. Record it so
-            # assert_clean() fails the run rather than silently serving personal data.
-            self.unexpected_requests.append(f"{method} {path} (personal-scope read from a group page)")
+        leak = personal_scope_leak(path, entry.query)
+        if leak:
+            # A group workspace page must never read a personal-scope resource. The M4 group action
+            # and M4C group agent editors resolve every side resource -- reminders, options,
+            # knowledge, identities, delegation targets, MCP preconfigurations -- through a
+            # group-scoped route, so any personal read reaching this fixture from a group page is a
+            # leak. Record it so assert_clean() fails the run rather than silently serving personal
+            # data, exactly as two M4 personal reads once slipped past every suite the base answered.
+            self.unexpected_requests.append(f"{method} {path} ({leak} from a group page)")
             self._json(route, {"error": "Personal-scope reads are not available on group pages."}, 500)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/agent-options"):
+            self._agent_options(route, entry)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/agent-knowledge"):
+            self._agent_knowledge(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/agents" in path:
+            self._agents(route, entry)
             return
         if path.startswith("/api/groups/") and path.endswith("/action-options"):
             self._action_options(route, entry)
             return
         if path.startswith("/api/groups/") and "/actions" in path:
             self._actions(route, entry)
+            return
+        if path == "/api/models/foundry/agents" and method == "POST":
+            self._foundry_discovery(route, entry)
+            return
+        if path == "/api/agent-templates" and method == "POST" and not self._template_submission_allowed:
+            # The group template panel hides its submit button when the server gate is off, so a POST
+            # from a group page whose last options withheld submission is a leaked affordance. Record
+            # it rather than answering, exactly as the server 403s a non-admin in that state.
+            self.unexpected_requests.append(
+                f"POST {path} (template submission is not allowed on this group page)"
+            )
+            self._json(route, {"error": "Template submission is not allowed for this group."}, 403)
             return
         if path == "/api/groups" and method == "GET":
             term = entry.query.get("search", [""])[0].lower()
@@ -328,6 +479,19 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         role = role or (current["role"] if current else "Owner")
         context = group_context(group_id, name, role=role, status=status)
         context["action_management"] = copy.deepcopy(action_management(role, status))
+        self.groups[group_id] = context
+        return context
+
+    def set_agent_policy(self, group_id, *, role=None, status="active"):
+        """Recompute a group's context for an agent role and status.
+
+        `group_context` already computes both the action and agent management hints from the same
+        role and status, so this recomputes the whole context -- the agent_management hint follows.
+        """
+        current = self.groups.get(group_id)
+        name = current["workspace"]["name"] if current else f"{group_id} workspace"
+        role = role or (current["role"] if current else "Owner")
+        context = group_context(group_id, name, role=role, status=status)
         self.groups[group_id] = context
         return context
 
@@ -509,6 +673,214 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_actions[group_id][index] = candidate
         self.native_revisions[(group_id, identifier)] += 1
         self._json(route, self._action_envelope(group_id, candidate))
+
+    # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------
+
+    def _seed_agents(self, group_id, records):
+        rows = []
+        for record in records:
+            identifier = record["id"]
+            rows.append(record)
+            self.native_agent_secret_paths[(group_id, identifier)] = agent_secret_paths(record)
+            self.native_agent_revisions[(group_id, identifier)] = 1
+        self.native_agents[group_id] = rows
+
+    def record_agent(self, group_id, identifier):
+        return next((row for row in self.native_agents.get(group_id, []) if row["id"] == identifier), None)
+
+    def _agent_revision(self, group_id, identifier):
+        return f"group-agent-rev:{group_id}:{identifier}:{self.native_agent_revisions[(group_id, identifier)]}"
+
+    def touch_agent(self, group_id, identifier):
+        """Simulate a concurrent edit by another manager: the stored agent revision moves on."""
+        self.native_agent_revisions[(group_id, identifier)] += 1
+        return self._agent_revision(group_id, identifier)
+
+    def _project_agent(self, group_id, record):
+        result = copy.deepcopy(record)
+        for pointer in self.native_agent_secret_paths.get((group_id, record["id"]), []):
+            _set_pointer(result, pointer, SECRET_MASK)
+        return result
+
+    def _agent_envelope(self, group_id, record):
+        actions = record.get("agent_actions") or []
+        read_only = bool(record.get("is_global")) or "edit" not in actions
+        return {
+            "record": self._project_agent(group_id, record),
+            "revision": self._agent_revision(group_id, record["id"]),
+            "secret_paths": copy.deepcopy(self.native_agent_secret_paths.get((group_id, record["id"]), [])),
+            "read_only": read_only,
+        }
+
+    def _agent_options(self, route, entry):
+        # /api/groups/<group_id>/agent-options -- its own path segment, so it never collides with
+        # /agents/<id>. It answers the group editor options to every member role, takes no query and
+        # 400s any query exactly as the server's _reject_query_parameters().
+        group_id = entry.path.split("/")[3]
+        assert group_id in self.groups, f"Unknown group agent-options scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            return
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        assert entry.method == "GET", entry
+        can_author = bool(self.groups[group_id].get("agent_management", {}).get("operations"))
+        template_submission = group_id not in self.template_submission_denied
+        self._template_submission_allowed = bool(can_author and template_submission)
+        self._json(route, group_agent_options(
+            group_id, can_author=can_author, template_submission=template_submission))
+
+    def _foundry_discovery(self, route, entry):
+        # POST /api/models/foundry/agents -- Foundry resource discovery. The server route resolves a
+        # group-scoped connection through the account's ACTIVE group, not the page's, so the group
+        # editor must offer no discovery for one; a request that still arrives with scope 'group'
+        # from a group page is a cross-scope hazard and is recorded as unexpected. A global
+        # connection has no group dependency, so it is answered like the personal path.
+        scope = (entry.body or {}).get("scope")
+        if scope == "group":
+            self.unexpected_requests.append(
+                f"POST {entry.path} (group-scoped Foundry discovery from a group page)"
+            )
+            self._json(route, {"error": "Group-scoped Foundry discovery is not available on a group page."}, 500)
+            return
+        self._json(route, {
+            "agents": [{
+                "id": "global-assistant", "name": "global-assistant",
+                "display_name": "Global assistant", "description": "A discoverable global resource.",
+            }],
+            "responses_api_version": "2025-01-01",
+        })
+
+    def _agent_knowledge(self, route, entry):
+        # /api/groups/<group_id>/agent-knowledge -- the group-scoped assigned-knowledge catalogue,
+        # so a group agent never pulls the caller's personal sources. No query, every member role.
+        group_id = entry.path.split("/")[3]
+        assert group_id in self.groups, f"Unknown group agent-knowledge scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            return
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        assert entry.method == "GET", entry
+        self._json(route, group_agent_knowledge_catalog(group_id))
+
+    def _agents(self, route, entry):
+        parts = entry.path.split("/")
+        # /api/groups/<group_id>/agents[/<agent_id>]
+        group_id = parts[3]
+        tail = parts[5] if len(parts) > 5 else None
+        method = entry.method
+        assert group_id in self.groups, f"Unknown group agent scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            return
+        management = self.groups[group_id].get("agent_management", {})
+        operations = set(management.get("operations", []))
+        # Every native group agent route rejects unexpected query parameters with a 400, mirroring
+        # the server's _reject_query_parameters(); the frontend therefore sends none.
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        if tail is None:
+            if method == "GET":
+                self._json(route, {"agents": [
+                    self._project_agent(group_id, row) for row in self.native_agents.get(group_id, [])
+                ]})
+                return
+            if method == "POST":
+                assert "create" in operations, f"Create reached a workspace without the hint: {entry}"
+                self._create_agent(route, entry, group_id)
+                return
+        else:
+            record = self.record_agent(group_id, tail)
+            if record is None:
+                self._json(route, {"error": "Agent not found in this group."}, 404)
+                return
+            if method == "GET":
+                self._json(route, self._agent_envelope(group_id, record))
+                return
+            if method == "PATCH":
+                self._patch_agent(route, entry, group_id, tail, record, operations)
+                return
+            if method == "DELETE":
+                assert "delete" in operations and "delete" in (record.get("agent_actions") or []), (
+                    f"Delete reached a read-only agent: {entry}"
+                )
+                assert entry.body is None, "A group agent delete carries no body."
+                self.native_agents[group_id] = [
+                    row for row in self.native_agents[group_id] if row["id"] != tail
+                ]
+                self._json(route, {"success": True})
+                return
+        self.unexpected_requests.append(f"{method} {entry.path}")
+        self._json(route, {"error": "Unexpected group agent request."}, 500)
+
+    def _create_agent(self, route, entry, group_id):
+        assert isinstance(entry.body, dict) and set(entry.body) == {
+            "updates", "clear_secret_paths", "removed_paths",
+        }, entry
+        updates = entry.body["updates"]
+        # An agent create carries the client-allocated id in updates, exactly as the personal editor
+        # does: saveAgentConfiguration seeds the record with a generated id and keeps it in the diff.
+        assert isinstance(updates, dict) and isinstance(updates.get("id"), str) and updates["id"], entry
+        assert not {"user_id", "is_global", "is_group", "group_id", "revision", "secret_paths"} & set(updates)
+        assert not any(key.startswith("_") for key in updates), "Ephemeral editor state must not be persisted."
+        # agent_actions is a read projection the schema does not accept; it must never be echoed into
+        # a write, in updates or as a removed path.
+        assert "agent_actions" not in updates, "agent_actions is projection-only; it must not be sent in updates."
+        assert "/agent_actions" not in entry.body["removed_paths"], "agent_actions must not appear in removed_paths."
+        identifier = updates["id"]
+        assert self.record_agent(group_id, identifier) is None, f"Agent id already exists: {identifier}"
+        base = {"id": identifier, "group_id": group_id, "is_group": True, "is_global": False,
+                "agent_actions": list(AGENT_ACTIONS)}
+        try:
+            record = _editor_candidate(base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"])
+        except EditorSecretError:
+            self._json(route, {"error": "Stored credentials must be kept, replaced, or explicitly cleared."}, 400)
+            return
+        record["group_id"] = group_id
+        record["is_group"] = True
+        record["is_global"] = False
+        record["agent_actions"] = list(AGENT_ACTIONS)
+        self.native_agents.setdefault(group_id, []).insert(0, record)
+        self.native_agent_secret_paths[(group_id, identifier)] = agent_secret_paths(record)
+        self.native_agent_revisions[(group_id, identifier)] = 1
+        self._json(route, self._agent_envelope(group_id, record), 201)
+
+    def _patch_agent(self, route, entry, group_id, identifier, record, operations):
+        assert "edit" in operations and "edit" in (record.get("agent_actions") or []), (
+            f"Edit reached a read-only agent: {entry}"
+        )
+        assert isinstance(entry.body, dict) and set(entry.body) == {
+            "updates", "expected_revision", "clear_secret_paths", "removed_paths",
+        }, entry
+        updates = entry.body["updates"]
+        assert isinstance(updates, dict) and "id" not in updates, entry
+        assert not {"user_id", "is_global", "is_group", "group_id", "revision", "secret_paths"} & set(updates)
+        assert not any(key.startswith("_") for key in updates), "Ephemeral editor state must not be persisted."
+        assert "agent_actions" not in updates, "agent_actions is projection-only; it must not be sent in updates."
+        assert "/agent_actions" not in entry.body["removed_paths"], "agent_actions must not appear in removed_paths."
+        if entry.body["expected_revision"] != self._agent_revision(group_id, identifier):
+            self._json(route, {"error": "This agent changed in another session. Reload before saving."}, 409)
+            return
+        paths = self.native_agent_secret_paths.get((group_id, identifier), [])
+        try:
+            candidate = _editor_candidate(
+                record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )
+        except EditorSecretError:
+            self._json(route, {
+                "error": "Stored credentials must be kept at their original paths, replaced, or explicitly cleared.",
+            }, 400)
+            return
+        candidate["agent_actions"] = record.get("agent_actions") or list(AGENT_ACTIONS)
+        self.native_agent_secret_paths[(group_id, identifier)] = agent_secret_paths(candidate)
+        index = next(i for i, row in enumerate(self.native_agents[group_id]) if row["id"] == identifier)
+        self.native_agents[group_id][index] = candidate
+        self.native_agent_revisions[(group_id, identifier)] += 1
+        self._json(route, self._agent_envelope(group_id, candidate))
 
 
 @pytest.fixture

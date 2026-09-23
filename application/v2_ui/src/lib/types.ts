@@ -432,6 +432,20 @@ export interface WorkspaceAgent {
     /** True for agents supplied by an administrator, which a user may not edit or delete. */
     is_global?: boolean;
     is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group agent response so the client
+     * can prove a returned agent belongs to the workspace it asked for -- the same identity check
+     * the group action and prompt readers make. Absent on personal agents.
+     */
+    group_id?: string;
+    /** True when the caller may only read this agent, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-agent operation hint (`edit`, `delete`, `chat`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the agent off, and
+     * the client never enables one the server did not offer. `chat` gates only the use-in-chat link.
+     */
+    agent_actions?: string[];
     agent_type?: string;
     tags?: string[];
     actions_to_load?: string[];

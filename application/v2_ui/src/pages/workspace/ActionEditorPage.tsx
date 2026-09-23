@@ -40,7 +40,9 @@ export function ActionEditorPage({ adapter = PERSONAL_ACTION_WORKBENCH }: { adap
     const location = useLocation();
     const query = new URLSearchParams(location.search);
     const scope = query.get('scope') === 'global' ? 'global' : 'personal';
-    const returnTo = resourceId === 'new' ? agentEditorReturnPath(query.get('returnTo')) : null;
+    const returnTo = resourceId === 'new'
+        ? agentEditorReturnPath(query.get('returnTo'), adapter.scope.kind === 'group' ? adapter.scope.id : undefined)
+        : null;
     return <ActionEditor key={JSON.stringify([owner, adapter.basePath, resourceId, scope, returnTo])}
         resourceId={resourceId} scope={scope} returnTo={returnTo} adapter={adapter} />;
 }
