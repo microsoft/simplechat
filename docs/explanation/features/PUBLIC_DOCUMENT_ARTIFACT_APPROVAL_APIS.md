@@ -48,13 +48,65 @@ Every route carries `@swagger_route(security=get_auth_security())`,
 
 ## Review state and receipts
 
-`GET /publication` returns `schema_version`, `public_workspace_id`,
-`document_id`, `document_version`, `etag`, and a `publication` block with
-`status`, `is_requester`, the requester attribution fields, and the permitted
-`actions`.
+`GET /publication` returns:
 
-Decision receipts use `status` of `applied`, `unchanged`, `queued`, or
-`partial`, with the resulting `state` constrained per action:
+```json
+{
+  "schema_version": 1,
+  "public_workspace_id": "W",
+  "document_id": "D",
+  "document_version": 3,
+  "etag": "\"0x8D...\"",
+  "actions": ["inspect", "approve_artifact", "reject_artifact"],
+  "publication": {
+    "status": "pending_approval",
+    "is_requester": false,
+    "requested_by_user_id": "...",
+    "requested_by_display_name": "...",
+    "requested_at": "...",
+    "actions": ["approve_artifact", "reject_artifact"]
+  }
+}
+```
+
+Two action lists are present on purpose. The top-level `actions` are the
+document's collaboration actions for this reader, and `publication.actions` are
+the decisions available on the pending request specifically.
+
+`publication` is `null` for a document that has no generated-artifact request.
+When present, its `status` is one of `pending_approval`, `approved`,
+`approval_failed`, `rejected`, or `cancelled`. An unrecognized stored value is
+reported as `unavailable` rather than passed through, so a client never has to
+handle an arbitrary string.
+
+There is no `relationship` field, unlike the group collaboration state. Public
+workspaces have no share relationship in this release, so there are no
+`owner`, `approved`, `removed`, or `denied` states and no repair-only tombstones.
+
+### Decision outcomes
+
+Each decision returns a receipt whose `status` and HTTP code depend on the
+outcome:
+
+| Outcome | `status` | HTTP |
+|---|---|---|
+| Approval recorded and processing queued | `queued` | 202 |
+| Rejection or cancellation recorded | `applied` | 200 |
+| The same decision was already recorded | `unchanged` | 200 |
+| Decision recorded, but notice or cache cleanup did not complete | `partial` | 207 |
+
+A successful approval always returns `queued` rather than `applied`, because
+approving hands the document to screening and processing rather than finishing
+synchronously.
+
+**Treat 207 as success, not failure.** A `partial` receipt means the decision
+itself **was** recorded; only a follow-up effect needs reconciliation. It
+carries an `errors` entry such as
+`{stage: "cleanup", code: "publication_cleanup_incomplete"}`. A client that
+treats every non-200 response as a failed decision would misreport a recorded
+approval as having failed and could prompt the reviewer to decide again.
+
+The resulting `state` is constrained per action:
 
 | Action | Permitted result state |
 |---|---|
