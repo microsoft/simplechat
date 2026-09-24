@@ -1,6 +1,8 @@
 // GroupWorkspacePicker.tsx
 
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Compass } from 'lucide-react';
 import { GROUP_WORKSPACES, type WorkspacePage } from '../../lib/workspaces';
 import { GlassButton } from '../ui/primitives';
 
@@ -22,6 +24,7 @@ export function GroupWorkspacePicker({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [retry, setRetry] = useState(0);
+    const navigate = useNavigate();
 
     useEffect(() => {
         const timeout = window.setTimeout(() => { setTerm(search.trim()); setPage(1); }, 300);
@@ -66,6 +69,12 @@ export function GroupWorkspacePicker({
                     <input type="search" className={INPUT_CLASS} value={search} disabled={disabled}
                         placeholder="Search all your groups" onChange={(event) => setSearch(event.target.value)} />
                 </label>
+            </div>
+            <div>
+                <GlassButton size="sm" variant="subtle" disabled={disabled}
+                    onClick={() => navigate('/groups/directory')}>
+                    <Compass size={14} />Browse all groups
+                </GlassButton>
             </div>
             {error ? (
                 <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">

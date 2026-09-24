@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowUpRight, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
+import { ArrowUpRight, Compass, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
@@ -353,7 +353,8 @@ export function GroupWorkspacePage() {
                 <EmptyState icon={<Users size={28} />} title="Choose a group workspace"
                     description={hasDocumentLink ? 'A document link must include its explicit group. Choose a group and open the document from that workspace.'
                         : 'Select a group above to load its details and shared tools.'}
-                    action={<a href="/profile?tab=groups" className="text-sm text-accent underline">Find or manage your groups in classic</a>} />
+                    action={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/groups/directory')}>
+                        <Compass size={14} />Browse the group directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
                     className={nativeDocuments || nativePrompts || nativeActions || nativeAgents ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
