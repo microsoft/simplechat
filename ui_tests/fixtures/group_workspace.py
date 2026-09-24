@@ -703,11 +703,13 @@ def _ordered_hint(vocabulary, operations):
     return {"schema_version": 1, "operations": [operation for operation in vocabulary if operation in operations]}
 
 
-def document_management(role, status, *, extract_metadata=False):
-    """`group_document_management_operations`, with the group's downloads allowed."""
+def document_management(role, status, *, extract_metadata=False, download_enabled=True):
+    """`group_document_management_operations`: the download operation is offered only when the group's
+    file downloads are enabled, exactly as the server threads `download_enabled=` into the helper."""
     operations = set()
     if role in GROUP_CONTENT_MANAGER_ROLES and status in GROUP_VIEWABLE_STATUSES:
-        operations.add("download")
+        if download_enabled:
+            operations.add("download")
         if status == "active":
             operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags"})
             if extract_metadata:
@@ -1022,7 +1024,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             "can_view": viewable, "can_chat": viewable,
             "can_upload": manager and active, "can_edit": manager and active,
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and viewable,
+            "can_download": manager and viewable and settings_flags["downloads_admin"],
         },
         "document_queries": {
             "sort_fields": [
@@ -1031,7 +1033,10 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             ],
             "facets": True, "places": True,
         },
-        "document_management": document_management(role, status, extract_metadata=enable_extract_meta_data),
+        "document_management": document_management(
+            role, status, extract_metadata=enable_extract_meta_data,
+            download_enabled=settings_flags["downloads_admin"],
+        ),
         "document_collaboration": document_collaboration(role, status),
         "prompt_management": prompt_management(role, status),
         # A switched-off capability sends an empty hint, as its availability predicate empties it.

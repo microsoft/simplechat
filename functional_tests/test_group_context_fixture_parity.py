@@ -88,11 +88,14 @@ VARIANTS = {
 }
 EXTRACTION_ON = VARIANTS["extraction-on"]
 
-# The four settings capability switches `settings_management` reads, each compared on its own because
-# some also move sections the top-level union covers (downloads-off empties the real document download
-# permission, which the modelled fixture does not model). Each entry is the `group_context` switches, the
-# real settings they stand for, and the session app roles the real read runs under -- `holds_create_groups_role`
-# is a session role on the server, not a setting, so it configures the roles rather than the settings dict.
+# The four settings capability switches `settings_management` reads. Each entry is the `group_context`
+# switches, the real settings they stand for, and the session app roles the real read runs under --
+# `holds_create_groups_role` is a session role on the server, not a setting, so it configures the roles
+# rather than the settings dict. The switch test compares the WHOLE context under each switch (walking
+# every field as the main 4x5 test does), not just `settings_management`: `allow_group_workspace_file_downloads`
+# also moves `document_permissions.can_download` and the `download` operation in `document_management`, and
+# the fixture models all three, so a browser test that turns downloads off never sees a Download the server
+# would refuse.
 SETTINGS_SWITCHES = {
     "downloads-off": (
         {"allow_group_workspace_file_downloads": False},
@@ -225,27 +228,30 @@ def test_the_reason_constants_are_the_servers_texts(modelled):
     assert no_agents["sections"]["agents"]["reason"] == fixture_module.GROUP_AGENTS_DISABLED_REASON
 
 
-def real_settings_management(env, role, status, *, roles=("User",), **settings):
-    """The `settings_management` block the real context sends for a role, status, settings and the
-    caller's session app roles -- the one block the switch-parity test compares, since some switches
-    also move sections the modelled fixture does not model."""
+def real_context_as(env, role, status, *, roles=("User",), **settings):
+    """The whole context the real builder sends for a role, status, settings and the caller's session
+    app roles. The switch test needs the session-role seam because `holds_create_groups_role` is a
+    session role on the server, not a setting, so it can't go through `real_context`'s fixed ["User"]."""
     env.settings.update(settings)
     env.records["group-a"]["status"] = status
     with env.client.session_transaction() as state:
         state["user"] = {"oid": ROLE_USERS[role], "roles": list(roles)}
     response = env.client.get("/api/v2/workspaces/group/group-a")
     assert response.status_code == 200, response.get_data(as_text=True)
-    return response.get_json()["settings_management"]
+    return response.get_json()
 
 
 @pytest.mark.parametrize("switch", list(SETTINGS_SWITCHES))
 def test_settings_management_tracks_each_capability_switch(modelled, switch):
-    """Each `group_context` settings switch moves `settings_management` exactly as the real policy does
-    under the setting or session role it stands for."""
+    """Each `group_context` settings switch moves the WHOLE context exactly as the real policy does
+    under the setting or session role it stands for -- not just `settings_management`. Downloads-off,
+    for one, also has to empty `document_permissions.can_download` and the `download` operation, and
+    the walk catches any other field a switch moves that the fixture would otherwise miss."""
     fixture_switches, real_settings, roles = SETTINGS_SWITCHES[switch]
-    served = fixture_context("Owner", "active", **fixture_switches)["settings_management"]
-    real = real_settings_management(modelled, "Owner", "active", roles=roles, **real_settings)
-    assert served == real, f"{switch}:\n  server:  {real!r}\n  fixture: {served!r}"
+    served = fixture_context("Owner", "active", **fixture_switches)
+    real = real_context_as(modelled, "Owner", "active", roles=roles, **real_settings)
+    found = differences(real, served)
+    assert not found, f"{switch}:\n{describe(found)}"
 
 
 def test_an_unrecognized_status_is_reported_as_unknown_by_both():
