@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.143)**
+
+#### Bug Fixes
+
+*   **Group Details No Longer Expose The Stored Group Document**
+    *   Fixed `GET /api/groups/<group_id>` returning the stored group document to every member. When Key Vault secret storage is off, that included the plaintext credentials of the group's model endpoints. It also included pending join requests and internal fields.
+    *   The route now returns only what the group management page uses, plus the caller's role. The retention policy is limited to Owners and Admins, as the public workspace details route already does.
+    *   Endpoints, join requests and members remain available from their own routes, with their own permissions.
+    *   (Ref: `route_backend_groups.py`, `build_group_details_payload`, [Group Details Payload Disclosure Fix](fixes/GROUP_DETAILS_PAYLOAD_DISCLOSURE_FIX.md))
+
 ### **(v0.261.142)**
 
 #### New Features

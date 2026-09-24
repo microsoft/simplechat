@@ -31,6 +31,56 @@ from functions_settings import (
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
+# Roles that manage a group's settings, and so read its retention policy.
+GROUP_DETAILS_SETTINGS_ROLES = ("Owner", "Admin")
+
+
+def build_group_details_payload(group_doc, role, app_settings):
+    """Project a group document for one of its members.
+
+    The details route used to return the stored group document itself. That
+    carried the group's model endpoints, with their credentials inline when Key
+    Vault storage is off, along with the pending join requests, the member list
+    and the Cosmos system fields, to every member. The projection returns only
+    what the group management page reads, plus the caller's role. The retention
+    policy is included for the Owners and Admins who manage it.
+    """
+    owner = group_doc.get("owner") or {}
+    payload = {
+        "id": group_doc.get("id"),
+        "name": group_doc.get("name", ""),
+        "description": group_doc.get("description", ""),
+        "owner": {
+            "id": owner.get("id", ""),
+            "displayName": owner.get("displayName", ""),
+            "email": owner.get("email", ""),
+        },
+        "admins": list(group_doc.get("admins") or []),
+        "documentManagers": list(group_doc.get("documentManagers") or []),
+        "status": group_doc.get("status", "active"),
+        "createdDate": group_doc.get("createdDate"),
+        "modifiedDate": group_doc.get("modifiedDate"),
+        "heroColor": normalize_workspace_hero_color(
+            group_doc.get("heroColor"),
+            DEFAULT_WORKSPACE_HERO_COLOR,
+        ),
+        "disable_file_downloads": bool(group_doc.get("disable_file_downloads", False)),
+        "file_downloads_admin_enabled": is_group_workspace_file_download_admin_enabled(
+            app_settings,
+            group_doc,
+        ),
+        "file_downloads_enabled": is_group_workspace_file_download_enabled(
+            app_settings,
+            group_doc,
+        ),
+        "userRole": role,
+    }
+    payload.update(get_workspace_logo_metadata(group_doc))
+    if role in GROUP_DETAILS_SETTINGS_ROLES:
+        payload["retention_policy"] = dict(group_doc.get("retention_policy") or {})
+    return payload
+
+
 def register_route_backend_groups(bp):
     """
     Register all group-related API endpoints under '/api/groups/...'
@@ -199,28 +249,11 @@ def register_route_backend_groups(bp):
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
 
-        if not get_user_role_in_group(group_doc, user_id):
+        role = get_user_role_in_group(group_doc, user_id)
+        if not role:
             return jsonify({"error": "You are not a member of this group"}), 403
 
-        response_doc = dict(group_doc)
-        response_doc["heroColor"] = normalize_workspace_hero_color(
-            group_doc.get("heroColor"),
-            DEFAULT_WORKSPACE_HERO_COLOR,
-        )
-        response_doc.update(get_workspace_logo_metadata(group_doc))
-        response_doc["disable_file_downloads"] = bool(group_doc.get("disable_file_downloads", False))
-        app_settings = get_settings()
-        response_doc["file_downloads_admin_enabled"] = is_group_workspace_file_download_admin_enabled(
-            app_settings,
-            group_doc,
-        )
-        response_doc["file_downloads_enabled"] = is_group_workspace_file_download_enabled(
-            app_settings,
-            group_doc,
-        )
-        response_doc.pop("logoBase64", None)
-
-        return jsonify(response_doc), 200
+        return jsonify(build_group_details_payload(group_doc, role, get_settings())), 200
 
     @bp.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
