@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.142)**
+
+#### New Features
+
+*   **Group File Source APIs**
+    *   New routes manage a group's File Sync sources for a named group, at `/api/groups/<group_id>/file-sources`. They cover list, create, edit, delete, connection tests, folder browsing, Sync now, run history and ignored paths, without depending on the account's active group.
+    *   If two managers edit the same source, the second save is refused instead of silently overwriting the first. A sync finishing never counts as a change.
+    *   A delete asks explicitly whether to delete the documents the source produced, and reports how many were deleted. It is refused while a sync is running. If the source changes after its documents were already deleted, the response says so instead of claiming nothing happened.
+    *   New credentials only take effect when a save succeeds, and deleting a source removes its stored secrets. The editor options list only the identities a source can actually use.
+    *   The native V2 editor for group file sources arrives in a later release. Until then, group sources are still managed in the classic group workspace.
+    *   (Ref: `route_backend_group_file_sources_scoped.py`, `functions_group_file_source_access.py`, `functions_group_file_source_policy.py`, `functions_file_sync.py`, [Group File Source APIs](features/GROUP_FILE_SOURCE_APIS.md))
+
+#### Bug Fixes
+
+*   **Sync Now Explains Why It Didn't Start**
+    *   **Sync now** used to answer "Verify the source configuration and try again" when a sync was already queued or running, or when the File Sync concurrent-run limit was reached. It now says which of those happened, in the classic and native workspaces.
+    *   (Ref: `queue_file_sync_source_run`, `FileSyncPublicValidationError`)
+
 ### **(v0.261.141)**
 
 #### New Features

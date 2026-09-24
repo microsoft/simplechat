@@ -109,7 +109,11 @@ back, which the V2 group file-source editor adds as `config_revision`.
   its remaining files. It stops only when it would write the source. Any items
   and documents it creates after the delete are left behind. When the delete
   asked to remove associated files, documents created after that point are not
-  removed.
+  removed. From version **0.261.142**, the native group file-source routes
+  (`/api/groups/<group_id>/file-sources`) refuse a delete while a run is queued
+  or running, and check again just before the record is removed. See
+  [Group File Source APIs](../features/GROUP_FILE_SOURCE_APIS.md). The classic
+  routes are unchanged.
 - A run decides which files to process, including whether to hard-delete a
   document whose remote file is gone, from the state it loaded at the start. An
   ignore saved mid-run takes effect on the item, and from the next run on.
