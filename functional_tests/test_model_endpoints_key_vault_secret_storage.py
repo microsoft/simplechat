@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.261.125
+Version: 0.261.140
 Implemented in: 0.241.179
 Strict screening credential hydration and safe retrieval logging: 0.261.106
 Custom credential strict hydration merge coverage: 0.261.113
 Actionable secret-write errors and explicit diagnostic credentials: 0.261.125
+Endpoint-keyed user and group secret names are always staged: 0.261.140
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
 returned to the UI as placeholders, resolved for backend use, and cleaned up
@@ -17,6 +18,7 @@ the secret.
 
 import importlib
 import os
+import re
 import sys
 import types
 from unittest.mock import Mock, patch
@@ -192,7 +194,11 @@ def test_model_endpoint_key_vault_helper_lifecycle():
         saved_endpoint = module.keyvault_model_endpoint_save_helper(endpoint, "endpoint-123", scope="user")
         secret_reference = saved_endpoint["auth"]["api_key"]
 
-        assert secret_reference == "endpoint-123--model-endpoint--user--model-endpoint-api-key"
+        # User and group secret names are keyed by the endpoint id alone, so a new
+        # value gets a fresh staged name rather than the deterministic
+        # ``model-endpoint-api-key`` name another user's endpoint with the same id
+        # could hold (0.261.140).
+        assert re.fullmatch(r"endpoint-123--model-endpoint--user--s-[0-9a-f]{16,}", secret_reference)
         assert FakeSecretClient.stored_secrets[secret_reference] == "super-secret-key"
 
         placeholder_endpoint = module.keyvault_model_endpoint_get_helper(

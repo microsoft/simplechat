@@ -34,6 +34,12 @@ from functions_group_identity_policy import (
     group_identities_available,
     group_identity_management_operations,
 )
+from functions_group_endpoint_policy import (
+    GROUP_ENDPOINTS_DISABLED_REASON,
+    GROUP_ENDPOINT_WRITE_ROLES,
+    group_endpoint_management_operations,
+    group_endpoints_available,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -108,7 +114,6 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     manager = role in GROUP_CONTENT_MANAGER_ROLES
     automation_manager = role in get_group_workflow_management_roles(settings)
     semantic_kernel = bool(settings.get("enable_semantic_kernel", False))
-    group_kernel = semantic_kernel and bool(settings.get("per_user_semantic_kernel", False))
     file_sync_enabled = is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
     sync_enabled = manager and file_sync_enabled
     # The single availability predicate the immutable identity routes also call, so
@@ -118,18 +123,14 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         settings, group_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
     )
 
-    endpoints_configured = (
-        group_kernel
-        and bool(settings.get("allow_group_custom_endpoints", False))
-        and bool(settings.get("enable_multi_model_endpoints", False))
-    )
     delegation_configured = semantic_kernel and bool(settings.get("allow_group_agents", False))
     delegation_allowed = delegation_configured and is_governance_access_allowed("governance_group_agents", user_id)
     # The single availability predicate the immutable agent routes also call, so
     # the Agents section and the routes agree on one gate (mirrors actions/B3).
     agents_available, agents_reason = group_agents_available(user_id, settings)
     actions_available, actions_reason = group_actions_available(user_id, settings)
-    endpoints_allowed = endpoints_configured and is_governance_access_allowed("governance_group_endpoints", user_id)
+    # The same one-predicate rule for the immutable-target endpoint routes (M5C).
+    endpoints_available, endpoints_reason = group_endpoints_available(user_id, settings)
     workflows_enabled = is_group_workflows_enabled_for_group(settings, group_id)
 
     def section(enabled, can_manage=False, reason="This section is not enabled for this group."):
@@ -155,8 +156,8 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             actions_reason or "Group actions are not enabled.",
         ),
         "endpoints": section(
-            endpoints_allowed, role in ("Owner", "Admin"),
-            governance_reason if endpoints_configured else "Group model endpoints are not enabled.",
+            endpoints_available, role in GROUP_ENDPOINT_WRITE_ROLES,
+            endpoints_reason or GROUP_ENDPOINTS_DISABLED_REASON,
         ),
         "workflows": section(
             workflows_enabled, automation_manager,
@@ -255,6 +256,12 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "schema_version": 1,
             "operations": group_identity_management_operations(
                 role, group, settings, available=identities_available,
+            ),
+        },
+        "endpoint_management": {
+            "schema_version": 1,
+            "operations": group_endpoint_management_operations(
+                user_id, group, role, settings, available=endpoints_available,
             ),
         },
     }

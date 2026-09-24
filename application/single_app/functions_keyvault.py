@@ -64,6 +64,11 @@ MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS = {
     "client_secret": {"service_principal", "oauth2_client_credentials"},
     "bearer_token": {"bearer"},
 }
+# Group and user model endpoint secret names are keyed by the endpoint id alone
+# (``{endpoint_id}--model-endpoint--{scope}--...``), so two workspaces can hold
+# endpoints with the same id. In these scopes a stored reference is accepted only
+# when it is the endpoint's own, and a new value always gets a fresh name.
+MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES = frozenset({"group", "user"})
 AGENT_SENSITIVE_SECRET_FIELDS = [
     {
         "path": ("azure_openai_gpt_key",),
@@ -1309,11 +1314,49 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     return updated
 
 
+def _refuse_foreign_model_endpoint_references(endpoint_dict, existing_endpoint, scope):
+    """In the endpoint-keyed scopes, accept only the endpoint's own stored references.
+
+    Group and user secret names carry the endpoint id but no workspace, so a
+    reference that passes ``secret_reference_matches_context`` may still name the
+    credential of another group's or user's endpoint with the same id. A
+    reference-shaped value is therefore accepted only when it equals this
+    endpoint's existing stored reference for that field. The check runs even with
+    Key Vault storage off, so a borrowed name can never be stored inline and become
+    resolvable once storage is turned on.
+    """
+    auth = (endpoint_dict or {}).get("auth") if isinstance(endpoint_dict, dict) else None
+    if scope not in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES or not isinstance(auth, dict):
+        return
+    for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+        value = auth.get(auth_field)
+        if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+            continue
+        if value == _get_existing_secret_reference(existing_endpoint, ("auth", auth_field)):
+            continue
+        log_event(
+            "[KEY_VAULT] Rejected a model endpoint secret reference that is not the endpoint's stored credential.",
+            extra={"scope": scope, "auth_field": auth_field},
+            level=logging.WARNING,
+        )
+        raise ValueError(
+            f"Stored Key Vault reference for model endpoint '{auth_field}' is not this endpoint's stored credential. Re-enter the secret value."
+        )
+
+
 def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None, *, stage_new_secrets=False):
-    """Store model endpoint auth secrets in Key Vault and replace them with references."""
+    """Store model endpoint auth secrets in Key Vault and replace them with references.
+
+    In the group and user scopes (``MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES``) a
+    reference is accepted only when it is the endpoint's own stored one, and a new
+    value is always stored under a fresh staged name, never the deterministic name
+    another workspace's endpoint with the same id could hold. Global callers are
+    unchanged. A refused value raises ``ValueError``.
+    """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+    _refuse_foreign_model_endpoint_references(endpoint_dict, existing_endpoint, scope)
 
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
@@ -1376,9 +1419,11 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
             continue
 
         secret_name = _build_model_endpoint_secret_name(auth_field)
-        if stage_new_secrets:
+        if stage_new_secrets or scope in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES:
             # A losing import must not overwrite the secret used by another
-            # worker's committed connection. The owner/scope remain unchanged.
+            # worker's committed connection, and in the endpoint-keyed scopes a
+            # deterministic name could belong to another workspace's endpoint with
+            # the same id. The owner/scope remain unchanged.
             prefix = f"{clean_name_for_keyvault(str(scope_value))}--{source}--{scope}--"
             available = 127 - len(prefix)
             if available < 18:
@@ -1402,10 +1447,23 @@ def keyvault_model_endpoint_get_helper(
 
     ``strict`` only affects VALUE retrieval. NAME/TRIGGER and plaintext values
     keep their legacy behavior, including when Key Vault storage is disabled.
+
+    VALUE hydration is the step every consumer of a stored endpoint takes before
+    calling it, so for group and user endpoints it also applies the application
+    identity rule (``functions_model_endpoint_app_identity``): an endpoint that would
+    send the application's token to a disallowed host or audience fails closed with
+    ``ApplicationIdentityPolicyError``, whether or not Key Vault storage is on.
     """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+    if return_type == SecretReturnType.VALUE and scope in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES:
+        # Deferred so the rule, and the settings helpers it reads, load only when a
+        # group or user endpoint is hydrated for use; this helper's importers and its
+        # import-time dependencies are otherwise unchanged.
+        from functions_model_endpoint_app_identity import resolve_application_identity_for_use
+
+        endpoint_dict = resolve_application_identity_for_use(endpoint_dict, scope)
 
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
