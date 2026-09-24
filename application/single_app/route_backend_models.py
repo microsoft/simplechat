@@ -5,6 +5,7 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_governance import ensure_governance_access
+from functions_azure_endpoint_validation import validate_azure_ai_endpoint_host
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_group_endpoint_access import (
     group_endpoint_error_response,
@@ -265,6 +266,80 @@ def register_route_backend_models(bp):
             raise ValueError("Endpoint ID is required to resolve stored secrets.")
         return endpoint_id
 
+    def apply_transient_server_credential_policy(endpoint_cfg, scope):
+        """Constrain a transient personal or group request that would use the app's identity.
+
+        With no ``endpoint_id`` the connection and authentication come from the request.
+        Unless they carry the caller's own API key or service principal, the discovery and
+        test clients fall back to the application's own identity
+        (``DefaultAzureCredential``), so the caller must not choose where that token goes
+        or what it is for:
+
+        - a request-supplied token audience (``foundry_scope``), authority
+          (``custom_authority``) or ``custom`` management cloud is refused, and the
+          management cloud, audience and authority are derived from server settings;
+        - the endpoint host must be an Azure AI service host of the configured cloud.
+
+        Custom connections never use the application identity and are unaffected. Global
+        (admin) requests and saved endpoints (stored configuration) do not come here.
+        """
+        provider = str(endpoint_cfg.get("provider") or "aoai").strip().lower()
+        if provider in (MODEL_ENDPOINT_PROVIDER_CUSTOM, "openai_compatible"):
+            return endpoint_cfg
+        auth = endpoint_cfg.get("auth") if isinstance(endpoint_cfg.get("auth"), dict) else {}
+        auth_type = str(auth.get("type") or "managed_identity").strip().lower()
+        if auth_type in ("api_key", "service_principal"):
+            return endpoint_cfg
+
+        connection = endpoint_cfg.get("connection") if isinstance(endpoint_cfg.get("connection"), dict) else {}
+        server_cloud = get_model_endpoint_management_cloud_for_environment()
+        server_authority = get_model_endpoint_default_custom_authority()
+        try:
+            server_scope = resolve_model_endpoint_foundry_scope(
+                {"management_cloud": server_cloud}, endpoint=connection.get("endpoint"),
+            )
+        except ValueError:
+            server_scope = ""
+        requested_scope = str(auth.get("foundry_scope") or "").strip()
+        requested_authority = str(auth.get("custom_authority") or "").strip()
+        requested_cloud = normalize_model_endpoint_management_cloud(auth.get("management_cloud"))
+        if (
+            (requested_scope and requested_scope != server_scope)
+            or (requested_authority and requested_authority != server_authority)
+            or (requested_cloud == "custom" and server_cloud != "custom")
+        ):
+            log_event(
+                "[MODELS] Refused a request-supplied token audience or authority for the application identity",
+                extra={"scope": scope, "provider": provider, "auth_type": auth_type},
+                level=logging.WARNING,
+            )
+            raise AIConnectionError(
+                "The application identity uses this deployment's own token audience and authority. "
+                "Remove the Foundry scope, custom authority and custom cloud, or use an API key or a service principal.",
+                "server_credential_override_refused",
+            )
+        try:
+            validate_azure_ai_endpoint_host(connection.get("endpoint"), server_cloud)
+        except ValueError:
+            log_event(
+                "[MODELS] Refused the application identity for an endpoint outside the Azure AI allowlist",
+                extra={"scope": scope, "provider": provider, "auth_type": auth_type, "cloud": server_cloud},
+                level=logging.WARNING,
+            )
+            raise AIConnectionError(
+                "The application identity can be used only with an Azure AI endpoint in this cloud. "
+                "Use an API key or a service principal for other endpoints.",
+                "server_credential_endpoint_refused",
+            ) from None
+
+        derived_auth = {
+            key: value for key, value in auth.items() if key not in ("foundry_scope", "custom_authority")
+        }
+        derived_auth["management_cloud"] = server_cloud
+        if server_authority:
+            derived_auth["custom_authority"] = server_authority
+        return {**endpoint_cfg, "auth": derived_auth}
+
     def resolve_request_endpoint_payload(payload, scope="global", *, for_chat_test=False, group_id=None):
         user_id = get_current_user_id()
         endpoint_id = str(payload.get("endpoint_id") or payload.get("id") or "").strip()
@@ -318,6 +393,8 @@ def register_route_backend_models(bp):
                 merged_payload["model"] = persisted_model
         else:
             merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
+            if scope in ("user", "group"):
+                merged_payload = apply_transient_server_credential_policy(merged_payload, scope)
 
         if endpoint_id:
             merged_payload["id"] = endpoint_id
@@ -622,6 +699,8 @@ def register_route_backend_models(bp):
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except LookupError as exc:
             log_event(
                 "[MODELS] Fetch model list blocked because the model endpoint was not found",
