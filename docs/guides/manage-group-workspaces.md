@@ -22,7 +22,7 @@ Use a group workspace when a team needs common source documents, prompts, agents
 ## Before you start
 
 - Admins must enable `enable_group_workspaces`; creating groups also depends on `enable_group_creation` and may require `require_member_of_create_group`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
-- You need group membership or permission to create/find groups from Profile.
+- You need group membership, or permission to create groups. From version **0.261.150** you can find, join and create groups in V2; the classic **Profile** page still offers them too.
 - Tabs such as **Sync**, **Workflows**, **Agents**, and **Actions** require their own admin toggles.
 
 ## Use group workspaces in V2
@@ -39,6 +39,25 @@ an arbitrary group.
 **Search your groups** searches the full membership list, not just the displayed
 page. A selected group stays selected when searching or changing result pages.
 Section URLs include the group ID, so a bookmark opens the intended group.
+
+### Find, join, or create a group
+
+From version **0.261.150**, choose **Browse all groups** in the header, or
+**Browse the group directory** when no group is selected. The directory has
+three views: **All**, **My groups** and **Discover**. Search matches a group's
+name or description, and the view, search and page stay in the address, so a
+link or the back button returns to the same list.
+
+- **Open** a group you belong to, to go to its workspace.
+- **Request to join** a group you don't belong to. An owner or admin approves
+  the request, currently on the classic manage page. **Cancel request** takes
+  it back.
+- **Create group** appears when your organization lets you create groups. Give
+  it a name of up to 80 characters, and optionally a description. The new
+  group's workspace opens, with you as its owner.
+
+The directory shows each group's name, description, member count and owner's
+name, and your role or request. It never shows the owner's email.
 
 ### Browse group documents
 

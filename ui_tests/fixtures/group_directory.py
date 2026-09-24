@@ -1,8 +1,8 @@
 # group_directory.py
 """
 Closed M7A group directory HTTP fixtures for the real production V2 SPA.
-Version: 0.261.149
-Implemented in: 0.261.149
+Version: 0.261.150
+Implemented in: 0.261.150
 
 The fixture serves the native group directory family the directory page reads and writes --
 `GET`/`POST /api/groups/directory`, `POST`/`DELETE /api/groups/<group_id>/join-request` and the

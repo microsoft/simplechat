@@ -4,8 +4,9 @@
 
 These routes let a client find groups, create one, and ask to join one, without
 touching the account's active group. They are the server side of the native V2
-group directory. The directory page itself is a later release. Until then, the
-classic **Find Group** and **Create Group** flows remain in use.
+group directory, which is available from version **0.261.150**; see
+[V2 Group Directory](V2_GROUP_DIRECTORY.md). The classic **Find Group** and
+**Create Group** flows are unchanged.
 
 A client can use them to:
 - list every group the caller may discover, paged and searchable, with the

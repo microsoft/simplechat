@@ -1,8 +1,8 @@
 # test_v2_group_directory.py
 """
 Production-SPA coverage for the native V2 group directory page.
-Version: 0.261.149
-Implemented in: 0.261.149
+Version: 0.261.150
+Implemented in: 0.261.150
 
 Exercises the real group directory surface -- the browse-and-join page built on the My Workspace
 design system and driven by the scope-neutral directory adapter -- against closed synthetic HTTP.

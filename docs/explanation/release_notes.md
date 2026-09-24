@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.150)**
+
+#### New Features
+
+*   **V2 Group Directory**
+    *   Find, join and create groups in V2 at `/v2/groups/directory`, reached from **Browse all groups** in the group workspaces header or from the screen shown when no group is selected. The **All**, **My groups** and **Discover** views, the search and the page stay in the address.
+    *   Each group shows its name, description, member count, owner's name, and your role or pending request. **Open** goes to a group you belong to. **Request to join** and **Cancel request** update the row from the server's answer, and a conflicting change reloads the list rather than guessing.
+    *   **Create group** appears only when the server allows it, including the **CreateGroups** role rule. It checks the name and description limits the way the server counts them, and then opens the new group.
+    *   (Ref: `GroupDirectoryPage.tsx`, `DirectoryList.tsx`, `CreateGroupDialog.tsx`, `groupDirectory.ts`, [V2 Group Directory](features/V2_GROUP_DIRECTORY.md))
+
 ### **(v0.261.149)**
 
 #### Bug Fixes

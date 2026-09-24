@@ -1,8 +1,8 @@
 # test_group_directory_fixture_parity.py
 """
 Per-route shape parity between the M7A group directory UI fixture and the real routes.
-Version: 0.261.149
-Implemented in: 0.261.149
+Version: 0.261.150
+Implemented in: 0.261.150
 
 The V2 group directory browser suite mocks the network with the closed HTTP fixture
 `ui_tests/fixtures/group_directory.py`. A fixture whose response shape drifts from the server
