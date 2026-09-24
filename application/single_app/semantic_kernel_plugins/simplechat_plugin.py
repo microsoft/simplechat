@@ -8,6 +8,11 @@ from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 
 from functions_appinsights import log_event
+from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    GroupDocumentWriteConflict,
+)
 from functions_simplechat_operations import (
     SIMPLECHAT_CAPABILITY_DEFINITIONS,
     add_conversation_message_for_current_user,
@@ -130,6 +135,21 @@ class SimpleChatPlugin(BasePlugin):
             return {"success": False, "error": str(exc), "error_type": "not_found"}
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_type": "validation"}
+        except GroupDocumentWriteConflict:
+            # The group kept changing, so nothing was saved and the request can be
+            # repeated: the model gets the shared sentence to relay, and the log
+            # carries no group data and no traceback.
+            log_event(
+                "[SIMPLE_CHAT_PLUGIN] A group change was not saved because the group kept changing.",
+                extra={"operation": operation_name},
+                level=logging.WARNING,
+            )
+            return {
+                "success": False,
+                "error": GROUP_WRITE_CONFLICT_MESSAGE,
+                "error_type": "conflict",
+                "error_code": GROUP_WRITE_CONFLICT_CODE,
+            }
         except Exception as exc:
             log_event(
                 f"[SIMPLE_CHAT_PLUGIN] {operation_name} failed: {exc}",
