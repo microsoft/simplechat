@@ -30,11 +30,12 @@ requirement.
 Deep Research does not require selecting the Web button first. Its automatic
 source discovery still depends on the administrator enabling Web Search.
 Selected workspaces and document filters continue to bound document access.
-Image generation has no orchestration adapter; use ordinary chat for that work.
-If Image was already selected, Send and Enter pause for an explicit choice:
-**Use regular Chat with Image**, or **Use Orchestrate without Image for this
-message**. The second choice excludes Image only from that orchestration message
-and preserves your ordinary-chat Image preference.
+Since **0.261.132**, Image works in Orchestrate as a request for image proposal
+cards: the answer includes at least one card, and each image is generated only
+when you approve it. Without Image, the answer can still propose images when the
+request would benefit from them, and it can include charts and Mermaid diagrams.
+Your saved Instruction memories, such as "I don't like charts", decide which
+visuals you get unless your current message explicitly asks for one.
 
 URL Access uses the full resolved message, including an attached prompt. Removing
 the URL from the draft clears that now-ineligible selection; it does not clear

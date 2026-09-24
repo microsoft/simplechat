@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.127
+Version: 0.261.132
 """
 
 import hashlib
@@ -192,6 +192,9 @@ def resolve_seeds(request_data):
         'reasoning_effort': _text(request_data.get('reasoning_effort')),
         'prompt': prompt,
         'web_search': request_data.get('web_search_enabled') is True,
+        # The composer's Image control. In orchestration it asks the answer to propose
+        # images for approval; the answer step honors it only when image generation is on.
+        'image_generation': request_data.get('image_generation_enabled') is True,
         'required_capabilities': _string_list(request_data.get('required_capabilities')),
         'active_group_ids': _string_list(
             request_data.get('active_group_ids') or request_data.get('active_group_id')

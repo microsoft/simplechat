@@ -311,6 +311,24 @@ restrictions and confirmation behavior remain intact. The focused loop can make 
 calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
 and cancellation. No output phase or composer action picker is added.
 
+### Charts, diagrams, and images in answers
+
+Since **0.261.132**, orchestrated answers can include inline charts, Mermaid diagrams, and
+image proposal cards, without an extra setting:
+
+- A chart of data an action retrieves is drawn by a short chart step inside that action
+  step, from the exact returned rows. The chart step can use only the built-in chart tools,
+  so it cannot call the integration again, and it is not counted against
+  `max_auto_invoke_attempts`. It adds one model call per charted step.
+- Mermaid diagrams are written by the answer step.
+- Image proposal cards appear only when **Image generation** (`enable_image_generation`) is
+  on, and each image is generated only after the user approves its card. The composer's
+  Image control is usable in Orchestrate and asks for at least one card.
+
+Users' saved Instruction memories shape these visuals; for example, a saved "no charts"
+instruction stops charts they did not ask for. The Gather/Reason/Render harness preview
+does not produce these visuals yet.
+
 ### Limits {#chat-orchestration-limits-section}
 
 Bounds on a single run.

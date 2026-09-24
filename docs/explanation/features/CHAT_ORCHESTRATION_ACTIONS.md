@@ -1,8 +1,10 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.098**
+Version: **0.261.132**
 
 Implemented in version: **0.261.098**
+
+Retrieved-data charts added in version: **0.261.132**
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -59,6 +61,27 @@ The top-level planner chooses the action and task; the focused loop chooses func
 and binds their arguments. Avoiding agent setup does **not** mean avoiding model calls.
 Conversational follow-ups retain their resolved request and bounded, authorized
 conversation reference when handed to an action, including accepted clarification answers.
+
+### Charting retrieved data
+
+Since **0.261.132**, an action step can chart what it retrieves. When the user's current
+message asks for a chart, or the planner's task for the step asks for one, a chart sub-step
+runs after the action's own loop:
+
+- It is a separate model call whose kernel holds only the built-in chart tools. It cannot
+  call the action's functions, and it does not count toward the action's function-call limit.
+- `chart_retrieved_rows` charts the exact rows a gather call returned, read on the server.
+  Time and numeric x values are sorted ascending, and a series longer than 200 points keeps
+  each segment's highest and lowest value. The chart subtitle states the sampling.
+- It receives the user's saved Instruction memories, so preferences such as chart colors or
+  "no charts" apply. An explicit chart request in the current message still wins. Recalled
+  facts are never included.
+- A chart that cannot be created leaves the step's findings intact and says so.
+
+The step summary reports the result, for example "Used Simulation (3 function calls) and
+created 1 chart." The chart travels in the step's tool citations, untruncated, and the answer
+step places it. Runs under the opt-in Gather/Reason/Render harness do not add the chart
+sub-step.
 
 The existing `/api/v2/orchestration/plan` and `/api/v2/orchestration/run` endpoints and
 plan approval/editing flow remain the entry points. There is no second action allowlist,
@@ -150,6 +173,10 @@ See [Orchestration settings](../../admin/orchestration.md) for rollout and limit
 - Backend action catalog, planning and runtime tests cover authorization, isolated
   execution and failure behavior. The existing orchestration tests remain relevant for
   phase ordering, executor behavior and citation persistence.
+- `functional_tests/test_orchestration_action_runtime.py` also covers the chart sub-step:
+  exact rows become at most 200 chronological points, the sub-step cannot call the action,
+  saved instructions reach it while facts do not, and capturing runs never add it.
+  `functional_tests/test_orchestration_visual_outputs.py` covers placement in the answer.
 - TypeScript changes are checked with the existing V2 `npm run typecheck` command.
 
 Browser fixtures use local assets and synthetic data. They do not prove live

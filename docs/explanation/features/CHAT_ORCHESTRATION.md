@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.130** (tracked in `application/single_app/config.py`)
+**Version: 0.261.132** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -18,6 +18,7 @@
 **Selected composition profile definitions supplied in version: 0.261.127**
 **Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
 **Runtime boundary hardening implemented in version: 0.261.129**
+**Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
 
 ## Overview
 
@@ -992,6 +993,32 @@ and PowerPoint/PPTX mappings remain future extensions of that shared framework;
 existing XML/native formats are unchanged. This slice adds no output scheduling,
 workspace-placement or delivery capability.
 
+### Charts, diagrams, and image proposals
+
+Since **0.261.132**, an orchestrated answer can show the same visuals as ordinary chat:
+inline charts, Mermaid diagrams, and image proposal cards. These are part of presenting
+gathered knowledge, so they do not use the reserved output phase.
+
+- **Charts** are drawn where the raw data is. When the user's current message asks for a
+  chart, or the planner asks for one in an action task, the action step runs a chart
+  sub-step after its own loop. The sub-step's kernel holds only the built-in chart tools, and
+  `chart_retrieved_rows` charts the exact rows an earlier call returned. Series longer than
+  the 200 points a chart renders keep each segment's highest and lowest value, and the chart
+  subtitle states the sampling. The answer places each chart at its `[[chart:<id>]]` token;
+  any it does not place is appended once.
+- **Diagrams** are written by the answer step in Mermaid, using ordinary chat's diagram
+  guidance. Gathering steps keep the entities and relationships the diagram needs.
+- **Image proposals** are `simpleimage` cards the user approves one at a time, through the
+  existing approval route. They are offered only when `enable_image_generation` is on. The
+  answer decides from the request type whether images help, including when the user did not
+  ask. Selecting **Image** in Orchestrate asks for at least one proposal.
+
+Saved memory keeps its existing precedence: an explicit ask in the current message wins,
+otherwise a saved Instruction memory about visuals overrides proactive or suggested visuals,
+and style preferences apply to whichever step authors the visual. The chart sub-step
+receives saved instructions only, never recalled facts, and never the action's own
+functions. See the [visual outputs fix](../fixes/ORCHESTRATION_VISUAL_OUTPUTS_FIX.md).
+
 ## API
 
 Planning and execution are deliberately separate requests. The plan is durable between
@@ -1243,7 +1270,8 @@ to the front.
 | `functional_tests/test_orchestration_deep_research.py` | Multi-query discovery and review, query bounds, logs-only backup recovery, cancellation, partial/empty results, resolved follow-ups, and user-URL provenance |
 | `functional_tests/test_orchestration_action_catalog.py` | Scoped discovery, existing governance, exact references, secret-free projections and revocation |
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
-| `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
+| `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup; the chart sub-step charts exact rows, cannot reach the action, and receives only saved instructions |
+| `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
@@ -1272,10 +1300,15 @@ research-selection rate is not itself a quality improvement.
   gather knowledge directly, but the `output` phase remains empty. There are no dedicated
   output scheduling, workspace placement or delivery steps. Actions retain their existing
   operations, so knowledge-phase placement is not a read-only guarantee.
-- **An agent step produces no artifacts.** Charts and images an agent generates are written
-  through the Flask-bound message-artifact pipeline, which the worker thread cannot reach.
-  The adapter surfaces the agent's tool activity as citations instead and returns no
-  artifacts.
+- **An agent step produces no file artifacts.** Generated files are written through the
+  Flask-bound message-artifact pipeline, which the worker thread cannot reach. The adapter
+  surfaces the agent's tool activity as citations instead. Since **0.261.132**, a chart an
+  agent creates with its chart tool travels in those citations and is placed in the answer,
+  and images are offered as proposal cards by the answer step. Agent steps do not receive
+  saved memories.
+- **Visuals are limited to the legacy contract.** The Gather/Reason/Render harness does not
+  yet produce charts, diagrams, or image proposals. A chart renders at most 200 points per
+  series; longer series are reduced to each segment's highest and lowest values.
 - **One agent per plan.** Loading an agent resolves Key Vault secrets, hydrates every plugin
   it declares, and introspects SQL and Cosmos schemas. There is no working kernel cache, so
   each agent step pays that cost in full.

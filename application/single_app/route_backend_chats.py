@@ -242,10 +242,11 @@ from functions_generated_file_exports import (
 )
 from functions_chart_operations import (
     CORE_CHART_PLUGIN_NAME,
-    INLINE_CHART_BLOCK_LANGUAGE,
+    append_inline_chart_blocks_to_message as _append_inline_chart_blocks_to_message,
     build_proactive_chart_guidance_message,
     normalize_chart_kind,
     user_request_supports_proactive_charts,
+    user_requested_chart_visualization,
 )
 from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_conversation_context import (
@@ -2327,7 +2328,6 @@ def _rollback_mixed_source_chat_publication(
     }
 
 
-INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
 TABULAR_INLINE_CHART_MAX_POINTS = 12
 TABULAR_INLINE_CHART_MAX_CHARTS = 2
 TABULAR_INLINE_CHARTABLE_FUNCTIONS = {'group_by_aggregate', 'group_by_datetime_component'}
@@ -3441,68 +3441,6 @@ def _build_stream_cancel_event(
         **dict(extra_payload or {}),
     })
     return f"data: {json.dumps(payload)}\n\n"
-
-
-def _normalize_inline_chart_markdown(chart_markdown):
-    block = str(chart_markdown or '').strip()
-    if not block.startswith(f'```{INLINE_CHART_BLOCK_LANGUAGE}'):
-        return None
-    return block
-
-
-def _collect_inline_chart_blocks(candidate, chart_blocks):
-    if isinstance(candidate, dict):
-        normalized_chart_markdown = _normalize_inline_chart_markdown(candidate.get('chart_markdown'))
-        if normalized_chart_markdown:
-            chart_blocks.append({
-                'chart_id': candidate.get('chart_payload', {}).get('chartId') if isinstance(candidate.get('chart_payload'), dict) else None,
-                'chart_markdown': normalized_chart_markdown,
-            })
-
-        for value in candidate.values():
-            _collect_inline_chart_blocks(value, chart_blocks)
-        return
-
-    if isinstance(candidate, list):
-        for item in candidate:
-            _collect_inline_chart_blocks(item, chart_blocks)
-
-
-def _append_inline_chart_blocks_to_message(message_content, agent_citations):
-    chart_blocks = []
-    _collect_inline_chart_blocks(agent_citations, chart_blocks)
-
-    if not chart_blocks:
-        return message_content
-
-    existing_content = str(message_content or '').strip()
-    appended_blocks = []
-    seen_chart_ids = set()
-
-    for chart_block in chart_blocks:
-        chart_id = str(chart_block.get('chart_id') or '').strip()
-        chart_markdown = chart_block.get('chart_markdown')
-        if not chart_markdown:
-            continue
-
-        if chart_id:
-            if chart_id in seen_chart_ids:
-                continue
-            if INLINE_CHART_ID_PATTERN_TEMPLATE.format(chart_id) in existing_content:
-                seen_chart_ids.add(chart_id)
-                continue
-            seen_chart_ids.add(chart_id)
-
-        if chart_markdown in existing_content:
-            continue
-
-        appended_blocks.append(chart_markdown)
-
-    if not appended_blocks:
-        return message_content
-
-    separator = '\n\n' if existing_content else ''
-    return f"{existing_content}{separator}{'\n\n'.join(appended_blocks)}"
 
 
 def _get_appended_inline_chart_content_delta(original_content, updated_content):
@@ -7990,42 +7928,6 @@ async def maybe_create_tabular_generated_output(
             'in this chat as a downloadable export.'
         ),
     }
-
-
-def user_requested_chart_visualization(user_message):
-    """Return True when the user is explicitly asking for a plotted visualization."""
-    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
-    if not normalized_message:
-        return False
-
-    non_visual_patterns = (
-        'chart of accounts',
-        'org chart',
-        'organization chart',
-        'organizational chart',
-        'chart out ',
-    )
-    if any(pattern in normalized_message for pattern in non_visual_patterns):
-        return False
-
-    if re.search(
-        r'\b(?:bar|line|pie|doughnut|scatter|bubble|radar|histogram|heatmap|area|stacked(?:\s+bar|\s+line)?)\s+chart\b',
-        normalized_message,
-    ):
-        return True
-
-    if 'table and chart' in normalized_message or 'chart and table' in normalized_message:
-        return True
-
-    if re.search(r'\b(?:graph|plot|visuali[sz]e?|visuali[sz]ation)\b', normalized_message):
-        return True
-
-    return bool(
-        re.search(
-            r'\b(?:include|with|show|create|generate|render|make|build|draw|produce)\b[^.!?\n]{0,80}\bchart\b',
-            normalized_message,
-        )
-    )
 
 
 def build_chart_tool_usage_system_message():

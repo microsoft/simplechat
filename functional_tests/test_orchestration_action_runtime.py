@@ -1,8 +1,8 @@
 # test_orchestration_action_runtime.py
 """Functional coverage for isolated multi-function action execution.
 
-Version: 0.261.127
-Implemented in: 0.261.098
+Version: 0.261.132
+Implemented in: 0.261.098; chart sub-step added in 0.261.132
 
 Runs the real Semantic Kernel auto-invocation loop and function filters with a
 scripted model and local plugins. No Azure or external service calls are made.
@@ -10,6 +10,7 @@ scripted model and local plugins. No Azure or external service calls are made.
 
 import ast
 import asyncio
+import functools
 import importlib
 import json
 import logging
@@ -17,6 +18,7 @@ import sys
 import typing
 from contextlib import nullcontext
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
@@ -55,6 +57,7 @@ def runtime(monkeypatch):
             },
             calls=[], loads=[], prepared=[], instances=[], requests=[], replies=[],
             cancelled=False, fail=False, after_call=None, block=False, close_error=False,
+            lookup_value=None,
         )
         state.action = {
             'action_ref': 'personal:actor:tickets', 'id': 'tickets', 'name': 'tickets',
@@ -84,7 +87,7 @@ def runtime(monkeypatch):
                 state.calls.append((ticket, frame.identity.user_id))
                 if state.fail:
                     raise RuntimeError('PRIVATE_PROVIDER_FAILURE')
-                value = {'ticket': ticket, 'status': 'open'}
+                value = state.lookup_value(ticket) if state.lookup_value else {'ticket': ticket, 'status': 'open'}
                 frame.budget.record_tool_invocation(SimpleNamespace(
                     plugin_name='tickets', function_name='lookup', parameters={'ticket': ticket},
                     result=value, user_id=frame.identity.user_id, success=True,
@@ -169,8 +172,10 @@ def tool_message(*tickets, function='tickets-lookup'):
     )
 
 
-async def execute(state, *, invocation_capture=None):
+async def execute(state, *, invocation_capture=None, visual_request=None):
     capture_kwargs = {'invocation_capture': invocation_capture} if invocation_capture is not None else {}
+    if visual_request is not None:
+        capture_kwargs['visual_request'] = visual_request
     return await state.runtime.invoke_action(
         state.action['action_ref'], 'Look up the tickets.', state.context,
         settings=state.settings, user_id='actor', cancel_requested=lambda: state.cancelled,
@@ -818,6 +823,184 @@ def test_selected_action_preparation_reuses_overlays_and_secret_identity_resolut
     with pytest.raises(PermissionError):
         namespace['prepare_action_plugin_manifest']({'type': 'agent'}, settings)
     assert not stages
+
+
+# --------------------------------------------------------------------------------------
+# Chart sub-step (0.261.132): charts are drawn from the exact gathered rows by a separate
+# model call whose kernel holds only the chart tools.
+# --------------------------------------------------------------------------------------
+
+def usage():
+    return {'prompt_tokens': 2, 'completion_tokens': 1, 'total_tokens': 3}
+
+
+def text_reply(text):
+    return ChatMessageContent(role=AuthorRole.ASSISTANT, content=text, metadata={'usage': usage()})
+
+
+def chart_call(arguments, function='retrieved_data_charts-chart_retrieved_rows'):
+    return ChatMessageContent(
+        role=AuthorRole.ASSISTANT,
+        items=[FunctionCallContent(id='chart-1', name=function, arguments=json.dumps(arguments))],
+        metadata={'usage': usage()},
+    )
+
+
+def telemetry_rows(count=900):
+    """One-second samples returned newest first, the way Yamcs archive history returns them."""
+    start = datetime(2026, 9, 23, 19, 58, 31, tzinfo=timezone.utc)
+    rows = [
+        {
+            'generation_time': (start + timedelta(seconds=index)).isoformat().replace('+00:00', 'Z'),
+            'eng_value': 27 + index % 5,
+        }
+        for index in range(count)
+    ]
+    rows[min(300, count - 1)]['eng_value'] = 40
+    return list(reversed(rows))
+
+
+def chart_request(**overrides):
+    return {'chart': True, 'explicit_chart': True, 'request': 'Plot the voltage for 15 minutes.', **overrides}
+
+
+@pytest.fixture
+def chart_tools(runtime, monkeypatch):
+    """The real ChartPlugin, with its invocation logger recording into the step budget."""
+    contexts = runtime.contexts
+
+    def plugin_function_logger(plugin_name):
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                result = func(*args, **kwargs)
+                frame = contexts.current_agent_execution()
+                if frame is not None:
+                    frame.budget.record_tool_invocation(SimpleNamespace(
+                        plugin_name=plugin_name, function_name=func.__name__, parameters=kwargs,
+                        result=result, user_id=frame.identity.user_id, success=True,
+                        provenance={'root_id': frame.budget.root_id},
+                    ))
+                return result
+            return wrapper
+        return decorator
+
+    monkeypatch.setitem(sys.modules, 'semantic_kernel_plugins.plugin_invocation_logger', module(
+        'semantic_kernel_plugins.plugin_invocation_logger', plugin_function_logger=plugin_function_logger,
+    ))
+    monkeypatch.delitem(sys.modules, 'semantic_kernel_plugins.chart_plugin', raising=False)
+    yield importlib.import_module('semantic_kernel_plugins.chart_plugin')
+    sys.modules.pop('semantic_kernel_plugins.chart_plugin', None)
+
+
+def chart_results(result):
+    return [
+        invocation.result for invocation in result['invocations']
+        if getattr(invocation, 'plugin_name', None) == 'ChartPlugin'
+        and isinstance(invocation.result, dict) and invocation.result.get('success')
+    ]
+
+
+def test_requested_chart_is_drawn_from_exact_rows_after_the_action_loop(runtime, chart_tools):
+    runtime.lookup_value = lambda ticket: {'success': True, 'rows': telemetry_rows()}
+    runtime.context.memory_context = {
+        'instruction_messages': [{
+            'role': 'system',
+            'content': '<Instruction Memory>\n- Draw my charts in red.\n</Instruction Memory>',
+        }],
+        'context_messages': [{'role': 'system', 'content': '<Fact Memory>\n- PRIVATE_FACT\n</Fact Memory>'}],
+    }
+    runtime.replies = [
+        tool_message('history'),
+        text_reply('900 voltage samples were retrieved.'),
+        chart_call({
+            'source_function': 'lookup', 'x_field': 'generation_time', 'y_fields': 'eng_value',
+            'title': 'Voltage', 'colors': 'red',
+        }),
+        text_reply('Created the Voltage chart.'),
+    ]
+    result = asyncio.run(execute(runtime, visual_request=chart_request()))
+
+    assert runtime.calls == [('history', 'actor')]
+    assert result['calls'] == 1
+    assert result['charts'] == 1
+    assert 'Charts created from the retrieved results: "Voltage"' in result['findings']
+    [chart] = chart_results(result)
+    payload = chart['chart_payload']
+    labels = payload['data']['labels']
+    values = payload['data']['datasets'][0]['data']
+    assert chart['chart_markdown'].startswith('```simplechart')
+    assert len(labels) <= 200 and len(values) == len(labels)
+    assert labels[0] == '19:58:31' and labels[-1] == '20:13:30'
+    assert 40 in values and 27 in values and 31 in values
+    assert payload['data']['datasets'][0]['borderColor'] == '#dc2626'
+    assert '200 of 900 points' in payload['subtitle']
+    assert payload['options']['beginAtZero'] is False
+    assert len(runtime.requests) == 4
+    gather_requests, chart_step_request = runtime.requests[:2], runtime.requests[2]
+    assert all('Draw my charts in red' not in request for request in gather_requests)
+    assert all('separate chart step' in request for request in gather_requests)
+    assert 'Draw my charts in red' in chart_step_request
+    assert 'PRIVATE_FACT' not in chart_step_request
+    assert '"explicit_chart_request": true' in chart_step_request
+    assert '"row_count": 900' in chart_step_request
+    assert runtime.context.token_usage['total_tokens'] == 12
+    assert all(instance.closed for instance in runtime.instances)
+    assert runtime.contexts.current_agent_execution() is None
+
+
+def test_chart_step_cannot_reach_the_action_and_keeps_findings_on_failure(runtime, chart_tools):
+    runtime.lookup_value = lambda ticket: {'rows': telemetry_rows(20)}
+    runtime.replies = [
+        tool_message('history'),
+        text_reply('Twenty samples were retrieved.'),
+        tool_message('99'),
+        text_reply('No chart.'),
+    ]
+    result = asyncio.run(execute(runtime, visual_request=chart_request(explicit_chart=False)))
+
+    assert runtime.calls == [('history', 'actor')]
+    assert result['calls'] == 1
+    assert result['charts'] == 0
+    assert result['findings'].startswith('Twenty samples were retrieved.')
+    assert 'The requested chart could not be created' in result['findings']
+    assert '"explicit_chart_request": false' in runtime.requests[2]
+
+
+def test_chart_tool_errors_are_reported_to_the_model_not_raised(runtime, chart_tools):
+    runtime.lookup_value = lambda ticket: {'rows': telemetry_rows(20)}
+    runtime.replies = [
+        tool_message('history'),
+        text_reply('Twenty samples were retrieved.'),
+        chart_call({'source_function': 'lookup', 'x_field': 'missing_field', 'y_fields': 'eng_value'}),
+        text_reply('The chart could not be drawn.'),
+    ]
+    result = asyncio.run(execute(runtime, visual_request=chart_request()))
+
+    assert result['charts'] == 0
+    assert 'Available fields' in runtime.requests[3]
+    assert runtime.calls == [('history', 'actor')]
+
+
+def test_without_a_chart_request_the_action_loop_is_unchanged(runtime, chart_tools):
+    runtime.replies = [tool_message('42')]
+    result = asyncio.run(execute(runtime, visual_request={'chart': False, 'diagram': True}))
+
+    assert result['charts'] == 0
+    assert len(runtime.requests) == 2
+    assert 'keep the entities, relationships' in runtime.requests[0]
+    assert 'Charts created' not in result['findings']
+
+
+def test_capturing_runs_never_add_the_chart_step(runtime, chart_tools):
+    capture_module = importlib.import_module('functions_orchestration_invocation_capture')
+    state = capture_module.OrchestrationInvocationCapture(lambda *args, **kwargs: None)
+    runtime.replies = [tool_message('42')]
+    result = asyncio.run(execute(runtime, invocation_capture=state, visual_request=chart_request()))
+
+    assert result['charts'] == 0
+    assert len(runtime.requests) == 2
+    assert all('chart' not in request.lower() for request in runtime.requests)
 
 
 if __name__ == '__main__':

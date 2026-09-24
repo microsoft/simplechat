@@ -38,7 +38,6 @@ TARGET_FUNCTIONS = {
     'build_tabular_inline_chart_citations',
     'get_tabular_invocation_error_message',
     'get_tabular_invocation_result_payload',
-    'user_requested_chart_visualization',
 }
 
 
@@ -137,6 +136,13 @@ def load_tabular_chart_helpers():
         're': re,
         'user_request_supports_proactive_charts': lambda user_message: False,
     }
+    # Chart intent detection moved to functions_chart_operations in 0.261.132 so
+    # orchestration can share it; the route imports it under the same name.
+    if str(APP_ROOT) not in sys.path:
+        sys.path.insert(0, str(APP_ROOT))
+    from functions_chart_operations import user_requested_chart_visualization  # pylint: disable=import-error,import-outside-toplevel
+
+    namespace['user_requested_chart_visualization'] = user_requested_chart_visualization
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(ROUTE_FILE), 'exec'), namespace)
     return namespace, route_content
 

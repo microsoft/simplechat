@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.132)**
+
+#### Bug Fixes
+
+*   **Charts, Mermaid Diagrams, And Image Proposals In Orchestrated Answers**
+    *   Fixed orchestrated requests such as "Plot BatteryVoltage1 over the last 15 minutes" answering that a plot could not be produced. No orchestration step had a chart tool, the retrieved rows never reached the answer, and the answer step had none of the chart, Mermaid, or image-proposal guidance ordinary chat uses.
+    *   A requested chart is now drawn from the exact rows an action retrieved, by a chart step that can use only the built-in chart tools. Long series are reduced to the 200 points a chart shows while keeping each segment's highest and lowest values, and the chart subtitle states the sampling.
+    *   The answer places those charts, writes Mermaid diagrams, and proposes images when image generation is enabled, including when an image would help but was not requested. Each image is generated only after the user approves its card.
+    *   Saved Instruction memories shape these visuals, so "I don't like charts" stops charts you did not ask for. An explicit request in the current message still wins, and recalled facts never reach the chart step.
+    *   (Ref: `functions_orchestration_visuals.py`, `functions_orchestration_actions.py`, `functions_orchestration_adapters.py`, `functions_chart_operations.py`, [Visual Outputs Fix](fixes/ORCHESTRATION_VISUAL_OUTPUTS_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Image In Orchestrate**
+    *   The composer's Image control now works in Orchestrate, where it asks the answer for at least one image proposal card instead of blocking the message. A status line explains that the images wait for approval.
+    *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md))
+
 ### **(v0.261.129)**
 
 #### New Features

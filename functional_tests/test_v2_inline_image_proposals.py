@@ -55,6 +55,9 @@ CHAT_STORE = V2_SRC / "stores" / "chatStore.ts"
 
 CLASSIC_MODULE = APP_DIR / "static" / "js" / "chat" / "chat-inline-image-proposals.js"
 SERVER_MODULE = APP_DIR / "functions_image_generation.py"
+# Since 0.261.132 the fence language and prompt cap live in this import-light module, which
+# functions_image_generation.py re-exports, so orchestration can read them without image clients.
+SERVER_PROPOSAL_MODULE = APP_DIR / "functions_image_proposals.py"
 CHAT_ROUTES = APP_DIR / "route_backend_chats.py"
 
 LOGIC_TEST = REPO_ROOT / "functional_tests" / "test_v2_inline_image_proposal_logic.mjs"
@@ -96,7 +99,7 @@ def test_fence_language_matches_the_classic_client_and_the_server():
     print("Testing the fence language...")
     spec_source = _read(SPEC_MODULE)
     classic_source = _read(CLASSIC_MODULE)
-    server_source = _read(SERVER_MODULE)
+    server_source = f"{_read(SERVER_MODULE)}\n{_read(SERVER_PROPOSAL_MODULE)}"
 
     v2_language = re.search(
         r"IMAGE_PROPOSAL_LANGUAGE\s*=\s*'([^']+)'", spec_source
@@ -133,7 +136,7 @@ def test_sanitisation_caps_match_the_server():
     """A card cannot display or send more than the server will accept."""
     print("Testing sanitisation caps...")
     spec_source = _read(SPEC_MODULE)
-    server_source = _read(SERVER_MODULE)
+    server_source = f"{_read(SERVER_MODULE)}\n{_read(SERVER_PROPOSAL_MODULE)}"
 
     expected_caps = {
         "PROMPT_MAX_LENGTH": "IMAGE_PROPOSAL_PROMPT_MAX_LENGTH",
@@ -147,7 +150,9 @@ def test_sanitisation_caps_match_the_server():
         if not client_value:
             raise AssertionError(f"{client_name} is not defined in imageProposalSpec.ts")
         if not server_value:
-            raise AssertionError(f"{server_name} is not defined in functions_image_generation.py")
+            raise AssertionError(
+                f"{server_name} is not defined in functions_image_generation.py or functions_image_proposals.py"
+            )
         if client_value.group(1) != server_value.group(1):
             raise AssertionError(
                 f"{client_name} is {client_value.group(1)} but the server's "
