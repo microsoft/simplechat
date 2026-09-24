@@ -90,4 +90,5 @@ workspace from **Group Workspaces** or **Public Workspaces** instead.
 
 ## Related
 
+- [Public Document Decision Link Fix](PUBLIC_DOCUMENT_DECISION_LINK_FIX.md)
 - [Group Directory APIs](../features/GROUP_DIRECTORY_APIS.md)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace generated-artifact decisions.
-Version: 0.261.134
+Version: 0.261.148
 Implemented in: 0.261.134
+Decision link opens the V2 public workspace route: 0.261.148
 
 The scoped public collaboration routes, the public publication adapter, the
 shared canonical artifact-publication engine, the shared screening consume-latch
@@ -453,7 +454,7 @@ def test_real_public_decisions_preserve_exact_destination_and_durable_receipt(pu
         assert env.source.records[env.target][OPERATION]["phase"] == "complete"
     if action != "cancel":
         notice = env.publication_calls["notify"][-1]
-        assert notice["link_url"] == f"/v2/public-workspaces/public-a/documents?document_id={env.target}"
+        assert notice["link_url"] == f"/v2/public/public-a/documents?document_id={env.target}"
         assert notice["metadata"]["publication_receipt_id"] == env.receipt_id
     env.user_settings.assert_not_called()
 

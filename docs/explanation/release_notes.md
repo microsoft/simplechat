@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.148)**
+
+#### Bug Fixes
+
+*   **Public Publication Decisions Open The Document**
+    *   Fixed the notification a member gets when a public workspace manager approves or rejects their generated file. It linked to `/v2/public-workspaces/<id>/documents`, a path the V2 app doesn't serve, so it opened the V2 home page. It now opens `/v2/public/<id>/documents` with the document named.
+    *   A new check fails if any backend link points to a V2 path that the V2 router doesn't serve. Notifications sent before the fix keep their old link.
+    *   (Ref: `functions_public_document_publication.py`, `test_public_workspace_notification_links_fix.py`, [Public Document Decision Link Fix](fixes/PUBLIC_DOCUMENT_DECISION_LINK_FIX.md))
+
 ### **(v0.261.147)**
 
 #### New Features

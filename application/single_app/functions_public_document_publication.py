@@ -303,7 +303,7 @@ def decide_public_document_publication(user_id, public_workspace_id, document_id
                 artifact, receipt, _bound = publication.read_artifact_publication_request(document)
             publication.decide_artifact_publication(
                 user_id, document, choice, operation_guard=guard, delete_destination=cleanup,
-                decision_link_url=f"/v2/public-workspaces/{quote(public_workspace_id, safe='')}/documents?document_id={quote(document_id, safe='')}",
+                decision_link_url=f"/v2/public/{quote(public_workspace_id, safe='')}/documents?document_id={quote(document_id, safe='')}",
                 operation_id=operation_id,
             )
     except Exception as error:
