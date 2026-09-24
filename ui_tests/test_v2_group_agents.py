@@ -1,8 +1,8 @@
 # test_v2_group_agents.py
 """
 Production-SPA coverage for the native scope-aware V2 group agents workbench.
-Version: 0.261.137
-Implemented in: 0.261.137
+Version: 0.261.138
+Implemented in: 0.261.138
 
 Exercises the real agent collection and full-page editor against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/agents` family, its

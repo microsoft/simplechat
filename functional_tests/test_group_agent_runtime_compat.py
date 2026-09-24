@@ -1,6 +1,8 @@
 # test_group_agent_runtime_compat.py
 """
 Runtime compatibility of the stored group-agent shape (M4C §8 B6).
+Version: 0.261.138
+Implemented in: 0.261.138
 
 One record is built by the REAL ``apply_group_agent_write`` (through the immutable
 group-agent create route, over the same in-memory Cosmos seam the API contract

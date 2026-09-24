@@ -1,8 +1,8 @@
 # group_agents.py
 """
 Closed M4C group agent HTTP fixtures for the real production V2 SPA.
-Version: 0.261.137
-Implemented in: 0.261.137
+Version: 0.261.138
+Implemented in: 0.261.138
 
 The fixture serves the immutable `/api/groups/<group_id>/agents[...]` family, the
 `/api/groups/<group_id>/agent-options` editor options and the
