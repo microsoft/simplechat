@@ -3,8 +3,8 @@
 Closed, real-SPA browser scenarios for M2B group document management.
 Version: 0.261.163
 Implemented in: 0.261.129
-Coded failures show the server's sentence, delete guards name the conversation, and downloads take
-the server's attachment name: 0.261.163
+Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
+the server's name: 0.261.163
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -987,12 +987,8 @@ def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_ma
     assert "origin" not in ui.groups
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): the explorer saves every multi-document download as "
-    "'documents.zip' (DocumentExplorer's saveBlob fallback) instead of the attachment name the server sends, "
-    "'group-documents.zip'. The fixture's invented Content-Disposition used the explorer's own name."
-))
 def test_batch_download_is_saved_under_the_servers_archive_name(group_management_ui):
+    """A multi-document download is saved under the archive name the server's attachment gives."""
     ui = group_management_ui
     open_documents(ui)
     select_documents(ui, "same-document", "shared-report")
@@ -1006,6 +1002,40 @@ def test_batch_download_is_saved_under_the_servers_archive_name(group_management
     with ui.page.expect_download() as download:
         perform(ui, batch, command(ui, "Download").click)
     assert download.value.suggested_filename == GROUP_ARCHIVE_NAME
+
+
+def test_archives_take_a_bare_server_name_and_singles_keep_their_own(group_management_ui):
+    """Robustness: deliberately unusual attachment headers. An archive is saved under the server's
+    name, `filename*` preferred and any path dropped, or documents.zip when the name is empty or
+    only a path. A single download keeps the document's own name, whatever lossy name (the
+    server's secure_filename) its header carries."""
+    ui = group_management_ui
+    ui.record("shared-report")["file_name"] = "Published report (final).pdf"
+    ui.record("same-document")["file_name"] = "报告.pdf"
+    open_documents(ui)
+    both = ("same-document", "shared-report")
+    cases = (
+        (both, "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20set.zip; filename=\"resume_set.zip\"", "résumé set.zip"),
+        (both, 'attachment; filename="../../reports/evil.zip"', "evil.zip"),
+        (both, 'attachment; filename="reports/"', "documents.zip"),
+        (both, 'attachment; filename=""', "documents.zip"),
+        (("shared-report",), 'attachment; filename="Published_report_final.pdf"', "Published report (final).pdf"),
+        (("same-document",), 'attachment; filename="pdf"', "报告.pdf"),
+        (("shared-report",), "attachment", "Published report (final).pdf"),
+    )
+    for identifiers, disposition, expected in cases:
+        select_documents(ui, *identifiers)
+        reply = ui.queue_operation(
+            "GET" if len(identifiers) == 1 else "POST",
+            f"{identifiers[0]}/download" if len(identifiers) == 1 else "download",
+            body=None if len(identifiers) == 1 else {"document_ids": list(identifiers)},
+            response=b"file bytes", content_type="application/octet-stream",
+            headers={"Content-Disposition": disposition},
+        )
+        with ui.page.expect_download() as download:
+            perform(ui, reply, command(ui, "Download").click)
+        assert download.value.suggested_filename == expected, disposition
+    assert len(ui.operation_requests) == len(cases)
 
 
 def test_final_html_json_and_error_download_bodies_never_become_files(group_management_ui):

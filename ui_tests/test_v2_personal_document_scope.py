@@ -2,10 +2,11 @@
 """
 Protect personal document behavior while the shared explorer gains group scope.
 
-Version: 0.261.130
+Version: 0.261.163
 Implemented in: 0.261.128
 Management baseline expanded in: 0.261.129
 Personal sharing baseline expanded in: 0.261.130
+Downloads keep their names whatever the personal routes send: 0.261.163
 
 The real SPA runs against closed synthetic personal APIs. A saved active group
 must not retarget personal reads, filtering, selection, or metadata writes.
@@ -17,6 +18,7 @@ from collections import Counter
 
 import pytest
 from playwright.sync_api import expect
+from werkzeug.utils import secure_filename
 
 from ui_tests.fixtures.workspace_authoring import (
     OWNER_ID, WorkspaceAuthoringFixture, connect_options,  # noqa: F401
@@ -24,6 +26,13 @@ from ui_tests.fixtures.workspace_authoring import (
 
 
 pytestmark = pytest.mark.ui
+# The personal download routes name a file as functions_documents._sanitize_download_file_name
+# does, and a batch of several personal_documents.zip.
+PERSONAL_ARCHIVE_NAME = "personal_documents.zip"
+
+
+def personal_download_name(file_name):
+    return secure_filename(str(file_name or "").replace("\\", "/").split("/")[-1].strip()) or "document"
 
 
 class PersonalDocumentFixture(WorkspaceAuthoringFixture):
@@ -155,10 +164,22 @@ class PersonalDocumentFixture(WorkspaceAuthoringFixture):
                 "deleted": deleted, "errors": errors,
                 "deleted_count": len(deleted), "error_count": len(errors),
             }, 207 if errors else 200)
-        elif entry.path == "/api/documents/personal-alpha/download" and entry.method == "GET":
+        elif (
+            entry.method == "GET" and (download := re.fullmatch(r"/api/documents/([^/]+)/download", entry.path))
+            and download[1] in self.documents
+        ):
             route.fulfill(
                 body=b"personal source fixture", content_type="application/octet-stream",
-                headers={"Content-Disposition": 'attachment; filename="personal-alpha.txt"'},
+                headers={"Content-Disposition": f'attachment; filename="{personal_download_name(self.documents[download[1]]["file_name"])}"'},
+            )
+        elif entry.path == "/api/documents/download" and entry.method == "POST":
+            identifiers = entry.body["document_ids"]
+            assert identifiers and all(identifier in self.documents for identifier in identifiers), entry
+            name = personal_download_name(self.documents[identifiers[0]]["file_name"]) if len(identifiers) == 1 else PERSONAL_ARCHIVE_NAME
+            route.fulfill(
+                body=b"personal download fixture",
+                content_type="application/octet-stream" if len(identifiers) == 1 else "application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{name}"'},
             )
         elif entry.path == "/api/userSearch" and entry.method == "GET":
             self._json(route, [self.share_recipient])
@@ -314,6 +335,30 @@ def test_personal_download_uses_the_personal_source_route(personal_documents):
     assert len(requests) == 1
     assert requests[0].path == "/api/documents/personal-alpha/download"
     assert requests[0].query == {}
+
+
+def test_personal_downloads_keep_their_names_whatever_the_route_sends(personal_documents):
+    """The personal routes name a single file by its secure_filename and a batch
+    personal_documents.zip. The personal explorer never reads either, so it saves a download
+    exactly as it always has: the document's own name, or documents.zip for several."""
+    ui = personal_documents
+    ui.downloads_enabled = True
+    ui.documents["personal-alpha"]["file_name"] = "Alpha notes.txt"
+    assert personal_download_name("Alpha notes.txt") == "Alpha_notes.txt"
+    ui.open("/workspace/documents")
+    ui.page.get_by_role("checkbox", name="Select Personal Alpha", exact=True).check()
+    with ui.page.expect_download() as single:
+        ui.page.get_by_role("button", name="Download", exact=True).first.click()
+    assert single.value.suggested_filename == "Alpha notes.txt"
+    ui.page.get_by_role("checkbox", name="Select Personal Beta", exact=True).check()
+    with ui.page.expect_download() as batch:
+        ui.page.get_by_role("button", name="Download", exact=True).first.click()
+    assert batch.value.suggested_filename == "documents.zip"
+    downloads = [entry for entry in ui.requests if entry.path.endswith("/download")]
+    assert [(entry.method, entry.path) for entry in downloads] == [
+        ("GET", "/api/documents/personal-alpha/download"), ("POST", "/api/documents/download"),
+    ]
+    assert sorted(downloads[1].body["document_ids"]) == ["personal-alpha", "personal-beta"]
 
 
 def test_personal_failed_metadata_save_keeps_the_draft(personal_documents):

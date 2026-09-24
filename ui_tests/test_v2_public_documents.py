@@ -4,7 +4,8 @@ Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
 Version: 0.261.163
 Implemented in: 0.261.132
-A coded failure shows the server's sentence (apiClient): 0.261.163
+A coded failure shows the server's sentence (apiClient), and an archive takes the server's
+name: 0.261.163
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -766,14 +767,15 @@ def test_downloads_save_complete_bytes_and_refusals_never_become_files(public_ma
             archive.writestr(ZipInfo(name, date_time=(2026, 9, 1, 0, 0, 0)), content)
     archive_bytes = stream.getvalue()
     select_documents(ui, "same-document", "notes-document")
+    # The public route names its archive public-documents.zip, and the explorer saves it so.
     batch = ui.queue_operation(
         "POST", "download", body={"document_ids": ["same-document", "notes-document"]},
         response=archive_bytes, content_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="documents.zip"'},
+        headers={"Content-Disposition": 'attachment; filename="public-documents.zip"'},
     )
     with ui.page.expect_download() as download:
         perform(ui, batch, command(ui, "Download").click)
-    assert download.value.suggested_filename == "documents.zip"
+    assert download.value.suggested_filename == "public-documents.zip"
     saved_archive = tmp_path / "set.zip"
     download.value.save_as(saved_archive)
     assert saved_archive.read_bytes() == archive_bytes
