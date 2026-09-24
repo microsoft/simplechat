@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.139)**
+
+#### New Features
+
+*   **Native Group Identities**
+    *   Group workspace identities can now be listed, created, edited and deleted from the native group workspace. These are the reusable credentials that group File Sync sources and group actions use. Previously the group Identities section sent users to the classic interface.
+    *   Owners, admins and document managers manage identities while the group is active. Ordinary members don't see them, as in the classic workspace.
+    *   If two managers edit the same identity, the second save is refused and the draft is kept. A delete is refused while a File Sync source or an action still uses the identity, and the editor lists what uses it.
+    *   Stored secrets are never shown. A new secret value only takes effect when the save commits, so a refused save never changes the credential in use.
+    *   The group action editor can now use a reusable group identity. Someone who can't list the group's identities sees an existing binding as kept, without an error.
+    *   (Ref: `route_backend_group_identities_scoped.py`, `functions_group_identity_access.py`, `functions_group_identity_policy.py`, `identityWorkbench.ts`, [V2 Group Identities](features/V2_GROUP_IDENTITIES.md), [Group Identity APIs](features/GROUP_IDENTITY_APIS.md))
+
 ### **(v0.261.138)**
 
 #### New Features

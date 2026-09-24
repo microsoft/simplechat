@@ -104,9 +104,9 @@ made active.
 - **Actions** (version **0.261.137**). Owners and Admins create, edit, test,
   and delete group actions. When an administrator requires it, only the Owner
   can. Everyone else sees read-only details. Actions provided by an
-  administrator appear as **Provided · Read only**. Reusable group identities
-  and saved MCP preconfigurations cannot yet be chosen in the group action
-  editor. An action that already uses a group identity keeps it.
+  administrator appear as **Provided · Read only**. From version **0.261.139**
+  an action can use one of the group's reusable identities. Saved MCP
+  preconfigurations cannot yet be chosen in the group action editor.
 - **Agents** (version **0.261.138**). Owners and Admins create, edit, and delete
   group agents, under the same owner-only rule. Everyone in the group can open
   an agent and use it in chat. **Use in chat** opens the agent in its own
@@ -122,11 +122,21 @@ them. When group agents are turned off for your organization, the Agents
 section is not offered. When only group actions are off, **Actions** keeps the
 **Call agent** manager.
 
+### Identities
+
+From version **0.261.139**, Owners, Admins, and DocumentManagers manage the
+group's reusable identities in **Identities**. These are the credentials that
+File Sync sources and actions use. Stored secrets are never shown; enter a new
+value to replace one. A new value only takes effect when the save succeeds. You
+cannot delete an identity while a File Sync source or an action still uses it:
+the editor lists what uses it, so you can move those to another identity first.
+Ordinary members do not see identities.
+
 ### Use group tools and manage the workspace
 
-Use **Workflows** for the native workflow editor and run history. **Identities**,
-**Sync**, and **Endpoints** are marked **Classic** while their native V2
-experiences are being built. **Open classic group workspace** confirms the
+Use **Workflows** for the native workflow editor and run history. **Sync** and
+**Endpoints** are marked **Classic** while their native V2 experiences are being
+built. **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
 Owners and administrators also have **Manage group (classic)** for members,
 join requests, and group settings.
@@ -142,9 +152,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-Identities, File Sync sources, model endpoints, group membership
-administration, group settings, and public workspace pages still use the
-classic interface.
+File Sync sources, model endpoints, group membership administration, group
+settings, and public workspace pages still use the classic interface.
 
 ## Use the classic workspace
 

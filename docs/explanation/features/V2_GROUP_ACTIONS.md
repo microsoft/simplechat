@@ -92,13 +92,22 @@ configured manually.
 
 ## Identities
 
-Reusable group identities cannot be chosen in the V2 editor yet. The only group
-identity list follows the account's selected group, and a group page must never
-load a member's personal identities. Group identity editing arrives with M5A.
+From version **0.261.139**, the group action editor lists the group's reusable
+identities from the group's own route (`GET /api/groups/<group_id>/identities`),
+keeping those the server reports as usable for actions. It never loads a
+member's personal identities. Group identities are managed in the group's
+Identities section; see [V2 Group Identities](V2_GROUP_IDENTITIES.md).
 
-An action already bound to a group identity, for example one created in the
-classic workspace, keeps that binding when edited. The editor labels it
-"Group identity" and does not describe it as unavailable.
+- **Someone who cannot list the group's identities**, such as an ordinary
+  member: the editor shows no error, and keeps an existing binding, described as
+  "Uses a group identity; kept as is."
+- **The list loaded, but the bound identity is not in it:** the editor calls
+  the binding unavailable.
+- **The list could not be loaded:** the editor shows the load error and keeps
+  the neutral wording.
+
+In 0.261.137 no group identity could be chosen, and an existing binding was
+kept as "Group identity".
 
 ## Connection tests
 
