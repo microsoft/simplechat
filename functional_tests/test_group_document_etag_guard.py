@@ -226,6 +226,9 @@ def test_every_guarded_writer_names_its_cache_reason():
         # The native group settings writes name theirs at each _write call.
         "functions_group_settings.py": {"cache_reason"},
         "functions_simplechat_operations.py": {"'group_member_added'"},
+        "route_backend_control_center.py": {
+            "None", "'group_status_updated'", "'group_member_added'", "'group_ownership_transferred'",
+        },
         "route_backend_groups.py": {"cache_reason", "'group_updated'", "None"},
         "route_backend_retention_policy.py": {"None"},
     }
@@ -328,10 +331,19 @@ def _cache_reasons_by_function(file_name, callee):
         "update_group_retention_settings": {"None"},
         "force_push_retention_defaults": {"None"},
     }),
+    ("route_backend_control_center.py", "update_group_document_with_etag_guard", {
+        # The metrics cache is read by no chat bootstrap payload, as before.
+        "enhance_group_with_activity": {"None"},
+        "api_update_group_status": {"'group_status_updated'"},
+        "api_admin_add_group_member": {"'group_member_added'"},
+        "_execute_take_ownership": {"'group_ownership_transferred'"},
+        "_execute_transfer_ownership": {"'group_ownership_transferred'"},
+    }),
 ])
 def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):
-    """The name, description, color and download writes bump group_updated, as the classic
-    writers did; the logo and retention writes bump nothing, as they never did."""
+    """Every converted classic writer bumps what it bumped before: the name, description,
+    color and download writes group_updated, the Control Center writes their own reasons,
+    and the logo, retention and metrics writes nothing, as they never did."""
     assert _cache_reasons_by_function(file_name, callee) == expected
 
 

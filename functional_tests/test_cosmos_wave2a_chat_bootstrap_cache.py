@@ -279,12 +279,12 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
         ],
         "route_backend_control_center.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_status_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
+            "cache_reason=\"group_status_updated\"",
+            "cache_reason=\"group_member_added\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_status_updated\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_bulk_status_updated\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_ownership_transferred\")",
+            "cache_reason=\"group_ownership_transferred\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
         ],
     }
