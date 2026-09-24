@@ -116,15 +116,19 @@ function orgDefaultLabel(value: number | 'none'): string {
  * fall within the server's bounds. The currently stored value is always kept selectable, even when
  * it now sits outside the bounds, so opening the editor never silently rewrites it.
  */
-function retentionChoices(current: string, bounds: GroupRetentionBounds): { value: string; label: string }[] {
+function retentionChoices(current: string, stored: string, bounds: GroupRetentionBounds): { value: string; label: string }[] {
     const choices = [
         { value: 'default', label: 'Using organization default' },
         { value: 'none', label: 'No automatic deletion' },
     ];
     const days = RETENTION_DAY_OPTIONS.filter((option) => option >= bounds.min_days && option <= bounds.max_days) as number[];
-    const currentDays = Number(current);
-    if (current !== 'default' && current !== 'none' && Number.isInteger(currentDays) && !days.includes(currentDays)) {
-        days.push(currentDays);
+    // Keep both the open draft value and the stored value selectable, even when either now sits
+    // outside the bounds, so editing the other field never drops a value the server still holds.
+    for (const value of [current, stored]) {
+        const numeric = Number(value);
+        if (value !== 'default' && value !== 'none' && Number.isInteger(numeric) && !days.includes(numeric)) {
+            days.push(numeric);
+        }
     }
     days.sort((left, right) => left - right);
     for (const option of days) {
@@ -270,10 +274,6 @@ export function GroupSettingsSection({
         const base = retentionDraftOf(settings);
         return !!base && (retentionDraft.conversation !== base.conversation || retentionDraft.document !== base.document);
     }, [settings, retentionDraft]);
-    // Both editors count toward the leave guard, and while either is dirty the immediate-save
-    // downloads switch is frozen so a stray toggle can't discard the unsaved profile or retention edit.
-    const editorDirty = profileDirty || retentionDirty;
-    useEffect(() => { onDirtyChangeRef.current(editorDirty); }, [editorDirty]);
 
     const reload = useCallback(() => setReloadToken((value) => value + 1), []);
 
@@ -284,6 +284,13 @@ export function GroupSettingsSection({
     const canEditProfile = canEditName || canEditDescription || canEditColor;
     const canEditDownloads = allows('edit_downloads');
     const canEditRetention = allows('edit_retention');
+
+    // Only a draft the viewer can still save counts toward the leave guard and the downloads freeze.
+    // When a lock or a demotion withdraws an editor's operations its now read-only draft is dropped
+    // from the guard, so the picker frees and the downloads switch follows only its own gate; a Discard
+    // control stays available to clear the stranded draft.
+    const editorDirty = (canEditProfile && profileDirty) || (canEditRetention && retentionDirty);
+    useEffect(() => { onDirtyChangeRef.current(editorDirty); }, [editorDirty]);
 
     const profileReason = groupSettingsReasonText(
         reason('edit_name') || reason('edit_description') || reason('edit_color'),
@@ -470,6 +477,7 @@ export function GroupSettingsSection({
             const next = await adapter.updateDownloads(disable, settings.downloads.revision);
             applySettings(next);
             setNotice({ tone: 'status', text: 'File download policy saved.' });
+            onSavedRef.current();
         } catch (cause) {
             refused = await settleWrite(cause, setDownloadsError, settings);
         } finally {
@@ -529,6 +537,11 @@ export function GroupSettingsSection({
 
     const disabled = interactionDisabled || busy;
     const logo = settings.logo;
+    const retentionStored = retentionDraftOf(settings);
+    // Discard clears a stranded draft -- including one a lock or demotion has just re-gated read-only,
+    // where Save is no longer rendered -- by resetting the editor to the stored settings.
+    const discardProfile = () => { setProfileError(''); setDraft(profileDraftOf(settings)); };
+    const discardRetention = () => { setRetentionError(''); setRetentionDraft(retentionDraftOf(settings)); };
 
     return (
         <div className="space-y-4" data-testid="group-settings-section">
@@ -590,13 +603,21 @@ export function GroupSettingsSection({
                         </div>
                     </div>
                     {profileError ? <p role="alert" className="text-xs text-danger">{profileError}</p> : null}
-                    {canEditProfile ? (
-                        <div className="flex justify-end">
-                            <GlassButton variant="primary" size="sm" disabled={disabled || !profileDirty}
-                                onClick={() => void saveProfile()} data-testid="group-settings-save-profile">
-                                {profileBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-                                Save profile
-                            </GlassButton>
+                    {(canEditProfile || profileDirty) ? (
+                        <div className="flex justify-end gap-2">
+                            {profileDirty ? (
+                                <GlassButton variant="ghost" size="sm" disabled={disabled}
+                                    onClick={discardProfile} data-testid="group-settings-discard-profile">
+                                    Discard changes
+                                </GlassButton>
+                            ) : null}
+                            {canEditProfile ? (
+                                <GlassButton variant="primary" size="sm" disabled={disabled || !profileDirty}
+                                    onClick={() => void saveProfile()} data-testid="group-settings-save-profile">
+                                    {profileBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                                    Save profile
+                                </GlassButton>
+                            ) : null}
                         </div>
                     ) : null}
                 </fieldset>
@@ -686,7 +707,7 @@ export function GroupSettingsSection({
                             <select value={retentionDraft.conversation} className={FIELD_CLASS}
                                 data-testid="group-settings-retention-conversation"
                                 onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, conversation: event.target.value }); }}>
-                                {retentionChoices(retentionDraft.conversation, settings.retention.bounds.conversation).map((choice) => (
+                                {retentionChoices(retentionDraft.conversation, retentionStored?.conversation ?? retentionDraft.conversation, settings.retention.bounds.conversation).map((choice) => (
                                     <option key={choice.value} value={choice.value}>{choice.label}</option>
                                 ))}
                             </select>
@@ -696,20 +717,28 @@ export function GroupSettingsSection({
                             <select value={retentionDraft.document} className={FIELD_CLASS}
                                 data-testid="group-settings-retention-document"
                                 onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, document: event.target.value }); }}>
-                                {retentionChoices(retentionDraft.document, settings.retention.bounds.document).map((choice) => (
+                                {retentionChoices(retentionDraft.document, retentionStored?.document ?? retentionDraft.document, settings.retention.bounds.document).map((choice) => (
                                     <option key={choice.value} value={choice.value}>{choice.label}</option>
                                 ))}
                             </select>
                         </label>
                     </fieldset>
                     {retentionError ? <p role="alert" className="text-xs text-danger">{retentionError}</p> : null}
-                    {canEditRetention ? (
-                        <div className="flex justify-end">
-                            <GlassButton variant="primary" size="sm" disabled={disabled}
-                                onClick={() => void saveRetention()} data-testid="group-settings-save-retention">
-                                {retentionBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-                                Save retention
-                            </GlassButton>
+                    {(canEditRetention || retentionDirty) ? (
+                        <div className="flex justify-end gap-2">
+                            {retentionDirty ? (
+                                <GlassButton variant="ghost" size="sm" disabled={disabled}
+                                    onClick={discardRetention} data-testid="group-settings-discard-retention">
+                                    Discard changes
+                                </GlassButton>
+                            ) : null}
+                            {canEditRetention ? (
+                                <GlassButton variant="primary" size="sm" disabled={disabled}
+                                    onClick={() => void saveRetention()} data-testid="group-settings-save-retention">
+                                    {retentionBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                                    Save retention
+                                </GlassButton>
+                            ) : null}
                         </div>
                     ) : null}
                 </GlassPanel>

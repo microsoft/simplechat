@@ -276,6 +276,9 @@ def test_profile_network_failure_keeps_draft(group_settings_ui):
     by_testid(ui, "group-settings-name").fill("Kept through a dropped connection")
     by_testid(ui, "group-settings-save-profile").click()
     # A dropped connection is not a refusal either: the draft stays and the profile stays editable. (S2)
+    # Wait for the failure alert first, so the write has actually settled and any errant reload() would
+    # already have fired; asserting the draft before the abort is processed could never fail. (S17)
+    expect(ui.page.get_by_role("alert").first).to_be_visible()
     expect(by_testid(ui, "group-settings-name")).to_have_value("Kept through a dropped connection")
     expect(by_testid(ui, "group-settings-name")).to_be_enabled()
     # The aborted request never reaches the fixture, so drop its transport console error to keep the
@@ -307,6 +310,36 @@ def test_lock_after_load_regates_controls_read_only(group_settings_ui):
     # The draft is kept even as the controls freeze, and no further write is attempted.
     expect(by_testid(ui, "group-settings-name")).to_have_value("Edited just before the lock")
     assert len(settings_calls(ui, "PATCH", "profile")) == 1
+
+
+# --------------------------------------------------------------------------
+# S14: a re-gated read-only draft no longer strands the page dirty.
+# --------------------------------------------------------------------------
+
+def test_lock_regate_frees_picker_and_downloads_and_offers_discard(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    original = by_testid(ui, "group-settings-name").input_value()
+    by_testid(ui, "group-settings-name").fill("Edited just before the lock")
+    # While the profile draft is editable and dirty, the picker search and the downloads switch are
+    # frozen -- the group can't be switched, and the immediate-save switch can't fire, mid-edit.
+    expect(ui.page.get_by_placeholder("Search all your groups")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-downloads-toggle")).to_be_disabled()
+    # The group locks server-side; the refused save re-gates the profile read-only and keeps the draft.
+    ui.configure("group-a", role="Owner", status="locked")
+    by_testid(ui, "group-settings-save-profile").click()
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-save-profile")).to_have_count(0)
+    # S14: the now read-only draft is dropped from the leave guard, so the picker frees again and the
+    # downloads switch follows only its own gate -- an owner in a locked group may still use it. A
+    # Discard control stays available and clears the stranded draft when clicked.
+    expect(ui.page.get_by_placeholder("Search all your groups")).to_be_enabled()
+    expect(by_testid(ui, "group-settings-downloads-toggle")).to_be_enabled()
+    discard = by_testid(ui, "group-settings-discard-profile")
+    expect(discard).to_be_visible()
+    discard.click()
+    expect(by_testid(ui, "group-settings-name")).to_have_value(original)
+    expect(by_testid(ui, "group-settings-discard-profile")).to_have_count(0)
 
 
 # --------------------------------------------------------------------------
@@ -387,6 +420,42 @@ def test_downloads_toggle_saves(group_settings_ui):
     by_testid(ui, "group-settings-downloads-toggle").click()
     expect(ui.page.get_by_text("File download policy saved.", exact=True)).to_be_visible()
     assert len(settings_calls(ui, "PATCH", "downloads")) == 1
+
+
+def test_downloads_toggle_refreshes_context(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    before = len(context_calls(ui))
+    # S16: a downloads save refreshes the workspace context, so the Documents section drops Download
+    # without waiting for a refocus. The save fires a fresh context GET; wait for it to land.
+    with ui.page.expect_response(
+        lambda response: response.url.endswith("/api/v2/workspaces/group/group-a")
+        and response.request.method == "GET"
+    ):
+        by_testid(ui, "group-settings-downloads-toggle").click()
+    expect(ui.page.get_by_text("File download policy saved.", exact=True)).to_be_visible()
+    assert len(settings_calls(ui, "PATCH", "downloads")) == 1
+    assert len(context_calls(ui)) > before
+
+
+def test_status_change_keeps_a_settings_write(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    # Turn downloads off: a real write that lands in the fixture's settings store.
+    by_testid(ui, "group-settings-downloads-toggle").click()
+    expect(ui.page.get_by_text("File download policy saved.", exact=True)).to_be_visible()
+    # The group is then rebuilt for a new status. S20: the fixture replays the settings store over the
+    # rebuilt context, so the downloads-off write is still there in the very next context read. The
+    # server, which reads the same settings on every context build, never reverts it either.
+    ui.configure("group-a", role="Owner", status="active")
+    with ui.page.expect_response(
+        lambda response: response.url.endswith("/api/v2/workspaces/group/group-a")
+        and response.request.method == "GET"
+    ) as info:
+        ui.page.evaluate("window.dispatchEvent(new Event('focus'))")
+    context = info.value.json()
+    assert context["document_permissions"]["can_download"] is False
+    assert "download" not in context["document_management"].get("operations", [])
 
 
 def test_downloads_absent_when_capability_off(group_settings_ui):

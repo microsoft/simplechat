@@ -1267,7 +1267,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "description": profile["description"],
             "hero_color": profile["hero_color"],
             "has_logo": bool(profile.get("logo_url")),
-            "logo_version": 1 if profile.get("logo_url") else 0,
+            # The server reads logoVersion from the branding doc and floors it at 1
+            # (functions_workspace_branding.get_workspace_logo_metadata), so even a group with no logo
+            # never reports 0. Seed the same floor.
+            "logo_version": 1,
             "disable_file_downloads": False,
             "retention": {"conversation_retention_days": "default", "document_retention_days": "default"},
         }
@@ -1685,6 +1688,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             f"/api/groups/{quote(group_id, safe='')}/logo?v={store['logo_version']}"
             if store["has_logo"] else None
         )
+
+    def _apply_settings_store_to_context(self, group_id):
+        """Re-apply a group's written settings after a context rebuild.
+
+        A context rebuild (a role, status or membership change) builds a fresh context from the seed
+        profile, which drops any settings a test has already written: the profile name, description,
+        colour and logo, and the group download switch. Replaying the store over the rebuilt context
+        keeps those, so changing status after a settings write still serves the written values -- the
+        server, which reads the same settings on every context build, never reverts them either.
+        """
+        self._sync_profile_context(group_id)
+        self._sync_download_context(group_id)
 
     def _group_settings(self, route, entry):
         try:

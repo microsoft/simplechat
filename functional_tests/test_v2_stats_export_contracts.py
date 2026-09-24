@@ -51,6 +51,10 @@ def test_personal_export_keeps_classic_sections_columns_and_bom_contract():
 
     assert "const body = withBom ? `\\ufeff${contents}` : contents;" in export_dialog
     assert "downloadCsv(csv, activityCsvFileName());" in export_dialog
+    # The personal export passes no third argument, so it relies on the parameter default. Pin the
+    # default to true (S19): a default silently flipped to false would drop the BOM the personal call
+    # depends on, even though the ternary and the call site above would still read as correct.
+    assert "function downloadCsv(contents: string, fileName: string, withBom = true) {" in export_dialog
 
 
 def test_group_export_keeps_classic_csv_columns_without_bom():

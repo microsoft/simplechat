@@ -82,6 +82,9 @@ class GroupSettingsFixture(GroupWorkspaceFixture):
         )
         if group_id not in self.native_group_settings:
             self._seed_group_settings(group_id)
+        # Keep any settings a test has already written (profile, logo, downloads) across this rebuild,
+        # so changing role or status never reverts the served context to the seed profile.
+        self._apply_settings_store_to_context(group_id)
         self.active_group = group_id
         return self.groups[group_id]
 
