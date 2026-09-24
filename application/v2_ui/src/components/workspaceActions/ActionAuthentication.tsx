@@ -22,6 +22,9 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
     const identity = identities.find((candidate) => candidate.id === draft.identity_id);
     const identityMissing = Boolean(draft.identity_id && !identity);
     const groupScoped = Boolean(props.groupScope);
+    // A group member cannot list identities (403): the list is unresolvable, so a bound identity is
+    // "kept as is". A manager whose list loaded but lacks the bound id gets the actionable copy.
+    const keptAsIs = groupScoped && !props.identitiesResolvable;
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
 
     const textField = (path: string, label: string, help?: string, required = false) => props.original?.secret_paths.includes(path)
@@ -75,7 +78,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                                 });
                             }}>
                             <option value="">Use action-specific credentials</option>
-                            {identityMissing ? <option value={draft.identity_id} disabled>{groupScoped ? 'Group identity' : 'Unavailable identity'} — {draft.identity_id}</option> : null}
+                            {identityMissing ? <option value={draft.identity_id} disabled>{keptAsIs ? 'Group identity' : 'Unavailable identity'} — {draft.identity_id}</option> : null}
                             {identities.map((candidate) => <option key={candidate.id} value={candidate.id}>
                                 {candidate.name} · {candidate.auth_type.replaceAll('_', ' ')} · {candidate.scope_type || 'personal'} · {candidate.id}
                             </option>)}
@@ -84,7 +87,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                     {props.identitiesLoading ? <p role="status" className="text-xs text-text-3">Loading permitted identities…</p> : null}
                     {props.identitiesError ? <p role="alert" className="text-sm text-danger">{props.identitiesError} The existing identity has not been changed.</p> : null}
                     {identityMissing ? <p role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                        {groupScoped
+                        {keptAsIs
                             ? 'Uses a group identity; kept as is. Its ID is retained; enter action-specific credentials to replace it.'
                             : 'The selected identity is unavailable or no longer compatible. Its ID is retained until you explicitly choose a replacement; a same-name identity will never be substituted.'}
                     </p> : null}

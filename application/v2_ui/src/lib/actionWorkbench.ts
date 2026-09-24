@@ -17,7 +17,7 @@
 // deleting and testing a specific action additionally require the action to belong to this group
 // and to carry the operation in its own action_actions, exactly as the group prompt gate does.
 
-import { api } from './apiClient';
+import { ApiError, api } from './apiClient';
 import {
     buildEditorWrite, isRecord,
     type ActionConfiguration, type ActionTypeDefinition, type AuthoringResource,
@@ -39,6 +39,19 @@ export type ActionScope =
 
 export const ACTION_OPERATIONS = ['create', 'edit', 'delete', 'test'] as const;
 export type ActionOperation = typeof ACTION_OPERATIONS[number];
+
+/**
+ * Thrown when the current scope forbids listing identities at all -- a group member gets a 403 (or
+ * a 404 for a workspace with no identity route), as opposed to an empty-but-readable list. The
+ * action editor catches this to keep neutral "kept as is" copy instead of implying no identities
+ * are configured, and it never falls back to reading personal identities.
+ */
+export class IdentitiesNotPermittedError extends Error {
+    constructor(message = 'Reusable identities are not available in this workspace.') {
+        super(message);
+        this.name = 'IdentitiesNotPermittedError';
+    }
+}
 
 export interface ActionWorkbenchAdapter {
     scope: ActionScope;
@@ -130,6 +143,10 @@ export const PERSONAL_ACTION_WORKBENCH: ActionWorkbenchAdapter = {
 function groupActionsUrl(groupId: string, actionId?: string): string {
     const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/actions`;
     return actionId ? `${base}/${encodeURIComponent(requireWorkspaceId(actionId))}` : base;
+}
+
+function groupIdentitiesUrl(groupId: string): string {
+    return `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/identities`;
 }
 
 /**
@@ -273,12 +290,42 @@ export function createGroupActionWorkbench(
             }
             await api.delete<{ success: boolean }>(groupActionsUrl(groupId, action.id));
         },
-        listIdentities: async () => {
-            // Reusable group identities are an M5A capability with no read route yet: the only group
-            // identity route is active-group scoped, and loading personal identities into a group
-            // page would breach the no-personal-data-in-group-scope invariant. Serve none, with no
-            // request, until M5A provides an immutable group identity route.
-            return [];
+        listIdentities: async (signal) => {
+            // M5A: read the native group identity list and offer the ones an action may bind. The
+            // route is immutable and page-group scoped, so it never resolves the account's active
+            // group. A 403 (member) or 404 (no route) means "not available here": raise
+            // IdentitiesNotPermittedError so the editor keeps neutral copy rather than reading
+            // personal identities. Every served row must belong to this group, and only identities
+            // the server marks usable for actions are offered -- with no client-side default or
+            // alias, since the backend normalizes usage_contexts exactly as its save-time check does.
+            let response: unknown;
+            try {
+                response = await api.get<unknown>(groupIdentitiesUrl(groupId), signal);
+            } catch (cause) {
+                if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) {
+                    throw new IdentitiesNotPermittedError();
+                }
+                throw cause;
+            }
+            const rows = isRecord(response) && Array.isArray(response.identities)
+                ? response.identities
+                : [];
+            return rows.filter(isRecord).filter((identity) => {
+                if (identity.group_id !== groupId) {
+                    throw new Error('The identity response does not match this group. Refresh and try again.');
+                }
+                return Array.isArray(identity.usage_contexts) && identity.usage_contexts.includes('action');
+            }).map((identity) => {
+                const credentials = isRecord(identity.credentials) ? identity.credentials : {};
+                return {
+                    id: String(identity.id ?? ''),
+                    name: String(identity.name ?? ''),
+                    auth_type: String(credentials.auth_type ?? ''),
+                    description: identity.description ? String(identity.description) : undefined,
+                    scope_type: 'group',
+                    scope_id: groupId,
+                } satisfies ActionIdentity;
+            });
         },
         test: (draft, original, definition, signal) => testWorkspaceAction(draft, original, definition, signal, testScope),
     };

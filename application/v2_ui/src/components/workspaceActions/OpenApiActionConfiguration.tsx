@@ -123,6 +123,10 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
     const { identities, unavailable } = connectorIdentityOptions(props.identities, kind, selectedId);
     const disabled = props.readOnly || props.original?.read_only || props.identitiesLoading;
     const groupScoped = Boolean(props.groupScope);
+    // A group member cannot list identities (403): the list is unresolvable, so a bound identity is
+    // "kept as is" rather than flagged as replaceable. A manager whose list loaded but lacks the
+    // bound id sees the actionable "unavailable" wording, even in group scope.
+    const keptAsIs = groupScoped && !props.identitiesResolvable;
     const id = `${kind}-identity`;
     return (
         <div className="space-y-2">
@@ -138,7 +142,7 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
                         props.onChange((current) => selectConnectorIdentity(current, kind, identity ?? null));
                     }}>
                     <option value="">Use action-specific credentials</option>
-                    {unavailable ? <option value={selectedId} disabled>{groupScoped ? 'Group identity' : 'Unavailable identity'} — {selectedId}</option> : null}
+                    {unavailable ? <option value={selectedId} disabled>{keptAsIs ? 'Group identity' : 'Unavailable identity'} — {selectedId}</option> : null}
                     {identities.map((identity) => <option key={identity.id} value={identity.id}>
                         {identity.name} · {identity.auth_type.replaceAll('_', ' ')} · {identity.scope_type || 'personal'} · {identity.id}
                     </option>)}
@@ -147,10 +151,9 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
             <div id={`${id}-status`} className="space-y-1 text-xs text-text-3" aria-live="polite">
                 {props.identitiesLoading ? <p>Loading permitted identities…</p> : null}
                 {props.identitiesError ? <p role="alert" className="text-danger">{props.identitiesError} The current identity selection has not been changed.</p> : null}
-                {!props.identitiesLoading && !props.identitiesError && !identities.length ? <p>{groupScoped
-                    ? 'Reusable group identities aren’t available in this workspace yet. Action-specific credentials are still supported.'
-                    : 'No compatible reusable identities are available. Action-specific credentials are still supported.'}</p> : null}
-                {unavailable ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-warn">{groupScoped
+                {!props.identitiesLoading && !props.identitiesError && !identities.length
+                    ? <p>No compatible reusable identities are available. Action-specific credentials are still supported.</p> : null}
+                {unavailable ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-warn">{keptAsIs
                     ? 'Uses a group identity; kept as is. Its ID is retained; enter action-specific credentials to replace it.'
                     : 'The selected identity is unavailable or incompatible. Its ID is retained; choose a replacement explicitly. A same-name identity will not be substituted.'}</p> : null}
                 {selectedId && !unavailable ? <p>{identities.find(({ id }) => id === selectedId)?.description || 'The server resolves this identity when the action runs.'}</p> : null}

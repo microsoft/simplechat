@@ -299,8 +299,9 @@ def test_identity_bound_action_keeps_its_binding_without_a_personal_read(group_a
     open_editor(ui, IDENTITY_ACTION_ID)
     name = name_field(page, "action")
     expect(name).to_have_value(IDENTITY_NAME)
-    # No reusable group identity route exists yet, so the editor lists none and never falls back to
-    # reading the member's personal identities.
+    # M5A closed the gap: the editor now lists reusable identities from the group route
+    # (/api/groups/<g>/identities), but it must still never fall back to reading the member's
+    # personal identities under /api/workspace-identities/.
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/workspace-identities/")], (
         "A group action editor must not read personal reusable identities."
     )

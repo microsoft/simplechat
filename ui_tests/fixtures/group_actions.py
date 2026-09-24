@@ -57,8 +57,10 @@ class GroupActionsFixture(GroupWorkspaceFixture):
         self._seed("group-a", [
             group_action("group-a", EDITABLE_ACTION_ID, "Weekly report API"),
             group_action("group-a", WITHHELD_ACTION_ID, "Withheld API", actions=()),
-            # A V1-era action bound to a group identity. No reusable group identity route exists yet
-            # (M5A), so the editor keeps the binding with neutral copy and lists no identities.
+            # A V1-era action bound to a group identity whose id predates the native identity list.
+            # M5A now serves the reusable group identity route, so the editor lists the group's
+            # identities and shows this stale binding as an unavailable "Group identity" option --
+            # it still never falls back to a personal identity read.
             group_action("group-a", IDENTITY_ACTION_ID, "Bound report API",
                          identity_id=BOUND_IDENTITY_ID, auth={"type": "identity"}),
             # An editable MCP action. Its editor reads reminder defaults from the group

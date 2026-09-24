@@ -389,12 +389,27 @@ export interface WorkspacePrompt {
 
 export interface WorkspaceIdentity {
     id: string;
+    identity_id?: string;
     name?: string;
     description?: string;
     auth_type?: string;
     username?: string;
     scope_type?: string;
     scope_id?: string;
+    /** Present on native group identities; the owning group, checked against the page group. */
+    group_id?: string;
+    provider?: string;
+    source_type?: string;
+    /** Server-normalized capabilities, e.g. ["file_sync"], ["action"] or both. */
+    usage_contexts?: string[];
+    supported_source_types?: string[];
+    metadata?: Record<string, unknown>;
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    /** Conditional-write marker on native group identities. */
+    etag?: string;
+    /** The operations policy permits on this identity, a subset of ["edit", "delete"]. */
+    identity_actions?: string[];
     created_at?: string;
     updated_at?: string;
     [key: string]: unknown;
