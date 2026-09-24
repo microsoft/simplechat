@@ -88,6 +88,16 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group identity management hint (M5A). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit or delete group identities, computed from the identity
+     * manage roles (Owner, Admin, DocumentManager) and status. Absence means "read-only", never an
+     * empty grant.
+     */
+    identity_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

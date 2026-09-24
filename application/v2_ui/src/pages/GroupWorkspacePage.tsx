@@ -24,12 +24,14 @@ import { WorkflowsSection } from './workspace/WorkflowsSection';
 import { GroupDocumentsSection } from './workspace/DocumentsSection';
 import { GroupTagsSection } from './workspace/TagsSection';
 import { GroupPromptsSection } from './workspace/PromptsSection';
+import { GroupIdentitiesSection } from './workspace/GroupIdentitiesSection';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
 import { AgentsSection } from './workspace/AgentsSection';
 import { AgentEditorPage } from './workspace/AgentEditorPage';
 import { createGroupActionWorkbench } from '../lib/actionWorkbench';
 import { createGroupAgentWorkbench } from '../lib/agentWorkbench';
+import { createGroupIdentityWorkbench } from '../lib/identityWorkbench';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -144,11 +146,12 @@ export function GroupWorkspacePage() {
             id, label, icon, group, blurb: GROUP_SECTION_BLURBS[id],
             availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' || id === 'prompts' ? undefined
                 : id === 'agents' ? (context?.sections.agents.enabled ? undefined : 'Classic')
+                : id === 'identities' ? (context?.sections.identities.enabled ? undefined : 'Classic')
                 : id === 'actions' ? (context?.sections.actions.enabled ? undefined
                     : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
                 : 'Classic',
         };
-    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled]);
+    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
@@ -181,6 +184,19 @@ export function GroupWorkspacePage() {
             ? createGroupAgentWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.agent_management, groupActionAdapter)
             : null,
         [context?.scope.id, context?.workspace.name, context?.sections.agents.enabled, context?.agent_management, groupActionAdapter],
+    );
+    // Native group identities render only when the workspace advertises the Identities section as
+    // available (context.sections.identities.enabled), which requires the caller to be a manager. A
+    // member's section is unavailable and falls through to Classic. Create is gated on the
+    // identity_management hint; edit and delete are gated per row via each identity's
+    // identity_actions -- never a personal-identity fallback. This section writes in a dialog, so
+    // it keeps the personal SectionList layout rather than the full-bleed editor layout, and so it
+    // needs no full-bleed flag of its own.
+    const groupIdentityAdapter = useMemo(
+        () => context?.sections.identities.enabled
+            ? createGroupIdentityWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.identity_management)
+            : null,
+        [context?.scope.id, context?.workspace.name, context?.sections.identities.enabled, context?.identity_management],
     );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
@@ -381,6 +397,10 @@ export function GroupWorkspacePage() {
                                     <div className="min-h-0 flex-1"><AgentsSection actionsEnabled={groupAgentAdapter.canCreateActions} adapter={groupAgentAdapter} /></div>
                                 ) : section === 'prompts' && !resourceId ? (
                                     <GroupPromptsSection context={context} />
+                                ) : section === 'identities' && !resourceId && groupIdentityAdapter ? (
+                                    <GroupIdentitiesSection adapter={groupIdentityAdapter}
+                                        syncEnabled={context.sections.sync.enabled}
+                                        actionsEnabled={context.sections.actions.enabled} />
                                 ) : (
                                     <GlassPanel elevation="flat" className="space-y-4 p-5">
                                         <SectionIntro title={selected.section.label} description={selected.section.blurb} />

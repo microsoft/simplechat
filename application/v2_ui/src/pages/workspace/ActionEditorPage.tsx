@@ -27,7 +27,7 @@ import {
 import {
     validateWorkspaceAction, type ActionEditorHints,
 } from '../../lib/workspaceActionServices';
-import { PERSONAL_ACTION_WORKBENCH, type ActionWorkbenchAdapter } from '../../lib/actionWorkbench';
+import { PERSONAL_ACTION_WORKBENCH, IdentitiesNotPermittedError, type ActionWorkbenchAdapter } from '../../lib/actionWorkbench';
 import {
     connectorFeedback, validateConnectorAuthentication, validateConnectorConfiguration, type ConnectorFeedback,
 } from '../../lib/workspaceActionConnectors';
@@ -71,6 +71,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
     const [identities, setIdentities] = useState<ActionIdentity[]>([]);
     const [identitiesLoading, setIdentitiesLoading] = useState(true);
     const [identitiesError, setIdentitiesError] = useState<string | null>(null);
+    const [identitiesResolvable, setIdentitiesResolvable] = useState(true);
     const [hints, setHints] = useState<ActionEditorHints | null>(null);
     const [hintsError, setHintsError] = useState<string | null>(null);
     const [hintsLoading, setHintsLoading] = useState(true);
@@ -98,11 +99,19 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) setCatalogueError(errorMessage(cause, 'Could not load the governed action catalogue.'));
         }).finally(() => { if (!controller.signal.aborted) setCatalogueLoading(false); });
-        setIdentitiesLoading(true); setIdentitiesError(null);
+        setIdentitiesLoading(true); setIdentitiesError(null); setIdentitiesResolvable(true);
         void adapter.listIdentities(controller.signal).then((items) => {
-            if (!controller.signal.aborted) setIdentities(items);
+            if (!controller.signal.aborted) { setIdentities(items); setIdentitiesResolvable(true); }
         }).catch((cause: unknown) => {
-            if (!controller.signal.aborted) setIdentitiesError(errorMessage(cause, 'Could not load reusable identities.'));
+            if (controller.signal.aborted) return;
+            // A scope that forbids listing identities (a group member's 403) is not an error: the
+            // editor keeps neutral "kept as is" copy and never falls back to personal identities.
+            if (cause instanceof IdentitiesNotPermittedError) {
+                setIdentities([]); setIdentitiesResolvable(false); setIdentitiesError(null);
+            } else {
+                setIdentitiesResolvable(false);
+                setIdentitiesError(errorMessage(cause, 'Could not load reusable identities.'));
+            }
         }).finally(() => { if (!controller.signal.aborted) setIdentitiesLoading(false); });
         setHintsLoading(true); setHintsError(null);
         void adapter.fetchEditorHints(controller.signal).then((options) => {
@@ -173,6 +182,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         draft, original, onChange: setDraft,
         readOnly: readOnly || !canAuthor || saving || catalogueLoading || Boolean(catalogueError) || Boolean(loadError) || !definition,
         errors: expandActionFieldErrors(fieldErrors), onValidityChange, identities, identitiesLoading, identitiesError,
+        identitiesResolvable,
         groupScope: adapter.testScope,
     };
 

@@ -1,15 +1,17 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.128
+Version: 0.261.138
 Implemented in: 0.261.127
 
-The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`
-family and injects the `action_management` context hint, exactly as the M4 backend
-does, so the production group Actions page renders its native collection beside the
-Call agent manager rather than tripping the fixture on an unexpected request. The
-serving machinery lives here in the base class and is reused unchanged by
-`GroupActionsFixture`, so both fixtures answer these routes with one implementation.
+The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
+`/agents[...]` and `/identities[...]` families and injects the `action_management`,
+`agent_management` and `identity_management` context hints, exactly as the M4 and M5A
+backends do, so the production group Actions, Agents and Identities pages render their
+native collections -- and the action editor lists reusable group identities -- rather than
+tripping the fixture on an unexpected request. The serving machinery lives here in the base
+class and is reused unchanged by the dedicated per-section fixtures, so each fixture answers
+these routes with one implementation.
 """
 
 import copy
@@ -189,6 +191,105 @@ def group_agent_knowledge_catalog(group_id):
     }
 
 
+# The native group identity model, mirrored from the M5A backend so both the shell fixture and the
+# dedicated identity fixture answer list, read, create, edit and delete identically. Identity manage
+# roles are broader than actions' writer roles -- Owner, Admin and DocumentManager -- matching the
+# legacy `/api/workspace-identities/group` routes, and reads use the same roles, so an ordinary member
+# cannot list identities. `identity_actions` is the read-only per-identity projection (`edit`/`delete`)
+# the policy computes; the write body is the strict field set the classic editor sends, plus
+# `expected_etag` for the conditional PATCH and DELETE. Identities carry no `_editor_candidate`
+# secret-path machinery: a stored secret is a `password_stored`/`secret_stored` boolean pair and a
+# `ui_trigger_word` placeholder, exactly as `sanitize_workspace_identity` returns it.
+IDENTITY_OPERATIONS = ("create", "edit", "delete")
+IDENTITY_ACTIONS = ("edit", "delete")
+IDENTITY_MANAGE_ROLES = ("Owner", "Admin", "DocumentManager")
+IDENTITY_TRIGGER_WORD = "Stored_In_KeyVault"
+
+# The strict top-level fields the native identity write accepts (§10). Anything else is a 400.
+IDENTITY_WRITE_FIELDS = frozenset({
+    "name", "description", "provider", "source_type", "usage_contexts",
+    "supported_source_types", "metadata", "credentials",
+})
+
+# The generic message every unclassified ValueError becomes; the reviewed field messages the backend
+# raises as public validation errors are modelled in `_identity_validation_error`.
+IDENTITY_GENERIC_ERROR = "The workspace identity details are not valid."
+IDENTITY_CONFLICT_ERROR = "This workspace identity was modified. Reload and try again."
+IDENTITY_IN_USE_ERROR = "This workspace identity is still in use."
+
+
+def identity_management(role, status):
+    """The identity management hint, computed from policy exactly like `action_management`."""
+    if role in IDENTITY_MANAGE_ROLES and status == "active":
+        return {"schema_version": 1, "operations": list(IDENTITY_OPERATIONS)}
+    return {"schema_version": 1, "operations": []}
+
+
+def group_identity(group_id, identifier, name, *, usage=("action",), auth_type="api_key",
+                   secret_stored=True, actions=IDENTITY_ACTIONS, username="", domain="",
+                   client_identity="", provider=None, source_types=None, description=None,
+                   metadata=None):
+    """One group identity as the native projector returns it, before etag and masking are applied.
+
+    The stored credential is modelled as a boolean plus a placeholder, never a plaintext secret, so a
+    blank secret on save keeps it (`_secret` stays set) and a fresh value replaces it.
+    """
+    sources = list(source_types) if source_types is not None else [provider or "action"]
+    resolved_provider = provider or sources[0]
+    return {
+        "id": identifier,
+        "identity_id": identifier,
+        "type": "workspace_identity",
+        "scope_type": "group",
+        "group_id": group_id,
+        "name": name,
+        "description": description if description is not None else f"Reusable {name}.",
+        "provider": resolved_provider,
+        "source_type": resolved_provider,
+        "usage_contexts": list(usage),
+        "supported_source_types": sources,
+        "metadata": copy.deepcopy(metadata) if metadata else {},
+        "created_by": OWNER_ID,
+        "updated_by": OWNER_ID,
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-02T00:00:00+00:00",
+        "identity_actions": list(actions),
+        "_auth_type": auth_type,
+        "_username": username,
+        "_domain": domain,
+        "_client_identity": client_identity,
+        "_secret": bool(secret_stored),
+    }
+
+
+def _identity_credentials(record):
+    """The sanitized `credentials` block: no plaintext, a placeholder when a secret is stored."""
+    auth_type = record["_auth_type"]
+    uses_password = auth_type == "username_password"
+    stored = bool(record["_secret"]) and auth_type not in ("anonymous", "managed_identity")
+    placeholder = IDENTITY_TRIGGER_WORD if stored else ""
+    return {
+        "auth_type": auth_type,
+        "username": record.get("_username", ""),
+        "domain": record.get("_domain", ""),
+        "identity": record.get("_client_identity", ""),
+        "password_stored": stored and uses_password,
+        "secret_stored": stored and not uses_password,
+        "password": placeholder if uses_password else "",
+        "secret": "" if uses_password else placeholder,
+    }
+
+
+def _sanitize_identity(record):
+    """Project a stored identity to its sanitized response: drop `_*` keys and the actions projection,
+    add `credentials`. The native routes then add `etag` and `identity_actions` in `_identity_payload`.
+    """
+    result = {key: copy.deepcopy(value) for key, value in record.items()
+              if not key.startswith("_") and key != "identity_actions"}
+    result["credentials"] = _identity_credentials(record)
+    return result
+
+
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID):
     manager = role in ("Owner", "Admin", "DocumentManager")
     automation = role in ("Owner", "Admin")
@@ -217,6 +318,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "sections": sections,
         "action_management": action_management(role, status),
         "agent_management": agent_management(role, status),
+        "identity_management": identity_management(role, status),
         "native_delegation": {
             "group": "automation", "enabled": readable,
             "reason": None if readable else "This group is inactive.",
@@ -274,6 +376,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_agents = {}
         self.native_agent_secret_paths = {}
         self.native_agent_revisions = {}
+        # Native group identity state. Identities carry an etag rather than a revision string, so a
+        # per-(group, id) revision counter backs the etag and `touch_identity` advances it to model a
+        # concurrent edit. `identity_references` records what still uses an identity, so a delete of a
+        # referenced identity returns the in-use 409 with references and nothing is removed.
+        self.created_identity_counter = 0
+        self.native_identities = {}
+        self.native_identity_revisions = {}
+        self.identity_references = {}
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -306,6 +416,13 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             # locator matches in both the native list and the Call agent manager.
             self._seed_agents(group_id, [
                 group_agent(group_id, f"{group_id}-assistant", "Group assistant"),
+            ])
+            # One native identity per group so the group action editor lists a real reusable identity
+            # (the M4 gap, now closed) and the Identities section renders a real collection. It carries
+            # the `action` usage so the action editor's action-usage filter surfaces it.
+            self._seed_identities(group_id, [
+                group_identity(group_id, f"{group_id}-report-identity", "Report API identity",
+                               usage=("action",), auth_type="api_key"),
             ])
 
     def _bootstrap(self):
@@ -358,6 +475,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         if path.startswith("/api/groups/") and "/actions" in path:
             self._actions(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/identities" in path:
+            self._identities(route, entry)
             return
         if path == "/api/models/foundry/agents" and method == "POST":
             self._foundry_discovery(route, entry)
@@ -680,6 +800,222 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_actions[group_id][index] = candidate
         self.native_revisions[(group_id, identifier)] += 1
         self._json(route, self._action_envelope(group_id, candidate))
+
+    # --- Native group identity serving, shared with GroupIdentitiesFixture ----------------------
+
+    def _seed_identities(self, group_id, records):
+        rows = []
+        for record in records:
+            rows.append(record)
+            self.native_identity_revisions[(group_id, record["id"])] = 1
+        self.native_identities[group_id] = rows
+
+    def record_identity(self, group_id, identifier):
+        return next((row for row in self.native_identities.get(group_id, []) if row["id"] == identifier), None)
+
+    def _identity_etag(self, group_id, identifier):
+        return f"group-identity-etag:{group_id}:{identifier}:{self.native_identity_revisions[(group_id, identifier)]}"
+
+    def touch_identity(self, group_id, identifier):
+        """Simulate a concurrent edit by another manager: the stored identity etag moves on."""
+        self.native_identity_revisions[(group_id, identifier)] += 1
+        return self._identity_etag(group_id, identifier)
+
+    def _identity_payload(self, group_id, record):
+        """The sanitized identity plus the two fields the native routes add: `etag` and the
+        `identity_actions` projection. `usage_contexts` is already normalized on the stored record."""
+        payload = _sanitize_identity(record)
+        payload["etag"] = self._identity_etag(group_id, record["id"])
+        payload["identity_actions"] = list(record.get("identity_actions", []))
+        return payload
+
+    def set_identity_policy(self, group_id, *, role=None, status="active"):
+        """Recompute a group's context for an identity role and status.
+
+        `group_context` computes the `identity_management` hint from the same role and status, so
+        recomputing the whole context carries the new hint, exactly like `set_agent_policy`.
+        """
+        current = self.groups.get(group_id)
+        name = current["workspace"]["name"] if current else f"{group_id} workspace"
+        role = role or (current["role"] if current else "Owner")
+        context = group_context(group_id, name, role=role, status=status)
+        self.groups[group_id] = context
+        return context
+
+    def _identity_validation_error(self, body, prior):
+        """The reviewed field messages the backend raises as public validation errors (B3), served
+        verbatim so a test proves the editor renders the server's own text. Only the cases a strict
+        client can still reach are modelled: a required password or secret that is blank with nothing
+        stored to keep. Every other refusal is the generic message."""
+        credentials = body.get("credentials") if isinstance(body.get("credentials"), dict) else {}
+        auth_type = str(credentials.get("auth_type") or "")
+        stored = bool(prior["_secret"]) if prior is not None else False
+        if auth_type == "username_password":
+            if not str(credentials.get("password") or "") and not stored:
+                return "Username/password identities require a password"
+        elif auth_type not in ("anonymous", "managed_identity"):
+            if not str(credentials.get("secret") or "") and not stored:
+                return "This identity type requires a secret value"
+        return None
+
+    def _identity_from_write(self, group_id, identifier, body, prior):
+        """Fold a strict write body onto a new or existing identity. A blank secret (or the
+        round-tripped placeholder) keeps whatever is stored; a fresh value replaces it."""
+        credentials = body.get("credentials") if isinstance(body.get("credentials"), dict) else {}
+        auth_type = str(credentials.get("auth_type") or (prior["_auth_type"] if prior else "api_key"))
+        uses_password = auth_type == "username_password"
+        incoming = str((credentials.get("password") if uses_password else credentials.get("secret")) or "")
+        if incoming and incoming != IDENTITY_TRIGGER_WORD:
+            secret_stored = True
+        elif prior is not None:
+            secret_stored = bool(prior["_secret"])
+        else:
+            secret_stored = False
+        provider = str(body.get("provider") or (prior["provider"] if prior else "action"))
+        usage = body.get("usage_contexts")
+        sources = body.get("supported_source_types")
+        metadata = body.get("metadata")
+        now = datetime.now(timezone.utc).isoformat()
+        return {
+            "id": identifier,
+            "identity_id": identifier,
+            "type": "workspace_identity",
+            "scope_type": "group",
+            "group_id": group_id,
+            "name": str(body["name"]) if "name" in body else (prior["name"] if prior else ""),
+            "description": str(body["description"]) if "description" in body else (prior["description"] if prior else ""),
+            "provider": provider,
+            "source_type": str(body.get("source_type") or provider),
+            "usage_contexts": list(usage) if isinstance(usage, list) else (list(prior["usage_contexts"]) if prior else ["action"]),
+            "supported_source_types": list(sources) if isinstance(sources, list) else (list(prior["supported_source_types"]) if prior else [provider]),
+            "metadata": copy.deepcopy(metadata) if isinstance(metadata, dict) else (copy.deepcopy(prior["metadata"]) if prior else {}),
+            "created_by": prior["created_by"] if prior else OWNER_ID,
+            "updated_by": OWNER_ID,
+            "created_at": prior["created_at"] if prior else now,
+            "updated_at": now,
+            "identity_actions": list(prior["identity_actions"]) if prior else list(IDENTITY_ACTIONS),
+            "_auth_type": auth_type,
+            "_username": str(credentials.get("username", prior["_username"] if prior else "")),
+            "_domain": str(credentials.get("domain", prior["_domain"] if prior else "")),
+            "_client_identity": str(credentials.get("identity", prior["_client_identity"] if prior else "")),
+            "_secret": secret_stored,
+        }
+
+    def _identities(self, route, entry):
+        parts = entry.path.split("/")
+        # /api/groups/<group_id>/identities[/<identity_id>]
+        group_id = parts[3]
+        tail = parts[5] if len(parts) > 5 else None
+        method = entry.method
+        assert group_id in self.groups, f"Unknown group identity scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's identities."}, 403)
+            return
+        # Reads use the same manage roles as writes -- Owner, Admin and DocumentManager -- so an
+        # ordinary member is refused with 403 on every identity route, exactly as the legacy routes
+        # do. The group action editor turns that 403 into a silent resolvable=false and never falls
+        # back to a personal identity read.
+        if self.groups[group_id].get("role") not in IDENTITY_MANAGE_ROLES:
+            self._json(route, {"error": "You do not have access to this group's identities."}, 403)
+            return
+        # Every native group identity route rejects unexpected query parameters with a 400, mirroring
+        # the server's strict request contract; the frontend therefore sends none.
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        operations = set(self.groups[group_id].get("identity_management", {}).get("operations", []))
+        if tail is None:
+            if method == "GET":
+                self._json(route, {"identities": [
+                    self._identity_payload(group_id, row) for row in self.native_identities.get(group_id, [])
+                ]})
+                return
+            if method == "POST":
+                assert "create" in operations, f"Create reached a workspace without the hint: {entry}"
+                self._create_identity(route, entry, group_id)
+                return
+        else:
+            record = self.record_identity(group_id, tail)
+            if record is None:
+                self._json(route, {"error": "Identity not found in this group."}, 404)
+                return
+            if method == "GET":
+                self._json(route, {"identity": self._identity_payload(group_id, record)})
+                return
+            if method == "PATCH":
+                self._patch_identity(route, entry, group_id, tail, record, operations)
+                return
+            if method == "DELETE":
+                self._delete_identity(route, entry, group_id, tail, record, operations)
+                return
+        self.unexpected_requests.append(f"{method} {entry.path}")
+        self._json(route, {"error": "Unexpected group identity request."}, 500)
+
+    def _create_identity(self, route, entry, group_id):
+        body = entry.body
+        if not isinstance(body, dict) or set(body) - IDENTITY_WRITE_FIELDS:
+            self._json(route, {"error": IDENTITY_GENERIC_ERROR}, 400)
+            return
+        validation = self._identity_validation_error(body, prior=None)
+        if validation:
+            self._json(route, {"error": validation}, 400)
+            return
+        self.created_identity_counter += 1
+        identifier = f"group-identity-created-{self.created_identity_counter}"
+        record = self._identity_from_write(group_id, identifier, body, prior=None)
+        self.native_identities.setdefault(group_id, []).insert(0, record)
+        self.native_identity_revisions[(group_id, identifier)] = 1
+        self._json(route, {"identity": self._identity_payload(group_id, record)}, 201)
+
+    def _patch_identity(self, route, entry, group_id, identifier, record, operations):
+        assert "edit" in operations and "edit" in (record.get("identity_actions") or []), (
+            f"Edit reached a read-only identity: {entry}"
+        )
+        body = entry.body
+        if not isinstance(body, dict) or "expected_etag" not in body:
+            self._json(route, {"error": "This workspace identity is missing its version marker."}, 400)
+            return
+        if set(body) - IDENTITY_WRITE_FIELDS - {"expected_etag"}:
+            self._json(route, {"error": IDENTITY_GENERIC_ERROR}, 400)
+            return
+        if body["expected_etag"] != self._identity_etag(group_id, identifier):
+            self._json(route, {"error": IDENTITY_CONFLICT_ERROR, "error_code": "etag_conflict"}, 409)
+            return
+        validation = self._identity_validation_error(body, prior=record)
+        if validation:
+            self._json(route, {"error": validation}, 400)
+            return
+        updated = self._identity_from_write(group_id, identifier, body, prior=record)
+        index = next(i for i, row in enumerate(self.native_identities[group_id]) if row["id"] == identifier)
+        self.native_identities[group_id][index] = updated
+        self.native_identity_revisions[(group_id, identifier)] += 1
+        self._json(route, {"identity": self._identity_payload(group_id, updated)})
+
+    def _delete_identity(self, route, entry, group_id, identifier, record, operations):
+        assert "delete" in operations and "delete" in (record.get("identity_actions") or []), (
+            f"Delete reached a read-only identity: {entry}"
+        )
+        body = entry.body
+        if not isinstance(body, dict) or set(body) != {"expected_etag"}:
+            self._json(route, {"error": "A workspace identity delete carries only its version marker."}, 400)
+            return
+        if body["expected_etag"] != self._identity_etag(group_id, identifier):
+            self._json(route, {"error": IDENTITY_CONFLICT_ERROR, "error_code": "etag_conflict"}, 409)
+            return
+        references = self.identity_references.get((group_id, identifier))
+        if references:
+            # A delete refused because the identity is still referenced returns the in-use 409 with
+            # references limited to this group; nothing is removed, exactly as the server does.
+            self._json(route, {
+                "error": IDENTITY_IN_USE_ERROR,
+                "error_code": "identity_in_use",
+                "references": copy.deepcopy(references),
+            }, 409)
+            return
+        self.native_identities[group_id] = [
+            row for row in self.native_identities[group_id] if row["id"] != identifier
+        ]
+        self._json(route, {"success": True})
 
     # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------
 

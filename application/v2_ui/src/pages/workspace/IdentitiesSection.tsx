@@ -5,7 +5,7 @@
 // rather than as stored credentials, so the wording here is explicit about what these are
 // and what uses them.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { KeyRound, Trash2 } from 'lucide-react';
 import {
@@ -20,7 +20,10 @@ import {
     errorMessage,
     useSectionResource,
 } from '../../components/workspace/useSectionResource';
-import { deleteIdentity, fetchIdentities } from '../../lib/workspaceApi';
+import {
+    PERSONAL_IDENTITY_WORKBENCH,
+    type IdentityWorkbenchAdapter,
+} from '../../lib/identityWorkbench';
 import type { WorkspaceIdentity } from '../../lib/types';
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -41,12 +44,15 @@ export function authTypeLabel(authType: unknown): string {
 export function IdentitiesSection({
     syncEnabled,
     actionsEnabled,
+    adapter = PERSONAL_IDENTITY_WORKBENCH,
 }: {
     syncEnabled: boolean;
     actionsEnabled: boolean;
+    adapter?: IdentityWorkbenchAdapter;
 }) {
+    const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, setItems, setError } = useSectionResource<WorkspaceIdentity>(
-        fetchIdentities,
+        load,
         'Failed to load identities.',
     );
 
@@ -68,7 +74,7 @@ export function IdentitiesSection({
         setBusyId(identity.id);
         setItems(items.filter((item) => item.id !== identity.id));
         try {
-            await deleteIdentity(identity.id);
+            await adapter.remove(identity);
         } catch (deleteError) {
             setItems(previous);
             setError(errorMessage(deleteError, 'Could not delete the identity.'));

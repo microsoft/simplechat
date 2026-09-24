@@ -32,6 +32,12 @@ export interface ActionConnectorProps {
     identities: ActionIdentity[];
     identitiesLoading: boolean;
     identitiesError: string | null;
+    /**
+     * Whether the identity list was resolvable at all in this scope. False when the group forbids
+     * listing identities (a member gets 403); the connector then keeps neutral "kept as is" copy
+     * rather than treating the empty list as "none configured".
+     */
+    identitiesResolvable: boolean;
     /** Set when the action belongs to a group, so connector tests send the group test payload. */
     groupScope?: ActionTestGroupScope;
 }
