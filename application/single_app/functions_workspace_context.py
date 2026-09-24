@@ -44,6 +44,7 @@ from functions_group_file_source_policy import (
     group_file_source_management_operations,
     group_file_sources_available,
 )
+from functions_group_settings_policy import build_group_settings_management
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -280,6 +281,11 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
                 role, group, settings, available=file_sources_available,
             ),
         },
+        # The decision the native group settings routes enforce and their settings read
+        # publishes; the header offers Settings from it without an extra read.
+        "settings_management": build_group_settings_management(
+            role, group, settings, (user_info or {}).get("roles"),
+        ),
     }
 
 

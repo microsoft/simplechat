@@ -147,19 +147,40 @@ def _project_group_document(
     return payload
 
 
-def load_group_document_browser_documents(user_id, group_id):
-    require_group_document_read_context(user_id, group_id)
-    records = _query_group_document_records(group_id)
-    context = require_group_document_read_context(user_id, group_id)
+def current_group_document_records(records):
+    """The current revision of every document family in ``records``, as the document list shows them.
+
+    Families are formed per owning group. ``select_current_documents`` chooses each
+    family's current revision, and a revision marked ``is_current_version: false`` is
+    never shown. The group document list and ``count_current_group_documents`` both
+    use this, so the count always equals what the list shows.
+    """
     by_owner = {}
     for record in records:
         by_owner.setdefault(record["group_id"], []).append(record)
-    current = [
+    return [
         document
         for family_records in by_owner.values()
         for document in select_current_documents(family_records)
         if document.get("is_current_version") is not False
     ]
+
+
+def count_current_group_documents(group_id):
+    """The number of the group's own documents, counted as the group document list shows them.
+
+    Superseded revisions are not counted, and neither are documents shared into the
+    group, which belong to the group that shared them.
+    """
+    records = [record for record in _query_group_document_records(group_id) if record["group_id"] == group_id]
+    return len(current_group_document_records(records))
+
+
+def load_group_document_browser_documents(user_id, group_id):
+    require_group_document_read_context(user_id, group_id)
+    records = _query_group_document_records(group_id)
+    context = require_group_document_read_context(user_id, group_id)
+    current = current_group_document_records(records)
     group_names = {}
     documents = [
         _project_group_document(document, group_id, group_names, user_id=user_id, context=context, query_timestamp=True)

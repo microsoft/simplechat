@@ -4,6 +4,7 @@ Functional test for the conditional group-document writer.
 Version: 0.261.146
 Implemented in: 0.261.140
 No-bump commits (``cache_reason=None``): 0.261.146
+Group settings writers: 0.261.153
 
 ``update_group_document_with_etag_guard`` is the group-document equivalent of the
 File Sync ``_write_with_etag_guard`` (``fae9d6ef``). The real ``functions_group``
@@ -20,8 +21,9 @@ unconditional upsert it was.
 
 ``cache_reason`` is a required keyword. ``None`` commits without bumping the chat
 bootstrap cache, which the group directory's join and cancel use because no
-bootstrap payload reads pending requests; every other caller names a reason. The
-model endpoint writes still bump once per commit, which
+bootstrap payload reads pending requests, and which the group logo and retention
+writes use because the classic writers never bumped for them; every other caller
+names a reason. The model endpoint writes still bump once per commit, which
 ``test_group_endpoint_apis.py::test_each_committed_write_bumps_the_chat_bootstrap_cache_once``
 pins end to end.
 """
@@ -204,7 +206,7 @@ def _guard_calls():
 
 
 def test_every_guarded_writer_names_its_cache_reason():
-    """Only the group directory opts out of the bump; the model endpoint writes keep theirs."""
+    """Only the group directory, the logo and the retention writes opt out of the bump."""
     reasons = {}
     for file_name, call in _guard_calls():
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
@@ -216,7 +218,47 @@ def test_every_guarded_writer_names_its_cache_reason():
     assert reasons == {
         "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
         "functions_group_directory.py": {"None"},
+        # The native group settings writes name theirs at each _write call.
+        "functions_group_settings.py": {"cache_reason"},
     }
+
+
+def _cache_reasons_by_function(file_name, callee):
+    """``{innermost enclosing function: {cache_reason source}}`` for each call to ``callee``."""
+    tree = ast.parse((APP_DIR / file_name).read_text(encoding="utf-8"))
+    found = {}
+
+    def visit(node, owner):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call):
+                function = child.func
+                name = function.id if isinstance(function, ast.Name) else getattr(function, "attr", "")
+                if name == callee:
+                    value = {keyword.arg: keyword.value for keyword in child.keywords}["cache_reason"]
+                    found.setdefault(owner, set()).add(ast.unparse(value))
+            visit(child, owner)
+
+    visit(tree, None)
+    return found
+
+
+@pytest.mark.parametrize("file_name,callee,expected", [
+    ("functions_group_settings.py", "update_group_document_with_etag_guard", {"_write": {"cache_reason"}}),
+    ("functions_group_settings.py", "_write", {
+        "update_group_profile": {"'group_updated'"},
+        "update_group_downloads": {"'group_updated'"},
+        "replace_group_logo": {"None"},
+        "remove_group_logo": {"None"},
+        "update_group_retention": {"None"},
+    }),
+])
+def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):
+    """The name, description, color and download writes bump group_updated, as the classic
+    writers did; the logo and retention writes bump nothing, as they never did."""
+    assert _cache_reasons_by_function(file_name, callee) == expected
 
 
 def test_the_model_endpoint_cache_reason_is_a_real_reason(env):

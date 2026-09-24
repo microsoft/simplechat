@@ -24,6 +24,11 @@ so a user is not told to obtain a role that would not help. Asking to join needs
 ``enable_group_workspaces``: every authenticated user may ask to join any group, in
 every group status, as the classic Find Group flow allows.
 
+``group_creation_role_missing`` is the role half on its own. It is exactly the rule
+``create_group_role_required`` applies, and the classic group rename, recolor and
+delete routes carry that decorator, so the native group settings reuse it without
+the switches, which those routes never read.
+
 This module is pure: it reads only the values it is given.
 """
 
@@ -40,6 +45,16 @@ def _role_names(roles):
     return set()
 
 
+def group_creation_role_missing(settings, roles):
+    """Return ``True`` when creation is narrowed to ``CreateGroups`` and ``roles`` lacks it.
+
+    ``enable_group_workspaces`` and ``enable_group_creation`` are not read: the legacy
+    decorator this matches does not read them either.
+    """
+    source = settings if isinstance(settings, dict) else {}
+    return bool(source.get("require_member_of_create_group", False)) and GROUP_CREATION_APP_ROLE not in _role_names(roles)
+
+
 def group_creation_refusal(settings, roles):
     """Return why the caller may not create a group, or ``None`` when they may.
 
@@ -50,7 +65,7 @@ def group_creation_refusal(settings, roles):
     source = settings if isinstance(settings, dict) else {}
     if not source.get("enable_group_workspaces", False) or not source.get("enable_group_creation", False):
         return GROUP_CREATION_DISABLED
-    if source.get("require_member_of_create_group", False) and GROUP_CREATION_APP_ROLE not in _role_names(roles):
+    if group_creation_role_missing(source, roles):
         return GROUP_CREATION_ROLE_REQUIRED
     return None
 
@@ -72,4 +87,5 @@ __all__ = [
     "GROUP_DIRECTORY_HINTS_SCHEMA_VERSION",
     "build_group_directory_hints",
     "group_creation_refusal",
+    "group_creation_role_missing",
 ]
