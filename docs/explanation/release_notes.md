@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.163)**
+
+#### Bug Fixes
+
+*   **Classic Group Statistics Export Downloads Again**
+    *   On the classic **Manage group** page, exporting statistics showed "Failed to export group stats." and downloaded nothing whenever **Storage Usage** was ticked, which it is by default. The export called a byte formatter the page never had.
+    *   The export now downloads its CSV. Storage sizes read like the public workspace export's, for example "1.5 KB", and nothing else in the file changes.
+    *   (Ref: `static/js/group/manage_group.js` `exportGroupStats`, [Classic Group Stats Export Fix](fixes/CLASSIC_GROUP_STATS_EXPORT_FIX.md))
+
 ### **(v0.261.162)**
 
 #### Bug Fixes
