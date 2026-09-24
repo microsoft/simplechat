@@ -1,7 +1,7 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.129
+Version: 0.261.158
 Implemented in: 0.261.129
 
 Only HTTP responses are scripted. Components, stores, navigation, downloads,
@@ -231,11 +231,15 @@ def test_locked_workspace_only_offers_eligible_downloads(group_management_ui):
     open_documents(ui)
     select_documents(ui, "same-document")
     expect(command(ui, "Download")).to_be_enabled()
-    expect(command(ui, "Chat")).to_be_disabled()
+    # A locked group is read-only, not closed to chat: the server keeps chat on in it.
+    expect(command(ui, "Chat")).to_be_enabled()
     for label in ("Upload", "Tag", "Edit", "Delete", "Extract", "Switch to Enhanced"):
         expect(explorer(ui).get_by_role("button", name=label, exact=True)).to_have_count(0)
     expect(checkbox(ui, "held-report")).to_be_disabled()
-    show_details(ui, "source-denied")
+    # With chat on, a document whose source cannot be downloaded is still selectable (so opening its
+    # details keeps the selection). Selected on its own, it offers no download in the command bar or
+    # in its details.
+    select_documents(ui, "source-denied")
     expect(command(ui, "Download")).to_be_disabled()
     expect(ui.page.get_by_role("complementary").get_by_role("button", name="Download", exact=True)).to_be_disabled()
     assert_no_personal_controls(ui)

@@ -1,7 +1,7 @@
 # group_documents.py
 """
 Closed M2A group document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.128
+Version: 0.261.158
 Implemented in: 0.261.128
 
 The fixture serves full-set query results and separately scoped details/versions.
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, connect_options  # noqa: F401
+from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, connect_options, group_context  # noqa: F401
 
 
 SORT_FIELDS = (
@@ -62,6 +62,13 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
     def __init__(self, page):
         super().__init__(page)
         self.active_group = "group-a"
+        # A read-only slice views both groups as an ordinary member: an Owner's server context offers
+        # document management, which this fixture never serves. The deployment extracts metadata, as
+        # the bootstrap below says.
+        for group_id in ("group-a", "group-b"):
+            self.groups[group_id] = group_context(
+                group_id, self.groups[group_id]["workspace"]["name"], role="User", enable_extract_meta_data=True,
+            )
         self.now = int(datetime.now(timezone.utc).timestamp())
         self.documents = {}
         self.versions = {}

@@ -1,7 +1,7 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.152
+Version: 0.261.158
 Implemented in: 0.261.147
 
 Exercises the real file sources section and its editor dialog against closed synthetic
@@ -33,7 +33,7 @@ from playwright.sync_api import expect
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
     FILE_SOURCE_BUSY_ERROR, FILE_SOURCE_SYNC_BUSY_ERROR, FILE_SOURCE_SYNC_LIMIT_ERROR,
-    FILE_SOURCE_CONFLICT_ERROR,
+    FILE_SOURCE_CONFLICT_ERROR, GROUP_CONNECTIONS_ROLE_REASON,
 )
 from ui_tests.fixtures.group_file_sources import (  # noqa: F401
     GroupFileSourcesFixture, group_file_sources_ui,
@@ -704,7 +704,7 @@ def test_member_has_no_native_file_sources_section(group_file_sources_ui, theme,
     ui, page = group_file_sources_ui, group_file_sources_ui.page
     open_sources(ui, group="group-b", theme=theme, width=width, height=height)
     expect(page.get_by_text("File sources is not available", exact=True)).to_be_visible()
-    expect(page.get_by_text("Your role does not permit managing group connections.", exact=True)).to_be_visible()
+    expect(page.get_by_text(GROUP_CONNECTIONS_ROLE_REASON, exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="New file source", exact=True)).to_have_count(0)
     assert not sources_get(ui, group="group-b"), (
         "A member's unavailable section must not read the group file sources route."

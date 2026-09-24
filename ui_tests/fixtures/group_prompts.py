@@ -1,15 +1,16 @@
 # group_prompts.py
 """
 Closed M3 group prompt HTTP fixtures for the real production V2 SPA.
-Version: 0.261.152
+Version: 0.261.158
 Implemented in: 0.261.136
 
-The fixture serves the immutable `/api/groups/<group_id>/prompts[...]` family and
-injects the `prompt_management` context hint that gates create, edit and delete.
-It never permits personal `/api/prompts` writes and never falls back to personal
-behaviour: an absent hint yields a read-only workbench. Group prompts have no
-per-user favourite, so `is_favorite` is neither stored nor accepted, and every
-returned prompt identifies the requested group exactly as the reader validates.
+The fixture serves the immutable `/api/groups/<group_id>/prompts[...]` family, gated by
+the `prompt_management` context hint the shared group context carries exactly as the
+server sends it: always present, with create, edit and delete only for a writer in an
+active workspace. It never permits personal `/api/prompts` writes and never falls back
+to personal behaviour: a hint without operations yields a read-only workbench. Group
+prompts have no per-user favourite, so `is_favorite` is neither stored nor accepted,
+and every returned prompt identifies the requested group exactly as the reader validates.
 """
 
 import copy
@@ -22,9 +23,7 @@ from ui_tests.fixtures.group_workspace import (
 )
 
 
-PROMPT_OPERATIONS = ("create", "edit", "delete")
 PROMPT_ACTIONS = ("edit", "delete")
-WRITER_ROLES = ("Owner", "Admin", "DocumentManager")
 
 
 def group_prompt(group_id, identifier, name, *, content, actions=PROMPT_ACTIONS, **overrides):
@@ -43,13 +42,6 @@ def group_prompt(group_id, identifier, name, *, content, actions=PROMPT_ACTIONS,
     }
     record.update(copy.deepcopy(overrides))
     return record
-
-
-def prompt_management(role, status):
-    """The management hint, present only for a writer in an active workspace."""
-    if role in WRITER_ROLES and status == "active":
-        return {"schema_version": 1, "operations": list(PROMPT_OPERATIONS)}
-    return None
 
 
 class GroupPromptsFixture(GroupWorkspaceFixture):
@@ -77,8 +69,8 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                 actions=(),
             ),
         ]
-        # group-b: an ordinary member. Prompts are readable but no management hint is present,
-        # so the workbench is read-only: no create, edit, delete, or favourite affordances.
+        # group-b: an ordinary member. Prompts are readable but the management hint offers no
+        # operations, so the workbench is read-only: no create, edit, delete, or favourite affordances.
         self.set_prompt_policy("group-b", role="User", status="active")
         self.prompts["group-b"] = [
             group_prompt(
@@ -89,14 +81,11 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
         ]
 
     def set_prompt_policy(self, group_id, *, role=None, status="active"):
-        """Recompute a group's context with a prompt management hint for the role and status."""
+        """Recompute a group's context, whose prompt management hint is the server's for the role and status."""
         current = self.groups.get(group_id)
         name = current["workspace"]["name"] if current else f"{group_id} workspace"
         role = role or (current["role"] if current else "Owner")
         context = group_context(group_id, name, role=role, status=status)
-        hint = prompt_management(role, status)
-        if hint is not None:
-            context["prompt_management"] = copy.deepcopy(hint)
         self.groups[group_id] = context
         return context
 
@@ -154,7 +143,8 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
         if group_id in self.denied_groups:
             self._json(route, {"error": "You do not have access to this group's prompts."}, 403)
             return
-        writable = "prompt_management" in self.groups[group_id]
+        # The hint is always present, so what a write may do is read from its operations.
+        allowed = set(self.groups[group_id].get("prompt_management", {}).get("operations", ()))
         if identifier is None:
             if method == "GET":
                 assert set(entry.query) <= {"page", "page_size", "search"}, entry
@@ -166,7 +156,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                 })
                 return
             if method == "POST":
-                assert writable, f"Create reached a read-only workspace: {entry}"
+                assert "create" in allowed, f"Create reached a read-only workspace: {entry}"
                 assert set(entry.body) <= {"name", "content", "description"}, entry
                 assert "is_favorite" not in entry.body, "Group prompts must not carry favourites."
                 self.created_counter += 1
@@ -188,7 +178,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                 self._json(route, {"error": "Prompt not found in this group."}, 404)
                 return
             if method == "PATCH":
-                assert writable, f"Edit reached a read-only workspace: {entry}"
+                assert "edit" in allowed, f"Edit reached a read-only workspace: {entry}"
                 assert "expected_etag" in entry.body, "A conditional edit must carry expected_etag."
                 assert "is_favorite" not in entry.body, "Group prompts must not carry favourites."
                 if entry.body["expected_etag"] != record["etag"]:
@@ -203,7 +193,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                 self._json(route, copy.deepcopy(record))
                 return
             if method == "DELETE":
-                assert writable, f"Delete reached a read-only workspace: {entry}"
+                assert "delete" in allowed, f"Delete reached a read-only workspace: {entry}"
                 assert isinstance(entry.body, dict) and "expected_etag" in entry.body, (
                     "A conditional delete must carry expected_etag in its JSON body."
                 )
