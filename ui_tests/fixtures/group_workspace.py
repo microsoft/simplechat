@@ -926,6 +926,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         operations = set(self.groups[group_id].get("identity_management", {}).get("operations", []))
         if tail is None:
             if method == "GET":
+                # A test may force a malformed list envelope (no identities array) to prove the group
+                # action editor treats it as a hard load error -- resolvable stays false and a bound
+                # identity keeps its neutral "kept as is" copy -- rather than an empty success.
+                if getattr(self, "malformed_identity_list", False):
+                    self._json(route, {"identities": None})
+                    return
                 self._json(route, {"identities": [
                     self._identity_payload(group_id, row) for row in self.native_identities.get(group_id, [])
                 ]})

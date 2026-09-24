@@ -71,7 +71,10 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
     const [identities, setIdentities] = useState<ActionIdentity[]>([]);
     const [identitiesLoading, setIdentitiesLoading] = useState(true);
     const [identitiesError, setIdentitiesError] = useState<string | null>(null);
-    const [identitiesResolvable, setIdentitiesResolvable] = useState(true);
+    // Identities start UNRESOLVABLE so nothing renders a bound identity as "Unavailable" while the
+    // list is still loading; only a successful group load flips this true. Personal scope ignores it
+    // (its neutral branches are keyed on groupScoped), so this is byte-identical for personal.
+    const [identitiesResolvable, setIdentitiesResolvable] = useState(false);
     const [hints, setHints] = useState<ActionEditorHints | null>(null);
     const [hintsError, setHintsError] = useState<string | null>(null);
     const [hintsLoading, setHintsLoading] = useState(true);
@@ -99,7 +102,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) setCatalogueError(errorMessage(cause, 'Could not load the governed action catalogue.'));
         }).finally(() => { if (!controller.signal.aborted) setCatalogueLoading(false); });
-        setIdentitiesLoading(true); setIdentitiesError(null); setIdentitiesResolvable(true);
+        setIdentitiesLoading(true); setIdentitiesError(null); setIdentitiesResolvable(false);
         void adapter.listIdentities(controller.signal).then((items) => {
             if (!controller.signal.aborted) { setIdentities(items); setIdentitiesResolvable(true); }
         }).catch((cause: unknown) => {

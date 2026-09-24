@@ -30,7 +30,7 @@ identifies the requested group exactly as the reader validates.
 import pytest
 
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
-    GroupWorkspaceFixture, group_identity,
+    GroupWorkspaceFixture, group_identity, group_action,
 )
 
 
@@ -39,6 +39,7 @@ WITHHELD_IDENTITY_ID = "group-a-withheld-identity"
 FILE_SYNC_IDENTITY_ID = "group-a-file-sync-identity"
 IN_USE_IDENTITY_ID = "group-a-in-use-identity"
 CONNECTOR_ACTION_ID = "group-a-connector"
+BOUND_CONNECTOR_ACTION_ID = "group-a-bound-connector"
 
 
 class GroupIdentitiesFixture(GroupWorkspaceFixture):
@@ -74,6 +75,19 @@ class GroupIdentitiesFixture(GroupWorkspaceFixture):
         self.identity_references[("group-a", IN_USE_IDENTITY_ID)] = [
             {"kind": "action", "id": CONNECTOR_ACTION_ID, "name": "Shared connector"},
         ]
+        # A second group-a OpenAPI action bound to a reusable identity, so a test can open a real
+        # editor whose draft carries identity_id. It stays separate from the base "Shared connector"
+        # (which binds no identity) so the unbound editor test keeps a clean, identity-free select.
+        # It is appended, not reseeded, so the base connector and its bookkeeping are left intact.
+        bound = group_action("group-a", BOUND_CONNECTOR_ACTION_ID, "Bound connector",
+                             auth={"type": "identity", "identity": EDITABLE_IDENTITY_ID},
+                             identity_id=EDITABLE_IDENTITY_ID)
+        self.native_actions.setdefault("group-a", []).append(bound)
+        self.native_secret_paths[("group-a", BOUND_CONNECTOR_ACTION_ID)] = []
+        self.native_revisions[("group-a", BOUND_CONNECTOR_ACTION_ID)] = 1
+        # Off by default; one test flips it to force a malformed identity list envelope (no
+        # identities array), which the group action editor must treat as a hard load error.
+        self.malformed_identity_list = False
         # group-b: an ordinary member. Identities are manager-only, so the section is unavailable and
         # every identity route answers 403. The base already seeds one identity for it and models the
         # member role; the seeded row is never served, which is exactly the M4-gap silent path the
