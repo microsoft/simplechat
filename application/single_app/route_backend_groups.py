@@ -1,12 +1,13 @@
 # route_backend_groups.py
 
-from urllib.parse import quote
-
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import *
-from functions_debug import debug_print
+from functions_group_membership_audit import (
+    log_group_member_role_change,
+    notify_group_member_role_change,
+)
 from functions_notifications import create_notification
 from functions_simplechat_operations import (
     add_group_member_for_current_user,
@@ -799,48 +800,26 @@ def register_route_backend_groups(bp):
         cosmos_groups_container.upsert_item(group_doc)
         bump_chat_bootstrap_global_cache_version(reason="group_member_role_updated")
 
-        # Log activity for role change
-        try:
-            activity_record = {
-                'id': str(uuid.uuid4()),
-                'type': 'group_member_role_changed',
-                'activity_type': 'update_member_role',
-                'timestamp': datetime.utcnow().isoformat(),
-                'changed_by_user_id': user_id,
-                'changed_by_email': user_email,
-                'changed_by_role': current_role,
-                'group_id': group_id,
-                'group_name': group_doc.get('name', 'Unknown'),
-                'member_user_id': member_id,
-                'member_email': member_email,
-                'member_name': member_name,
-                'old_role': target_role,
-                'new_role': new_role,
-                'description': f"{current_role} {user_email} changed {member_name} ({member_email}) role from {target_role} to {new_role} in group {group_doc.get('name', group_id)}"
-            }
-            cosmos_activity_logs_container.create_item(body=activity_record)
-        except Exception as log_error:
-            debug_print(f"Failed to log role change activity: {log_error}")
-        
-        # Create notification for the member whose role was changed
-        try:
-            from functions_notifications import create_notification
-            create_notification(
-                user_id=member_id,
-                notification_type='system_announcement',
-                title='Role Changed',
-                message=f"Your role in group '{group_doc.get('name', 'Unknown')}' has been changed from {target_role} to {new_role} by {user_email}.",
-                link_url=f"/groups/{quote(group_id, safe='')}",
-                metadata={
-                    'group_id': group_id,
-                    'group_name': group_doc.get('name', 'Unknown'),
-                    'changed_by': user_email,
-                    'old_role': target_role,
-                    'new_role': new_role
-                }
-            )
-        except Exception as notif_error:
-            debug_print(f"Failed to create role change notification: {notif_error}")
+        log_group_member_role_change(
+            group_id=group_id,
+            group_doc=group_doc,
+            changed_by_user_id=user_id,
+            changed_by_email=user_email,
+            changed_by_role=current_role,
+            member_id=member_id,
+            member_email=member_email,
+            member_name=member_name,
+            old_role=target_role,
+            new_role=new_role,
+        )
+        notify_group_member_role_change(
+            group_id=group_id,
+            group_doc=group_doc,
+            member_id=member_id,
+            changed_by_email=user_email,
+            old_role=target_role,
+            new_role=new_role,
+        )
 
         return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
 
