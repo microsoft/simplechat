@@ -71,10 +71,6 @@ ALLOWED_DYNAMIC_MODULES = {
 }
 # The ratchet: raw writers this series still moves onto the guard. Each conversion removes its own.
 PENDING_RAW_WRITES = Counter({
-    ("route_backend_group_documents.py", "api_create_group_tag", "upsert_item"): 1,
-    ("route_backend_group_documents.py", "api_update_group_tag", "upsert_item"): 2,
-    ("route_backend_group_documents.py", "api_delete_group_tag", "upsert_item"): 1,
-    ("functions_documents.py", "get_or_create_tag_definition", "upsert_item"): 1,
     ("functions_simplechat_operations.py", "make_group_inactive_for_current_user", "upsert_item"): 1,
     ("functions_group.py", "update_group_model_endpoints", "upsert_item"): 1,
 })

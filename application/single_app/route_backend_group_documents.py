@@ -236,6 +236,51 @@ def _require_active_group_document_context(user_id, allowed_roles, permission_me
     return active_group_id, group_doc, get_user_role_in_group(group_doc, user_id), None
 
 
+GROUP_TAG_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+GROUP_TAG_PERMISSION_MESSAGE = 'You do not have permission to manage tags'
+
+
+class _GroupTagAnswer(Exception):
+    """Ends a guarded tag change without writing: with ``answer`` (payload, status), or none to carry on."""
+
+    def __init__(self, answer=None):
+        super().__init__("The group tag change was answered without a write.")
+        self.answer = answer
+
+
+def _save_group_tag_definitions(group_id, user_id, change):
+    """Apply ``change`` to the tag definitions on the group's current copy.
+
+    The caller's tag role is checked again on that copy, so a role removed meanwhile
+    refuses the change, and everything else on the group (membership, status, the
+    other definitions) comes from that copy too. ``change`` edits the definitions in
+    place and returns whether it changed anything; nothing is written when it didn't.
+    It can raise ``_GroupTagAnswer`` to refuse. Returns an error response, or ``None``
+    to carry on. No chat bootstrap payload reads tag definitions, so nothing is bumped.
+    """
+    def apply_change(fresh):
+        if get_user_role_in_group(fresh, user_id) not in GROUP_TAG_MANAGER_ROLES:
+            raise _GroupTagAnswer(({'error': GROUP_TAG_PERMISSION_MESSAGE}, 403))
+        definitions = fresh.get('tag_definitions') or {}
+        if not change(definitions):
+            raise _GroupTagAnswer()
+        fresh['tag_definitions'] = definitions
+        return fresh
+
+    try:
+        saved = update_group_document_with_etag_guard(group_id, apply_change, cache_reason=None)
+    except _GroupTagAnswer as answered:
+        if answered.answer is None:
+            return None
+        payload, status = answered.answer
+        return jsonify(payload), status
+    except GroupDocumentWriteConflict:
+        return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+    if saved is None:
+        return jsonify({'error': 'Active group not found'}), 404
+    return None
+
+
 def _get_group_document_display_name(document_item):
     return str(
         (document_item or {}).get('title')
@@ -2622,17 +2667,22 @@ def register_route_backend_group_documents(bp):
             if not is_valid_color:
                 return jsonify({'error': color_error}), 400
 
-            tag_defs = group_doc.get('tag_definitions', {})
+            created_at = datetime.now(timezone.utc).isoformat()
 
-            if normalized_tag in tag_defs:
-                return jsonify({'error': 'Tag already exists'}), 409
+            # Decided on the group's current copy, so a tag created meanwhile is refused
+            # rather than replaced, and nothing else is restored from an older copy.
+            def add_definition(definitions):
+                if normalized_tag in definitions:
+                    raise _GroupTagAnswer(({'error': 'Tag already exists'}, 409))
+                definitions[normalized_tag] = {
+                    'color': normalized_color,
+                    'created_at': created_at
+                }
+                return True
 
-            tag_defs[normalized_tag] = {
-                'color': normalized_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            group_doc['tag_definitions'] = tag_defs
-            cosmos_groups_container.upsert_item(group_doc)
+            error_response = _save_group_tag_definitions(active_group_id, user_id, add_definition)
+            if error_response:
+                return error_response
 
             return jsonify({
                 'message': f'Tag "{normalized_tag}" created successfully',
@@ -2811,6 +2861,21 @@ def register_route_backend_group_documents(bp):
 
                 normalized_new_tag = normalized_new[0]
 
+                # The definition moves first, on the group's current copy: a refusal there
+                # (the caller's tag role removed meanwhile, the group deleted, or a group
+                # that kept changing) leaves every document untouched. A definition that
+                # has already moved is left alone, so repeating the request after a
+                # document failed finishes the documents that still carry the old name.
+                def rename_definition(definitions):
+                    if normalized_old_tag not in definitions:
+                        return False
+                    definitions[normalized_new_tag] = definitions.pop(normalized_old_tag)
+                    return True
+
+                error_response = _save_group_tag_definitions(active_group_id, user_id, rename_definition)
+                if error_response:
+                    return error_response
+
                 query = "SELECT * FROM c WHERE c.group_id = @group_id"
                 parameters = [{"name": "@group_id", "value": active_group_id}]
                 documents = list(cosmos_group_documents_container.query_items(
@@ -2845,13 +2910,6 @@ def register_route_backend_group_documents(bp):
 
                         updated_count += 1
 
-                tag_defs = group_doc.get('tag_definitions', {})
-                if normalized_old_tag in tag_defs:
-                    old_def = tag_defs.pop(normalized_old_tag)
-                    tag_defs[normalized_new_tag] = old_def
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
-
                 invalidate_group_search_cache(active_group_id)
 
                 return jsonify({
@@ -2860,23 +2918,27 @@ def register_route_backend_group_documents(bp):
                 }), 200
 
             if new_color:
+                from datetime import datetime, timezone
+
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
 
-                tag_defs = group_doc.get('tag_definitions', {})
+                created_at = datetime.now(timezone.utc).isoformat()
 
-                if normalized_old_tag in tag_defs:
-                    tag_defs[normalized_old_tag]['color'] = normalized_color
-                else:
-                    from datetime import datetime, timezone
-                    tag_defs[normalized_old_tag] = {
-                        'color': normalized_color,
-                        'created_at': datetime.now(timezone.utc).isoformat()
-                    }
+                def recolor_definition(definitions):
+                    if normalized_old_tag in definitions:
+                        definitions[normalized_old_tag]['color'] = normalized_color
+                    else:
+                        definitions[normalized_old_tag] = {
+                            'color': normalized_color,
+                            'created_at': created_at
+                        }
+                    return True
 
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
+                error_response = _save_group_tag_definitions(active_group_id, user_id, recolor_definition)
+                if error_response:
+                    return error_response
 
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
@@ -2915,6 +2977,20 @@ def register_route_backend_group_documents(bp):
         try:
             normalized_tag = normalize_tag(tag_name)
 
+            # The definition goes first, on the group's current copy: a refusal there
+            # leaves every document untouched. A definition already removed is left
+            # alone, so repeating the request after a document failed finishes the
+            # documents that still carry the tag.
+            def remove_definition(definitions):
+                if normalized_tag not in definitions:
+                    return False
+                definitions.pop(normalized_tag)
+                return True
+
+            error_response = _save_group_tag_definitions(active_group_id, user_id, remove_definition)
+            if error_response:
+                return error_response
+
             query = "SELECT * FROM c WHERE c.group_id = @group_id"
             parameters = [{"name": "@group_id", "value": active_group_id}]
             documents = list(cosmos_group_documents_container.query_items(
@@ -2947,12 +3023,6 @@ def register_route_backend_group_documents(bp):
                         pass
 
                     updated_count += 1
-
-            tag_defs = group_doc.get('tag_definitions', {})
-            if normalized_tag in tag_defs:
-                tag_defs.pop(normalized_tag)
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
 
             if updated_count > 0:
                 invalidate_group_search_cache(active_group_id)

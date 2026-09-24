@@ -12664,6 +12664,14 @@ def get_default_tag_color(tag_name):
     return color_palette[color_index]
 
 
+class _GroupTagDefinitionPresent(Exception):
+    """The group's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The group already has this tag definition.")
+        self.definition = definition
+
+
 def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
     """
     Get or create a tag definition.
@@ -12687,18 +12695,47 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
     safe_color = get_safe_tag_color(color, tag_name)
 
     if workspace_type == 'group' and group_id:
-        from functions_group import find_group_by_id
+        from functions_group import (
+            GroupDocumentWriteConflict,
+            find_group_by_id,
+            update_group_document_with_etag_guard,
+        )
         group_doc = find_group_by_id(group_id)
         if not group_doc:
             return {'color': safe_color}
         tag_defs = group_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            group_doc['tag_definitions'] = tag_defs
-            cosmos_groups_container.upsert_item(group_doc)
+            # Added to the group's current copy, and only while that copy still lacks it:
+            # a definition added meanwhile is kept, not replaced, nothing else on the
+            # group is restored from the copy read above, and a group deleted meanwhile
+            # is not recreated. A group that keeps changing is left without it; the
+            # colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _GroupTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                group_doc = update_group_document_with_etag_guard(group_id, add_definition, cache_reason=None)
+            except _GroupTagDefinitionPresent as present:
+                group_doc = {'tag_definitions': {tag_name: present.definition}}
+            except GroupDocumentWriteConflict:
+                log_event(
+                    "[Tags] A group tag definition was not saved because the group kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not group_doc:
+                return {'color': safe_color}
+            tag_defs = group_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def

@@ -208,9 +208,9 @@ def _guard_calls():
 
 
 def test_every_guarded_writer_names_its_cache_reason():
-    """The group directory, the logo and the retention writes opt out of the bump; the
-    model endpoint writes keep theirs, and the membership and settings modules forward
-    each write's own reason (pinned below)."""
+    """The group directory, the logo, the retention and the tag definition writes opt
+    out of the bump; the model endpoint writes keep theirs, and the membership and
+    settings modules forward each write's own reason (pinned below)."""
     reasons = {}
     for file_name, call in _guard_calls():
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
@@ -220,6 +220,7 @@ def test_every_guarded_writer_names_its_cache_reason():
             "None" if isinstance(value, ast.Constant) and value.value is None else ast.unparse(value)
         )
     assert reasons == {
+        "functions_documents.py": {"None"},
         "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
         "functions_group_directory.py": {"None"},
         "functions_group_membership.py": {"cache_reason"},
@@ -229,6 +230,7 @@ def test_every_guarded_writer_names_its_cache_reason():
         "route_backend_control_center.py": {
             "None", "'group_status_updated'", "'group_member_added'", "'group_ownership_transferred'",
         },
+        "route_backend_group_documents.py": {"None"},
         "route_backend_groups.py": {"cache_reason", "'group_updated'", "None"},
         "route_backend_retention_policy.py": {"None"},
     }
@@ -339,11 +341,18 @@ def _cache_reasons_by_function(file_name, callee):
         "_execute_take_ownership": {"'group_ownership_transferred'"},
         "_execute_transfer_ownership": {"'group_ownership_transferred'"},
     }),
+    # Tag definitions are read by no chat bootstrap payload; the classic writes never bumped.
+    ("route_backend_group_documents.py", "update_group_document_with_etag_guard", {
+        "_save_group_tag_definitions": {"None"},
+    }),
+    ("functions_documents.py", "update_group_document_with_etag_guard", {
+        "get_or_create_tag_definition": {"None"},
+    }),
 ])
 def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):
     """Every converted classic writer bumps what it bumped before: the name, description,
     color and download writes group_updated, the Control Center writes their own reasons,
-    and the logo, retention and metrics writes nothing, as they never did."""
+    and the logo, retention, metrics and tag definition writes nothing, as they never did."""
     assert _cache_reasons_by_function(file_name, callee) == expected
 
 
