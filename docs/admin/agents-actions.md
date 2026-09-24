@@ -100,6 +100,14 @@ a model endpoint that the agent's owner configured, rather than one you
 administer. Enable them when teams genuinely need their own models, and pair them
 with an endpoint governance policy when only some of them should.
 
+A personal or group endpoint that authenticates with managed identity uses the
+application's own identity, so its owner doesn't get to decide where that token
+goes. Such an endpoint has to point at an Azure AI service host in the
+deployment's cloud. It can't override the token audience or authority, and it
+can't select a managed identity client ID. It can use an API key or a service
+principal instead. Global endpoints you configure yourself aren't restricted.
+See [Configure model endpoint identity]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}#personal-and-group-endpoints-that-use-the-application-identity).
+
 #### Settings
 
 | Setting | What it does | Default | Notes |

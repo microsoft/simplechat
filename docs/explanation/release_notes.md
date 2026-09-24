@@ -2,6 +2,47 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.140)**
+
+#### New Features
+
+*   **Group Model Endpoint APIs**
+    *   New routes manage one group model endpoint at a time for a named group, at `/api/groups/<group_id>/model-endpoints`. They also run model discovery, model tests and Foundry agent discovery for that group. They don't depend on the account's active group, so switching groups in another tab can't redirect a save.
+    *   Saves change only the one endpoint and write the group document conditionally. A membership change made at the same moment is kept rather than overwritten, and a deleted group is never recreated. If two people edit the same endpoint, the second save is refused.
+    *   A delete is refused while a group agent or workflow still uses the endpoint, and the response lists what uses it. Disabling an endpoint is always allowed.
+    *   The native V2 editor for group endpoints arrives in a later release. Until then, group endpoints are still edited in the classic group workspace.
+    *   (Ref: `route_backend_group_endpoints_scoped.py`, `functions_group_endpoint_access.py`, `functions_group_endpoint_policy.py`, `update_group_document_with_etag_guard`, [Group Model Endpoint APIs](features/GROUP_MODEL_ENDPOINT_APIS.md))
+
+#### Bug Fixes
+
+*   **Model Endpoint Credentials Stay With Their Own Endpoint**
+    *   Fixed a flaw where a group owner who knew another group's endpoint ID could make their own endpoint use that group's stored key, or overwrite it. Personal endpoints had the same flaw.
+    *   Root cause: these Key Vault secret names are built from the endpoint ID alone, and the save accepted any reference with the right shape.
+    *   A stored reference is now accepted only if it is the endpoint's own, and new keys are always stored under fresh names. Existing keys keep working.
+    *   (Ref: `functions_keyvault.py`, `save_scoped_endpoint_secrets`, [Secret Reference Scope Fix](fixes/MODEL_ENDPOINT_SECRET_REFERENCE_SCOPE_FIX.md))
+
+*   **Personal And Group Endpoints Can No Longer Redirect The Application's Identity**
+    *   Fixed personal and group model endpoints that use managed identity being able to send the application's own token to any host, for any audience, from any of the application's identities. This applied to model discovery and tests, and to saved endpoints used in chat, agents and workflows.
+    *   The endpoint must now be an Azure AI service host in the deployment's cloud, it uses the deployment's own token audience, authority and identity, and the rule is checked when the endpoint is saved and each time it's used.
+    *   Endpoints that use an API key or a service principal, custom connections, and admin-managed global endpoints are unchanged.
+    *   (Ref: `functions_model_endpoint_app_identity.py`, `functions_azure_endpoint_validation.py`, [Application Identity Fix](fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
+*   **Malformed Catalog Profile ID No Longer Causes A Server Error**
+    *   Fixed saving a model endpoint with a malformed catalog profile ID failing with a server error instead of "Choose a valid catalog profile." This affected every endpoint save, including Admin Settings.
+    *   Root cause: the error the check raises was never imported where it's raised.
+    *   (Ref: `functions_settings.py`, [Catalog Profile Validation Fix](fixes/MODEL_ENDPOINT_CATALOG_PROFILE_VALIDATION_FIX.md))
+
+#### Breaking Changes
+
+*   **Managed Identity On Personal And Group Endpoints**
+    *   A personal or group endpoint that uses managed identity stops working if any of these apply:
+        *   Its host isn't an Azure AI service host in the deployment's cloud, such as an APIM gateway or a proxy.
+        *   It stores a Foundry scope, custom authority or custom cloud.
+        *   The deployment runs in a custom cloud, where no host qualifies.
+    *   A stored managed identity client ID is ignored, and the deployment's default identity is used.
+    *   **Migration**: switch affected endpoints to an API key or a service principal, or ask an administrator to add a global endpoint. For endpoints that relied on a user-assigned identity, grant the deployment's default identity access instead.
+    *   (Ref: [Configure model endpoint identity](../guides/model-endpoint-identity-setup.md), [Application Identity Fix](fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
 ### **(v0.261.139)**
 
 #### New Features
