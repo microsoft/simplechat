@@ -7,10 +7,12 @@
 // server refused and why, which is the part the classic interface handles least well.
 
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2, Search, Trash2 } from 'lucide-react';
 import type { WorkspaceDocument, WorkspaceTag } from '../../lib/types';
+import { chatHrefForConversation } from '../../lib/conversationUrl';
 import {
-    changedDocumentMetadata, type DocumentDeleteOptions, type DocumentOperationError,
+    changedDocumentMetadata, deleteGuardConversation, type DocumentDeleteOptions, type DocumentOperationError,
     type SyncedDeleteAction, type TagOperationError,
 } from '../../lib/documentOperations';
 import {
@@ -494,6 +496,7 @@ export function DeleteDialog({
                                     String(candidate.id ?? candidate.document_id) ===
                                     entry.document_id,
                             );
+                            const conversation = deleteGuardConversation(entry);
                             return (
                                 <li
                                     key={entry.document_id}
@@ -510,6 +513,22 @@ export function DeleteDialog({
                                     {entry.file_sync ? <p className="mt-1 break-words text-xs text-text-3">
                                         Source: {entry.file_sync.source_name || entry.file_sync.source_id}.
                                         {' '}{entry.file_sync.relative_path || entry.file_sync.remote_path}
+                                    </p> : null}
+                                    {conversation ? <p className="mt-1 break-words text-xs text-text-3">
+                                        Conversation:{' '}
+                                        {conversation.conversationId ? (
+                                            <Link
+                                                to={chatHrefForConversation(conversation.conversationId)}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="font-medium text-accent underline underline-offset-2"
+                                            >
+                                                {conversation.title}
+                                                <span className="sr-only"> (opens in a new tab)</span>
+                                            </Link>
+                                        ) : (
+                                            <span className="font-medium text-text-2">{conversation.title}</span>
+                                        )}
                                     </p> : null}
                                 </li>
                             );

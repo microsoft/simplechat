@@ -108,6 +108,15 @@ export function chatHrefForAgent(agentId: string, scope: AgentLinkScope): string
 }
 
 /**
+ * A link that opens a conversation on the chat page, as `/chat?conversationId=<id>`.
+ *
+ * The router adds its base path, so the rendered href is `/v2/chat?conversationId=<id>`.
+ */
+export function chatHrefForConversation(conversationId: string): string {
+    return `/chat?${CONVERSATION_PARAM}=${encodeURIComponent(conversationId)}`;
+}
+
+/**
  * Also accepted when reading, never written.
  *
  * The server emits both spellings and they are already in circulation: notifications and

@@ -870,13 +870,10 @@ def test_partial_bulk_delete_retains_conversation_guard_and_retries_only_failed_
     assert not any("force" in entry.query or "keep_source" in str(entry.body) for entry in ui.operation_requests)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): the server sends the linked conversation (its title and url) "
-    "with the guard, but the confirmation shows only the document and the guard's generic message, so it "
-    "never says which conversation the file belongs to. The suite asserted the title only because the fixture "
-    "wrote it into an invented message."
-))
 def test_conversation_guard_names_the_linked_conversation(group_management_ui):
+    """The confirmation names the conversation a file was uploaded in, and opens it natively on
+    the V2 chat page, never at the classic url the server sends; the link opens in a new tab,
+    keeping the confirmation."""
     ui = group_management_ui
     open_documents(ui)
     select_documents(ui, "notes-document")
@@ -891,7 +888,57 @@ def test_conversation_guard_names_the_linked_conversation(group_management_ui):
     perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
     confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
     expect(confirmation).to_contain_text(CONVERSATION_DELETE_MESSAGE)
-    expect(confirmation).to_contain_text("Planning review")
+    expect(confirmation).to_contain_text("Conversation: Planning review")
+    link = confirmation.get_by_role("link", name=re.compile(r"^Planning review"))
+    expect(link).to_have_attribute("href", "/v2/chat?conversationId=existing-workspace-chat")
+    expect(link).to_have_attribute("target", "_blank")
+    expect(link).to_have_attribute("rel", "noopener noreferrer")
+
+
+def test_conversation_guard_links_only_the_native_chat_and_renders_text(group_management_ui):
+    """Robustness: deliberately malformed guards. Without a conversation id, an absolute,
+    protocol-relative, backslash or scripted url never becomes a link, and a url that names no
+    conversation shows the title only; with an id, the link is the native chat page, never the
+    url. A title is always text, never markup."""
+    ui = group_management_ui
+    title = '<img src=x onerror="window.__guardInjected = true"> Planning review'
+    cases = (
+        (None, "https://evil.example/chats?conversation_id=stolen", None),
+        (None, "//evil.example/chats?conversation_id=stolen", None),
+        (None, "/\\evil.example/chats?conversation_id=stolen", None),
+        (None, "javascript:alert(1)//?conversation_id=stolen", None),
+        (None, "/chats", None),
+        (None, "/chats?conversation_id=from-the-url", "/v2/chat?conversationId=from-the-url"),
+        ("existing-workspace-chat", "javascript:alert(1)", "/v2/chat?conversationId=existing-workspace-chat"),
+    )
+    open_documents(ui)
+    for conversation_id, url, href in cases:
+        select_documents(ui, "notes-document")
+        command(ui, "Delete").click()
+        dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
+        guard = conversation_delete_guard(
+            "notes-document", conversation_id or "unused", title=title, file_name="notes-document.pdf",
+        )
+        if conversation_id is None:
+            del guard["conversation"]["id"]
+        guard["conversation"]["url"] = url
+        guarded = ui.queue_operation(
+            "DELETE", "notes-document", query={"delete_mode": ["all_versions"]}, status=409, response=guard,
+        )
+        perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
+        confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
+        expect(confirmation, f"The {url!r} guard must still name its conversation.").to_contain_text(f"Conversation: {title}")
+        links = confirmation.get_by_role("link")
+        if href is None:
+            expect(links, f"The {url!r} guard must not become a link.").to_have_count(0)
+        else:
+            expect(links).to_have_count(1)
+            expect(links).to_have_attribute("href", href)
+        expect(confirmation.locator("img")).to_have_count(0)
+        confirmation.get_by_role("button", name="Cancel", exact=True).click()
+        expect(confirmation).to_have_count(0)
+    assert ui.page.evaluate("() => window.__guardInjected === undefined")
+    assert len(ui.operation_requests) == len(cases)
 
 
 def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_management_ui, tmp_path):

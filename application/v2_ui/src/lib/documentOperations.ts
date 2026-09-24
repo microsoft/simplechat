@@ -2,6 +2,7 @@
 
 import { ApiError, apiUrl, CREDENTIALS_MODE, requestWithStatus, uploadFileWithStatus } from './apiClient';
 import { isScreeningAvailable } from './contentScreening';
+import { readConversationParam } from './conversationUrl';
 import { documentId, generatedArtifactRestriction, normalizeStringList, supportsExtractionModeChange } from './documentExplorer';
 import type { DocumentReadScope } from './documentReadAdapter';
 import {
@@ -132,6 +133,44 @@ function operationErrors(value: unknown): DocumentOperationError[] {
         error: typeof error.error === 'string' ? error.error : undefined,
         message: typeof error.message === 'string' ? error.message : undefined,
     }));
+}
+
+/**
+ * A same-origin relative path, normalized: it starts with a single `/`, has no scheme, and
+ * resolves against this page's origin to that origin. A protocol-relative URL, a backslash (which
+ * a browser may read as a slash), and any whitespace or control character make it none at all.
+ */
+export function sameOriginRelativePath(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')
+        || /[\\\s\u0000-\u001f\u007f]/.test(value)) {
+        return null;
+    }
+    try {
+        const origin = window.location.origin;
+        const url = new URL(value, origin);
+        return url.origin === origin ? `${url.pathname}${url.search}${url.hash}` : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The conversation a conversation-linked delete guard names, for its confirmation to show: the
+ * title as text, and the conversation to open natively. Its id is the guard's own conversation id
+ * or, without one, the conversation its url names -- read only from a same-origin relative url.
+ * The url itself, which points at the classic chat page, is never followed.
+ */
+export function deleteGuardConversation(
+    error: DocumentOperationError,
+): { title: string; conversationId: string | null } | null {
+    const conversation: unknown = error.conversation;
+    if (!isRecord(conversation) || typeof conversation.title !== 'string' || !conversation.title.trim()) return null;
+    let conversationId = typeof conversation.id === 'string' ? conversation.id.trim() : '';
+    if (!conversationId) {
+        const path = sameOriginRelativePath(conversation.url);
+        conversationId = path ? readConversationParam(new URL(path, window.location.origin).searchParams) ?? '' : '';
+    }
+    return { title: conversation.title.trim(), conversationId: conversationId || null };
 }
 
 export function inspectDocumentBatch(
