@@ -87,6 +87,7 @@ from route_backend_group_prompts import *
 from route_backend_group_prompts_scoped import *
 from route_backend_group_actions_scoped import *
 from route_backend_group_agents_scoped import *
+from route_backend_group_identities_scoped import *
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
@@ -1486,6 +1487,9 @@ register_route_blueprint('backend_group_actions_scoped', register_route_backend_
 
 # ------------------- API Group Agents Routes -----------
 register_route_blueprint('backend_group_agents_scoped', register_route_backend_group_agents_scoped, user_required_blueprint)
+
+# ------------------- API Group Identities Routes -------
+register_route_blueprint('backend_group_identities_scoped', register_route_backend_group_identities_scoped, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)

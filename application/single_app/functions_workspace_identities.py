@@ -5,7 +5,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import (
+    CosmosAccessConditionFailedError,
+    CosmosResourceNotFoundError,
+)
 
 from config import (
     cosmos_global_workspace_identities_container,
@@ -16,6 +20,9 @@ from config import (
 from functions_appinsights import log_event
 from functions_keyvault import (
     SecretReturnType,
+    keyvault_identity_cleanup_helper,
+    keyvault_identity_delete_helper,
+    keyvault_identity_discard_staged_helper,
     retrieve_secret_from_key_vault_by_full_name,
     store_secret_in_key_vault,
     ui_trigger_word,
@@ -180,19 +187,51 @@ def _get_usage_auth_types(usage_contexts: List[str]) -> Set[str]:
     return auth_types or set(WORKSPACE_IDENTITY_AUTH_TYPES)
 
 
-def _store_identity_secret(scope_type: str, scope_id: str, identity_id: str, field_name: str, secret_value: str) -> str:
+class WorkspaceIdentityValidationError(ValueError):
+    """A reviewed, data-free validation message safe to show a manager.
+
+    The native group identity routes surface ``public_message``; every other
+    ``ValueError`` stays a single generic 400, so a raw exception can never reach a
+    client. Legacy routes are unaffected: they already return ``str(error)``.
+    """
+
+    def __init__(self, public_message: str):
+        self.public_message = str(public_message or "The workspace identity details are not valid.")
+        super().__init__(self.public_message)
+
+
+def _store_identity_secret(
+    scope_type: str,
+    scope_id: str,
+    identity_id: str,
+    field_name: str,
+    secret_value: str,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
+) -> str:
     settings = get_settings()
     if not _as_bool(settings.get("enable_key_vault_secret_storage")) or not str(settings.get("key_vault_name") or "").strip():
         return secret_value
 
-    secret_name = f"workspace-identity-{identity_id}-{field_name}"
-    return store_secret_in_key_vault(
+    # A fresh name isolates a failed conditional write: the stored reference keeps
+    # pointing at the previous secret until the write commits, so a refused CAS
+    # never changes the live credential. The runtime resolves secrets by the stored
+    # full name, so a fresh name need not be conventional.
+    if fresh_names:
+        secret_name = f"identity-{uuid.uuid4().hex}"
+    else:
+        secret_name = f"workspace-identity-{identity_id}-{field_name}"
+    stored_full_name = store_secret_in_key_vault(
         secret_name=secret_name,
         secret_value=secret_value,
         scope_value=scope_id,
         source="identity",
         scope=_keyvault_scope(scope_type),
     )
+    if staged_names is not None:
+        staged_names.append(stored_full_name)
+    return stored_full_name
 
 
 def _prepare_auth_payload(
@@ -202,14 +241,17 @@ def _prepare_auth_payload(
     raw_credentials: Dict[str, Any],
     existing_auth: Optional[Dict[str, Any]] = None,
     allowed_auth_types: Optional[Set[str]] = None,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     raw_credentials = raw_credentials or {}
     existing_auth = existing_auth or {}
     auth_type = _normalize_text(raw_credentials.get("auth_type", existing_auth.get("auth_type", "username_password")), 50).lower()
     if auth_type not in WORKSPACE_IDENTITY_AUTH_TYPES:
-        raise ValueError("Unsupported workspace identity authentication type")
+        raise WorkspaceIdentityValidationError("Unsupported workspace identity authentication type")
     if allowed_auth_types and auth_type not in allowed_auth_types:
-        raise ValueError("Selected authentication type is not available for the selected identity uses")
+        raise WorkspaceIdentityValidationError("Selected authentication type is not available for the selected identity uses")
 
     prepared_auth = {"auth_type": auth_type}
     if auth_type == "anonymous":
@@ -239,10 +281,13 @@ def _prepare_auth_payload(
             elif existing_auth.get("password"):
                 prepared_auth["password"] = existing_auth["password"]
             else:
-                raise ValueError("Username/password identities require a password")
+                raise WorkspaceIdentityValidationError("Username/password identities require a password")
             return prepared_auth
 
-        stored_password = _store_identity_secret(scope_type, scope_id, identity_id, "password", str(password))
+        stored_password = _store_identity_secret(
+            scope_type, scope_id, identity_id, "password", str(password),
+            fresh_names=fresh_names, staged_names=staged_names,
+        )
         if stored_password == str(password):
             prepared_auth["password"] = stored_password
         else:
@@ -256,10 +301,13 @@ def _prepare_auth_payload(
         elif existing_auth.get("secret"):
             prepared_auth["secret"] = existing_auth["secret"]
         else:
-            raise ValueError("This identity type requires a secret value")
+            raise WorkspaceIdentityValidationError("This identity type requires a secret value")
         return prepared_auth
 
-    stored_secret = _store_identity_secret(scope_type, scope_id, identity_id, "secret", str(secret_value))
+    stored_secret = _store_identity_secret(
+        scope_type, scope_id, identity_id, "secret", str(secret_value),
+        fresh_names=fresh_names, staged_names=staged_names,
+    )
     if stored_secret == str(secret_value):
         prepared_auth["secret"] = stored_secret
     else:
@@ -273,6 +321,9 @@ def _normalize_identity_payload(
     payload: Dict[str, Any],
     identity_id: str,
     existing_identity: Optional[Dict[str, Any]] = None,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     existing_identity = existing_identity or {}
     scope_type = _validate_scope(scope_type)
@@ -320,6 +371,8 @@ def _normalize_identity_payload(
             raw_credentials=payload.get("credentials") or payload.get("auth") or {},
             existing_auth=existing_identity.get("auth") or {},
             allowed_auth_types=allowed_auth_types,
+            fresh_names=fresh_names,
+            staged_names=staged_names,
         ),
     }
 
@@ -373,10 +426,20 @@ def sanitize_workspace_identity(identity: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized_identity
 
 
-def create_workspace_identity(scope_type: str, scope_id: str, payload: Dict[str, Any], created_by: str) -> Dict[str, Any]:
+def create_workspace_identity(
+    scope_type: str,
+    scope_id: str,
+    payload: Dict[str, Any],
+    created_by: str,
+    *,
+    stage_secrets: bool = False,
+) -> Dict[str, Any]:
     scope_type = _validate_scope(scope_type)
     identity_id = str(uuid.uuid4())
-    normalized_payload = _normalize_identity_payload(scope_type, scope_id, payload or {}, identity_id)
+    staged_names: Optional[List[str]] = [] if stage_secrets else None
+    normalized_payload = _normalize_identity_payload(
+        scope_type, scope_id, payload or {}, identity_id, staged_names=staged_names
+    )
     scope_field = _scope_field(scope_type)
     now_iso = _now_iso()
     identity = {
@@ -391,7 +454,14 @@ def create_workspace_identity(scope_type: str, scope_id: str, payload: Dict[str,
         "updated_at": now_iso,
         **normalized_payload,
     }
-    _get_identities_container(scope_type).create_item(body=identity)
+    try:
+        _get_identities_container(scope_type).create_item(body=identity)
+    except Exception:
+        # The create failed after secrets may have been stored; drop them so a
+        # failed create never leaves an orphan behind in Key Vault.
+        if staged_names:
+            keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise
     return identity
 
 
@@ -408,6 +478,118 @@ def update_workspace_identity(scope_type: str, scope_id: str, identity_id: str, 
 def delete_workspace_identity(scope_type: str, scope_id: str, identity_id: str, deleted_by: str) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
     _get_identities_container(scope_type).delete_item(item=identity["id"], partition_key=scope_id)
+    return {"identity_id": identity_id, "deleted_by": deleted_by}
+
+
+class WorkspaceIdentityConflict(Exception):
+    """A conditional identity write failed because the stored record changed.
+
+    The immutable-target routes translate this to a 409 with a stable message. It
+    is raised when the caller's ``expected_etag`` no longer matches the stored
+    record, either detected at read time or by the ``IfNotModified`` precondition
+    on the Cosmos write.
+    """
+
+
+def update_workspace_identity_conditional(
+    scope_type: str,
+    scope_id: str,
+    identity_id: str,
+    payload: Dict[str, Any],
+    updated_by: str,
+    expected_etag: str,
+) -> Dict[str, Any]:
+    """Update an identity only if its stored ``_etag`` still matches ``expected_etag``.
+
+    Unlike :func:`update_workspace_identity` (which upserts and so can resurrect a
+    record deleted between the read and the write), this reads the current record,
+    refuses a stale etag, normalizes the payload while staging any new secrets under
+    fresh Key Vault names, then replaces conditionally with ``IfNotModified`` so a
+    concurrent write or delete never loses. Fresh names isolate a refused replace:
+    the stored reference keeps pointing at the previous secret, so a 409 never
+    changes the live credential. On failure the staged secrets are discarded; on
+    success the superseded ones are removed. A missing record is a
+    :class:`LookupError` (404) and is never recreated.
+    """
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    current_etag = identity.get("_etag")
+    if not expected_etag or expected_etag != current_etag:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the update")
+
+    previous_auth = dict(identity.get("auth") or {})
+    # Stage new secrets under fresh names so a refused conditional replace never
+    # changes the credential the stored reference still points at. The staged
+    # names are discarded on any failure and the superseded ones removed only on
+    # success.
+    staged_names: List[str] = []
+    normalized_payload = _normalize_identity_payload(
+        scope_type, scope_id, payload or {}, identity_id, existing_identity=identity,
+        fresh_names=True, staged_names=staged_names,
+    )
+    updated = dict(identity)
+    updated.update(normalized_payload)
+    updated["updated_by"] = updated_by
+    updated["updated_at"] = _now_iso()
+
+    container = _get_identities_container(scope_type)
+    try:
+        stored = container.replace_item(
+            item=identity["id"],
+            body=updated,
+            etag=expected_etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except CosmosResourceNotFoundError:
+        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise LookupError("Workspace identity not found")
+    except CosmosAccessConditionFailedError:
+        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise WorkspaceIdentityConflict("Workspace identity changed before the update")
+    except Exception:
+        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise
+
+    keyvault_identity_cleanup_helper(
+        previous_auth, normalized_payload.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
+    )
+    return stored if isinstance(stored, dict) else updated
+
+
+def delete_workspace_identity_conditional(
+    scope_type: str,
+    scope_id: str,
+    identity_id: str,
+    deleted_by: str,
+    expected_etag: str,
+) -> Dict[str, Any]:
+    """Delete an identity only if its stored ``_etag`` still matches ``expected_etag``.
+
+    Reads the current record, refuses a stale etag, then deletes conditionally with
+    ``IfNotModified``. A record deleted meanwhile is a :class:`LookupError` (404)
+    and is never recreated. The identity's Key Vault secrets are removed after the
+    delete commits, best effort and logged.
+    """
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    current_etag = identity.get("_etag")
+    if not expected_etag or expected_etag != current_etag:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the delete")
+
+    container = _get_identities_container(scope_type)
+    try:
+        container.delete_item(
+            item=identity["id"],
+            partition_key=scope_id,
+            etag=expected_etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except CosmosResourceNotFoundError:
+        raise LookupError("Workspace identity not found")
+    except CosmosAccessConditionFailedError:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the delete")
+
+    keyvault_identity_delete_helper(
+        dict(identity.get("auth") or {}), scope_id, scope=_keyvault_scope(scope_type)
+    )
     return {"identity_id": identity_id, "deleted_by": deleted_by}
 
 
@@ -805,6 +987,38 @@ def _apply_generic_action_identity_auth(action_auth: Dict[str, Any], identity_au
         action_auth["key"] = _identity_secret(identity_auth)
 
 
+def normalize_identity_usage_contexts(identity: Dict[str, Any]) -> List[str]:
+    """The canonical ``usage_contexts`` for a stored identity.
+
+    One source of truth for both :func:`identity_supports_usage` (the save-time
+    gate) and the native response projection, so a response can never disagree with
+    what the server accepts. Older records may omit the field or hold aliases
+    (``agent``/``plugin``/``general``); this applies the same ``_normalize_list``
+    call, allowed values, ``["action"]`` default and aliases those callers use.
+    """
+    return _normalize_list(
+        identity.get("usage_contexts"),
+        allowed_values=WORKSPACE_IDENTITY_USAGE_CONTEXTS,
+        default_values=["action"],
+        aliases=WORKSPACE_IDENTITY_USAGE_ALIASES,
+    )
+
+
+def normalize_identity_supported_source_types(identity: Dict[str, Any]) -> List[str]:
+    """The canonical ``supported_source_types`` for a stored identity.
+
+    One source of truth for both :func:`identity_supports_usage` (the save-time
+    gate) and the native response projection, so a response can never advertise a
+    different source-type set than the server enforces. A record that omits the
+    field falls back to its ``provider`` (``["generic"]`` when even that is
+    missing), and ``generic`` matches any requested source type at the gate.
+    """
+    return _normalize_list(
+        identity.get("supported_source_types"),
+        default_values=[identity.get("provider", "generic")],
+    )
+
+
 def identity_supports_usage(
     identity: Dict[str, Any],
     usage_context: str,
@@ -815,19 +1029,12 @@ def identity_supports_usage(
         _normalize_text(usage_context, 80).lower(),
         _normalize_text(usage_context, 80).lower(),
     )
-    usage_contexts = set(
-        _normalize_list(
-            identity.get("usage_contexts"),
-            allowed_values=WORKSPACE_IDENTITY_USAGE_CONTEXTS,
-            default_values=["action"],
-            aliases=WORKSPACE_IDENTITY_USAGE_ALIASES,
-        )
-    )
+    usage_contexts = set(normalize_identity_usage_contexts(identity))
     if normalized_usage_context not in usage_contexts:
         return False
     if source_type:
         normalized_source_type = _normalize_text(source_type, 80).lower()
-        supported_source_types = set(_normalize_list(identity.get("supported_source_types"), default_values=[identity.get("provider", "generic")]))
+        supported_source_types = set(normalize_identity_supported_source_types(identity))
         if normalized_source_type not in supported_source_types and "generic" not in supported_source_types:
             return False
     if auth_types:
