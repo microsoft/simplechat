@@ -51,7 +51,7 @@ for candidate in (ROOT, ROOT / "ui_tests", ROOT / "ui_tests" / "fixtures"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN, SECRET_MASK  # noqa: E402
+from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN, SECRET_MASK, action_types  # noqa: E402
 from ui_tests.fixtures.group_actions import (  # noqa: E402
     EDITABLE_ACTION_ID, IDENTITY_ACTION_ID, MCP_ACTION_ID, MEMBER_ACTION_ID, PROVIDED_ACTION_ID,
     WITHHELD_ACTION_ID, GroupActionsFixture,
@@ -553,6 +553,22 @@ def test_types_shape_parity(modelled, user_id):
             continue
         for key in ("additional_fields_schema", "metadata_schema"):
             assert item[key] == stored[action_type][key], f"type {action_type}: {key}"
+
+
+def test_personal_types_carry_the_servers_auth_types(modelled):
+    """The personal catalogue (`GET /api/user/plugins/types?view=editor`) runs the same
+    `build_action_editor_types` as the group route, and the group fixture reuses the personal list for
+    everything but the auth types, so the personal fixture must list each type's auth types exactly as
+    the real builder does: sorted, and the shared enum for a type with no definition file."""
+    personal = {item["type"]: item for item in action_types()}
+    discovered = [
+        {"type": action_type, "display": item["display"], "description": item["description"]}
+        for action_type, item in personal.items()
+    ]
+    real = {item["type"]: item for item in modelled.routes["build_action_editor_types"](discovered)}
+    assert set(real) == set(personal)
+    for action_type, item in personal.items():
+        assert item["allowed_auth_types"] == real[action_type]["allowed_auth_types"], f"type {action_type}"
 
 
 @pytest.mark.parametrize("user_id", ["owner", "member"])
