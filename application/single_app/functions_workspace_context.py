@@ -44,6 +44,7 @@ from functions_group_file_source_policy import (
     group_file_source_management_operations,
     group_file_sources_available,
 )
+from functions_group_membership_policy import GROUP_MEMBERSHIP_MANAGER_ROLES
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -70,6 +71,9 @@ PUBLIC_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
 PUBLIC_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 PUBLIC_STATUSES = ("active", "locked", "upload_disabled", "inactive")
 INVALID_SCOPE_ID = re.compile(r"[/\\?#\x00-\x1f\x7f]")
+# The group-only navigation group that holds workspace management sections (M7B Members;
+# M7C adds settings, activity and statistics to it).
+GROUP_MANAGE_SECTION_GROUP = "manage"
 
 
 class WorkspaceContextError(Exception):
@@ -184,6 +188,14 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     }
     for section_id, entry in sections.items():
         entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
+    # Members (M7B) is a group-only section in the "manage" group, so the personal section
+    # registry and its groups are untouched. Every member may open it in any status that
+    # lets them view the group, like every other section; which membership controls it
+    # offers comes from the member list's own hints, never from this navigation entry.
+    sections["members"] = {
+        **section(True, role in GROUP_MEMBERSHIP_MANAGER_ROLES),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
 
     logo = get_workspace_logo_metadata(group)
     owner = group.get("owner") or {}
