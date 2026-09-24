@@ -2,6 +2,8 @@
 
 **Implemented in version: 0.261.127**
 
+**Updated in version: 0.261.134** (each run attempt owns its outputs)
+
 **Application version owner:** `application/single_app/config.py`
 
 **Issue:** microsoft/simplechat#1509
@@ -31,7 +33,8 @@ transaction.
 
 The output ID hashes:
 
-- The original approved work ID and requesting actor/conversation/step/contract.
+- The approved work ID, which is the run attempt's own ID, and the requesting
+  actor/conversation/step/contract.
 - The requested safe filename.
 - The complete immutable source-reference digest, including its result and
   manifest fingerprints.
@@ -43,6 +46,13 @@ The current render producer's full identity, run, attempt index, source
 Replacing the source, projection, filename, profile, or renderer version creates
 a different output identity. A different run attempt cannot adopt the original
 producer's admission by merely presenting its work ID.
+
+Each whole-run retry attempt is approved separately and is its own approved work.
+Since **0.261.134** its outputs therefore have their own identities, even when a
+file is rendered again from reused content. Before, the attempt presented the
+first attempt's work ID and was refused with `output_producer_changed`. Preparing
+the retry supersedes the earlier attempt's outputs; the new attempt renders and
+lists only its own.
 
 Safe requested filenames retain any extension explicitly declared by their
 shared catalog entry, including `.yml`, `.markdown`, and `.text`. The rendering

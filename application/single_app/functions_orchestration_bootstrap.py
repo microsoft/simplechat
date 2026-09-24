@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.135
+Version: 0.261.138
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the

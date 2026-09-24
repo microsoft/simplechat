@@ -1,5 +1,5 @@
 # functions_orchestration_result_contracts.py
-"""Opt-in retained-result contracts, independent of application startup and v1 plans."""
+"""Opt-in retained-result contracts, independent of application startup."""
 
 import hashlib
 import json
@@ -355,7 +355,10 @@ _IMAGE_ASSET_FIELDS = frozenset({
 })
 _IMAGE_ASSET_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 _IMAGE_MESSAGE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
+# Generation decodes every image and admits only these formats within these bounds, so each
+# retained image can always be re-encoded into the PNG or JPEG rendition a document embeds.
 MAX_IMAGE_ASSET_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_ASSET_PIXELS = 12_000_000
 
 
 def _bounded_text(value, limit, *, required=False):
@@ -552,7 +555,7 @@ class StepBindings:
 
 
 def validate_input_bindings(steps, *, existing_results=None, max_steps=MAX_BINDING_STEPS):
-    """Return inferred dependencies without modifying, sorting, or repairing a v1 plan.
+    """Return inferred dependencies without modifying, sorting, or repairing a plan.
 
     Input/output specifications and the existing-result alias catalog are supplied
     by the server, not by a model. Resolving an alias still requires current access.

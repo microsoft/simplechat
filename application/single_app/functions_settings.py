@@ -267,7 +267,7 @@ RETIRED_SETTING_KEYS = (
 RETIRED_ORCHESTRATION_CAPABILITIES = {"respond": "compose"}
 
 
-def remove_retired_settings(settings):
+def normalize_retired_orchestration_settings(settings):
     """Drop retired settings in-place and rename retired capability ids.
 
     Returns whether anything changed, so a load can persist the migration.
@@ -2043,7 +2043,7 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_document_access_index_required_settings(merged)
         normalize_inbound_mcp_settings(merged)
         normalize_public_workspace_display_settings(merged)
-        remove_retired_settings(merged)
+        normalize_retired_orchestration_settings(merged)
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
@@ -2191,7 +2191,7 @@ def update_settings(new_settings, *, expected_etag=None):
         normalize_document_access_index_required_settings(settings_item)
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
-        remove_retired_settings(settings_item)
+        normalize_retired_orchestration_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
         normalize_model_endpoint_identity_header_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(

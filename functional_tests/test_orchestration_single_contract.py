@@ -109,7 +109,7 @@ def test_settings_defaults_no_longer_offer_the_toggle(modules):
     assert TOGGLE not in sanitize
     assert settings.RETIRED_SETTING_KEYS == (TOGGLE,)
     # Loading and saving both retire the stored switch.
-    assert source.count("remove_retired_settings(") == 3
+    assert source.count("normalize_retired_orchestration_settings(") == 3
 
 
 def test_a_stored_toggle_and_answer_capability_are_retired_on_load(modules):
@@ -118,17 +118,17 @@ def test_a_stored_toggle_and_answer_capability_are_retired_on_load(modules):
         TOGGLE: True, "enable_chat_orchestration": True,
         "chat_orchestration_enabled_capabilities": ["document_search", "respond", "compose"],
     }
-    assert settings.remove_retired_settings(stored) is True
+    assert settings.normalize_retired_orchestration_settings(stored) is True
     assert TOGGLE not in stored
     assert stored["chat_orchestration_enabled_capabilities"] == ["document_search", "compose"]
     # Idempotent: a migrated document is not rewritten again.
-    assert settings.remove_retired_settings(stored) is False
+    assert settings.normalize_retired_orchestration_settings(stored) is False
     narrowed = {"chat_orchestration_enabled_capabilities": ["web_search", "respond"]}
-    settings.remove_retired_settings(narrowed)
+    settings.normalize_retired_orchestration_settings(narrowed)
     # The old answering step was always kept in a narrowed list; Prepare content replaces it.
     assert narrowed["chat_orchestration_enabled_capabilities"] == ["web_search", "compose"]
     untouched = {"chat_orchestration_enabled_capabilities": []}
-    assert settings.remove_retired_settings(untouched) is False and untouched[
+    assert settings.normalize_retired_orchestration_settings(untouched) is False and untouched[
         "chat_orchestration_enabled_capabilities"
     ] == []
 

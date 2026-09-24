@@ -2,7 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.135)**
+### **(v0.261.139)**
+
+#### Breaking Changes
+
+*   **Gather / Reason / Render Is The Only Orchestration Plan Contract**
+    *   The **Gather / Reason / Render harness (preview)** admin setting (`enable_chat_orchestration_harness`) and its server-side admission check were removed. Every new plan uses Gather / Reason / Render whenever **Enable Chat Orchestration** is on. A stored value of the old setting is dropped when settings load or save.
+    *   The earlier phase-based contract (Knowledge / Reasoning / Output phases and a final **Answer** step) was deleted. A saved capability list that named its Answer capability (`respond`) now names **Prepare content** (`compose`) instead; the migration never adds **Create a file** or **Generate images** to a narrowed list.
+    *   Plans saved by the earlier contract no longer open or rerun. Opening, editing, retrying, running or cancelling one shows "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request." Such runs are left out of the conversation's run list and the planner's history of earlier runs; deleting the conversation still removes their saved data.
+    *   Orchestrated agent steps now always run under the acquisition checks that previously applied only to Gather / Reason / Render plans. They admit Azure AI Foundry (classic) agents without local actions, workspace knowledge or web sources; other agents, including local Semantic Kernel agents, are refused with a safe failure instead of running unchecked.
+    *   **Migration**: Start a new request for any conversation whose earlier orchestration plan no longer opens. Administrators who narrowed the capability list and want files or images in plans should select **Create a file** and **Generate images**.
+    *   (Ref: `functions_settings.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `route_backend_orchestration.py`, `templates/admin/_panes/chat-orchestration.html`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md), [Orchestration settings](../admin/orchestration.md))
+
+#### Bug Fixes
+
+*   **One Planner Carries All Of The Planning Guidance**
+    *   The planner's single prompt now includes the earlier prompt's guidance on choosing agents and actions, searching before analyzing and passing the found sources on, choosing between web search and deep research by cost and need, using conversation, saved memory and earlier runs, writing self-contained step tasks, visuals, and when and how to ask clarifying or file questions.
+    *   A plan the planner writes incorrectly is refused instead of being silently repaired, so an approved plan is exactly the work that runs. The step that writes the chat answer cannot be disabled while editing a plan.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_plan_revisions.py`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Gather / Reason / Render orchestration](features/ORCHESTRATION_GATHER_REASON_RENDER.md))
+
+#### User Interface Enhancements
+
+*   **Plans Show Only What Runs**
+    *   The plan card, plan panel and run view no longer group steps into Knowledge / Reasoning / Output phases or show an **Always runs** answer step. Steps appear in dependency order with their Gather, Reason or Render role.
+    *   A finished run's steps show their real status, such as **Completed** or **Failed**, instead of **Will run**. Opening a plan saved by the earlier contract shows the message above instead of a spinner.
+    *   Admin capability help now explains that plans need **Prepare content** to write an answer or a file's content and **Create a file** to deliver files.
+    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `orchestrationPlan.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
+
+### **(v0.261.138)**
 
 #### New Features
 
@@ -21,7 +48,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Missing Files And Images Are Never Reported As Delivered**
     *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
     *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
-    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **A Large Or WEBP Image No Longer Fails The Whole File**
+    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
+    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images Never Offer A Paid Second Approval**
+    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
+    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
 
 #### User Interface Enhancements
 
@@ -30,6 +66,29 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Image control's notice now reads "Orchestrate will plan the images you ask for and generate them when the plan runs."
     *   (Ref: `OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, `Composer.tsx`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
 
+### **(v0.261.137)**
+
+#### Bug Fixes
+
+*   **Orchestrate Remembers Auto And Pinned Models**
+    *   Fixed the Orchestrate model choice resetting to a specific model whenever you left the chat or opened a new chat, which meant choosing **Auto - choose per step** again on every visit.
+    *   The choice is now saved to your account, so Auto or a pinned model stays selected across chats, reloads, and devices. A model pinned for Orchestrate does not change the model normal chat uses.
+    *   Fixed the normal chat model sometimes snapping back to the model that was selected when the page loaded after you left the chat and returned.
+    *   (Ref: `Composer.tsx`, `orchestrationModelRouting.ts`, `route_backend_users.py`, [Model Picker Persistence Fix](fixes/ORCHESTRATION_MODEL_PICKER_PERSISTENCE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Orchestrate Model Picker Under Manual Controls**
+    *   The Orchestrate model picker now sits in the normal model picker's place under **Manual controls**, instead of appearing above the message box, so the toolbar keeps its shape when Orchestrate is switched on.
+    *   **Auto - choose per step** is the default wherever a connected model has a catalog profile rated for general answering. Auto is not offered when no model qualifies, and when an administrator hides Manual controls, Orchestrate uses Auto without a picker.
+    *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md), [Choose models for orchestration](../guides/model-catalog-routing.md))
+
+*   **Planner Model Dropdown In Admin Settings**
+    *   Orchestration → Planner model is now one dropdown on both the V2 and classic Admin Settings pages, replacing four text boxes for the deployment name, model ID, endpoint ID, and provider.
+    *   It lists the same models as the default chat model picker, or the classic deployments when AI Connections are off, and writes the four settings for you. **Use the answer model (default)** keeps planning on whichever model answers.
+    *   A saved planner model that is no longer listed stays selected and is labelled as missing rather than being cleared, and V2 refuses saves the runtime could never resolve.
+    *   (Ref: `OrchestrationPlannerModelPicker.tsx`, `admin_orchestration_planner_model.js`, `chat-orchestration.html`, `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md#chat-orchestration-planner-model-section))
+
 ### **(v0.261.134)**
 
 #### Bug Fixes
@@ -37,13 +96,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Gather / Reason / Render Answers Match What Orchestration Could Already Do**
     *   Fixed orchestrated requests quietly falling back to legacy plans when **Auto - choose per step** was selected. Legacy plans cannot create files, so "create a csv" or "create a word file" produced inline text instead. With the Gather / Reason / Render harness enabled, Auto requests now plan that work, and each step runs on its own authorized model, which is checked again before the run. Editing or restoring an Auto plan now keeps Auto routing instead of silently dropping it.
     *   The answer step now receives saved memory and the relevant earlier messages, so follow-ups such as "put those in a table" work. It also includes the charts, Mermaid diagrams, and image proposal cards the planner asks for, and places charts drawn from an action's exact rows.
-    *   Fixed answers refusing well-known facts ("I don't have source evidence... to provide an accurate CSV") and filling reports with "Verify with a reputable source". The planner now declares what each answer may rely on: general knowledge, gathered sources only, or both. When an optional search fails, the answer is still written and says what could not be checked.
+    *   Fixed answers refusing well-known facts ("I don't have source evidence... to provide an accurate CSV") and filling reports with "Verify with a reputable source". The planner now declares what each answer may rely on: general knowledge, gathered sources only, or both. When an optional search fails, the answer is still written and says what could not be checked. If another step also fails, retrying the run from its failed step now searches again and rewrites the answer with the results, instead of stopping with "Saved step inputs changed".
     *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
 
 *   **Web Search Failures Explain Themselves, Retry Once, And Link Their Sources**
     *   A failed web search now reports a specific reason, such as a timeout, an HTTP status, or a service that isn't configured, instead of "This operation could not complete." Read-only gathering retries once after a temporary service error.
     *   Web search results no longer pass raw citation markers such as 【3:1†source】 into answers. Each marker becomes a numbered link to its source, in both ordinary chat and orchestration.
     *   (Ref: `functions_web_search_results.py`, `route_backend_chats.py`, `functions_orchestration_adapters.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Auto Model Routing Plans Data Analysis, Research, And Actions On Common Deployments**
+    *   Fixed Auto refusing whole plans with "No eligible connected model for Structured data analysis" (or Reasoning) when models such as gpt-4o or gpt-4.1 were connected. Few catalog profiles rate those tasks, so when no connected model is rated for a step's task, the step now runs on the capable model best rated for general answering, and its reason says so. Rated models still win, and a model rated unsuitable for the task, an archived profile, or a model without a required capability such as tool calling is never used.
+    *   Fixed every Auto-routed action and deep research step in a Gather / Reason / Render plan being refused by the external-source check, which rebuilt the step's model from the run's empty Auto selection instead of the step's approved binding.
+    *   The answer is now credited to the model that wrote it. A reply that reuses an earlier turn's result keeps the default model rather than borrowing another step's. An Ask-planner revision that cannot be assigned models now reports that no eligible model is available and keeps the previous plan.
+    *   (Ref: `functions_orchestration_model_routing.py`, `functions_orchestration_external_metadata.py`, `functions_orchestration_plan_editing.py`, [Choose models for orchestration](../guides/model-catalog-routing.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Whole-Run Retries Of Plans With Files Render Their Own Files**
+    *   Fixed a whole-run retry of a Gather / Reason / Render plan ending as failed whenever the new attempt had to render a file that the previous attempt had already created or admitted. The new attempt listed the previous attempt's withdrawn file as its own, tried to reuse a file that was no longer available, or was refused when rendering the same content again.
+    *   Each attempt now owns its files. A retry renders them again from saved content, without calling a model, and the previous attempt's files are shown as superseded. React V2 still offers **Retry from failed step** only for an attempt without files, and **Retry file** for a single failed file is unchanged.
+    *   (Ref: `functions_orchestration_recovery.py`, `functions_orchestration_services.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
 
 #### User Interface Enhancements
 

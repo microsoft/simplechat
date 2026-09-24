@@ -1,8 +1,8 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.135
-Implemented in: 0.261.135
+Version: 0.261.138
+Implemented in: 0.261.138
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own

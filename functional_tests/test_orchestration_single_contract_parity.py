@@ -1,5 +1,5 @@
 # test_orchestration_single_contract_parity.py
-"""Gather/Reason/Render parity with the answer features legacy orchestration had.
+"""Gather/Reason/Render parity with the answer features the earlier orchestration had.
 
 Version: 0.261.139
 Implemented in: 0.261.134
@@ -9,15 +9,16 @@ Uses the initialized headless harness (real bootstrap, model resolution, leases,
 checkpoints, retained results and renderer) with offline model replies. Covers:
 Auto model routing on dependency plans, saved memory and conversation references in
 compose, the declared knowledge basis, optional inputs that let an answer disclose a
-failed gather step instead of failing, planner-named visuals, the planner descriptor,
-web search failure classification with one transient retry, and Foundry citation
-placeholders turned into links.
+failed gather step instead of failing, retries that run again the steps completed without
+a retried producer, planner-named visuals, the planner descriptor, web search failure
+classification with one transient retry, and Foundry citation placeholders turned into
+links.
 """
 
 import importlib
 import importlib.util
 import json
-from copy import deepcopy
+from copy import copy, deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,11 @@ def test_dependency_planning_binds_auto_models_and_records_the_planner(harness, 
     assert plan["planner"] == {"label": "gpt-4o", "source": "default"}
     system = harness.model_calls[0]["messages"][0]["content"]
     assert "When model_routing is auto" in system
+    assert "only these steps are model-backed and take a model_task" in system
+    assert "Every other step" in system and "takes no model_task" in system
+    # There is one planner contract; asking for the removed earlier one is refused.
+    with pytest.raises(harness.schema.LegacyPlanError):
+        harness.planner.build_planner_messages({"model_routing": "auto"}, contract_version=1)
     assert "knowledge_basis" in system and "render_file" in system
 
 
@@ -212,6 +218,17 @@ def test_answer_selection_prefers_the_final_response_producer():
     assert routing.answer_selection(render_only, {"model": {"model_deployment": "default"}}) == {
         "model": {"model_deployment": "default"},
     }
+    # A reply taken from an earlier turn's result is written by no step in this run, so it is
+    # not credited to whichever compose step happens to be bound.
+    reused = {**plan, "final_response": {
+        "version": "orchestration-input-binding-v1", "step_id": None, "output_name": None,
+        "existing_result": "reused_answer",
+    }}
+    assert routing.answer_selection(reused, {"model": {"model_deployment": "default"}}) == {
+        "model": {"model_deployment": "default"},
+    }
+    no_answer = {key: value for key, value in plan.items() if key != "final_response"}
+    assert routing.answer_selection(no_answer, {"model": None}) == {"model": None}
 
 
 # ------------------------------------------------------------------------------------------
@@ -411,6 +428,205 @@ def test_a_producer_the_final_response_needs_stays_required(harness):
     assert steps["draft"]["optional"] is False
 
 
+def _instructed(step, instruction):
+    step["arguments"] = {**step["arguments"], "instruction": instruction}
+    return step
+
+
+def _payloads_for(harness, instruction):
+    payloads = [json.loads(call["messages"][-1]["content"]) for call in harness.model_calls]
+    return [payload for payload in payloads if payload.get("instruction") == instruction]
+
+
+def _first_attempt(harness):
+    execution = harness.prepare()
+    try:
+        result = harness.run_engine(execution)
+    finally:
+        execution.close()
+    return result, execution
+
+
+def _claimed_retry(harness, execution, submission_id):
+    """Prepare a whole-run retry as the route does, then claim and bind the new attempt."""
+    parent = harness.read()
+    authorize = lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1")
+    probe = copy(execution.context)
+    probe.result_service = harness.services().results
+    child = harness.recovery.prepare_retry(
+        "run-1", "owner", {
+            "conversation_id": "conversation-1", "submission_id": submission_id,
+            "expected_version": parent["recovery_version"],
+        },
+        authorize=authorize, message_container=harness.messages,
+        validate=lambda current: harness.recovery.validate_resume(
+            current, probe, harness.settings, authorize, source_run_id=current["id"],
+        ),
+    )
+    services = harness.services()
+    claimed = harness.revisions.claim_plan_run(
+        child["id"], "owner", "conversation-1", expected_version=child["edit_version"],
+        settings=harness.settings,
+        result_alias_resolver=lambda current: harness.service_bindings.admitted_result_aliases(
+            current, services.results,
+        ),
+    )
+    lease = harness.recovery.ExecutionLease(claimed, authorize, message_container=harness.messages)
+    return child, harness.execution.prepare_harness_execution(claimed, settings=harness.settings, lease=lease)
+
+
+def _attempt_files(harness, run_id):
+    return [
+        (output["file_name"], output["available"])
+        for output in harness.services().rendering.list_public_outputs(run_id)
+    ]
+
+
+def test_a_retry_reruns_steps_that_completed_without_a_retried_producer(harness):
+    """Version 0.261.134: a retry delivers the answer and file the first attempt missed."""
+    harness.create(
+        [
+            _instructed(compose_step("facts"), "List the facts."),
+            _instructed(compose_step("context"), "Describe the context."),
+            _instructed(_mixed_compose(inputs={
+                "facts": {"binding": input_binding("facts"), "allow_partial": False, "optional": True},
+            }), "Write the answer."),
+            render_step("report", "md"),
+            _instructed(compose_step("finish", inputs={
+                "answer": {"binding": input_binding("prepare"), "allow_partial": False},
+                "context": {"binding": input_binding("context"), "allow_partial": False},
+            }), "Finish the report."),
+        ],
+        replies=[
+            RuntimeError("FACTS_UNAVAILABLE"), "Context kept from the first attempt.",
+            "An answer written without the facts.", RuntimeError("FINISH_UNAVAILABLE"),
+        ],
+        final_response=input_binding("finish"),
+    )
+    first, execution = _first_attempt(harness)
+    parent = harness.read()
+    recovery = harness.recovery.recovery_projection(parent)
+
+    assert first["status"] == "failed"
+    assert [payload["unavailable_inputs"][0]["name"] for payload in _payloads_for(harness, "Write the answer.")] == ["facts"]
+    assert _attempt_files(harness, "run-1") == [("report.md", True)]
+    # The answer and its file completed, but only without the facts the retry fetches again.
+    assert recovery["eligible"], recovery
+    assert recovery["reused_step_ids"] == ["context"]
+    assert recovery["retry_step_ids"] == ["facts", "prepare", "report", "finish"]
+
+    child, retried = _claimed_retry(harness, execution, "retry-missing-facts")
+    assert child["retry_reused_step_ids"] == ["context"]
+    assert "render_output_ids" not in child
+    harness.replies.extend([
+        "Washington, Adams and Jefferson.", "An answer that uses the facts.", "The finished report.",
+    ])
+    done = decoded_frames(retried.execute())[-1]
+    answers = _payloads_for(harness, "Write the answer.")
+    steps = {
+        row["step_id"]: row
+        for row in harness.runs.read_item(child["id"], "conversation-1")["execution_steps"]
+    }
+
+    assert done["status"] == "completed", done
+    assert len(harness.model_calls) == 7
+    assert len(_payloads_for(harness, "Describe the context.")) == 1
+    assert len(answers) == 2 and "facts" in answers[1]["inputs"]
+    assert not answers[1].get("unavailable_inputs")
+    assert steps["context"].get("reused") is True
+    assert steps["prepare"]["status"] == "completed" and not steps["prepare"].get("reused")
+    # The new attempt rendered and owns its file; the superseded attempt's file is withdrawn.
+    assert _attempt_files(harness, child["id"]) == [("report.md", True)]
+    assert _attempt_files(harness, "run-1") == [("report.md", False)]
+    assert harness.blobs.file_uploads == 2
+
+
+def test_a_retry_renders_its_own_file_when_the_source_is_reused(harness):
+    """Version 0.261.134: a retry re-renders a file from reused content instead of failing."""
+    harness.create(
+        [
+            _instructed(compose_step("prepare"), "Write the report."),
+            render_step("report", "md"),
+            _instructed(compose_step("notes"), "Write the cover note."),
+        ],
+        replies=["The complete report.", RuntimeError("NOTES_UNAVAILABLE")],
+        final_response=input_binding("notes"),
+    )
+    first, execution = _first_attempt(harness)
+    recovery = harness.recovery.recovery_projection(harness.read())
+
+    assert first["status"] == "failed"
+    assert _attempt_files(harness, "run-1") == [("report.md", True)]
+    # Preparing a retry supersedes this attempt's file, so its render is never reused.
+    assert recovery["reused_step_ids"] == ["prepare"]
+    assert recovery["retry_step_ids"] == ["report", "notes"]
+
+    child, retried = _claimed_retry(harness, execution, "retry-cover-note")
+    harness.replies.append("The cover note.")
+    done = decoded_frames(retried.execute())[-1]
+    assert done["status"] == "completed", done
+    parent_output = harness.services().rendering.list_public_outputs("run-1")[0]
+    child_outputs = harness.services().rendering.list_public_outputs(child["id"])
+
+    assert len(_payloads_for(harness, "Write the report.")) == 1
+    assert len(done["generated_artifacts"]) == len(child_outputs) == 1
+    assert child_outputs[0]["available"] is True and parent_output["available"] is False
+    assert parent_output["error_code"] == "output_superseded"
+    assert child_outputs[0]["output_id"] != parent_output["output_id"]
+    assert harness.blobs.file_uploads == 2
+
+
+def test_retry_invalidation_follows_consumers_and_ignores_disabled_producers(harness, monkeypatch):
+    optional = {"binding": input_binding("facts"), "allow_partial": False, "optional": True}
+    harness.create(
+        [
+            compose_step("facts"), compose_step("context"), _mixed_compose(inputs={"facts": optional}),
+            render_step("report", "md"),
+            compose_step("finish", inputs={
+                "answer": {"binding": input_binding("prepare"), "allow_partial": False},
+            }),
+        ],
+        final_response=input_binding("finish"),
+    )
+    record = harness.read()
+    recovery = harness.recovery
+    stale = recovery._reuse_invalidated_by_rerun
+    contract_error = stale.__globals__["ResultContractError"]
+    everything = {"facts", "context", "prepare", "report", "finish"}
+
+    def unparseable(step):
+        raise contract_error("result_binding_invalid")
+
+    assert stale(record, everything - {"facts"}) == {"prepare", "report", "finish"}
+    # A restart of the same attempt keeps its file, so only the steps the rerun changes run again.
+    assert stale(record, everything, new_attempt=False) == set()
+    assert stale(record, everything - {"facts"}, new_attempt=False) == {"prepare", "report", "finish"}
+    with monkeypatch.context() as patched:
+        # Run listings project recovery for every run, so a run with nothing to run again
+        # (any completed run) must not parse step inputs at all. A render still never
+        # carries over: a retry supersedes the attempt that owns its file.
+        patched.setitem(stale.__globals__, "step_input_specs", unparseable)
+        assert stale(record, everything) == {"report"}
+        failed = {
+            **deepcopy(record), "status": "failed", "started_at": "2026-01-01T00:00:00+00:00",
+            "checkpoint_version": recovery.CHECKPOINT_VERSION, "execution_binding": "binding",
+            "execution_steps": [
+                {"step_id": step_id, "capability_id": "compose", "status": "completed", "checkpoint_available": True}
+                for step_id in ("context", "prepare", "finish")
+            ],
+        }
+        # A read-only projection reports a plan it cannot parse; it never raises.
+        projection = recovery.recovery_projection(failed)
+        assert projection["eligible"] is False
+        assert projection["reason_code"] == "checkpoint_invalid"
+    for step in record["plan"]["steps"]:
+        if step["step_id"] == "facts":
+            step["enabled"] = False
+    # A disabled producer does not run again, so what completed without it stays reusable.
+    assert stale(record, everything - {"facts"}) == {"report"}
+    assert stale({"plan": {"planner_contract_version": 1, "steps": []}}, set()) == set()
+
+
 # ------------------------------------------------------------------------------------------
 # Visuals named by the planner
 # ------------------------------------------------------------------------------------------
@@ -588,7 +804,7 @@ def test_foundry_citation_placeholders_become_numbered_links():
     )
 
 
-def test_legacy_executor_retries_a_transient_read_only_failure_once(monkeypatch):
+def test_executor_retries_a_transient_read_only_failure_once(monkeypatch):
     executor = importlib.import_module("functions_orchestration_executor")
     schema = importlib.import_module("functions_orchestration_schema")
     monkeypatch.setattr(executor, "_TRANSIENT_RETRY_DELAY_SECONDS", 0)

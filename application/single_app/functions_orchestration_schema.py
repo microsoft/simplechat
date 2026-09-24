@@ -1151,6 +1151,7 @@ FAILURE_MESSAGES = {
     'image_content_refused': 'The image service declined this image prompt under its content policy.',
     'image_generation_unavailable': 'Image generation is not available for this deployment right now.',
     'image_request_invalid': 'The image model did not accept the planned image request.',
+    'retry_would_repeat': 'A retry would send the same request that was declined. Ask again with a different description instead.',
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
@@ -1215,6 +1216,17 @@ def failure_is_transient(failure):
     if code in TRANSIENT_FAILURE_CODES:
         return True
     return code == 'provider_http_error' and failure.get('provider_status') in TRANSIENT_PROVIDER_STATUSES
+
+
+# Failures in which a service declined or rejected the planned request itself. A checkpoint
+# retry resends exactly the same request, so it would reproduce them.
+REQUEST_REFUSAL_FAILURE_CODES = frozenset({'image_content_refused', 'image_request_invalid'})
+
+
+def failure_repeats_on_retry(failure):
+    """Whether resending the same planned request would reproduce this failure."""
+    failure = failure if isinstance(failure, dict) else {}
+    return failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
 
 
 def failure_explanation(failures, *, partial=False, cancelled=False):

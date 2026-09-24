@@ -6,6 +6,10 @@ Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
 never replaces the original publication failure with a missing-reply read.
+A retry that runs a failed producer again also runs the steps that completed without it.
+A retry renders its own files: it never reuses a render step or inherits the parent's
+file admissions, because preparing the retry supersedes the parent's files.
+A retry that could only resend requests a service declined is not offered.
 A run from the removed legacy contract is never retried, resumed or continued; only
 conversation deletion still reads it, to remove its saved data.
 """
@@ -32,8 +36,8 @@ from functions_orchestration_plan_revisions import PlanRevisionError, read_revis
 from functions_orchestration_output_store import build_output_cleanup_intent
 from functions_orchestration_registry import admitted_export_pairs, get_capability
 from functions_orchestration_schema import (
-    LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, build_failure, build_step_result, is_legacy_plan,
-    safe_failure, summarize_plan,
+    LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, build_failure, build_step_result,
+    failure_repeats_on_retry, is_legacy_plan, safe_failure, step_input_specs, summarize_plan,
 )
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import (
@@ -72,6 +76,72 @@ def _retained_producer_steps(record):
         step for step in (record.get('plan') or {}).get('steps') or []
         if not legacy or step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
     ]
+
+
+def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
+    """Retained dependency steps that a resume must run again.
+
+    In a new attempt a render step always runs again. Its file belongs to the attempt
+    that rendered it, and preparing a retry supersedes that attempt's files, so a reused
+    render could only point at a file that is no longer available. A restart of the same
+    attempt keeps its files, so it still reuses completed renders.
+
+    A step can also complete without an optional input whose producer failed. When a
+    resume runs that producer again, the saved result was computed without an input the
+    attempt may now have, so the step and every step computed from it run again. Reusing
+    it would otherwise fail the attempt with ``recovery_changed`` as soon as the producer
+    succeeded, and the retry could never deliver what the first attempt missed.
+
+    Callers refuse a run from the removed legacy contract before asking.
+    """
+    retained = set(retained)
+    steps = [step for step in record['plan'].get('steps') or [] if step.get('enabled', True)]
+    renders = {
+        step['step_id'] for step in steps
+        if new_attempt and step['step_id'] in retained and step.get('role') == 'render'
+    }
+    rerun = {step['step_id'] for step in steps} - retained
+    if not rerun:
+        # Run listings project recovery for every run; one with nothing to run again,
+        # such as any completed run, needs no input parsing.
+        return renders
+    consumed = {
+        step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
+        for step in steps if step['step_id'] in retained
+    }
+    invalidated = set(renders)
+    while True:
+        added = {
+            step_id for step_id, producers in consumed.items()
+            if step_id not in invalidated and producers & (rerun | invalidated)
+        }
+        if not added:
+            return invalidated
+        invalidated |= added
+
+
+def _retry_repeats_refusal(record, steps, retry):
+    """Whether a retry could only resend requests that were declined.
+
+    A checkpoint retry resends the exact planned requests. When every step it would run
+    again either failed because a service declined its request, such as an image prompt
+    refused under a content policy, or runs again only because of what it depends on, the
+    retry would reproduce the same outcome at the cost of running those steps again.
+    Asking again plans a new request instead. Any other failed or unfinished step, such as
+    a render that failed on a timeout, keeps the retry available.
+    """
+    saved = {step.get('step_id'): step for step in steps}
+    refused = False
+    for step_id in retry:
+        step = saved.get(step_id) or {}
+        failure = step.get('failure') if isinstance(step.get('failure'), dict) else {}
+        if step.get('status') == 'failed' and failure_repeats_on_retry(failure):
+            refused = True
+        elif step.get('status') not in _retained_statuses(record) and failure.get('code') != 'dependency_unavailable':
+            # Completed steps run again only because a producer they consumed runs again,
+            # and dependency-blocked steps only because theirs failed; anything else is new work.
+            return False
+    return refused
 
 
 class RecoveryError(RuntimeError):
@@ -349,10 +419,16 @@ def recovery_projection(record):
     reused = [
         step['step_id'] for step in steps if step.get('status') in _retained_statuses(record)
     ]
+    try:
+        stale = _reuse_invalidated_by_rerun(record, reused)
+    except (PlanValidationError, ResultContractError):
+        stale, invalid = set(), True
+    reused = [step_id for step_id in reused if step_id not in stale]
     retry = [
         step['step_id'] for step in record.get('plan', {}).get('steps') or []
         if step.get('enabled', True) and step['step_id'] not in reused
     ]
+    repeats_refusal = _retry_repeats_refusal(record, steps, retry)
     uncertain = any(
         step.get('capability_id') in EFFECT_CAPABILITIES and step.get('effects_uncertain')
         for step in steps
@@ -384,6 +460,8 @@ def recovery_projection(record):
         reason, message = 'context_unavailable', build_failure('context_unavailable')['message']
     elif any(not step.get('checkpoint_available') for step in steps if step.get('step_id') in reused):
         reason, message = 'checkpoint_unavailable', build_failure('checkpoint_unavailable')['message']
+    elif repeats_refusal:
+        reason, message = 'retry_would_repeat', build_failure('retry_would_repeat')['message']
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),
@@ -971,6 +1049,13 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
     if source.get('execution_binding') != binding:
         raise CheckpointError('recovery_changed')
     source_steps = {step['step_id']: step for step in _execution_steps(source)}
+    # A continuation keeps failed steps terminal, so nothing it restores is stale. Any other
+    # resume runs them again, so a step that completed without one of their outputs cannot
+    # be reused. Preparing a retry, or running the attempt it created, is a new attempt:
+    # it renders its own files instead of reusing the superseded attempt's.
+    stale = set() if allow_waiting else _reuse_invalidated_by_rerun(record, {
+        step_id for step_id, saved in source_steps.items() if saved.get('status') in _retained_statuses(source)
+    }, new_attempt=source_run_id is not None or bool(record.get('retry_of_run_id')))
     payloads = {}
     state_fields = STATE_FIELDS + OPTIONAL_STATE_FIELDS + DEPENDENCY_STATE_FIELDS
     initial_state = {key: deepcopy(getattr(context, key, None)) for key in state_fields}
@@ -1003,7 +1088,7 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                 continue
             if saved.get('status') == 'running':
                 raise CheckpointError('result_commit_unconfirmed')
-            if saved.get('status') not in _retained_statuses(source):
+            if saved.get('status') not in _retained_statuses(source) or step['step_id'] in stale:
                 continue
             payload = _completed_checkpoint(source, step['step_id'], authorize, result_service=result_service)
             if (
@@ -1112,9 +1197,12 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         'inherited_checkpoints', 'chat_content_checked_output', 'chat_content_output_pending',
     ):
         child.pop(key, None)
+    # The child starts with none of the parent's results or file admissions. Files belong to
+    # the attempt that admitted them; the parent keeps its admission index for its own history
+    # and cleanup.
     for key in (
         'execution_deadline_at', 'pending_results', 'task_results', 'outputs', 'result_outputs',
-        'message', 'summary', 'final_response', 'delivery_facts',
+        'message', 'summary', 'final_response', 'delivery_facts', 'render_output_ids',
     ):
         child.pop(key, None)
     child.update({

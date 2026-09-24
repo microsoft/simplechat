@@ -107,6 +107,17 @@ export interface UserSettings {
     /** Used when approval overrides are allowed; absent until the user chooses a mode. */
     orchestrationApprovalMode?: ApprovalMode;
 
+    /**
+     * Whether Orchestrate chooses a model per step (`auto`) or uses the pinned model below.
+     *
+     * Absent until the user chooses, which means the default: Auto wherever a connected model
+     * can be chosen per step. Kept apart from `preferredModelId` so a model pinned for
+     * orchestration never changes what an ordinary chat uses.
+     */
+    orchestrationModelRouting?: 'auto' | 'manual';
+    /** The model pinned for Orchestrate, as a catalog `selection_key`. */
+    orchestrationPreferredModelId?: string;
+
     chatCompletionAudioEnabled?: boolean;
     chatCompletionAudioMuted?: boolean;
     chatCompletionAudioSound?: string;
@@ -178,6 +189,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'preferredModelDeployment',
     'reasoningEffortSettings',
     'orchestrationApprovalMode',
+    // The Orchestrate model choice. V2-only: the classic interface has no orchestration.
+    'orchestrationModelRouting',
+    'orchestrationPreferredModelId',
     'chatCompletionAudioEnabled',
     'chatCompletionAudioMuted',
     'chatCompletionAudioSound',

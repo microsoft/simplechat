@@ -1,8 +1,9 @@
 # test_v2_elicitation_composer.py
 """
 Browser regressions for composer-aware inline clarification answers.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.096
+Single orchestration contract updated in: 0.261.139
 
 Exercise the real cards, composer, stores, controller, and request builders.
 Only API responses are replaced. The existing Azure Playwright connection fixture
@@ -227,8 +228,17 @@ class InlineApi:
             "plan_id": "accepted-plan", "run_id": "accepted-run",
             "conversation_id": CONVERSATION, "turn_id": body["turn_id"],
             "revision": body["elicitation_revision"] + 1,
+            "planner_contract_version": 2,
             "intent": {"summary": "Use the supplied answer", "complexity": "simple"},
-            "steps": [{"step_id": "respond", "capability_id": "respond", "title": "Answer", "arguments": {}}],
+            "steps": [{
+                "step_id": "answer", "capability_id": "compose", "role": "reason", "title": "Answer",
+                "arguments": {"instruction": "Use the supplied answer."}, "inputs": {},
+                "outputs": [{"name": "answer", "kind": "markdown-v1"}], "depends_on": [],
+            }],
+            "final_response": {
+                "version": "orchestration-input-binding-v1", "step_id": "answer",
+                "output_name": "answer", "existing_result": None,
+            },
             "approval": {"mode": "manual", "state": "pending", "timeout_seconds": 0},
             "status": "awaiting_approval",
         }}

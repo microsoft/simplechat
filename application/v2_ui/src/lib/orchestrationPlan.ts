@@ -306,6 +306,17 @@ export function hasGeneratedImages(orchestrationMetadata: unknown): boolean {
     return Array.isArray(images) && images.some((image) => typeof asRecord(image).message_id === 'string');
 }
 
+/**
+ * Whether a run's terminal frame reports saved image messages its answer shows.
+ *
+ * The frame lists them at the top level, and the answer's metadata carries the same list;
+ * either is enough for the chat to load the images with the answer.
+ */
+export function doneFrameHasGeneratedImages(event: unknown): boolean {
+    const frame = asRecord(event);
+    return hasGeneratedImages(frame) || hasGeneratedImages(asRecord(frame.metadata).orchestration);
+}
+
 /** Whether a named input binds a generated image rather than gathered information. */
 export function bindsGeneratedImage(plan: OrchestrationPlan, binding: OrchestrationInputBinding | null): boolean {
     if (!binding?.step_id) return false;

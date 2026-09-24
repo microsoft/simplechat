@@ -1,8 +1,9 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.135
-Implemented in: 0.261.135
+Version: 0.261.139
+Implemented in: 0.261.138
+Single orchestration contract updated in: 0.261.139
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -15,7 +16,11 @@ fixed PNG bytes. Covers:
 - the server truth the planner receives and the single repair call;
 - generate_image gating, the per-plan budget, persistence as an image message tied to the
   orchestrated answer, and the retained image-asset-v1 result;
-- DOCX, PDF and PPTX files embedding exactly the images their source consumed;
+- DOCX, PDF and PPTX files embedding exactly the images their source consumed, as
+  renditions the Office renderers accept (a 4.7 MB PNG and a WEBP image never fail a file);
+- answers owning the images they show: a retry reuses existing images, generates the
+  missing one, keeps the earlier answer's images, and is not offered when it could only
+  resend a refused request; approving a planned image's card never pays twice;
 - scenarios: a CSV of states and capitals, a Word report with an image of each of the first
   three presidents, the same report without a file, and a failing search, image and render.
 """
@@ -30,7 +35,7 @@ from copy import deepcopy
 import pytest
 
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
+from test_support.orchestration_harness_execution import compose_step, decoded_frames, input_binding, render_step
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -50,7 +55,7 @@ REPORT_TEXT = (
 
 
 def test_version_includes_the_deliverables_contract():
-    assert_app_version_at_least("0.261.135")
+    assert_app_version_at_least("0.261.138")
 
 
 # ------------------------------------------------------------------------------------------
@@ -66,19 +71,44 @@ def _png(color, size=(48, 32)):
     return buffer.getvalue()
 
 
-def _enable_images(harness, monkeypatch, failures=None):
+def _noise_png(size=(1536, 1024)):
+    """A PNG that does not compress, like a detailed 1536x1024 illustration over 4 MB."""
+    import random
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.frombytes("RGB", size, random.Random(7).randbytes(size[0] * size[1] * 3)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _webp(color=(20, 40, 160, 180), size=(640, 480)):
+    """A semi-transparent WEBP, which no Office renderer accepts as is."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", size, color).save(buffer, format="WEBP")
+    return buffer.getvalue()
+
+
+def _data_url(mime_type, data):
+    return f"data:{mime_type};base64," + base64.b64encode(data).decode("ascii")
+
+
+def _enable_images(harness, monkeypatch, failures=None, images=None):
     """Real chat image persistence; only the image service request is doubled."""
     harness.settings.update(deepcopy(IMAGE_SETTINGS))
     generation = importlib.import_module("functions_image_generation")
     calls = []
-    colors = iter(["red", "green", "blue", "orange", "purple", "teal"])
+    colors = iter(["red", "green", "blue", "orange", "purple", "teal", "gray", "olive"])
 
     def source(settings, prompt, size="", quality="", background=""):
         calls.append({"prompt": prompt, "size": size, "quality": quality, "background": background})
         failure = (failures or {}).get(len(calls))
         if failure is not None:
             raise failure
-        return "data:image/png;base64," + base64.b64encode(_png(next(colors))).decode("ascii")
+        custom = (images or {}).get(len(calls))
+        return custom if custom is not None else _data_url("image/png", _png(next(colors)))
 
     monkeypatch.setattr(generation, "request_generated_image_source", source)
     return calls
@@ -216,11 +246,15 @@ def _compose_call(harness):
     return calls[0]["messages"]
 
 
-def _file_bytes(harness, extension):
-    found = [
+def _files(harness, extension):
+    return [
         record["data"] for (_container, name), record in harness.blobs.records.items()
         if name.endswith(extension) and "/images/" not in name
     ]
+
+
+def _file_bytes(harness, extension):
+    found = _files(harness, extension)
     assert len(found) == 1, sorted(name for _container, name in harness.blobs.records)
     return found[0]
 
@@ -571,7 +605,7 @@ def test_a_generated_image_is_saved_with_the_answer_that_shows_it(harness, monke
         "final_response": input_binding("report", "report"),
     }, replies=["Here is the lighthouse.\n\n[[image:lighthouse]]"])
 
-    harness.prepare().execute()
+    frames = decoded_frames(harness.prepare().execute())
     saved = harness.read()
     answer = harness.assistant_messages()[0]
     [image] = _image_messages(harness)
@@ -595,6 +629,10 @@ def test_a_generated_image_is_saved_with_the_answer_that_shows_it(harness, monke
     assert answer["metadata"]["orchestration"]["generated_images"] == [
         {"visual_id": "lighthouse", "message_id": image["id"]},
     ]
+    # The browser loads the image messages from the terminal frame, not only from the thread.
+    [done] = [frame for frame in frames if frame.get("done")]
+    assert done["generated_images"] == answer["metadata"]["orchestration"]["generated_images"]
+    assert done["metadata"]["orchestration"]["generated_images"] == done["generated_images"]
     payload = json.loads(_compose_call(harness)[-1]["content"])
     assert payload["images"] == [{"token": "[[image:lighthouse]]", "title": "A lighthouse at dusk"}]
     assert "lighthouse" not in payload["inputs"]
@@ -626,29 +664,253 @@ def test_image_prompts_pass_the_chat_output_check_before_generation(harness, mon
 # Images in files
 # ------------------------------------------------------------------------------------------
 
-def test_a_reused_image_follows_the_answer_that_is_published(harness):
-    """A retry that reuses a completed image step shows that image under its own answer."""
-    _create(harness, {"steps": [compose_step()], "final_response": input_binding("prepare")})
-    image = {
-        "id": "conversation-1_image_7", "conversation_id": "conversation-1", "role": "image",
-        "metadata": {"image_proposal": {
-            "visualId": "art", "source_assistant_message_id": "assistant_orchestration_earlier",
-        }},
+def _image_media(output_format, data):
+    """Each embedded image part of a DOCX or PPTX as (extension, size in bytes)."""
+    import zipfile
+
+    folder = "word/media/" if output_format == "docx" else "ppt/media/"
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return sorted(
+            (info.filename.rsplit(".", 1)[-1].lower(), info.file_size)
+            for info in archive.infolist() if info.filename.startswith(folder)
+        )
+
+
+def test_documents_embed_renditions_the_office_renderers_accept():
+    rendering = importlib.import_module("functions_orchestration_rendering")
+    output_store = importlib.import_module("functions_orchestration_output_store")
+    from PIL import Image
+
+    def opened(data):
+        with Image.open(io.BytesIO(data)) as image:
+            return image.format, image.mode, image.size
+
+    limit = 4 * 1024 * 1024
+    small = _png("red")
+    assert rendering.document_image_bytes(small, max_bytes=limit, max_pixels=10_000_000) is small
+    large = _noise_png()
+    assert len(large) > limit
+    fitted = rendering.document_image_bytes(large, max_bytes=limit, max_pixels=10_000_000)
+    assert len(fitted) <= limit and opened(fitted) == ("JPEG", "RGB", (1536, 1024))
+    # WEBP is re-encoded losslessly when it fits, keeping its transparency.
+    assert opened(rendering.document_image_bytes(_webp(), max_bytes=limit, max_pixels=10_000_000)) == (
+        "PNG", "RGBA", (640, 480),
+    )
+    # Images share the renderer's pixel budget, so each one fits its share.
+    shared = rendering.document_image_bytes(small, max_bytes=limit, max_pixels=1_000)
+    assert opened(shared)[0] == "PNG" and opened(shared)[2][0] * opened(shared)[2][1] <= 1_000
+    with pytest.raises(output_store.OutputError):
+        rendering.document_image_bytes(b"not an image", max_bytes=limit, max_pixels=10_000_000)
+
+
+def test_the_image_asset_contract_admits_only_what_generation_validates():
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    image_edit = importlib.import_module("functions_image_edit")
+    # Generation decodes each image within these bounds; files embed a rendition of it.
+    assert contracts.MAX_IMAGE_ASSET_BYTES == image_edit.MAX_SOURCE_IMAGE_BYTES
+    assert contracts.MAX_IMAGE_ASSET_PIXELS == image_edit.MAX_IMAGE_PIXELS
+    assert contracts._IMAGE_ASSET_MIME_TYPES == {"image/png", "image/jpeg", "image/webp"}
+
+
+def test_a_large_png_and_a_webp_never_fail_a_word_file(harness, monkeypatch):
+    """A 4.7 MB PNG and a WEBP image are embedded as renditions; chat keeps the originals."""
+    large, webp = _noise_png(), _webp()
+    _enable_images(harness, monkeypatch, images={
+        1: _data_url("image/png", large), 2: _data_url("image/webp", webp),
+    })
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    data = _file_bytes(harness, ".docx")
+    stored = {
+        image["metadata"]["image_proposal"]["visualId"]: harness.blobs.records[("harness-chat", image["blob_path"])]["data"]
+        for image in _image_messages(harness)
     }
-    harness.messages.create_item(deepcopy(image))
-    execution = harness.prepare()
-    try:
-        assets = {"art": {"asset_id": "art", "message_id": image["id"]}}
-        execution._link_generated_images(assets, "assistant_orchestration_now")
-        execution._link_generated_images({"other": {"asset_id": "other", "message_id": "missing"}}, "unused")
-    finally:
-        execution.close()
-    linked = harness.messages.read_item(image["id"], "conversation-1")
-    assert linked["metadata"]["image_proposal"]["source_assistant_message_id"] == "assistant_orchestration_now"
+    media = _image_media("docx", data)
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert _embedded_images("docx", data) == 3
+    assert stored["washington"] == large and stored["adams"] == webp
+    assert len(media) == 3 and all(
+        extension in {"png", "jpeg", "jpg"} and size <= 4 * 1024 * 1024 for extension, size in media
+    ), media
+
+
+def test_an_image_stays_linked_to_the_answer_that_generated_it(harness, monkeypatch):
+    """Answers own the list of images they show; publishing never moves an image elsewhere."""
+    _enable_images(harness, monkeypatch)
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    _create(harness, _president_plan(with_file=False), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    answer = harness.assistant_messages()[0]
+
+    assert answer["id"] == checkpoints.orchestration_answer_message_id("run-1")
+    assert {
+        image["id"]: image["metadata"]["image_proposal"]["source_assistant_message_id"]
+        for image in _image_messages(harness)
+    } == {entry["message_id"]: answer["id"] for entry in answer["metadata"]["orchestration"]["generated_images"]}
+    assert not hasattr(harness.execution.HarnessExecution, "_link_generated_images")
+
+
+def test_approving_a_planned_image_card_again_returns_the_saved_image(harness):
+    generation = importlib.import_module("functions_image_generation")
+    answer = {
+        "id": "assistant_orchestration_1", "conversation_id": "conversation-1", "role": "assistant",
+        "metadata": {"orchestration": {"generated_images": [
+            "not-an-entry", {"visual_id": "washington", "message_id": 7},
+            {"visual_id": "washington", "message_id": "conversation-1_image_1"},
+        ]}},
+    }
+    image = {
+        "id": "conversation-1_image_1", "conversation_id": "conversation-1", "role": "image",
+        "content": "/api/image/conversation-1_image_1", "model_deployment_name": "gpt-image-1",
+        "metadata": {"image_proposal": {"visualId": "washington", "title": "George Washington"}},
+    }
+    stored = {"conversation-1_image_1": image}
+    read = lambda message_id: deepcopy(stored.get(message_id))
+    proposal = {"visualId": "washington", "prompt": "A portrait"}
+
+    assert generation.find_planned_proposal_image(answer, proposal, read)["id"] == image["id"]
+    assert generation.find_planned_proposal_image(answer, {"visualId": "adams", "prompt": "x"}, read) is None
+    assert generation.find_planned_proposal_image({**answer, "metadata": {}}, proposal, read) is None
+    assert generation.find_planned_proposal_image(None, proposal, read) is None
+    for changed in (
+        {"metadata": {"image_proposal": {"visualId": "washington"}, "is_deleted": True}},
+        {"conversation_id": "conversation-2"},
+        {"metadata": {"image_proposal": {"visualId": "jefferson"}}},
+        {"role": "assistant"},
+    ):
+        stored["conversation-1_image_1"] = {**image, **changed}
+        assert generation.find_planned_proposal_image(answer, proposal, read) is None
+    stored.clear()
+    assert generation.find_planned_proposal_image(answer, proposal, read) is None
+
+
+def _load_app_functions(file_name, names, namespace):
+    """Execute the real selected functions of an application module without its startup graph."""
+    import ast
+    from pathlib import Path
+
+    generation = importlib.import_module("functions_image_generation")
+    source = Path(generation.__file__).with_name(file_name).read_text(encoding="utf-8-sig")
+    tree = ast.parse(source)
+    nodes = []
+    for name in names:
+        node = next(item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef) and item.name == name)
+        node.decorator_list = []
+        nodes.append(node)
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), file_name, "exec"), namespace)
+    return namespace
+
+
+def test_the_approval_route_never_pays_twice_for_a_planned_image():
+    """The real handler returns the answer's saved image and never calls the image service."""
+    from unittest.mock import Mock
+
+    from flask import Flask, jsonify, request
+
+    generation = importlib.import_module("functions_image_generation")
+    answer = {
+        "id": "assistant_orchestration_1", "conversation_id": "conversation-1", "role": "assistant",
+        "metadata": {"orchestration": {"generated_images": [
+            {"visual_id": "washington", "message_id": "conversation-1_image_1"},
+        ]}},
+    }
+    image = {
+        "id": "conversation-1_image_1", "conversation_id": "conversation-1", "role": "image",
+        "content": "/api/image/conversation-1_image_1", "prompt": "A portrait",
+        "model_deployment_name": "gpt-image-1",
+        "metadata": {"image_proposal": {"visualId": "washington", "title": "George Washington"}},
+    }
+    missing = type("NotFoundForTest", (Exception,), {})
+
+    class Messages:
+        def read_item(self, item, partition_key):
+            found = {answer["id"]: answer, image["id"]: image}.get(item)
+            if found is None or partition_key != "conversation-1":
+                raise missing()
+            return deepcopy(found)
+
+    generate = Mock(side_effect=AssertionError("The image service must not be called."))
+    namespace = _load_app_functions("route_backend_chats.py", ("generate_image_from_proposal",), {
+        "request": request, "jsonify": jsonify, "logging": importlib.import_module("logging"),
+        "datetime": importlib.import_module("datetime").datetime,
+        "get_settings": lambda: {"enable_image_generation": True},
+        "image_generation_is_enabled": lambda settings: True,
+        "get_current_user_id": lambda: "owner", "get_current_user_info": lambda: {},
+        "_authorize_personal_conversation_access": Mock(return_value={"id": "conversation-1", "title": "Presidents"}),
+        "normalize_image_proposal": generation.normalize_image_proposal,
+        "find_planned_proposal_image": generation.find_planned_proposal_image,
+        "generate_chat_image_message": generate, "cosmos_messages_container": Messages(),
+        "cosmos_conversations_container": Mock(), "invalidate_conversation_cache_for_item": Mock(),
+        "CosmosResourceNotFoundError": missing, "AIConnectionError": type("AIConnectionForTest", (Exception,), {}),
+        "image_generation_error_response": generation.image_generation_error_response,
+        "image_generation_error_log_context": generation.image_generation_error_log_context,
+        "log_event": Mock(),
+    })
+    app = Flask(__name__)
+    with app.test_request_context(json={
+        "conversation_id": "conversation-1", "assistant_message_id": answer["id"],
+        "proposal": {"visualId": "washington", "title": "George Washington", "prompt": "A portrait"},
+    }):
+        response, status = namespace["generate_image_from_proposal"]()
+    payload = response.get_json()
+
+    assert status == 200 and generate.call_count == 0
+    assert payload["already_generated"] is True and payload["message_id"] == image["id"]
+    assert payload["image_message"]["id"] == image["id"]
+    assert payload["image_message"]["content"] == image["content"]
+    namespace["cosmos_conversations_container"].replace_item.assert_not_called()
+
+
+def test_a_conversation_export_includes_the_images_each_answer_lists():
+    """A retry's answer exports the image it reused, and the earlier answer keeps it too."""
+    from typing import Any, Dict, List, Optional
+
+    image = {
+        "id": "image_w", "conversation_id": "conversation-1", "role": "image",
+        "metadata": {"image_proposal": {"visualId": "washington", "source_assistant_message_id": "assistant_1"}},
+    }
+    other = {
+        "id": "image_x", "conversation_id": "conversation-1", "role": "image",
+        "metadata": {"image_proposal": {"visualId": "other", "source_assistant_message_id": "assistant_9"}},
+    }
+
+    class Messages:
+        def query_items(self, query, parameters, partition_key):
+            return [deepcopy(image), deepcopy(other)]
+
+    namespace = _load_app_functions("route_backend_conversation_export.py", (
+        "_attach_generated_image_proposal_assets", "_orchestration_generated_image_message_ids",
+        "_load_generated_image_proposal_assets",
+    ), {
+        "Any": Any, "Dict": Dict, "List": List, "Optional": Optional, "cosmos_messages_container": Messages(),
+        "debug_print": lambda *args, **kwargs: None,
+        "_build_export_image_asset_from_message": lambda conversation_id, image_message, proposal: {
+            "message_id": image_message["id"], "visual_id": proposal["visualId"],
+        },
+    })
+    attach = namespace["_attach_generated_image_proposal_assets"]
+    earlier = {"id": "assistant_1", "role": "assistant", "content": "", "metadata": {}}
+    retried = {"id": "assistant_2", "role": "assistant", "content": "", "metadata": {"orchestration": {
+        "generated_images": [{"visual_id": "washington", "message_id": "image_w"}, {"message_id": 7}],
+    }}}
+
+    assert attach(earlier, "conversation-1")["_export_generated_image_assets"] == [
+        {"message_id": "image_w", "visual_id": "washington"},
+    ]
+    assert attach(retried, "conversation-1")["_export_generated_image_assets"] == [
+        {"message_id": "image_w", "visual_id": "washington"},
+    ]
+    assert "_export_generated_image_assets" not in attach({**retried, "role": "user"}, "conversation-1")
+
 
 @pytest.mark.parametrize("output_format", ["docx", "pdf", "pptx"])
 def test_files_embed_exactly_the_images_their_source_consumed(harness, monkeypatch, output_format):
-    _enable_images(harness, monkeypatch)
+    # A WEBP image, which no Office renderer accepts as is, is embedded as a PNG rendition.
+    _enable_images(harness, monkeypatch, images={1: _data_url("image/webp", _webp())})
     deck = output_format == "pptx"
     report = _report_step(
         _image_inputs(["washington"]), delivers=() if deck else ("report",),
@@ -678,9 +940,12 @@ def test_files_embed_exactly_the_images_their_source_consumed(harness, monkeypat
 
     harness.prepare().execute()
     saved = harness.read()
+    data = _file_bytes(harness, f".{output_format}")
 
     assert saved["status"] == "completed", saved.get("failure")
-    assert _embedded_images(output_format, _file_bytes(harness, f".{output_format}")) == 1
+    assert _embedded_images(output_format, data) == 1
+    if output_format != "pdf":
+        assert [extension for extension, _size in _image_media(output_format, data)] == ["png"]
 
 
 def test_a_deck_that_did_not_place_its_image_gets_a_slide_for_it(harness, monkeypatch):
@@ -905,6 +1170,142 @@ def test_scenario_a_failed_image_is_reported_and_never_delivered(harness, monkey
     assert _embedded_images("docx", _file_bytes(harness, ".docx")) == 2
 
 
+def _authorize(harness):
+    return lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1")
+
+
+def _retry_request(harness, execution, submission_id):
+    """The checkpoint retry of run-1, exactly as the retry route publishes it."""
+    from copy import copy
+
+    parent = harness.read()
+    probe = copy(execution.context)
+    probe.result_service = harness.services().results
+    return harness.recovery.prepare_retry(
+        "run-1", "owner", {
+            "conversation_id": "conversation-1", "submission_id": submission_id,
+            "expected_version": parent["recovery_version"],
+        },
+        authorize=_authorize(harness), message_container=harness.messages,
+        validate=lambda current: harness.recovery.validate_resume(
+            current, probe, harness.settings, _authorize(harness), source_run_id=current["id"],
+        ),
+    )
+
+
+def _claim_retry(harness, child):
+    services = harness.services()
+    claimed = harness.revisions.claim_plan_run(
+        child["id"], "owner", "conversation-1", expected_version=child["edit_version"],
+        settings=harness.settings,
+        result_alias_resolver=lambda current: harness.service_bindings.admitted_result_aliases(
+            current, services.results,
+        ),
+    )
+    lease = harness.recovery.ExecutionLease(claimed, _authorize(harness), message_container=harness.messages)
+    return harness.execution.prepare_harness_execution(claimed, settings=harness.settings, lease=lease)
+
+
+def test_a_retry_generates_the_missing_image_and_delivers_all_of_them(harness, monkeypatch):
+    """Version 0.261.138: a retry reuses the images that exist and rewrites the report and file."""
+    route = importlib.import_module("functions_image_api_route")
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    calls = _enable_images(harness, monkeypatch, failures={
+        2: route.ImageGenerationError("busy", "image_rate_limited", 429),
+    })
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    execution = harness.prepare()
+    execution.execute()
+    parent = harness.read()
+    recovery = harness.recovery.recovery_projection(parent)
+    earlier = harness.messages.read_item(checkpoints.orchestration_answer_message_id("run-1"), "conversation-1")
+
+    assert parent["status"] == "failed" and parent["outcome"] == "partial"
+    assert earlier["content"].count("```simpleimage") == 2
+    assert recovery["eligible"], recovery
+    assert recovery["reused_step_ids"] == ["washington", "jefferson"]
+    assert recovery["retry_step_ids"] == ["adams", "report", "word"]
+
+    child = _retry_request(harness, execution, "retry-missing-image")
+    harness.replies.append(REPORT_TEXT)
+    _claim_retry(harness, child).execute()
+    finished = harness.runs.read_item(child["id"], "conversation-1")
+    answer = harness.messages.read_item(checkpoints.orchestration_answer_message_id(child["id"]), "conversation-1")
+    images = {image["metadata"]["image_proposal"]["visualId"]: image for image in _image_messages(harness)}
+    listed = {
+        entry["visual_id"]: entry["message_id"]
+        for entry in answer["metadata"]["orchestration"]["generated_images"]
+    }
+
+    assert finished["status"] == "completed", finished.get("failure")
+    assert len(calls) == 4 and len(images) == 3
+    assert answer["content"].count("```simpleimage") == 3 and "Delivery notes" not in answer["content"]
+    assert sorted(_embedded_images("docx", data) for data in _files(harness, ".docx")) == [2, 3]
+    assert listed == {visual_id: image["id"] for visual_id, image in images.items()}
+    # The earlier attempt's answer still shows its own images; nothing was moved away from it.
+    assert {
+        visual_id: image["metadata"]["image_proposal"]["source_assistant_message_id"]
+        for visual_id, image in images.items()
+    } == {"washington": earlier["id"], "jefferson": earlier["id"], "adams": answer["id"]}
+    assert harness.messages.read_item(earlier["id"], "conversation-1")["metadata"]["orchestration"][
+        "generated_images"
+    ] == earlier["metadata"]["orchestration"]["generated_images"]
+
+
+def test_a_retry_that_could_only_resend_a_refused_image_is_not_offered(harness, monkeypatch):
+    route = importlib.import_module("functions_image_api_route")
+    _enable_images(harness, monkeypatch, failures={
+        2: route.ImageGenerationError("refused", "image_content_refused", 400),
+    })
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    execution = harness.prepare()
+    execution.execute()
+    recovery = harness.recovery.recovery_projection(harness.read())
+
+    assert recovery["eligible"] is False and recovery["reason_code"] == "retry_would_repeat"
+    assert recovery["retry_step_ids"] == ["adams", "report", "word"]
+    with pytest.raises(harness.recovery.RecoveryError) as refused:
+        _retry_request(harness, execution, "retry-refused-image")
+    assert refused.value.message == harness.schema.FAILURE_MESSAGES["retry_would_repeat"]
+
+
+def test_a_retry_stays_available_while_other_work_could_succeed(harness, monkeypatch):
+    route = importlib.import_module("functions_image_api_route")
+    _enable_images(harness, monkeypatch, failures={
+        2: route.ImageGenerationError("refused", "image_content_refused", 400),
+        3: route.ImageGenerationError("busy", "image_rate_limited", 429),
+    })
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    recovery = harness.recovery.recovery_projection(harness.read())
+
+    assert recovery["eligible"], recovery
+    assert recovery["retry_step_ids"] == ["adams", "jefferson", "report", "word"]
+
+
+def test_the_refusal_rule_only_counts_work_that_depends_on_a_refusal():
+    recovery = importlib.import_module("functions_orchestration_recovery")
+    repeats = recovery._retry_repeats_refusal
+    record = {"plan": {"planner_contract_version": 2, "steps": []}}
+    refused = {"step_id": "adams", "status": "failed", "failure": {"code": "image_content_refused"}}
+    stale = {"step_id": "report", "status": "completed"}
+    blocked = {"step_id": "word", "status": "skipped", "failure": {"code": "dependency_unavailable"}}
+    timed_out = {"step_id": "word", "status": "failed", "failure": {"code": "provider_timeout"}}
+    retry = ["adams", "report", "word"]
+
+    assert repeats(record, [refused, stale, blocked], retry) is True
+    assert repeats(record, [refused, stale, timed_out], retry) is False
+    assert repeats(record, [refused, stale, blocked], [*retry, "never_ran"]) is False
+    assert repeats(record, [stale, blocked], ["report", "word"]) is False
+    # A run from the removed earlier contract never reaches this rule: its recovery
+    # projection is refused first with the legacy-plan reason.
+    legacy = recovery.recovery_projection({"id": "legacy", "plan": {"planner_contract_version": 1, "steps": []}})
+    assert legacy["eligible"] is False and legacy["reason_code"] == "legacy_plan"
+
+
 def test_scenario_a_failed_render_is_never_reported_as_delivered(harness, monkeypatch):
     _enable_images(harness, monkeypatch)
     adapters = importlib.import_module("functions_generated_office_adapters")
@@ -945,7 +1346,7 @@ def test_turning_off_a_file_at_approval_keeps_the_run_retryable(harness, monkeyp
     from copy import copy
 
     route = importlib.import_module("functions_image_api_route")
-    _enable_images(harness, monkeypatch, failures={2: route.ImageGenerationError("refused", "image_content_refused", 400)})
+    _enable_images(harness, monkeypatch, failures={2: route.ImageGenerationError("busy", "image_rate_limited", 429)})
     record = _create(harness, _president_plan(), replies=[REPORT_TEXT])
     services = harness.services()
     claimed = harness.revisions.claim_plan_run(

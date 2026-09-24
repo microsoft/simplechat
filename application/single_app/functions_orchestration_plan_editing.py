@@ -477,6 +477,12 @@ def build_plan_edit_outcome(
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
+    except ModelCatalogError as exc:
+        # Auto binds every revised step again; an unreachable inventory keeps the plan as it was.
+        raise PlanRevisionError(
+            'No eligible model is available for that change. Your previous plan is unchanged.',
+            code='model_unavailable', status_code=403,
+        ) from exc
     finally:
         planner_model.close()
     _add_usage(context, document.get('token_usage'))

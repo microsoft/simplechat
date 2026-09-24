@@ -155,6 +155,11 @@ or the parameter is unsupported, the request uses **Model default** instead of
 advertising invented options. Explicit **None** is distinct from omitting the
 parameter. Plans and answer metadata retain compatibility adjustments.
 
+Since **0.261.137**, the V2 interface restores the model you last chose when you
+return to chat, rather than the model that was selected when the page first loaded.
+Orchestrate keeps its own model choice; see
+[Orchestration approval](#orchestration-approval-v2-interface).
+
 ## Grounded search and document scope
 
 {% include media.html src="reference/chat-controls-grounded-search.png" alt="Grounded Search panel with action, scope, document, tags, filters, and comparison controls visible." title="Grounded search and document scope" capture="Capture the Grounded Search panel with action, scope, document, tags, filters, and comparison controls visible." %}
@@ -286,13 +291,24 @@ for the complete workflow.
 
 ## Orchestration approval (V2 interface)
 
-Since **0.261.126**, Orchestrate has a visible **Orchestration model** picker.
+Since **0.261.126**, Orchestrate has an **Orchestration model** picker.
 **Auto - choose per step** asks the server to choose an authorized connected model
 for each model-backed step; a specific model remains pinned. Planned and completed
 steps show model attribution and the selection reason. This picker is distinct
 from the **Auto** approval choice below. Ordinary V2 chat and classic chat remain
 manual-only, and switching modes retains the normal-chat model. See
 [Choose models for orchestration]({{ '/guides/model-catalog-routing/' | relative_url }}).
+
+Since **0.261.137**, the picker sits in the normal model picker's place under
+**Manual controls** instead of above the message box, so the toolbar keeps its shape
+when Orchestrate is switched on. **Auto - choose per step** is the default wherever a
+connected model has a catalog profile rated for general answering; otherwise a specific
+model is used and Auto is not offered. Your choice, Auto or a pinned model, is saved to your
+account, so it stays in place when you leave the chat, open a new chat, reload, or
+sign in elsewhere. A model pinned here does not change the model normal chat uses.
+When an administrator hides Manual controls, the picker is unavailable and Orchestrate
+uses Auto (or the default model when Auto cannot be used), ignoring any saved pin.
+Sending an orchestrated message waits until your saved choice has loaded.
 
 In Orchestrate, selected Document Search, Web Search, Deep Research, and eligible
 URL Access controls are positive requirements, not the complete list of permitted
@@ -301,10 +317,9 @@ authorized capabilities, while selected documents, agents, workspaces, and filte
 retain their intended constraints. Deep Research can be selected without also
 selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
 rather than sending your prompt to the image model, it combines with every other
-control and shapes the plan. Since **0.261.139**, every new orchestration plan
-uses Gather / Reason / Render: Image is treated as a request for images, which
-the plan generates as its own tasks when it runs. Suggested images remain
-approval cards that generate only when you approve them.
+control and shapes the plan. Since **0.261.138**, Image is treated as a request for
+images, which the plan generates as its own tasks when it runs. Suggested images
+remain approval cards that generate only when you approve them.
 
 Every Orchestrate request now invokes the planner, even a short question or
 acknowledgment. The planner may choose a direct answer; no topic rule forces

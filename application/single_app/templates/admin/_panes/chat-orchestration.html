@@ -178,35 +178,30 @@
                         <i class="bi bi-cpu me-2"></i>Planner Model
                     </h5>
                     <p class="text-muted">
-                        Which model writes the plan. Planning is a short, structured task rather than a conversational one, so a smaller and faster deployment usually does it well and costs less per message than the model that writes the answer.
-                    </p>
-                    <p class="text-muted small">
-                        Leave the deployment blank to plan with this deployment's default chat model.
+                        Which model writes the plan. Planning is a short, structured task rather than a conversational one, so a smaller and faster model usually does it well and costs less per message than the model that writes the answer.
                     </p>
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label" for="chat_orchestration_planner_deployment">Planner deployment name</label>
-                            <input type="text" class="form-control" id="chat_orchestration_planner_deployment" name="chat_orchestration_planner_deployment"
-                                value="{{ settings.chat_orchestration_planner_deployment or '' }}">
+                    <!-- One dropdown writes the four planner fields below; admin_orchestration_planner_model.js fills it from the configured models. -->
+                    <div class="mb-3">
+                        <label class="form-label" for="chat_orchestration_planner_model">Planner model</label>
+                        <select class="form-select" id="chat_orchestration_planner_model" aria-describedby="chat-orchestration-planner-model-help">
+                            <option value="">Use the answer model (default)</option>
+                        </select>
+                        <div class="form-text" id="chat-orchestration-planner-model-help">
+                            Lists the models your AI Connections publish for chat, or the classic deployments when connections are off. Keep Use the answer model to plan with whichever model answers.
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label" for="chat_orchestration_planner_model_id">Planner model id</label>
-                            <input type="text" class="form-control" id="chat_orchestration_planner_model_id" name="chat_orchestration_planner_model_id"
-                                value="{{ settings.chat_orchestration_planner_model_id or '' }}">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label" for="chat_orchestration_planner_model_endpoint_id">Planner model endpoint id</label>
-                            <input type="text" class="form-control" id="chat_orchestration_planner_model_endpoint_id" name="chat_orchestration_planner_model_endpoint_id"
-                                value="{{ settings.chat_orchestration_planner_model_endpoint_id or '' }}">
-                            <div class="form-text">Required when planning through a configured model endpoint rather than the default deployment.</div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label" for="chat_orchestration_planner_model_provider">Planner model provider</label>
-                            <input type="text" class="form-control" id="chat_orchestration_planner_model_provider" name="chat_orchestration_planner_model_provider"
-                                value="{{ settings.chat_orchestration_planner_model_provider or '' }}">
+                        <div class="form-text text-warning d-none" id="chat-orchestration-planner-model-saved-note" role="status">
+                            The saved planner model is not one of the models listed here. It is kept until you choose another; planning fails rather than switching models if it cannot be used.
                         </div>
                     </div>
+                    <input type="hidden" id="chat_orchestration_planner_deployment" name="chat_orchestration_planner_deployment"
+                        value="{{ settings.chat_orchestration_planner_deployment or '' }}" />
+                    <input type="hidden" id="chat_orchestration_planner_model_id" name="chat_orchestration_planner_model_id"
+                        value="{{ settings.chat_orchestration_planner_model_id or '' }}" />
+                    <input type="hidden" id="chat_orchestration_planner_model_endpoint_id" name="chat_orchestration_planner_model_endpoint_id"
+                        value="{{ settings.chat_orchestration_planner_model_endpoint_id or '' }}" />
+                    <input type="hidden" id="chat_orchestration_planner_model_provider" name="chat_orchestration_planner_model_provider"
+                        value="{{ settings.chat_orchestration_planner_model_provider or '' }}" />
                 </div>
 
             </div>

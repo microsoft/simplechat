@@ -642,6 +642,39 @@ def _build_image_proposal_metadata(proposal, source_assistant_message_id=None):
     return metadata
 
 
+def find_planned_proposal_image(source_message, proposal, read_image_message):
+    """The image an orchestrated answer already generated for this proposal, or None.
+
+    An orchestrated answer lists, in ``metadata.orchestration.generated_images``, the image
+    messages its planned steps generated. Approving one of its image cards again returns
+    that image instead of paying for another. ``read_image_message(message_id)`` returns
+    the saved message from the answer's own conversation, or None when it is missing.
+    """
+    metadata = source_message.get('metadata') if isinstance(source_message, dict) else None
+    orchestration = metadata.get('orchestration') if isinstance(metadata, dict) else None
+    entries = orchestration.get('generated_images') if isinstance(orchestration, dict) else None
+    visual_id = _normalize_visual_id((proposal or {}).get('visualId'))
+    if not visual_id or not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        message_id = entry.get('message_id')
+        if entry.get('visual_id') != visual_id or not isinstance(message_id, str) or not message_id:
+            continue
+        image = read_image_message(message_id)
+        image_metadata = image.get('metadata') if isinstance(image, dict) else None
+        planned = image_metadata.get('image_proposal') if isinstance(image_metadata, dict) else None
+        if (
+            isinstance(planned, dict) and image.get('role') == 'image'
+            and image.get('conversation_id') == source_message.get('conversation_id')
+            and image_metadata.get('is_deleted') is not True
+            and _normalize_visual_id(planned.get('visualId')) == visual_id
+        ):
+            return image
+    return None
+
+
 def generate_chat_image_message(
     *,
     settings,

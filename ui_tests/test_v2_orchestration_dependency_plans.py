@@ -264,7 +264,7 @@ def _deliverables_plan():
 
 @pytest.mark.parametrize("width", [1440, 390])
 def test_plan_panel_lists_what_the_user_asked_for_and_why_something_is_unavailable(editor_ui, width):
-    """Version 0.261.135: each deliverable, its producing step, and a server-owned unavailable reason."""
+    """Version 0.261.138: each deliverable, its producing step, and a server-owned unavailable reason."""
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
     view = mount_run_view(page, api, _deliverables_plan())

@@ -20,7 +20,8 @@
 **Runtime boundary hardening implemented in version: 0.261.129**
 **Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
 **Gather / Reason / Render answer parity implemented in version: 0.261.134**
-**Deliverables contract and generated images in files implemented in version: 0.261.135**
+**Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
+**Deliverables contract and generated images in files implemented in version: 0.261.138**
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
 
 ## Overview
@@ -660,9 +661,17 @@ model setting or API version is required.
 
 #### Model selection
 
-The answer model comes from **Manual controls** when one is selected, otherwise from
-the administrator's default model connection. Classic single-endpoint or APIM settings
-remain the fallback only when no connection-based selection or default applies.
+With **Auto - choose per step**, the default wherever a connected model has a catalog
+profile rated for general answering, the server binds a model to each model-backed step, and the
+answer is attributed to the step that writes it, the task that `final_response` names. When
+no step in the run writes the reply, for example when it reuses an earlier turn's result
+or the plan only delivers files, the reply keeps the default model. See
+[Model catalog profiles and per-step Auto routing](MODEL_CATALOG_PROFILES_AND_AUTO_ROUTING.md).
+
+With a pinned model, the answer model comes from **Manual controls** when one is
+selected, otherwise from the administrator's default model connection. Classic
+single-endpoint or APIM settings remain the fallback only when no connection-based
+selection or default applies.
 The selected deployment, provider, endpoint ID and model ID are resolved together:
 changing only the deployment on a legacy client could send it to the wrong endpoint.
 
@@ -676,7 +685,10 @@ resolution, plan generation and research review as well as the answer. A configu
 planner deployment or endpoint remains separate and does not override the answer model.
 Planner endpoint selections use the existing planner model/endpoint/provider settings and
 the caller's normal model access checks. A deployment-only planner override retains the
-classic single-endpoint/APIM connection.
+classic single-endpoint/APIM connection. Since **0.261.137**, administrators choose the
+planner from a **Planner model** dropdown on both admin pages, which writes those settings
+from a listed model instead of typed identifiers; see
+[Orchestration settings](../../admin/orchestration.md#chat-orchestration-planner-model-section).
 
 Planning resolves its client on the request thread after restoring canonical turn state,
 with authenticated streaming context retained for endpoint authorization. Execution
@@ -967,7 +979,7 @@ gathered knowledge or prepared content, and are represented in the plan by expli
 - **Image proposals** are `simpleimage` cards the user approves one at a time, through the
   existing approval route. They are offered only when `enable_image_generation` is on. The
   answer decides from the request type whether images help, including when the user did not
-  ask. Since **0.261.135**, a Gather / Reason / Render plan generates the images the user asks
+  ask. Since **0.261.138**, a Gather / Reason / Render plan generates the images the user asks
   for as planned steps, and keeps proposal cards for images it only suggests (see
   [Deliverables and generated images](#deliverables-and-generated-images)).
 
@@ -985,8 +997,10 @@ the earlier answer path had, and the planner states what the answer may rely on.
 
 - **Auto model routing.** Each model-backed step, including `compose`, is bound to an
   authorized connected model at planning time. The binding is checked again before
-  execution, and the step runs on that model. An Auto request uses the same current plan contract. The answer model is the one bound to the step that produces
-  `final_response`.
+  execution, and the step runs on that model. The answer model is the one bound to the
+  step that produces `final_response`; a reply that reuses an earlier turn's result keeps
+  the default selection. When no connected model is rated for a step's task, the step uses
+  the capable model best rated for general answering instead of failing the plan.
 - **Saved memory and follow-ups.** `compose` reads saved instruction and fact memory with
   the same precedence as before, plus the conversation messages the resolver selected. A
   follow-up can transform an earlier answer, but that answer is not treated as evidence.
@@ -1004,7 +1018,19 @@ the earlier answer path had, and the planner states what the answer may rely on.
   - A producer that feeds only optional inputs does not decide whether the plan
     succeeds. If it fails, the answer is still written, says once what could not be
     gathered, and does not present that content as sourced.
+  - A retry is offered when the run did not complete, for example when a required step
+    failed or a requested image was not delivered. It is not offered when it could only
+    send again a request a service declined, such as an image prompt refused under a
+    content policy; asking again plans a new request instead. A retry runs the failed
+    producer again, and also runs again the steps that completed without it and every
+    step computed from them, so the retried work can use what the first attempt missed.
+    Other completed steps are still reused.
   - Required inputs still fail closed.
+- **Retrying a run with files.** Each attempt owns its files, and preparing a retry
+  supersedes the previous attempt's files. So a whole-run retry never reuses a render
+  step: it renders the files again, from reused content where possible, without calling
+  a model, and the previous attempt's files are shown as superseded. React V2 offers that
+  retry only for an attempt without files; an attempt with files is recovered per file.
 - **Visuals.** The planner names the visuals a Markdown answer should author, and a chart
   over an action's rows, as structured `visuals` arguments. Keyword detection is not
   used. Charts drawn during gathering are placed at their tokens.
@@ -1019,7 +1045,7 @@ the earlier answer path had, and the planner states what the answer may rely on.
 
 ### Deliverables and generated images
 
-Since **0.261.135**, a Gather / Reason / Render plan lists what the user asked to receive
+Since **0.261.138**, a Gather / Reason / Render plan lists what the user asked to receive
 before its steps, and the server checks that list. See
 [Orchestration deliverables](ORCHESTRATION_DELIVERABLES.md) for the full contract.
 
@@ -1039,9 +1065,20 @@ before its steps, and the server checks that list. See
   orchestrated answer and retained as an `image-asset-v1` result. The answer places it
   with an `[[image:<step_id>]]` token, the chat shows it inline, and DOCX, PDF, and PPTX
   files embed it. Images are captioned as AI-generated illustrations.
+- **Images in files.** A file embeds a rendition of each image that the Office renderers
+  accept: an image over 4 MB or in WEBP is re-encoded and, only if needed, scaled down.
+  The chat keeps the image exactly as generated, so an image never fails its file for its
+  size or format.
+- **Answers own their images.** The answer lists the image messages it shows in
+  `metadata.orchestration.generated_images`, and the run's terminal frame repeats that
+  list so the chat loads them with the answer. Images are never moved between answers: a
+  retry lists the images it reused, and the earlier answer keeps showing them. A card for
+  a planned image never offers approval, and approving one through the API returns the
+  saved image instead of generating another.
 - **Honest delivery.** A run in which an explicit image or file was not delivered is
   reported as incomplete, and a deterministic **Delivery notes** list names each
-  undelivered or unavailable deliverable after the answer.
+  undelivered or unavailable deliverable after the answer. A retry generates a missing
+  image again, unless it could only resend a prompt the image service declined.
 - **You asked for.** The plan panel and the approval card list each deliverable, its state,
   the step that produces it, and the reason when it is unavailable.
 
@@ -1236,7 +1273,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 3. Open a V2 chat. Where orchestration is enabled the composer opens in it, with the
    capability toggles and the model, agent and reasoning pickers folded behind **Manual
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
-   turns it off again for anyone who wants the classic composer.
+   turns it off again for anyone who wants the classic composer. The model picker under
+   **Manual controls** starts on **Auto - choose per step** wherever Auto can be used.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
 5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
    explicitly run the accepted version or cancel the plan.
@@ -1258,6 +1296,14 @@ loaded, the composer keeps the draft and offers **Retry loading approval prefere
 before orchestration can start. An unsuccessful save shows an error and rolls back
 to the last confirmed selection unless a newer choice is still pending. Choose the
 mode again to retry saving. Existing plans retain their own approval state.
+
+The Orchestrate model choice is saved the same way, since **0.261.137**:
+`orchestrationModelRouting` records Auto or a pinned model, and
+`orchestrationPreferredModelId` records the pinned model's catalog selection key.
+Both are separate from the normal chat model. A pin whose model is no longer in the
+catalog falls back to the default, and a pin is ignored while an administrator hides
+Manual controls. Sending waits until the saved choice has loaded; a failed load
+does not block sending, because the picker shows what will be used.
 
 See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
 for the persistence contract and failure handling.
@@ -1297,10 +1343,11 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup; the chart sub-step charts exact rows, cannot reach the action, and receives only saved instructions |
 | `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
-| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless runner: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
+| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless runner: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, retries that run again what completed without a retried producer, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
 | `functional_tests/test_v2_orchestration_planner_display.mjs` | Browser normalization of the planner descriptor, Auto routing, optional inputs, and answer-basis and visual labels |
-| `functional_tests/test_orchestration_deliverables.py` | Deliverables validation and the single repair call, server truth, `generate_image` gating, budget and persistence, images embedded in DOCX, PDF and PPTX only from the file's own source lineage, and end-to-end scenarios for a CSV, a Word report with images, a report without a file, and failing search, image, and render steps |
-| `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, and generated-image helpers |
+| `functional_tests/test_orchestration_deliverables.py` | Deliverables validation and the single repair call, server truth, `generate_image` gating, budget and persistence, images embedded in DOCX, PDF and PPTX only from the file's own source lineage and as renditions the renderers accept (a 4.7 MB PNG and WEBP), answers that own their images, a retry that generates a missing image and delivers it in the answer and the Word file, no retry when it could only resend a refused prompt, an approval route that never pays twice, export of reused images, and end-to-end scenarios for a CSV, a Word report with images, a report without a file, and failing search, image, and render steps |
+| `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, generated-image helpers, a terminal frame read through the real run stream client, and a retry's image grouped under every answer that lists it, in React V2 and the classic client |
+| `ui_tests/test_v2_orchestration_generated_images.py` | The live chat loading an answer's generated images after the run, planned image cards that never offer Approve or Approve all while their image loads, and a reused image shown under both the earlier and the retried answer |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable binding is refused, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
@@ -1324,7 +1371,7 @@ research-selection rate is not itself a quality improvement.
 - **Auto routing binds steps to connected models by task.** Planning uses the selected or
   default model unless a dedicated planner override is configured. With **Auto**, each
   model-backed step is bound to an authorized connected model chosen by task suitability,
-  then priority. Since **0.261.134** this applies to Gather / Reason / Render plans as well.
+  then priority. This applies to every orchestration plan.
   Configured agents retain their own model behavior.
 - **No action output workflow.** Existing MCP, OpenAPI and other action types can
   gather knowledge directly, but actions are not file-rendering or delivery
@@ -1337,7 +1384,7 @@ research-selection rate is not itself a quality improvement.
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
 - **Generated images are AI illustrations, and proposal images stay out of files.** Since
-  **0.261.135**, a Gather / Reason / Render plan generates each image the user asks for
+  **0.261.138**, a Gather / Reason / Render plan generates each image the user asks for
   and embeds it in DOCX, PDF, and PPTX files. Web search cannot retrieve existing pictures,
   so a report links authentic sources and uses captioned AI illustrations. A plan generates
   at most four images, one after another. Proposal images the planner only suggests are

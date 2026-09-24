@@ -72,6 +72,12 @@ import {
     startOrchestrationPlan,
 } from '../../lib/orchestrationController';
 import {
+    AUTO_MODEL_VALUE,
+    orchestrationModelUpdate,
+    orchestrationModelValue,
+    resolveOrchestrationModel,
+} from '../../lib/orchestrationModelRouting';
+import {
     estimateLargeTabularRun,
     type TabularRunEstimate,
     type TabularRunSettings,
@@ -316,8 +322,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         setOrchestrationOn((on) => savedAnalysis ? true : !on);
     };
     const orchestrating = orchestrationOn && orchestrationAvailable && !savedAnalysis;
-    const [autoModelRouting, setAutoModelRouting] = useState(false);
-    const [orchestrationModel, setOrchestrationModel] = useState<string>();
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
     // administrator leaves them reachable; otherwise the planner owns every decision and there is
@@ -328,6 +332,40 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // when orchestrating with manual controls left reachable.
     const manualControlsVisible =
         !orchestrating || (manualControlsGovernable && manualControlsOpen);
+
+    /**
+     * The Orchestrate model: Auto (a model chosen per step) or one pinned model.
+     *
+     * Read from the account preference on every render rather than held in component state,
+     * which is what made the choice reset whenever the composer remounted -- leaving the chat
+     * and coming back, or opening a new chat from another page. Kept apart from the ordinary
+     * chat model: pinning one here does not change what a normal chat uses.
+     */
+    const savedModelRouting = useUserSettingsStore(
+        (state) => state.settings.orchestrationModelRouting,
+    );
+    const savedOrchestrationModel = useUserSettingsStore(
+        (state) => state.settings.orchestrationPreferredModelId,
+    );
+    const orchestrationModelChoice = resolveOrchestrationModel({
+        models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        pickerReachable: manualControlsGovernable,
+        savedRouting: savedModelRouting,
+        savedModelId: savedOrchestrationModel,
+        fallbackModel: options.modelDeployment,
+    });
+    const autoModelRouting = orchestrationModelChoice.routing === 'auto';
+    const orchestrationModel = orchestrationModelChoice.model;
+    const chooseOrchestrationModel = (value: string | undefined) => {
+        if (!value) {
+            return;
+        }
+        const preferences = useUserSettingsStore.getState();
+        preferences.update(orchestrationModelUpdate(value));
+        void preferences.flush();
+        // Choosing a model is the way out of agent mode here too, as it is in normal chat.
+        setOptions((current) => ({ ...current, agentSelection: undefined }));
+    };
 
     const approvalPreference = useUserSettingsStore(
         (state) => state.settings.orchestrationApprovalMode,
@@ -340,6 +378,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // Bootstrap may arrive before preferences. Do not run an administrator's automatic mode
     // while the user's saved requirement to review is still unknown.
     const approvalBlocked = approvalOverridable && (!settingsLoaded || invalidApprovalPreference);
+    // The same wait for a pinned Orchestrate model: sending before it has loaded would quietly
+    // send the default instead. Unlike approval, a failed load does not block, because the
+    // picker shows what will be sent and the default is a safe answer.
+    const modelPreferencePending = manualControlsGovernable && settingsLoading;
+    const orchestrationBlocked = approvalBlocked || modelPreferencePending;
     const chooseApprovalMode = (value: string | undefined) => {
         if (!settingsLoaded || !approvalOverridable) {
             toast.error('Your approval preference is not currently editable.');
@@ -421,14 +464,21 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         });
     }, [hasPromptUrls, gating.showUrlAccess, gating.showDeepResearch, orchestrating]);
 
-    // Apply the server's preferred model once bootstrap resolves. Stored as the same
-    // selection key the picker uses, so the full identity can be resolved from it.
+    // Apply the preferred model once bootstrap resolves. Stored as the same selection key the
+    // picker uses, so the full identity can be resolved from it.
+    //
+    // The bootstrap resolves `initial_model_selection` when it is fetched, so a model chosen
+    // since then is newer in the settings store than in the payload. Preferring the store is
+    // what stops a remounted composer -- leaving the chat and coming back -- from snapping back
+    // to the model that was current at startup. The payload still applies when the stored key
+    // no longer names a catalog model, since the server falls back to the deployment name.
     useEffect(() => {
+        const models = bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined;
+        const preferred = useUserSettingsStore.getState().settings.preferredModelId;
+        const remembered =
+            typeof preferred === 'string' && findModel(models, preferred) ? preferred : '';
         const initial = bootstrap?.catalogs?.initial_model_selection;
-        if (!initial) {
-            return;
-        }
-        const key = modelSelectionKey(initial as ModelCatalogEntry);
+        const key = remembered || (initial ? modelSelectionKey(initial as ModelCatalogEntry) : '');
         if (!key) {
             return;
         }
@@ -766,13 +816,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (streaming || !canPost || uploadsBlocked) {
             return;
         }
-        if (orchestrating && approvalBlocked) {
+        if (orchestrating && orchestrationBlocked) {
             toast.error(
-                settingsFailed
-                    ? 'Retry loading your approval preference before sending.'
-                    : invalidApprovalPreference && settingsLoaded
-                      ? 'Choose a valid approval mode before sending.'
-                      : 'Your approval preference is still loading.',
+                !approvalBlocked
+                    ? 'Your model preference is still loading.'
+                    : settingsFailed
+                      ? 'Retry loading your approval preference before sending.'
+                      : invalidApprovalPreference && settingsLoaded
+                        ? 'Choose a valid approval mode before sending.'
+                        : 'Your approval preference is still loading.',
             );
             return;
         }
@@ -1208,23 +1260,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     </p>
                 )}
 
-                {orchestrating && (
-                    <Dropdown
-                        options={[{ value: '__auto__', label: 'Auto - choose per step' }, ...modelOptions]}
-                        value={autoModelRouting ? '__auto__' : orchestrationModel || options.modelDeployment}
-                        placeholder="Orchestration model"
-                        title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
-                        onChange={(value) => {
-                            setAutoModelRouting(value === '__auto__');
-                            if (value !== '__auto__') setOrchestrationModel(value);
-                            setOptions((current) => ({ ...current, agentSelection: undefined }));
-                        }}
-                    />
-                )}
-
-                {orchestrating && approvalOverridable && (
+                {orchestrating && (approvalOverridable || manualControlsGovernable) && (
                     <div className="space-y-1 text-xs">
-                        {settingsLoading ? (
+                        {approvalOverridable && (settingsLoading ? (
                             <p role="status" className="mb-2 text-text-3">
                                 Loading your approval preference before orchestration can start...
                             </p>
@@ -1243,7 +1281,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             <p role="alert" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-warn">
                                 Your saved approval preference is invalid. Choose an approval mode before sending.
                             </p>
-                        ) : null}
+                        ) : null)}
+                        {!approvalOverridable && modelPreferencePending && (
+                            <p role="status" className="mb-2 text-text-3">
+                                Loading your model preference before orchestration can start...
+                            </p>
+                        )}
                         {preferencesSaving && (
                             <p role="status" className="mb-2 text-text-3">Saving preferences...</p>
                         )}
@@ -1303,7 +1346,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
                         showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
-                        submitDisabled={streaming || uploadsBlocked || (orchestrating && approvalBlocked)}
+                        submitDisabled={streaming || uploadsBlocked || (orchestrating && orchestrationBlocked)}
                         promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
                         onSendWithUnfilled={() => submit(true)}
                         knowledgeAgent={buildSelectionFields({
@@ -1444,6 +1487,26 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                             }));
                                             rememberModelSelection(value);
                                         }}
+                                    />
+                                )}
+
+                                {/* The same slot while orchestrating, where the model is also the
+                                    plan's: Auto picks one per step and is the default wherever a
+                                    connected model can be chosen that way. The choice is saved to
+                                    the account, and it lives here rather than above the input so the
+                                    toolbar does not change shape when Orchestrate is switched on. */}
+                                {gating.showModelPicker && orchestrating && (
+                                    <Dropdown
+                                        options={[
+                                            ...(orchestrationModelChoice.autoAvailable
+                                                ? [{ value: AUTO_MODEL_VALUE, label: 'Auto - choose per step' }]
+                                                : []),
+                                            ...modelOptions,
+                                        ]}
+                                        value={orchestrationModelValue(orchestrationModelChoice)}
+                                        placeholder="Orchestration model"
+                                        title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
+                                        onChange={chooseOrchestrationModel}
                                     />
                                 )}
 
@@ -1640,7 +1703,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && approvalBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

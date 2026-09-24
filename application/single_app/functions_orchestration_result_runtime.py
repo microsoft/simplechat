@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.135
+Version: 0.261.138
 """
 
 from copy import deepcopy

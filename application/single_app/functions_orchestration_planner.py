@@ -43,7 +43,7 @@ from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
 from functions_model_catalog import TASKS, ModelCatalogError
 from functions_orchestration_model_routing import (
-    ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
+    DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
 )
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
@@ -441,7 +441,8 @@ def build_planner_messages(
         {
             'role': 'system',
             'content': PLANNER_SYSTEM_PROMPT + (
-                '\n' + ROUTING_INSTRUCTIONS if payload.get('model_routing') == 'auto' else ''
+                '\n' + ROUTING_INSTRUCTIONS + DEPENDENCY_ROUTING_INSTRUCTIONS + '\n'
+                if payload.get('model_routing') == 'auto' else ''
             ) + (
                 '\n\n' + PLAN_EDIT_INSTRUCTIONS if edit_context is not None else ''
             ),
