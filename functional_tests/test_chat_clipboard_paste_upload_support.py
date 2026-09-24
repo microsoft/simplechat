@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for chat clipboard paste upload support.
-Version: 0.261.032
-Implemented in: 0.241.056; expanded in: 0.261.032
+Version: 0.261.046
+Implemented in: 0.241.056; expanded in: 0.261.032; hardened in: 0.261.046
 
 This test ensures chat paste uploads route clipboard files through the shared
 chat upload helper, normalize missing clipboard filenames, preserve normal text
@@ -12,6 +12,7 @@ and provide actionable errors when the browser cannot read an upload.
 """
 
 import os
+import re
 import sys
 from test_support.versioning import assert_app_version_at_least
 
@@ -130,11 +131,14 @@ def test_chat_upload_reports_unreadable_files_with_recovery_guidance():
         "Close the file in other apps then try again.",
         'The browser could not upload "${fileName}".',
         "The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted.",
-        "} catch (error) {\n      const fileName = String(file?.name || \"selected file\").trim() || \"selected file\";",
     ]
 
     missing = [snippet for snippet in required_snippets if snippet not in content]
     assert not missing, f"Missing unreadable upload guidance snippets: {missing}"
+    assert re.search(
+        r"catch \(error\) \{\s*const fileName = String\(file\?\.name \|\| \"selected file\"\)\.trim\(\) \|\| \"selected file\";",
+        content,
+    ), "Expected fetch upload failures to include the selected file name in recovery guidance."
     assert "error instanceof TypeError" not in content, (
         "Rejected upload requests must not depend on a browser-realm-specific error type."
     )

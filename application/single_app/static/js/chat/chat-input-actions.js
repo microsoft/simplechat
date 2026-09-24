@@ -726,13 +726,10 @@ export async function uploadFileToConversation(file) {
         body: formData,
       });
     } catch (error) {
-      if (error instanceof TypeError) {
-        const fileName = String(file?.name || "selected file").trim() || "selected file";
-        throw new Error(
-          `The browser could not upload "${fileName}". The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted. Ensure the file is closed and then try again.`
-        );
-      }
-      throw error;
+      const fileName = String(file?.name || "selected file").trim() || "selected file";
+      throw new Error(
+        `The browser could not upload "${fileName}". The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted. Ensure the file is closed and then try again.`
+      );
     }
 
     hideFileUploadingMessage(uploadingIndicatorEl);
