@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.146)**
+
+#### New Features
+
+*   **Group Directory APIs**
+    *   New server routes back the native V2 group directory:
+        *   `GET /api/groups/directory` lists every group you can discover, paged, sorted and searchable, with your membership in each and whether you may create a group;
+        *   `POST /api/groups/directory` creates a group;
+        *   `POST` and `DELETE /api/groups/<group_id>/join-request` ask to join a group, and cancel that request. Cancelling is new.
+    *   The listing never returns an owner's email or ID, or any member's entry. The membership arrays are reduced to the caller's own entries in the database.
+    *   Group creation is decided by one policy that the directory also reports, so the page can't offer Create to someone the server would refuse. Names are limited to 80 characters and descriptions to 500, with reviewed messages.
+    *   Join requests are written conditionally: a concurrent change is kept, and a group deleted meanwhile is reported as missing, never recreated. Every group status still accepts requests, as before.
+    *   The directory page itself arrives in a later release. The classic Find Group and Create Group flows are unchanged.
+    *   (Ref: `functions_group_directory.py`, `functions_group_directory_policy.py`, `route_backend_group_directory.py`, [Group Directory APIs](features/GROUP_DIRECTORY_APIS.md))
+
+#### Bug Fixes
+
+*   **Workspace Notification Links Open The Management Page**
+    *   Fixed six notifications that led to a 404. The group created, member added and role changed notifications linked to `/manage_group/<id>`, and the public workspace member added and role changed notifications linked to `/manage_public_workspace`. Neither path is served.
+    *   They now link to `/groups/<group_id>` and `/public_workspaces/<workspace_id>`. Notifications created before the fix keep their old link.
+    *   (Ref: `_build_group_manage_url`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, [Workspace Notification Links Fix](fixes/WORKSPACE_NOTIFICATION_LINKS_FIX.md))
+
 ### **(v0.261.145)**
 
 #### New Features

@@ -1,8 +1,8 @@
 # test_group_directory_apis.py
 """
 Functional test for the native group directory APIs.
-Version: 0.261.147
-Implemented in: 0.261.147
+Version: 0.261.146
+Implemented in: 0.261.146
 
 ``GET``/``POST /api/groups/directory`` and ``POST``/``DELETE
 /api/groups/<group_id>/join-request`` run for real (``functions_group``, the

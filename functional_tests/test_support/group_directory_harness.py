@@ -1,8 +1,8 @@
 # group_directory_harness.py
 """Shared, isolated harness for the native group directory tests (M7A).
 
-Version: 0.261.147
-Implemented in: 0.261.147
+Version: 0.261.146
+Implemented in: 0.261.146
 
 Loaded unchanged from their files:
 

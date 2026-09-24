@@ -1,8 +1,8 @@
 # test_group_notification_links_fix.py
 """
 Functional test for the group notification links.
-Version: 0.261.147
-Implemented in: 0.261.147
+Version: 0.261.146
+Implemented in: 0.261.146
 
 Four group notifications linked to ``/manage_group/<id>``, a path no route serves:
 the group-created notification, the two member-added notifications (to the new

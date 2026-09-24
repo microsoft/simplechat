@@ -1,8 +1,8 @@
 # test_group_directory_policy.py
 """
 Functional test for the group directory creation policy and its hint.
-Version: 0.261.147
-Implemented in: 0.261.147
+Version: 0.261.146
+Implemented in: 0.261.146
 
 ``group_creation_refusal`` is the one creation decision of the native group
 directory, and ``build_group_directory_hints`` reports it as ``can_create``. This

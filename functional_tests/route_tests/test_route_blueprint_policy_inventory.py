@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.147
+Version: 0.261.146
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
 Group model endpoint policy coverage: 0.261.140
-Group directory policy coverage: 0.261.147
+Group directory policy coverage: 0.261.146
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.

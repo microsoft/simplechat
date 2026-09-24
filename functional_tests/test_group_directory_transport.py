@@ -1,8 +1,8 @@
 # test_group_directory_transport.py
 """
 Functional test for how the native group directory routes resolve.
-Version: 0.261.147
-Implemented in: 0.261.147
+Version: 0.261.146
+Implemented in: 0.261.146
 
 ``/api/groups/<group_id>/join-request`` shares no pattern with any other route, so
 every method there must fail to match anything else: a server without the native

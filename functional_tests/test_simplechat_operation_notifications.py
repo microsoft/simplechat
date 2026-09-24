@@ -2,9 +2,9 @@
 # test_simplechat_operation_notifications.py
 """
 Functional test for SimpleChat operation notifications.
-Version: 0.261.147
+Version: 0.261.146
 Implemented in: 0.241.030
-Group notification links point at /groups/<group_id>: 0.261.147
+Group notification links point at /groups/<group_id>: 0.261.146
 
 This test ensures SimpleChat group creation, direct group member additions,
 and conversation creation fan out notifications into the notifications inbox

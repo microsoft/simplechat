@@ -1,9 +1,9 @@
 # test_group_document_etag_guard.py
 """
 Functional test for the conditional group-document writer.
-Version: 0.261.147
+Version: 0.261.146
 Implemented in: 0.261.140
-No-bump commits (``cache_reason=None``): 0.261.147
+No-bump commits (``cache_reason=None``): 0.261.146
 
 ``update_group_document_with_etag_guard`` is the group-document equivalent of the
 File Sync ``_write_with_etag_guard`` (``fae9d6ef``). The real ``functions_group``
