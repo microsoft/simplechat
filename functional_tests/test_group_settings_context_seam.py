@@ -1,8 +1,9 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 The selected-group context (``GET /api/v2/workspaces/group/<group_id>``) publishes
 ``settings_management`` so the V2 workspace can offer group settings without another

@@ -1,8 +1,9 @@
 # test_group_settings_apis.py
 """
 Functional test for the native group settings read and writes.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 ``GET /api/groups/<group_id>/settings`` and the writes under it run for real in
 ``test_support/group_settings_harness.py``, over the etag-enforcing groups container,

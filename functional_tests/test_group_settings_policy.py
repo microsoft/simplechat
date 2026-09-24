@@ -1,8 +1,9 @@
 # test_group_settings_policy.py
 """
 Functional test for the native group settings policy and its seam with the classic routes.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 ``group_settings_decisions`` is the one decision behind the native group settings and
 insights routes and their ``settings_management`` block. This test holds it, and the

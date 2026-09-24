@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.157)**
+
+#### Bug Fixes
+
+*   **Group Profile And Logo Edits Refused When The Group's Status Isn't Recognized**
+    *   The native group settings routes let the owner of a group with an unrecognized status change its name, description, color and logo, although the rest of the workspace treats such a group as unavailable. Those edits are now refused unless the group is active or has uploads disabled, with a message that says the status isn't recognized.
+    *   Downloads, retention and the settings, activity and statistics reads are unchanged.
+    *   (Ref: `functions_group_settings_policy.py`, `functions_group_settings.py`, [Group Settings Unknown Status Fix](fixes/GROUP_SETTINGS_UNKNOWN_STATUS_FIX.md))
+
 ### **(v0.261.156)**
 
 #### Bug Fixes
