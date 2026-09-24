@@ -291,6 +291,18 @@ def test_member_editor_shows_neutral_model_copy(group_agents_ui):
     expect(page.get_by_text("No enabled models are listed.", exact=False)).to_have_count(0)
 
 
+def test_manager_with_no_models_keeps_authoring_guidance(group_agents_ui):
+    """A manager on a legacy-default-model tenant keeps actionable guidance, not the member's neutral copy."""
+    ui, page = group_agents_ui, group_agents_ui.page
+    # group-a manager options carry no model endpoints, exactly like a multi-model-off tenant.
+    ui.empty_model_groups.add("group-a")
+    open_editor(ui, EDITABLE_AGENT_ID)
+    editor_section(page, "Model & connection")
+    # The editor is writable, so the actionable custom-connection guidance is shown, not neutral copy.
+    expect(page.get_by_text("No enabled models are listed.", exact=False)).to_be_visible()
+    expect(page.get_by_text("Uses a configured model.", exact=True)).to_have_count(0)
+
+
 def test_group_scoped_foundry_endpoint_hides_discovery(group_agents_ui):
     """A group-scoped Foundry connection offers no discovery and never posts the active-group route."""
     ui, page = group_agents_ui, group_agents_ui.page

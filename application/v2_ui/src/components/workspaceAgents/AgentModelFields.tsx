@@ -27,16 +27,22 @@ interface ModelFieldsProps {
      */
     allowCustomEndpoints?: boolean;
     /**
-     * Whether this editor is a group agent editor. A group member receives no model endpoints and a
-     * group-scoped saved connection cannot be resolved on a group page, so the notices use neutral
-     * read-only copy instead of the personal authoring guidance, and Foundry discovery is withheld
-     * for a group-scoped connection because `/api/models/foundry/agents` resolves the account's
-     * active group, not the page's. Omitted keeps the historical personal behaviour byte-identical.
+     * Whether this editor is a group agent editor. Foundry discovery is withheld for a group-scoped
+     * connection because `/api/models/foundry/agents` resolves the account's active group, not the
+     * page's; that applies to managers too, so it is keyed here rather than on read-only. Omitted
+     * keeps the historical personal behaviour byte-identical.
      */
     groupScope?: boolean;
+    /**
+     * Whether to show neutral read-only copy in place of the personal authoring guidance: true only
+     * for a read-only group editor (a member). A group manager with an empty model list still needs
+     * the actionable "configure a custom connection" guidance and the "Saved connection unavailable"
+     * hint, so this stays false for them. Omitted keeps the historical personal behaviour identical.
+     */
+    neutralReadOnlyCopy?: boolean;
 }
 
-function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints, groupScope }: ModelFieldsProps) {
+function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints, neutralReadOnlyCopy }: ModelFieldsProps) {
     const choices = agentModelChoices(options);
     const selected = selectedAgentModel(draft, choices);
     const customAllowed = allowCustomEndpoints ?? options.settings.allow_user_custom_endpoints === true;
@@ -56,7 +62,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                     {choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
                 </select>
             </AgentField>
-            {!choices.length ? <AgentNotice>{groupScope
+            {!choices.length ? <AgentNotice>{neutralReadOnlyCopy
                 ? 'Uses a configured model.'
                 : 'No enabled models are listed. You can retain the saved connection or configure a custom connection below.'}</AgentNotice> : null}
             <dl className="grid gap-3 rounded-xl border border-edge p-3 text-xs sm:grid-cols-3">
@@ -113,7 +119,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
     );
 }
 
-function FoundryModelFields({ draft, setDraft, options, groupScope }: ModelFieldsProps) {
+function FoundryModelFields({ draft, setDraft, options, groupScope, neutralReadOnlyCopy }: ModelFieldsProps) {
     const [resources, setResources] = useState<FoundryDiscoveryRecord[]>([]);
     const [responseVersion, setResponseVersion] = useState('');
     const [loading, setLoading] = useState(false);
@@ -198,7 +204,7 @@ function FoundryModelFields({ draft, setDraft, options, groupScope }: ModelField
                         else setDraft((current) => updateAgentSetting({ ...current, model_endpoint_id: '' }, key, { endpoint_id: '' }));
                     }}>
                     <option value="">Manual Foundry project connection</option>
-                    {endpointId && !selectedEndpoint ? <option value={endpointId}>{groupScope
+                    {endpointId && !selectedEndpoint ? <option value={endpointId}>{neutralReadOnlyCopy
                         ? 'Uses a configured model' : `Saved connection unavailable · ${endpointId}`}</option> : null}
                     {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id} · {agentText(endpoint.scope) || 'global'}</option>)}
                 </select>
