@@ -1,12 +1,13 @@
 # test_group_write_conflict_text.py
 """
 Functional test for the one group write conflict answer.
-Version: 0.261.160
+Version: 0.261.161
 Implemented in: 0.261.160
 
 When the group document keeps changing while a change to it is being saved
 (``GroupDocumentWriteConflict``), every group route answers 409 with the
-``error_code`` ``group_write_conflict`` and one reviewed sentence. Three sentences
+``error_code`` ``group_write_conflict`` and one reviewed sentence, and the SimpleChat
+agent tools answer the model with the same sentence and code. Three sentences
 existed before this: the group directory, settings and classic settings writers had
 one, the membership routes another, and the model endpoint routes a third. Now the
 code and the sentence both live in ``functions_group``, beside the exception, as
@@ -97,6 +98,7 @@ def test_the_constants_sit_beside_the_conflict_exception(modules):
 @pytest.mark.parametrize("module_name", [
     "functions_group_directory.py", "functions_group_membership.py", "functions_group_endpoint_access.py",
     "functions_group_settings.py", "route_backend_retention_policy.py",
+    "semantic_kernel_plugins/simplechat_plugin.py",
 ])
 def test_the_group_modules_import_the_constants(modules, module_name):
     assert {"GROUP_WRITE_CONFLICT_CODE", "GROUP_WRITE_CONFLICT_MESSAGE"} <= imports_from(modules[module_name], "functions_group")

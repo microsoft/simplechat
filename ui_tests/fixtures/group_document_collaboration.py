@@ -1,8 +1,10 @@
 # group_document_collaboration.py
 """
 Closed M2C sharing/publication HTTP fixtures for the real production V2 SPA.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.130
+The review states, recipient directory, receipts, refusals and partial outcomes are the real
+collaboration routes', held to them by functional_tests/test_group_document_fixture_parity.py.
 
 Reuse the existing local asset boundary, M2A reads, response gates, request
 recording and Azure Playwright connection options. Collaboration decisions are
@@ -22,7 +24,10 @@ import pytest
 from ui_tests.fixtures.group_document_management import (
     GroupDocumentManagementFixture, OperationReply, PRESENTATION_SETTINGS, operation_path,
 )
-from ui_tests.fixtures.group_documents import document, restricted
+from ui_tests.fixtures.group_documents import (
+    GROUP_DOCUMENT_NOT_FOUND_ERROR, GROUP_DOCUMENTS_DENIED_ERROR, GROUP_DOCUMENTS_STATUS_ERROR, document,
+    pending_artifact,
+)
 from ui_tests.fixtures.group_workspace import connect_options  # noqa: F401
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID, WorkspaceAuthoringFixture
 
@@ -48,6 +53,46 @@ COLLABORATION_PATH = re.compile(
 
 def collaboration_path(identifier, suffix="sharing", group_id="group-a"):
     return operation_path(f"{quote(identifier, safe='')}/{suffix}", group_id)
+
+
+# The collaboration routes' refusals and partial outcomes (functions_group_document_collaboration.py
+# and functions_group_document_publication.py), held to them by
+# functional_tests/test_group_document_fixture_parity.py. A refusal is a code and its sentence; a
+# reader outside the group, or in a status that bars reading, is refused as the read routes refuse.
+def collaboration_refusal(code, message):
+    return {"error": code, "message": message}
+
+
+STATE_CONFLICT = collaboration_refusal("state_conflict", "The document state changed. Refresh before retrying.")
+COLLABORATION_GONE = collaboration_refusal("collaboration_gone", "The document is not available in this group.")
+COLLABORATION_DENIED = collaboration_refusal("collaboration_unavailable", GROUP_DOCUMENTS_DENIED_ERROR)
+COLLABORATION_STATUS_REFUSED = collaboration_refusal("collaboration_unavailable", GROUP_DOCUMENTS_STATUS_ERROR)
+PUBLICATION_HANDOFF_ERROR = {
+    "stage": "queue", "code": "publication_handoff_unconfirmed",
+    "message": "Approval was recorded, but processing has not been confirmed. Reconcile the existing handoff.",
+}
+# An approval whose processing handoff failed records the decision, then reports that the handoff
+# was interrupted, was not confirmed, and sent no decision notice.
+FAILED_HANDOFF_ERRORS = (
+    {
+        "stage": "publication", "code": "publication_reconciliation_required",
+        "message": "The existing decision or processing handoff needs reconciliation; no second copy was requested.",
+    },
+    PUBLICATION_HANDOFF_ERROR,
+    {
+        "stage": "notifications", "code": "publication_notification_incomplete",
+        "message": "Decision notification delivery has not been confirmed.",
+    },
+)
+
+
+def effect_error(stage):
+    """A decision that changed access but could not confirm one of its effects: `search`, `index`,
+    `cache` or `notifications`."""
+    return {
+        "stage": stage, "code": f"{stage}_repair_required",
+        "message": f"The {stage} update could not be confirmed. Refresh before retrying.",
+    }
 
 
 def recipient(identifier, name, approval_status="not_approved"):
@@ -162,20 +207,23 @@ class GroupDocumentCollaborationFixture(GroupDocumentManagementFixture):
                     owner_name=self.groups[group_id]["workspace"]["name"] if owned else "Publishing group",
                     relationship=record["shared_approval_status"], actions=actions, recipients=recipients,
                 )
+            # Each generated artifact awaits approval. The Owner decides one; the other was requested
+            # by the viewer, as the member who asked for it (the role the suite reviews it under).
             for identifier, requester in (("pending-publication", False), ("requested-publication", True)):
                 actions = ["inspect", "cancel_artifact"] if requester else ["inspect", "approve_artifact", "reject_artifact"]
-                record = restricted(document(
-                    group_id, identifier, "Unreleased generated content", timestamp=self.now - 8,
-                    status="Pending approval", tags=[],
-                ))
-                record.update({
-                    "generated_artifact_promotion_status": "pending_approval",
-                    "document_actions": [], "document_collaboration_actions": actions,
-                })
+                request = publication(requester=requester, actions=actions[1:])
+                record = pending_artifact(
+                    document(
+                        group_id, identifier, "Unreleased generated content", timestamp=self.now - 8, tags=[],
+                    ),
+                    requested_by_user_id=request["requested_by_user_id"],
+                    requested_by_display_name=request["requested_by_display_name"],
+                    requested_at=request["requested_at"],
+                )
+                record["document_collaboration_actions"] = actions
                 self.documents[group_id].append(record)
                 self.reviews[(group_id, identifier)] = sharing_state(
-                    identifier, group_id=group_id, actions=actions,
-                    publication_state=publication(requester=requester, actions=actions[1:]),
+                    identifier, group_id=group_id, actions=actions, publication_state=request,
                 )
             self.target_catalog[group_id] = [
                 {"id": group_id, "name": self.groups[group_id]["workspace"]["name"], "description": "Self must not be offered."},
@@ -360,19 +408,21 @@ class GroupDocumentCollaborationFixture(GroupDocumentManagementFixture):
                 )
                 if not verified:
                     state = None
-            if group_id in self.denied_groups or not self.groups[group_id]["document_permissions"]["can_view"]:
-                self._json(route, {"error": "This group review is not available."}, 403)
+            if group_id in self.denied_groups:
+                self._json(route, COLLABORATION_DENIED, 403)
+            elif not self.groups[group_id]["document_permissions"]["can_view"]:
+                self._json(route, COLLABORATION_STATUS_REFUSED, 403)
             elif state is None:
-                self._json(route, {"error": "This document or review no longer exists."}, 404)
+                self._json(route, COLLABORATION_GONE, 404)
             elif suffix == "sharing":
                 self._json(route, state)
             else:
-                query = entry.query.get("search", [""])[0].casefold()
-                candidates = [
+                query = entry.query.get("search", [""])[0].lower()
+                candidates = sorted((
                     target for target in self.target_catalog[group_id]
                     if target["id"] != group_id
-                    and query in f'{target["name"]} {target["description"]}'.casefold()
-                ]
+                    and (not query or any(query in target[field].lower() for field in ("name", "description", "id")))
+                ), key=lambda target: (target["name"].casefold(), target["id"]))
                 page = int(entry.query["page"][0])
                 self._json(route, {
                     "groups": candidates[(page - 1) * 25:page * 25],
@@ -385,7 +435,7 @@ class GroupDocumentCollaborationFixture(GroupDocumentManagementFixture):
             failure = self.document_failures.get((group_id, detail[1]))
             if failure is not None:
                 assert entry.query == {"group_id": [group_id]}
-                self._json(route, {"error": "The requested document is unavailable in this group."}, failure)
+                self._json(route, {"error": GROUP_DOCUMENT_NOT_FOUND_ERROR}, failure)
                 return
         super()._dispatch(route, entry)
 

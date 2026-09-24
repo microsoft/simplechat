@@ -1,7 +1,7 @@
 # test_simplechat_agent_group_output.py
 """
-Functional test for the group summary the SimpleChat agent tools answer.
-Version: 0.261.160
+Functional test for the group summary and the conflict answer the SimpleChat agent tools give.
+Version: 0.261.161
 Implemented in: 0.261.160
 
 The ``create_group``, ``add_user_to_group`` and ``make_group_inactive`` tools
@@ -13,14 +13,25 @@ themselves, which classic and native routes also call, still return the document
 Every other field of each answer is unchanged: ``add_user_to_group`` keeps its
 ``member``, and ``make_group_inactive`` keeps ``old_status`` and ``new_status``.
 
+A group that kept changing while ``add_user_to_group`` or ``make_group_inactive``
+saved (``GroupDocumentWriteConflict``) fell into the plugin's generic answer, "Failed
+to ..." with the exception's text, logged at ERROR with its traceback. It now answers
+a failure the model can relay: the shared sentence and code,
+``GROUP_WRITE_CONFLICT_MESSAGE`` and ``GROUP_WRITE_CONFLICT_CODE``, with
+``error_type`` ``conflict``, logged at WARNING with only the operation's name. Every
+other failure keeps its answer.
+
 The plugin module is loaded unchanged. Its application imports are stubs that
-define every name the real modules define, refusing unless modelled here; the
-invocation logger is a pass-through, since it only records the call.
+define every name the real modules define, refusing unless modelled here;
+``functions_group``'s conflict exception, code and sentence are its real
+definitions, run from source. The invocation logger is a pass-through, since it only
+records the call.
 """
 
 import copy
 import importlib.util
 import json
+import logging
 import sys
 from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
@@ -29,7 +40,7 @@ from unittest.mock import patch
 import pytest
 
 from test_support.agent_delegation import APP_ROOT
-from test_support.app_source import refusing_module_stub
+from test_support.app_source import refusing_module_stub, run_definitions
 
 
 STORED_GROUP = {
@@ -55,12 +66,15 @@ PRIVATE_VALUES = (
     "cc.admin@example.test", "sk-inline-endpoint-secret", "Private notes", "etag-7",
 )
 MEMBER = {"userId": "newcomer-1", "email": "nia.newcomer@example.test", "displayName": "Nia Newcomer"}
+GROUP_CONFLICT_NAMES = ("GroupDocumentWriteConflict", "GROUP_WRITE_CONFLICT_CODE", "GROUP_WRITE_CONFLICT_MESSAGE")
 
 
 @contextmanager
 def plugin_environment():
     calls = []
+    logs = []
     answers = {}
+    group = run_definitions("functions_group.py", set(GROUP_CONFLICT_NAMES), {"__name__": "functions_group"})
 
     def operation(name):
         def run(**kwargs):
@@ -74,7 +88,10 @@ def plugin_environment():
     stubs = {
         "functions_appinsights": refusing_module_stub(
             "functions_appinsights.py", "functions_appinsights",
-            log_event=lambda *args, **kwargs: calls.append(("log_event", args)),
+            log_event=lambda *args, **kwargs: logs.append((args, kwargs)),
+        ),
+        "functions_group": refusing_module_stub(
+            "functions_group.py", "functions_group", **{name: group[name] for name in GROUP_CONFLICT_NAMES},
         ),
         "functions_simplechat_operations": refusing_module_stub(
             "functions_simplechat_operations.py", "functions_simplechat_operations",
@@ -100,7 +117,10 @@ def plugin_environment():
             "name": "simplechat_tools", "type": "simplechat", "default_group_id": "group-1",
             "enabled_functions": ["create_group", "add_group_member", "make_group_inactive"],
         })
-        yield SimpleNamespace(module=module, plugin=plugin, calls=calls, answers=answers)
+        yield SimpleNamespace(
+            module=module, plugin=plugin, calls=calls, logs=logs, answers=answers,
+            group=SimpleNamespace(**{name: group[name] for name in GROUP_CONFLICT_NAMES}),
+        )
 
 
 @pytest.fixture(scope="module")
@@ -112,6 +132,7 @@ def module_env():
 @pytest.fixture
 def env(module_env):
     module_env.calls.clear()
+    module_env.logs.clear()
     module_env.answers.clear()
     yield module_env
 
@@ -176,6 +197,8 @@ def test_make_group_inactive_answers_the_summary_and_both_statuses(env, old_stat
     (PermissionError("Insufficient permissions (Admin role required)"),
      {"success": False, "error": "Insufficient permissions (Admin role required)", "error_type": "permission"}),
     (LookupError("Group not found"), {"success": False, "error": "Group not found", "error_type": "not_found"}),
+    (ValueError("User is already a member"),
+     {"success": False, "error": "User is already a member", "error_type": "validation"}),
 ])
 def test_refusals_keep_their_answers(env, error, expected):
     for name in ("create_group_for_current_user", "add_group_member_for_current_user", "make_group_inactive_for_current_user"):
@@ -183,6 +206,58 @@ def test_refusals_keep_their_answers(env, error, expected):
     assert env.plugin.create_group(name="Research") == expected
     assert env.plugin.add_user_to_group(user_identifier="x") == expected
     assert env.plugin.make_group_inactive() == expected
+    assert env.logs == []
+
+
+CONFLICT_TOOLS = {
+    "add_user_to_group": (
+        "add_group_member_for_current_user", "add_group_member",
+        lambda plugin: plugin.add_user_to_group(user_identifier="nia.newcomer@example.test"),
+    ),
+    "make_group_inactive": (
+        "make_group_inactive_for_current_user", "make_group_inactive",
+        lambda plugin: plugin.make_group_inactive(reason="Cleanup"),
+    ),
+}
+
+
+@pytest.mark.parametrize("tool", CONFLICT_TOOLS)
+def test_a_group_that_keeps_changing_is_a_conflict_the_model_can_relay(env, tool):
+    operation, operation_name, call = CONFLICT_TOOLS[tool]
+    # The exception's own text is never relayed or logged, whatever it holds.
+    env.answers[operation] = env.group.GroupDocumentWriteConflict(
+        "group-1 kept changing for olive.owner@example.test (Private notes)",
+    )
+    result = call(env.plugin)
+    assert result == {
+        "success": False,
+        "error": env.group.GROUP_WRITE_CONFLICT_MESSAGE,
+        "error_type": "conflict",
+        "error_code": env.group.GROUP_WRITE_CONFLICT_CODE,
+    }
+    assert (result["error"], result["error_code"]) == (
+        "The group changed while your request was being saved. Try again.", "group_write_conflict",
+    )
+    assert env.logs == [(
+        ("[SIMPLE_CHAT_PLUGIN] A group change was not saved because the group kept changing.",),
+        {"extra": {"operation": operation_name}, "level": logging.WARNING},
+    )]
+    assert_private_values_absent(result)
+    assert_private_values_absent(env.logs)
+    assert "group-1" not in json.dumps(env.logs)
+
+
+def test_any_other_failure_keeps_the_unexpected_answer(env):
+    """A plain RuntimeError, the conflict's base class, is still unexpected."""
+    env.answers["add_group_member_for_current_user"] = RuntimeError("storage unavailable")
+    assert env.plugin.add_user_to_group(user_identifier="x") == {
+        "success": False, "error": "Failed to add group member", "error_type": "unexpected",
+        "details": "storage unavailable",
+    }
+    assert env.logs == [(
+        ("[SIMPLE_CHAT_PLUGIN] add_group_member failed: storage unavailable",),
+        {"level": logging.ERROR, "exceptionTraceback": True},
+    )]
 
 
 def test_the_summary_is_the_only_group_shape_a_tool_answers():

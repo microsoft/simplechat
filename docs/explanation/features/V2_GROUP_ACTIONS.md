@@ -159,6 +159,16 @@ group page to the personal agent settings or the MCP preconfiguration list as
 unexpected, so a personal-scope read fails the suite rather than passing
 silently.
 
+`functional_tests/test_group_action_fixture_parity.py` holds that fixture to the
+real group action routes, route by route: only server keys, every field the
+editor reads present on both sides, and matching statuses and error codes. The
+type catalogue comes from the real editor type builder. When it was added, after
+version **0.261.161**, it corrected four places where the fixture had drifted:
+the provided row's invented `group_id`, invented refusal texts, invented
+stored-credential refusals, and the auth types offered for each action type,
+which the server sorts and, for a type with no definition file, takes from the
+shared plugin schema.
+
 The personal authoring, draft navigation and delegation suites pass unchanged,
 as do the group prompt, group document and personal document suites.
 

@@ -7,6 +7,8 @@ Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
 Group context held to the server's builder, field by field: 0.261.157
 Settings, Activity and Statistics sections in the group context (M7C): 0.261.161
+Group agent responses held to the real routes, route by route: 0.261.161
+Group action responses held to the real routes, route by route: 0.261.161
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -36,8 +38,9 @@ from urllib.parse import quote, unquote, urlsplit
 import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
-    OWNER_ID, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
-    _editor_candidate, _set_pointer, action_record, agent_record, connect_options,  # noqa: F401
+    MISSING, OWNER_ID, SCHEMA_ROOT, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
+    _editor_candidate, _get_pointer, _schema, _set_pointer, _walk_values, action_record, agent_record,
+    connect_options,  # noqa: F401
     editor_options, personal_scope_leak,
 )
 
@@ -110,6 +113,21 @@ def action_management(role, status):
     return {"schema_version": 1, "operations": []}
 
 
+def action_editor_auth_types(action_type):
+    """The auth types `build_action_editor_types` lists for a type, sorted: the type's definition's
+    `allowedAuthTypes` when it lists any, otherwise the shared `AuthType` enum of plugin.schema.json
+    (`get_allowed_auth_types_for_plugin_type`)."""
+    compact = re.sub(r"[^a-z0-9]", "", str(action_type or "").lower())
+    if compact in {"msgraph", "microsoftgraph", "msgraphplugin", "microsoftgraphplugin"}:
+        name = "msgraph"
+    else:
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", str(action_type or "")).lower()
+    allowed = _schema(SCHEMA_ROOT / f"{name}.definition.json").get("allowedAuthTypes")
+    if not (isinstance(allowed, list) and allowed):
+        allowed = _schema(SCHEMA_ROOT / "plugin.schema.json").get("definitions", {}).get("AuthType", {}).get("enum", [])
+    return sorted({str(item) for item in allowed})
+
+
 # The native group agent model, mirrored from the M4C backend so both the shell fixture and the
 # dedicated agent fixture answer create, edit and delete identically. `agent_actions` is the
 # read-only per-agent projection: `edit`/`delete` gate the affordances and a conditional write, and
@@ -126,6 +144,41 @@ def agent_secret_paths(record):
     """The secret pointers a seeded or saved agent registers -- its connection key, when present."""
     value = record.get("other_settings", {}).get("connection", {}).get("api_key")
     return [AGENT_SECRET_POINTER] if isinstance(value, str) and value and value != SECRET_MASK else []
+
+
+# The native group agent and action routes answer through the personal editor engine
+# (`functions_workspace_authoring`), so a refusal carries the engine's own sentence, which the
+# editor renders verbatim. `test_group_agent_fixture_parity.py` holds these to the real routes.
+EDITOR_GROUP_DENIED_ERROR = "You do not have access to the selected group."
+EDITOR_RESOURCE_UNAVAILABLE_ERROR = "This workspace resource is unavailable."
+EDITOR_QUERY_REFUSED_ERROR = "This request does not accept query parameters."
+EDITOR_REVISION_CONFLICT_ERROR = "This resource changed. Reload it before saving."
+
+
+def editor_secret_refusal(record, updates, secret_paths, clear_paths, removed_paths):
+    """The engine's sentence for the stored-credential rule a refused editor write breaks.
+
+    `_editor_candidate` refuses the same writes without saying why; this names the first rule the
+    write breaks, in the order `merge_editor_write` checks them: a field both removed and cleared,
+    then each submitted value in turn (a mask with nothing stored behind it, or a stored secret
+    emptied without clearing it), then clearing a field that holds no secret, then removing the
+    configuration a stored secret lives in, and last a stored secret the write otherwise replaced.
+    """
+    known, cleared, removed = set(secret_paths), set(clear_paths), set(removed_paths)
+    if cleared & removed:
+        return "A field cannot be both removed and cleared."
+    for pointer, value in _walk_values(updates):
+        if value == SECRET_MASK:
+            original = _get_pointer(record, pointer)
+            if pointer not in known or original is MISSING or original == SECRET_MASK:
+                return "A stored secret is unavailable. Re-enter its value."
+        elif pointer in known and value in (None, "") and pointer not in cleared:
+            return "Use clear_secret_paths to clear a stored credential."
+    if cleared - known:
+        return "Only an existing secret can be cleared."
+    if any(secret == path or secret.startswith(f"{path}/") for path in removed for secret in known - cleared):
+        return "Clear stored credentials explicitly before removing their configuration."
+    return "Clear stored credentials explicitly before replacing their configuration."
 
 
 def group_agent(group_id, identifier, name, *, actions=AGENT_ACTIONS, **overrides):
@@ -158,67 +211,111 @@ def agent_management(role, status):
 GROUP_FOUNDRY_ENDPOINT_ID = "group-foundry-connection"
 GLOBAL_FOUNDRY_ENDPOINT_ID = "global-foundry-connection"
 
+# The group agent option settings, keyed exactly as `build_group_agent_editor_options` sends them
+# (its `_GROUP_OPTION_DEFAULTS`, the Key Vault reminder defaults and the template submission
+# gate), with the values of the deployment the fixtures model: every agent type allowed, global
+# agents merged in, the template gallery on, and the math builtin the only builtin enabled.
+GROUP_AGENT_OPTION_SETTINGS = {
+    "enable_semantic_kernel": True,
+    "per_user_semantic_kernel": True,
+    "merge_global_semantic_kernel_with_workspace": True,
+    "allow_group_custom_endpoints": True,
+    "allow_group_ai_foundry_agents": True,
+    "allow_group_new_foundry_agents": True,
+    "enable_multi_model_endpoints": True,
+    "default_model_selection": {},
+    "gpt_model": {},
+    "enable_gpt_apim": False,
+    "azure_apim_gpt_deployment": "",
+    "enable_agent_template_gallery": True,
+    "enable_web_search": True,
+    "enable_url_access": True,
+    "enable_time_plugin": False,
+    "enable_fact_memory_plugin": False,
+    "enable_math_plugin": True,
+    "enable_text_plugin": False,
+    "enable_http_plugin": False,
+    "enable_wait_plugin": False,
+    "enable_default_embedding_model_plugin": False,
+    "enable_key_vault_secret_storage": GROUP_SECRET_REMINDERS["storage_enabled"],
+    "enable_key_vault_secret_expiration_reminders": GROUP_SECRET_REMINDERS["reminders_enabled"],
+    "key_vault_secret_expiration_default_lead_days": GROUP_SECRET_REMINDERS["lead_days"],
+    "key_vault_secret_expiration_default_contact_email": GROUP_SECRET_REMINDERS["contact_email"],
+    "key_vault_secret_expiration_require_expiration": GROUP_SECRET_REMINDERS["require_expiration"],
+}
+GROUP_AGENT_AUTHORING_UNAVAILABLE_REASON = "Agent authoring is unavailable for this group workspace."
+# The chat entry of a chat deployment's `capability_status`, as `sanitize_model_endpoints_for_frontend`
+# describes it; the editor's model picker skips a deployment whose chat capability is unavailable.
+GROUP_AGENT_CHAT_CAPABILITY = {
+    "chat": {"supported": True, "source": "catalog", "reason": "", "api": "chat", "available": True},
+}
+
 
 def group_agent_options(group_id, *, can_author=True, template_submission=True, empty_models=False):
-    """The group agent editor options.
+    """The group agent editor options, as `build_group_agent_editor_options` builds them.
 
-    Derived from the shared editor options but carrying no personal endpoint permissions: every
-    `allow_user_*` / `allow_personal_*` flag is dropped and replaced with the group-scoped
-    custom-endpoint flag, so the editor's custom-connection controls read the group's own policy and
-    the options response proves it came from the group route rather than a personal-scope read.
+    The settings carry no `allow_user_*` / `allow_personal_*` capability: the editor's custom
+    connection controls read the group's own `allow_group_custom_endpoints`, so the response proves
+    it came from the group route rather than a personal-scope read.
 
-    A member cannot author, so the server withholds every model endpoint and the read-only editor
-    shows neutral "Uses a configured model" copy rather than personal authoring guidance. A manager
-    additionally receives two Foundry connections that prove the discovery gate: a group-scoped one
-    whose discovery route resolves the account's active group -- for which the editor offers no
-    discovery -- and a global one with no group dependency, for which discovery is kept.
+    A member cannot author, so the server offers every agent type disabled with its reason and
+    withholds every model endpoint and builtin, and the read-only editor shows neutral "Uses a
+    configured model" copy rather than personal authoring guidance. A manager receives the global
+    Azure OpenAI connection and two Foundry connections, projected as the options send them: no
+    `connection`, `auth` or `management` block, and each connection's `scope`. A group-scoped
+    Foundry connection discovers through the named-group route and a global one through the
+    legacy account-wide route.
 
     `empty_models` models a manager on a legacy-default-model tenant with no multi-model endpoints:
-    the list is empty but the caller can still author, so the editable editor keeps its actionable
-    "configure a custom connection" guidance rather than the member's neutral read-only copy.
+    the list is empty and multi-model endpoints are off, but the caller can still author, so the
+    editable editor keeps its actionable "configure a custom connection" guidance rather than the
+    member's neutral read-only copy.
 
-    `agent_template_submission_allowed` is always present, computed server-side for the caller, so
-    the group template panel gates on it rather than on the absent personal submission flag.
+    `agent_template_submission_allowed` is always present. The server computes it from the
+    tenant's submission gate alone, never the caller's group role, so a member receives it too;
+    the read-only editor is what keeps a member from submitting.
     """
-    options = copy.deepcopy(editor_options())
-    settings = options["settings"]
-    for key in list(settings):
-        if key.startswith("allow_user_") or key.startswith("allow_personal_"):
-            settings.pop(key)
-    settings["allow_group_custom_endpoints"] = True
-    settings["agent_template_submission_allowed"] = bool(can_author and template_submission)
-    if not can_author or empty_models:
-        options["model_endpoints"] = []
+    authoring = copy.deepcopy(editor_options())
+    settings = copy.deepcopy(GROUP_AGENT_OPTION_SETTINGS)
+    settings["agent_template_submission_allowed"] = bool(template_submission)
+    agent_types = [
+        {**item, "enabled": True} if can_author
+        else {**item, "enabled": False, "reason": GROUP_AGENT_AUTHORING_UNAVAILABLE_REASON}
+        for item in authoring["agent_types"]
+    ]
+    options = {"agent_types": agent_types, "settings": settings, "model_endpoints": [], "builtin_actions": []}
+    if not can_author:
         return options
-    options["model_endpoints"].extend([
-        {"id": GROUP_FOUNDRY_ENDPOINT_ID, "name": "Group Foundry connection", "provider": "aifoundry",
-         "enabled": True, "scope": "group", "connection": {}, "models": []},
+    options["builtin_actions"] = [{"id": "math", "label": "Math"}]
+    if empty_models:
+        settings["enable_multi_model_endpoints"] = False
+        return options
+    options["model_endpoints"] = [
+        {**endpoint, "scope": "global", "models": [
+            {**model, "capability_status": copy.deepcopy(GROUP_AGENT_CHAT_CAPABILITY)} for model in endpoint["models"]
+        ]}
+        for endpoint in authoring["model_endpoints"]
+    ] + [
         {"id": GLOBAL_FOUNDRY_ENDPOINT_ID, "name": "Global Foundry connection", "provider": "aifoundry",
-         "enabled": True, "scope": "global", "connection": {}, "models": []},
-    ])
+         "enabled": True, "scope": "global", "models": []},
+        {"id": GROUP_FOUNDRY_ENDPOINT_ID, "name": "Group Foundry connection", "provider": "aifoundry",
+         "enabled": True, "scope": "group", "group_id": group_id, "models": []},
+    ]
     return options
 
 
-def group_agent_knowledge_catalog(group_id):
-    """The group's own assigned-knowledge catalogue: group and public sources, never personal."""
+def group_agent_knowledge_catalog(group_id, group_name):
+    """The group's own assigned-knowledge catalogue, as `build_assigned_knowledge_catalog` builds it
+    for group scope: the group alone, labelled with its name, never a personal or public source,
+    and tags normalized to lowercase."""
     return {
-        "sources": [
-            {"scope": "group", "id": group_id, "label": "This group's workspace"},
-            {"scope": "public", "id": "public-handbook", "label": "Published handbook"},
-        ],
-        "documents": [
-            {
-                "id": f"{group_id}-brief", "title": "Group review brief",
-                "file_name": "group-brief.pdf", "scope": "group", "source_id": group_id,
-                "source_name": "This group's workspace", "tags": ["Finance"],
-            },
-            {
-                "id": "public-guide", "title": "Public review guide",
-                "file_name": "review-guide.pdf", "scope": "public", "source_id": "public-handbook",
-                "source_name": "Published handbook", "tags": ["Finance", "Operations"],
-            },
-        ],
-        "tags": [{"name": "Finance", "count": 2}, {"name": "Operations", "count": 1}],
+        "sources": [{"scope": "group", "id": group_id, "label": group_name}],
+        "documents": [{
+            "id": f"{group_id}-brief", "title": "Group review brief",
+            "file_name": "group-brief.pdf", "scope": "group", "source_id": group_id,
+            "source_name": group_name, "tags": ["finance"],
+        }],
+        "tags": [{"name": "finance", "count": 1}],
     }
 
 
@@ -1896,10 +1993,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         group_id = parts[3]
         assert group_id in self.groups, f"Unknown group action-options scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's actions."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         assert entry.method == "GET", entry
         self._json(route, {"secret_reminders": copy.deepcopy(GROUP_SECRET_REMINDERS)})
@@ -1912,7 +2009,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         method = entry.method
         assert group_id in self.groups, f"Unknown group action scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's actions."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         management = self.groups[group_id].get("action_management", {})
         operations = set(management.get("operations", []))
@@ -1920,13 +2017,17 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         # the server's _reject_query_parameters(); the frontend therefore sends none. Answering 400
         # here means a regression to ?view=editor fails a test instead of silently passing.
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         if tail == "types":
             # The enriched editor catalogue is a read capability served to every member role, in a
-            # {"types": [...]} envelope, exactly as the personal ?view=editor branch returns it.
+            # {"types": [...]} envelope, exactly as the personal ?view=editor branch returns it, with
+            # each type's auth types resolved and sorted as `build_action_editor_types` does.
             assert method == "GET", entry
-            self._json(route, {"types": copy.deepcopy(self.types)})
+            self._json(route, {"types": [
+                {**item, "allowed_auth_types": action_editor_auth_types(item["type"])}
+                for item in copy.deepcopy(self.types)
+            ]})
             return
         if tail is None:
             if method == "GET":
@@ -1941,7 +2042,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             record = self.record(group_id, tail)
             if record is None:
-                self._json(route, {"error": "Action not found in this group."}, 404)
+                self._json(route, {"error": EDITOR_RESOURCE_UNAVAILABLE_ERROR}, 404)
                 return
             if method == "GET":
                 self._json(route, self._action_envelope(group_id, record))
@@ -1980,7 +2081,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         try:
             record = _editor_candidate(base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"])
         except EditorSecretError:
-            self._json(route, {"error": "Stored credentials must be kept, replaced, or explicitly cleared."}, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         paths = []
         if record.get("auth", {}).get("key"):
@@ -2004,7 +2107,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         assert "action_actions" not in updates, "action_actions is projection-only; it must not be sent in updates."
         assert "/action_actions" not in entry.body["removed_paths"], "action_actions must not appear in removed_paths."
         if entry.body["expected_revision"] != self._action_revision(group_id, identifier):
-            self._json(route, {"error": "This action changed in another session. Reload before saving."}, 409)
+            self._json(route, {"error": EDITOR_REVISION_CONFLICT_ERROR}, 409)
             return
         paths = self.native_secret_paths.get((group_id, identifier), [])
         try:
@@ -2012,9 +2115,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
             )
         except EditorSecretError:
-            self._json(route, {
-                "error": "Stored credentials must be kept at their original paths, replaced, or explicitly cleared.",
-            }, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         self.native_secret_paths[(group_id, identifier)] = [
             pointer for pointer in paths if pointer not in entry.body["clear_secret_paths"]
@@ -3147,15 +3250,17 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         group_id = entry.path.split("/")[3]
         assert group_id in self.groups, f"Unknown group agent-options scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         assert entry.method == "GET", entry
         can_author = bool(self.groups[group_id].get("agent_management", {}).get("operations"))
         template_submission = group_id not in self.template_submission_denied
-        self._template_submission_allowed = bool(can_author and template_submission)
+        # The submit route enforces only the tenant's submission gate, so the options flag and the
+        # route agree for every member role; a member's read-only editor never offers the button.
+        self._template_submission_allowed = template_submission
         self._json(route, group_agent_options(
             group_id, can_author=can_author, template_submission=template_submission,
             empty_models=group_id in self.empty_model_groups))
@@ -3187,13 +3292,13 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         group_id = entry.path.split("/")[3]
         assert group_id in self.groups, f"Unknown group agent-knowledge scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         assert entry.method == "GET", entry
-        self._json(route, group_agent_knowledge_catalog(group_id))
+        self._json(route, group_agent_knowledge_catalog(group_id, self.groups[group_id]["workspace"]["name"]))
 
     def _agents(self, route, entry):
         parts = entry.path.split("/")
@@ -3203,14 +3308,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         method = entry.method
         assert group_id in self.groups, f"Unknown group agent scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's agents."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         management = self.groups[group_id].get("agent_management", {})
         operations = set(management.get("operations", []))
         # Every native group agent route rejects unexpected query parameters with a 400, mirroring
         # the server's _reject_query_parameters(); the frontend therefore sends none.
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         if tail is None:
             if method == "GET":
@@ -3225,7 +3330,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             record = self.record_agent(group_id, tail)
             if record is None:
-                self._json(route, {"error": "Agent not found in this group."}, 404)
+                self._json(route, {"error": EDITOR_RESOURCE_UNAVAILABLE_ERROR}, 404)
                 return
             if method == "GET":
                 self._json(route, self._agent_envelope(group_id, record))
@@ -3267,7 +3372,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         try:
             record = _editor_candidate(base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"])
         except EditorSecretError:
-            self._json(route, {"error": "Stored credentials must be kept, replaced, or explicitly cleared."}, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         record["group_id"] = group_id
         record["is_group"] = True
@@ -3292,7 +3399,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         assert "agent_actions" not in updates, "agent_actions is projection-only; it must not be sent in updates."
         assert "/agent_actions" not in entry.body["removed_paths"], "agent_actions must not appear in removed_paths."
         if entry.body["expected_revision"] != self._agent_revision(group_id, identifier):
-            self._json(route, {"error": "This agent changed in another session. Reload before saving."}, 409)
+            self._json(route, {"error": EDITOR_REVISION_CONFLICT_ERROR}, 409)
             return
         paths = self.native_agent_secret_paths.get((group_id, identifier), [])
         try:
@@ -3300,9 +3407,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
             )
         except EditorSecretError:
-            self._json(route, {
-                "error": "Stored credentials must be kept at their original paths, replaced, or explicitly cleared.",
-            }, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         candidate["agent_actions"] = record.get("agent_actions") or list(AGENT_ACTIONS)
         self.native_agent_secret_paths[(group_id, identifier)] = agent_secret_paths(candidate)
