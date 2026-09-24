@@ -33,9 +33,11 @@ Limits: this test can't see a container reached through a name computed at run
 time, or one held in a class or closure and fetched from another module. It also
 can't see writes through another SDK client or the REST API.
 
-``PENDING_RAW_WRITES`` is a ratchet. It lists the unconditional writers still being
-moved onto the guard in this series, and each conversion removes its own entries.
-A pending entry that no longer matches the code fails, so the list can only shrink.
+``PENDING_RAW_WRITES`` is the ratchet this series used while it moved the last
+unconditional writers onto the guard, each conversion removing its own entries. It
+is empty now, and a pending entry that doesn't match the code fails, so it can only
+shrink: a new unconditional writer has to go on the guard or be reviewed into the
+allowlist.
 """
 
 import ast
@@ -69,11 +71,8 @@ ALLOWED_DYNAMIC_MODULES = {
         "overwrite replaces whole documents from a backup by design"
     ),
 }
-# The ratchet: raw writers this series still moves onto the guard. Each conversion removes its own.
-PENDING_RAW_WRITES = Counter({
-    ("functions_simplechat_operations.py", "make_group_inactive_for_current_user", "upsert_item"): 1,
-    ("functions_group.py", "update_group_model_endpoints", "upsert_item"): 1,
-})
+# The ratchet: empty since every writer in the residuals series is on the guard.
+PENDING_RAW_WRITES = Counter()
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 

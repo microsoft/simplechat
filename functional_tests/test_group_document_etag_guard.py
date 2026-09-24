@@ -153,11 +153,13 @@ def test_a_lost_response_commit_is_recognised_rather_than_retried(env, monkeypat
     assert env.bumps == ["test_reason"]
 
 
-def test_the_legacy_collection_writer_is_still_an_unconditional_upsert(env):
-    """Recorded, not changed: M7B moves the legacy writers onto the guarded helper."""
+def test_the_legacy_collection_writer_uses_the_guard(env):
+    """The legacy bulk endpoint save writes the list on the current copy and bumps as before."""
     env.seed_group(GROUP_A)
-    env.modules.group.update_group_model_endpoints(GROUP_A, [])
-    assert [call[0] for call in env.write_calls()] == ["upsert_item"]
+    env.groups.before_replace.append(land_membership_change(env))
+    committed = env.modules.group.update_group_model_endpoints(GROUP_A, [])
+    assert [call[0] for call in env.write_calls()] == ["replace_item", "replace_item"]
+    assert committed["model_endpoints"] == [] and env.stored_group(GROUP_A)["model_endpoints"] == []
     assert env.bumps == ["group_model_endpoints_updated"]
 
 
@@ -221,12 +223,13 @@ def test_every_guarded_writer_names_its_cache_reason():
         )
     assert reasons == {
         "functions_documents.py": {"None"},
+        "functions_group.py": {"'group_model_endpoints_updated'"},
         "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
         "functions_group_directory.py": {"None"},
         "functions_group_membership.py": {"cache_reason"},
         # The native group settings writes name theirs at each _write call.
         "functions_group_settings.py": {"cache_reason"},
-        "functions_simplechat_operations.py": {"'group_member_added'"},
+        "functions_simplechat_operations.py": {"'group_member_added'", "'group_marked_inactive'"},
         "route_backend_control_center.py": {
             "None", "'group_status_updated'", "'group_member_added'", "'group_ownership_transferred'",
         },
@@ -347,6 +350,14 @@ def _cache_reasons_by_function(file_name, callee):
     }),
     ("functions_documents.py", "update_group_document_with_etag_guard", {
         "get_or_create_tag_definition": {"None"},
+    }),
+    # The legacy bulk endpoint save and the SimpleChat group writers keep their reasons.
+    ("functions_group.py", "update_group_document_with_etag_guard", {
+        "update_group_model_endpoints": {"'group_model_endpoints_updated'"},
+    }),
+    ("functions_simplechat_operations.py", "update_group_document_with_etag_guard", {
+        "add_group_member_for_current_user": {"'group_member_added'"},
+        "make_group_inactive_for_current_user": {"'group_marked_inactive'"},
     }),
 ])
 def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):

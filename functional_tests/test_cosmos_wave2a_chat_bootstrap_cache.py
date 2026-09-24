@@ -249,7 +249,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         "functions_group.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"group_created\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_deleted\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_model_endpoints_updated\")",
+            "cache_reason=\"group_model_endpoints_updated\"",
         ],
         "functions_public_workspaces.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_created\")",
@@ -260,7 +260,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_rejected\")",
         ],
         "functions_simplechat_operations.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_marked_inactive\")",
+            "cache_reason=\"group_marked_inactive\"",
             "cache_reason=\"group_member_added\"",
         ],
         "route_backend_groups.py": [

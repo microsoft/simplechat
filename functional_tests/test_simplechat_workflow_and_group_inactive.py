@@ -10,6 +10,7 @@ workflow payload shape and can make groups inactive only when the current user
 has the same admin access required by Control Center.
 """
 
+import copy
 import importlib
 import os
 import sys
@@ -39,14 +40,22 @@ class PatchSet:
         return False
 
 
-class FakeGroupsContainer:
-    def __init__(self):
-        self.upserted_items = []
+class FakeGroupWrites:
+    """Stands in for ``functions_group``'s guarded write: the change is applied to a
+    private copy of the stored group, as ``update_group_document_with_etag_guard`` does."""
 
-    def upsert_item(self, document):
-        stored_document = dict(document)
-        self.upserted_items.append(stored_document)
-        return stored_document
+    class GroupDocumentWriteConflict(Exception):
+        pass
+
+    def __init__(self, stored):
+        self.stored = stored
+        self.writes = []
+
+    def update_group_document_with_etag_guard(self, group_id, apply_changes, *, cache_reason):
+        written = apply_changes(copy.deepcopy(self.stored[group_id]))
+        self.writes.append((group_id, cache_reason, copy.deepcopy(written)))
+        self.stored[group_id] = written
+        return copy.deepcopy(written)
 
 
 def test_create_personal_workflow_for_current_user_builds_expected_payload():
@@ -178,7 +187,14 @@ def test_make_group_inactive_for_current_user_updates_status_and_history():
     print('🔍 Testing SimpleChat group inactive success path...')
 
     operations_module = importlib.import_module('functions_simplechat_operations')
-    fake_groups_container = FakeGroupsContainer()
+    fake_group_writes = FakeGroupWrites({
+        'group-123': {
+            'id': 'group-123',
+            'name': 'Quarterly Review',
+            'status': 'active',
+            'statusHistory': [],
+        },
+    })
     logged_status_changes = []
     logged_events = []
     app = Flask(__name__)
@@ -187,7 +203,7 @@ def test_make_group_inactive_for_current_user_updates_status_and_history():
     with PatchSet(
         operations_module,
         {
-            'cosmos_groups_container': fake_groups_container,
+            'functions_group': fake_group_writes,
             'get_current_user_info': lambda: {
                 'userId': 'user-123',
                 'userPrincipalName': 'admin@example.com',
@@ -195,12 +211,6 @@ def test_make_group_inactive_for_current_user_updates_status_and_history():
                 'email': 'admin@example.com',
             },
             'get_settings': lambda: {'require_member_of_control_center_admin': True},
-            'find_group_by_id': lambda group_id: {
-                'id': group_id,
-                'name': 'Quarterly Review',
-                'status': 'active',
-                'statusHistory': [],
-            },
             'log_group_status_change': lambda **kwargs: logged_status_changes.append(dict(kwargs)),
             'log_event': lambda message, extra=None, **kwargs: logged_events.append(
                 {
@@ -225,8 +235,9 @@ def test_make_group_inactive_for_current_user_updates_status_and_history():
 
     assert result['old_status'] == 'active'
     assert result['new_status'] == 'inactive'
-    assert len(fake_groups_container.upserted_items) == 1
-    updated_group = fake_groups_container.upserted_items[0]
+    assert len(fake_group_writes.writes) == 1
+    written_group_id, cache_reason, updated_group = fake_group_writes.writes[0]
+    assert (written_group_id, cache_reason) == ('group-123', 'group_marked_inactive')
     assert updated_group['status'] == 'inactive'
     assert len(updated_group['statusHistory']) == 1
     assert updated_group['statusHistory'][0]['old_status'] == 'active'

@@ -28,7 +28,6 @@ real ``functions_group`` over the etag-enforcing groups container from
   answers the tag's default colour and logs a data-free warning.
 """
 
-import ast
 import copy
 import logging
 import re
@@ -41,7 +40,7 @@ from unittest.mock import patch
 import pytest
 from flask import Blueprint, Flask, jsonify, request
 
-from test_support.agent_delegation import APP_ROOT, module_stub
+from test_support.app_source import definitions as source_definitions, refusing_module_stub
 from test_support.group_directory_harness import PEOPLE, group_directory_environment, person
 
 
@@ -58,63 +57,6 @@ DOCUMENT_DEFINITIONS = {
     "TAG_COLOR_PATTERN", "normalize_tag", "validate_tags", "normalize_tag_color", "get_safe_tag_color",
     "validate_tag_color", "get_default_tag_color", "_GroupTagDefinitionPresent", "get_or_create_tag_definition",
 }
-
-
-def _definitions(file_name, module_level, register=None, nested=()):
-    """The named module-level definitions and those nested in ``register``, in source order."""
-    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
-    selected, found = [], set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in module_level:
-            selected.append(node)
-            found.add(node.name)
-        elif isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id in module_level for target in node.targets
-        ):
-            selected.append(node)
-            found.update(target.id for target in node.targets if isinstance(target, ast.Name))
-        elif isinstance(node, ast.FunctionDef) and node.name == register:
-            for inner in node.body:
-                if isinstance(inner, ast.FunctionDef) and inner.name in nested:
-                    selected.append(inner)
-                    found.add(inner.name)
-    missing = (set(module_level) | set(nested)) - found
-    assert not missing, f"Missing definitions in {file_name}: {missing}"
-    return ast.Module(body=selected, type_ignores=[])
-
-
-def _defined_names(file_name):
-    """Every top-level name the real module defines: functions, classes and assignments."""
-    names = set()
-    for node in ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8")).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            names.update(target.id for target in node.targets if isinstance(target, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-    return {name for name in names if not name.startswith("__")}
-
-
-def refusing_module_stub(file_name, module_name, **provided):
-    """A stand-in for ``module_name`` with every name its file defines.
-
-    The names given are the real ones or this test's models; every other name refuses
-    when called, so code this test doesn't model fails where it's used, not at import.
-    """
-    defined = _defined_names(file_name)
-    assert set(provided) <= defined, f"{module_name} does not define {set(provided) - defined}"
-
-    def refusing(name):
-        def refused(*args, **kwargs):
-            raise AssertionError(f"The code under test called {module_name}.{name}, which this test does not model")
-
-        refused.__name__ = name
-        return refused
-
-    attributes = {name: refusing(name) for name in defined}
-    attributes.update(provided)
-    return module_stub(module_name, **attributes)
 
 
 class GroupDocuments:
@@ -163,7 +105,7 @@ def tag_environment():
             "re": re, "datetime": datetime, "timezone": timezone, "logging": logging,
             "log_event": env.log_event, "cosmos_groups_container": env.groups,
         }
-        exec(compile(_definitions("functions_documents.py", DOCUMENT_DEFINITIONS), "functions_documents.py", "exec"),
+        exec(compile(source_definitions("functions_documents.py", DOCUMENT_DEFINITIONS), "functions_documents.py", "exec"),
              document_namespace)
         documents_module = refusing_module_stub(
             "functions_documents.py", "functions_documents",
@@ -194,7 +136,7 @@ def tag_environment():
             "cosmos_group_documents_container": documents,
             "invalidate_group_search_cache": lambda group_id: events.append(("invalidate", group_id)),
         }
-        routes = _definitions(
+        routes = source_definitions(
             "route_backend_group_documents.py", ROUTE_MODULE_LEVEL,
             register="register_route_backend_group_documents", nested=ROUTE_NESTED,
         )

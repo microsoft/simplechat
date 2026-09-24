@@ -2,8 +2,10 @@
 """Authorization, projection and orchestration for immutable-target group model endpoints.
 
 The active-scoped legacy routes in ``route_backend_models.py``
-(``/api/group/model-endpoints`` and ``/api/group/models/*``) are left untouched.
-Everything here backs the ``/api/groups/<group_id>/model-endpoints`` family and the
+(``/api/group/model-endpoints`` and ``/api/group/models/*``) keep their own contract;
+only the legacy bulk save borrows the credential rules below, through the public
+helpers in the "legacy bulk save" section. Everything else here backs the
+``/api/groups/<group_id>/model-endpoints`` family and the
 named-group discovery routes, where the group is named in the path and every
 request reauthorizes membership, role and status independently of whatever
 workspace the account has selected.
@@ -525,6 +527,14 @@ def _log_credential_cleanup_failure(group_id, endpoint_id, exc):
     )
 
 
+def _log_kept_staged_credentials(group_id, staged):
+    log_event(
+        "[KEY_VAULT] Kept staged group model endpoint credentials after an uncertain write.",
+        extra={"group_id": group_id, "count": len(staged)},
+        level=logging.WARNING,
+    )
+
+
 def _discard_staged_credentials(group_id, staged):
     """Delete credentials a write staged but never committed.
 
@@ -582,6 +592,57 @@ def _clean_up_committed_credentials(group_id, committed, outcome, staged):
             keyvault_model_endpoint_delete_helper({"auth": {field: reference}}, endpoint_id, scope="group")
         except Exception as exc:
             _log_credential_cleanup_failure(group_id, endpoint_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# The legacy bulk save's credentials
+# ---------------------------------------------------------------------------
+# ``POST /api/group/model-endpoints`` in ``route_backend_models`` writes the whole
+# list through ``update_group_model_endpoints`` and settles its Key Vault
+# credentials with the same rules as the one-endpoint write below.
+
+def staged_group_endpoint_credentials(requested, previous_by_id, secured):
+    """``(endpoint_id, field, reference)`` for each credential a Key Vault save pass stored afresh.
+
+    ``requested`` and ``secured`` are the endpoints before and after the pass, in the
+    same order, and ``previous_by_id`` the stored endpoints by id. A reference either
+    of them already held is not staged.
+    """
+    staged = []
+    for endpoint, saved in zip(requested, secured):
+        if not isinstance(saved, dict):
+            continue
+        previous = previous_by_id.get(saved.get("id"))
+        known = set(_credential_references(endpoint).values()) | set(_credential_references(previous).values())
+        staged.extend(
+            (str(saved.get("id") or ""), field, reference)
+            for field, reference in _credential_references(saved).items()
+            if reference not in known
+        )
+    return staged
+
+
+def discard_staged_group_endpoint_credentials(group_id, staged):
+    """After a save that ended definitively without committing, delete what it staged.
+
+    A credential the stored document refers to is kept.
+    """
+    _discard_staged_credentials(group_id, staged)
+
+
+def keep_staged_group_endpoint_credentials(group_id, staged):
+    """After an uncertain failure, keep what the save staged rather than risk deleting a committed one."""
+    if staged:
+        _log_kept_staged_credentials(group_id, staged)
+
+
+def clean_up_committed_group_endpoint_credentials(group_id, committed, outcome, staged):
+    """After a committed save, delete the credentials the committed endpoints no longer use.
+
+    ``outcome`` holds the endpoints the write replaced (``previous``) and wrote
+    (``saved``). A credential the committed document still refers to is never deleted.
+    """
+    _clean_up_committed_credentials(group_id, committed, outcome, staged)
 
 
 # ---------------------------------------------------------------------------
@@ -650,12 +711,7 @@ def _write_endpoint_change(user_id, group_id, settings, change):
             ) from exc
         raise
     except Exception:
-        if staged:
-            log_event(
-                "[KEY_VAULT] Kept staged group model endpoint credentials after an uncertain write.",
-                extra={"group_id": group_id, "count": len(staged)},
-                level=logging.WARNING,
-            )
+        keep_staged_group_endpoint_credentials(group_id, staged)
         raise
     if committed is None:
         _discard_staged_credentials(group_id, staged)
