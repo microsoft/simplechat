@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for the native scope-aware V2 group model endpoints section.
 Version: 0.261.145
-Implemented in: 0.261.143
+Implemented in: 0.261.145
 
 Exercises the real Endpoints section -- the admin ModelConnectionsManager driven by a
 scope-aware group adapter, not a fork -- and its editor dialog against closed synthetic HTTP.

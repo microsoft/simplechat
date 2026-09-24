@@ -91,10 +91,13 @@ chat agent picker.
 
 **Foundry discovery.** For a Foundry agent on a **global** connection, the group
 editor discovers the connection's agents, applications or workflows as the
-personal editor does. For a **group-scoped** Foundry connection it offers no
-discovery, and says so, because the discovery service resolves the group from
-the account's selected group rather than the page. Its project fields can still
-be entered manually.
+personal editor does. In 0.261.138, a **group-scoped** Foundry connection
+offered no discovery, because the discovery service resolved the group from the
+account's selected group rather than the page. **From 0.261.145**, a
+group-scoped connection is discovered through
+`POST /api/groups/<group_id>/models/foundry/agents`, which resolves the group
+from the path. Discovery needs an Owner or Admin in an active group, as the
+server requires. A member's read-only editor disables it.
 
 ## Creating an action from an agent
 
@@ -158,8 +161,8 @@ with 29 cases:
   guidance;
 - provided agents opening read-only;
 - the group "Use in chat" link naming the group;
-- Foundry discovery hidden for group-scoped connections and kept for global
-  ones;
+- Foundry discovery for a group-scoped connection calling the named-group
+  route (from 0.261.145), while a global connection keeps the existing route;
 - template submission offered only when the server allows it;
 - a new action created from the agent editor returning to the kept draft in the
   same group;

@@ -1,7 +1,7 @@
 # test_v2_group_agents.py
 """
 Production-SPA coverage for the native scope-aware V2 group agents workbench.
-Version: 0.261.138
+Version: 0.261.145
 Implemented in: 0.261.138
 
 Exercises the real agent collection and full-page editor against closed synthetic

@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.145)**
+
+#### New Features
+
+*   **Native Group Endpoints In V2**
+    *   The group workspace's **Endpoints** section is native in V2. It lists the model connections a group owns for its own agents and workflows. Owners and Admins add, edit, enable or disable, and delete them in an active group, and can discover models and test chat before saving. Everyone else in the group sees a read-only list.
+    *   It reuses the administrator's connection manager through a scope-aware adapter, and talks only to the group's own routes. The administrator-only tests, network policy and notices are not shown in group scope.
+    *   A save made after someone else changed the connection keeps your draft and offers **Reload latest**. A delete refused because an agent or workflow still uses the connection names what uses it.
+    *   Foundry discovery in the group agent editor now works for group-scoped connections, through `POST /api/groups/<group_id>/models/foundry/agents`.
+    *   (Ref: `GroupEndpointsSection.tsx`, `ModelConnectionsManager.tsx`, `createGroupModelConnectionsAdapter`, [V2 Group Endpoints](features/V2_GROUP_ENDPOINTS.md))
+
 ### **(v0.261.144)**
 
 #### New Features

@@ -113,8 +113,9 @@ made active.
   group. An agent's model list, assigned knowledge, actions, and instruction
   drafting are all resolved for the selected group. The model list holds the
   administrator's connections you may use, plus the group's own when allowed.
-  Discovery of agents behind a group-scoped Foundry connection is not available
-  yet; enter those project fields manually.
+  From version **0.261.145**, **Discover agents** also works for a
+  group-scoped Foundry connection. It needs an Owner or Admin in an active
+  group.
 
 If two people edit the same prompt, action, or agent at once, the second save
 is refused and the editor keeps your changes, so you can reload and reapply
@@ -132,14 +133,34 @@ cannot delete an identity while a File Sync source or an action still uses it:
 the editor lists what uses it, so you can move those to another identity first.
 Ordinary members do not see identities.
 
+### Endpoints
+
+From version **0.261.145**, **Endpoints** is native. It lists the model
+connections the group owns for its own agents and workflows. These are separate
+from the connections an administrator shares with everyone. The section is
+offered when your organization allows group endpoints.
+
+- Everyone in the group can open a connection and see its models. Stored keys
+  and secrets are never shown.
+- Owners and Admins add, edit, enable or disable, and delete connections while
+  the group is active. They can also discover a connection's models and test
+  chat before saving.
+- Editing keeps a stored key unless you enter a new one.
+- A connection an agent or workflow still uses can't be deleted. The dialog
+  names what uses it, so you can move those to another connection, or disable
+  this one instead.
+- If someone else changed the connection since you opened it, the save is
+  refused and your changes stay in the editor. Choose **Reload latest**, review
+  your changes, and save again.
+
 ### Use group tools and manage the workspace
 
 Use **Workflows** for the native workflow editor and run history. From version
 **0.261.141**, workflow managers can also set a group workflow to run when File
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
-**Sync** and **Endpoints** are marked **Classic** while their native V2
-experiences are being built. **Open classic group workspace** confirms the
+**Sync** is marked **Classic** while its native V2 experience is being built.
+**Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
 Owners and administrators also have **Manage group (classic)** for members,
 join requests, and group settings.
@@ -155,8 +176,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-File Sync sources, model endpoints, group membership administration, group
-settings, and public workspace pages still use the classic interface.
+File Sync sources, group membership administration, group settings, and public
+workspace pages still use the classic interface.
 
 ## Use the classic workspace
 

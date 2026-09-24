@@ -12,9 +12,9 @@ Implemented in version: **0.261.140**, tracked in
 `application/single_app/config.py`.
 
 The endpoints stay where they always were: in `model_endpoints` on the group
-document. No new setting, container or index is required. The V2 editor for
-these routes is a later release. Until then, group endpoints are edited in the
-classic group workspace.
+document. No new setting, container or index is required. From version
+**0.261.145**, the native V2 group workspace edits group endpoints through these
+routes; see [V2 Group Endpoints](V2_GROUP_ENDPOINTS.md).
 
 ## Why new routes
 
@@ -294,6 +294,7 @@ and the broken-access-control scanner passes on every changed backend module.
 
 ## Related
 
+- [V2 Group Endpoints](V2_GROUP_ENDPOINTS.md)
 - [Model Endpoint Application Identity Fix](../fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md)
 - [Model Endpoint Secret Reference Scope Fix](../fixes/MODEL_ENDPOINT_SECRET_REFERENCE_SCOPE_FIX.md)
 - [Model Endpoint Catalog Profile Validation Fix](../fixes/MODEL_ENDPOINT_CATALOG_PROFILE_VALIDATION_FIX.md)

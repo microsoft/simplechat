@@ -2,7 +2,7 @@
 """
 Closed M5C group model endpoint HTTP fixtures for the real production V2 SPA.
 Version: 0.261.145
-Implemented in: 0.261.143
+Implemented in: 0.261.145
 
 The fixture serves the immutable `/api/groups/<group_id>/model-endpoints[...]` CRUD family
 and the group `/api/groups/<group_id>/models/{fetch,test-model}` discovery and test routes,

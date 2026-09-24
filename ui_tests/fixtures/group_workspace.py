@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.143
+Version: 0.261.145
 Implemented in: 0.261.127
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
