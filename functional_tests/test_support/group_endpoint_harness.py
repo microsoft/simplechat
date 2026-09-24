@@ -38,7 +38,6 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from functools import wraps
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 

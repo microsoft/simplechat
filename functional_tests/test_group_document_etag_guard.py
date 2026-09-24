@@ -1,8 +1,9 @@
 # test_group_document_etag_guard.py
 """
 Functional test for the conditional group-document writer.
-Version: 0.261.140
+Version: 0.261.147
 Implemented in: 0.261.140
+No-bump commits (``cache_reason=None``): 0.261.147
 
 ``update_group_document_with_etag_guard`` is the group-document equivalent of the
 File Sync ``_write_with_etag_guard`` (``fae9d6ef``). The real ``functions_group``
@@ -16,12 +17,25 @@ a deleted group is reported as missing and never recreated, that a writer which
 keeps losing gets a conflict with nothing written, that a lost-response commit is
 recognised, and that the legacy ``update_group_model_endpoints`` is still the
 unconditional upsert it was.
+
+``cache_reason`` is a required keyword. ``None`` commits without bumping the chat
+bootstrap cache, which the group directory's join and cancel use because no
+bootstrap payload reads pending requests; every other caller names a reason. The
+model endpoint writes still bump once per commit, which
+``test_group_endpoint_apis.py::test_each_committed_write_bumps_the_chat_bootstrap_cache_once``
+pins end to end.
 """
+
+import ast
+from pathlib import Path
 
 import pytest
 from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 
 from test_support.group_endpoint_harness import GROUP_A, group_endpoint_environment
+
+
+APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 
 
 @pytest.fixture(scope="module")
@@ -141,6 +155,72 @@ def test_the_legacy_collection_writer_is_still_an_unconditional_upsert(env):
     env.modules.group.update_group_model_endpoints(GROUP_A, [])
     assert [call[0] for call in env.write_calls()] == ["upsert_item"]
     assert env.bumps == ["group_model_endpoints_updated"]
+
+
+def test_a_none_cache_reason_commits_without_a_bump(env):
+    env.seed_group(GROUP_A)
+    env.groups.before_replace.append(land_membership_change(env))
+    written = env.modules.group.update_group_document_with_etag_guard(GROUP_A, add_description, cache_reason=None)
+    assert written["description"] == "Edited by the guarded writer"
+    assert env.stored_group(GROUP_A)["description"] == "Edited by the guarded writer"
+    assert [call[0] for call in env.write_calls()] == ["replace_item", "replace_item"]
+    assert env.bumps == []
+
+
+def test_a_none_cache_reason_lost_response_commit_is_recognised_without_a_bump(env, monkeypatch):
+    env.seed_group(GROUP_A)
+    original = env.groups.replace_item
+
+    def replace_then_lose_the_response(item, body, etag=None, match_condition=None, **kwargs):
+        original(item, body, etag=etag, match_condition=match_condition, **kwargs)
+        raise CosmosAccessConditionFailedError(status_code=412, message="Precondition failed")
+
+    monkeypatch.setattr(env.groups, "replace_item", replace_then_lose_the_response)
+    written = env.modules.group.update_group_document_with_etag_guard(GROUP_A, add_description, cache_reason=None)
+    assert written["description"] == "Edited by the guarded writer"
+    assert env.bumps == []
+
+
+def test_cache_reason_is_a_required_keyword(env):
+    env.seed_group(GROUP_A)
+    with pytest.raises(TypeError):
+        env.modules.group.update_group_document_with_etag_guard(GROUP_A, add_description)
+    with pytest.raises(TypeError):
+        env.modules.group.update_group_document_with_etag_guard(GROUP_A, add_description, None)
+    assert env.write_calls() == []
+
+
+def _guard_calls():
+    calls = []
+    for path in sorted(APP_DIR.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                function = node.func
+                name = function.id if isinstance(function, ast.Name) else getattr(function, "attr", "")
+                if name == "update_group_document_with_etag_guard":
+                    calls.append((path.name, node))
+    return calls
+
+
+def test_every_guarded_writer_names_its_cache_reason():
+    """Only the group directory opts out of the bump; the model endpoint writes keep theirs."""
+    reasons = {}
+    for file_name, call in _guard_calls():
+        keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+        assert "cache_reason" in keywords, f"{file_name} must pass cache_reason explicitly"
+        value = keywords["cache_reason"]
+        reasons.setdefault(file_name, set()).add(
+            "None" if isinstance(value, ast.Constant) and value.value is None else ast.unparse(value)
+        )
+    assert reasons == {
+        "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
+        "functions_group_directory.py": {"None"},
+    }
+
+
+def test_the_model_endpoint_cache_reason_is_a_real_reason(env):
+    assert env.modules.access.GROUP_ENDPOINT_CACHE_REASON == "group_model_endpoints_updated"
 
 
 if __name__ == "__main__":

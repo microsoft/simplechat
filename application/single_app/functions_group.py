@@ -510,8 +510,10 @@ def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reas
     transport retry of a committed write fails its own precondition), so that is
     reported as the committed write rather than as a conflict.
 
-    A committed write bumps the global chat bootstrap cache with ``cache_reason`` and
-    returns the stored document.
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
     """
     attempted = None
     for attempt in range(attempts + 1):
@@ -520,7 +522,8 @@ def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reas
         except exceptions.CosmosResourceNotFoundError:
             return None
         if attempted is not None and _stored_group_fields(current) == _stored_group_fields(attempted):
-            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
             return current
         if attempt == attempts:
             break
@@ -536,6 +539,7 @@ def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reas
             return None
         except exceptions.CosmosAccessConditionFailedError:
             continue
-        bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
         return written
     raise GroupDocumentWriteConflict("The group document kept changing while it was being saved.")
