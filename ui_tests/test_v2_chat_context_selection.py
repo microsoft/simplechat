@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.115
+Version: 0.261.159
 Implemented in: 0.261.094
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 
@@ -533,20 +533,20 @@ def test_workspace_chat_action_hands_real_selection_to_pills_only(context_page):
 
 def test_router_state_handoff_deduplicates_and_retains_scoped_metadata(context_page):
     page, api = context_page
-    group_document = {"document": DOCUMENTS["group"][0], "scope": SCOPES["group"]}
+    public_document = {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]}
     mount_workflow(
         page,
         {
             "pathname": "/chat",
             "search": (
-                "?search_documents=true&doc_scope=all&document_ids=group-campaign,public-policy"
-                "&tags=urgent&group_id=group-1&workspace_id=public-1&keep=untouched"
+                "?search_documents=true&doc_scope=all&document_ids=personal-brief,public-policy"
+                "&tags=urgent&workspace_id=public-1&keep=untouched"
             ),
             "state": {
                 "contextDocuments": [
-                    group_document,
-                    group_document,
-                    {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]},
+                    {"document": DOCUMENTS["personal"][0], "scope": SCOPES["personal"]},
+                    public_document,
+                    public_document,
                 ],
                 "contextTags": [{"name": "urgent", "scope": SCOPES["personal"]}],
             },
@@ -556,17 +556,50 @@ def test_router_state_handoff_deduplicates_and_retains_scoped_metadata(context_p
     expect(page.get_by_label("Current route", exact=True)).to_have_text("/chat?keep=untouched")
     draft = page.get_by_role("textbox", name="Message", exact=True)
     expect(draft).to_have_value("")
-    expect_pills(page, "Campaign outline", "Travel policy", "urgent")
+    expect_pills(page, "Quarterly brief", "Travel policy", "urgent")
     assert not api.requests, "Router records should avoid document resolution requests."
     draft.fill("Use the handed-over sources.")
     payload = send_draft(page, api)
     expect_context_metadata(
         payload,
-        documents=["group-campaign", "public-policy"],
+        documents=["personal-brief", "public-policy"],
         tags=["urgent"],
-        group=True,
         public=True,
     )
+
+
+def test_router_state_group_documents_require_an_explicit_group_handoff(context_page):
+    """Group records carried in router state are refused unless the link names the group.
+
+    An explicit group handoff (doc_scope=group with its group_id) re-reads the group's access and
+    every document from the server, so a record held in router state under another scope would
+    skip that check. Group chat handoffs from the documents explorer are covered in
+    test_v2_group_documents.py.
+    """
+    page, api = context_page
+    mount_workflow(
+        page,
+        {
+            "pathname": "/chat",
+            "search": (
+                "?search_documents=true&doc_scope=all&document_ids=group-campaign,public-policy"
+                "&group_id=group-1&workspace_id=public-1&keep=untouched"
+            ),
+            "state": {
+                "contextDocuments": [
+                    {"document": DOCUMENTS["group"][0], "scope": SCOPES["group"]},
+                    {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]},
+                ],
+            },
+        },
+        strict_mode=True,
+    )
+    page.evaluate("() => window.OrchHarness.mount('mount-b', 'Toaster', {})")
+    expect(page.get_by_text(
+        "Could not load the selected context. Choose it again from Documents.", exact=True,
+    ).first).to_be_visible()
+    expect_pills(page)
+    assert not api.requests, "A refused handoff must not resolve any document."
 
 
 @pytest.mark.parametrize("strict_mode", [False, True], ids=["ordinary", "strict-mode"])
