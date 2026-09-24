@@ -32,7 +32,18 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { EmptyState, GlassButton, Skeleton } from '../ui/primitives';
 import { PromptList } from './PromptList';
 import { PromptDetailsPane } from './PromptDetailsPane';
-import { EMPTY_PROMPT_DRAFT, PromptEditorDialog, type PromptDraft } from './PromptEditorDialog';
+import { EMPTY_PROMPT_DRAFT, PROMPT_REBASE_FIELDS, PromptEditorDialog, type PromptDraft } from './PromptEditorDialog';
+import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
+
+/** The editable projection of a stored prompt, the shape the editor draft and its baseline share. */
+function promptProjection(prompt: WorkspacePrompt): PromptDraft {
+    return {
+        id: prompt.id,
+        name: String(prompt.name ?? ''),
+        description: String(prompt.description ?? ''),
+        content: String(prompt.content ?? ''),
+    };
+}
 
 export function PromptWorkbench({
     adapter = PERSONAL_PROMPT_WORKBENCH,
@@ -45,6 +56,9 @@ export function PromptWorkbench({
     const [sort] = useState<PromptSort>('recent');
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [draft, setDraft] = useState<PromptDraft | null>(null);
+    // The prompt as the editor loaded it, so a conflict reload can tell which fields the user
+    // touched from which the other writer changed. Set only for an edit; a new prompt cannot conflict.
+    const [baseline, setBaseline] = useState<PromptDraft | null>(null);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     // A conditional-write conflict on a shared group prompt: the draft stays open and a refresh
@@ -96,16 +110,9 @@ export function PromptWorkbench({
     const openEditor = (prompt: WorkspacePrompt | null) => {
         setSaveError(null);
         setSaveConflict(false);
-        setDraft(
-            prompt
-                ? {
-                      id: prompt.id,
-                      name: String(prompt.name ?? ''),
-                      description: String(prompt.description ?? ''),
-                      content: String(prompt.content ?? ''),
-                  }
-                : { ...EMPTY_PROMPT_DRAFT },
-        );
+        const next = prompt ? promptProjection(prompt) : { ...EMPTY_PROMPT_DRAFT };
+        setDraft(next);
+        setBaseline(prompt ? next : null);
     };
 
     const onSave = async () => {
@@ -163,9 +170,30 @@ export function PromptWorkbench({
     };
 
     const onConflictRefresh = async () => {
-        setSaveConflict(false);
-        setSaveError(null);
-        await refresh();
+        if (!draft?.id || !baseline) {
+            setSaveConflict(false);
+            setSaveError(null);
+            await refresh();
+            return;
+        }
+        try {
+            const fresh = await adapter.list(new AbortController().signal);
+            setItems(fresh);
+            const current = fresh.find((prompt) => prompt.id === draft.id) ?? null;
+            if (!current) {
+                setSaveConflict(false);
+                setSaveError(REBASE_DELETED_NOTICE);
+                return;
+            }
+            const freshDraft = promptProjection(current);
+            const { draft: rebased, conflicts } = rebaseDraft(baseline, freshDraft, draft, PROMPT_REBASE_FIELDS);
+            setDraft(rebased);
+            setBaseline(freshDraft);
+            setSaveConflict(false);
+            setSaveError(rebaseNotice(conflicts));
+        } catch (reloadError) {
+            setSaveError(errorMessage(reloadError, 'Could not reload the latest version.'));
+        }
     };
 
     const onToggleFavorite = async (prompt: WorkspacePrompt) => {
@@ -384,6 +412,7 @@ export function PromptWorkbench({
                     onRefresh={saveConflict ? () => void onConflictRefresh() : undefined}
                     onCancel={() => {
                         setDraft(null);
+                        setBaseline(null);
                         setSaveError(null);
                         setSaveConflict(false);
                     }}

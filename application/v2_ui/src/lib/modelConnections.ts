@@ -23,6 +23,7 @@ import {
 } from './customModelConnections';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
+import type { RebaseField } from './rebaseDraft';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -448,6 +449,45 @@ export function toEditableConnection(source: ModelConnection): ModelConnection {
         models: Array.isArray(source.models) ? source.models.map((model) => ({ ...model })) : [],
     };
 }
+
+/**
+ * The editable fields the conflict rebase considers, over the editable {@link ModelConnection} that
+ * {@link toEditableConnection} produces. Only the group scope conflicts; admin never reloads.
+ *
+ * The nested `connection`, `management`, `identity_header` and `models` blocks are compared as whole
+ * units -- the classic editor writes them together, and a per-leaf split would not change which one
+ * a conflict names. Auth is listed leaf by leaf so its three secret leaves can be marked: a typed
+ * secret is kept, a blank input adopts the reloaded stored state, and the value is never compared or
+ * named. The `has_*` stored-secret flags are adopted from the reload like any other field.
+ */
+export const ENDPOINT_REBASE_FIELDS: RebaseField[] = [
+    { path: 'name', label: 'Name' },
+    { path: 'provider', label: 'Provider' },
+    { path: 'api_type', label: 'API type' },
+    { path: 'enabled', label: 'Enabled' },
+    { path: 'connection', label: 'Connection' },
+    { path: 'management', label: 'Management' },
+    { path: 'identity_header', label: 'Identity header' },
+    { path: 'models', label: 'Models' },
+    { path: 'auth.type', label: 'Authentication method' },
+    { path: 'auth.managed_identity_type', label: 'Managed identity type' },
+    { path: 'auth.managed_identity_client_id', label: 'Managed identity client ID' },
+    { path: 'auth.tenant_id', label: 'Tenant ID' },
+    { path: 'auth.client_id', label: 'Client ID' },
+    { path: 'auth.token_url', label: 'Token URL' },
+    { path: 'auth.scope', label: 'Scope' },
+    { path: 'auth.api_key_header', label: 'API key header' },
+    { path: 'auth.api_key_prefix', label: 'API key prefix' },
+    { path: 'auth.management_cloud', label: 'Management cloud' },
+    { path: 'auth.custom_authority', label: 'Custom authority' },
+    { path: 'auth.foundry_scope', label: 'Foundry scope' },
+    { path: 'has_api_key', label: 'Stored API key' },
+    { path: 'has_client_secret', label: 'Stored client secret' },
+    { path: 'has_bearer_token', label: 'Stored bearer token' },
+    { path: 'auth.client_secret', label: 'Client secret', secret: true },
+    { path: 'auth.api_key', label: 'API key', secret: true },
+    { path: 'auth.bearer_token', label: 'Bearer token', secret: true },
+];
 
 /**
  * Which editor fields a given provider and auth type actually use.

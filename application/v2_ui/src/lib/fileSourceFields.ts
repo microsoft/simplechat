@@ -15,6 +15,40 @@
 
 import type { FileSourceOptions, WorkspaceIdentity, WorkspaceSyncSource } from './types';
 import type { FileSourceWrite } from './fileSourceWorkbench';
+import type { RebaseField } from './rebaseDraft';
+
+/**
+ * The editable fields the conflict rebase considers, over a {@link FileSourceDraft}. The connection
+ * sub-fields are listed individually so a conflict names the exact input; unused ones stay blank on
+ * both sides and never collide. `secretStored` is adopted from the reload, and the secret itself is
+ * marked so a typed value is kept and a blank input adopts the reloaded stored state.
+ */
+export const FILE_SOURCE_REBASE_FIELDS: RebaseField[] = [
+    { path: 'name', label: 'Name' },
+    { path: 'sourceType', label: 'Type' },
+    { path: 'enabled', label: 'Enabled' },
+    { path: 'recursive', label: 'Include subfolders' },
+    { path: 'connection.uncPath', label: 'Network path' },
+    { path: 'connection.accountUrl', label: 'Service URL' },
+    { path: 'connection.shareName', label: 'Share name' },
+    { path: 'connection.directoryPath', label: 'Directory' },
+    { path: 'connection.containerName', label: 'Container' },
+    { path: 'connection.blobPrefix', label: 'Prefix' },
+    { path: 'includePatterns', label: 'Include patterns' },
+    { path: 'excludePatterns', label: 'Exclude patterns' },
+    { path: 'allowedExtensions', label: 'Allowed extensions' },
+    { path: 'scheduleEnabled', label: 'Schedule' },
+    { path: 'intervalMinutes', label: 'Sync interval' },
+    { path: 'credentialMode', label: 'Credential source' },
+    { path: 'identityId', label: 'Identity' },
+    { path: 'credentials.authType', label: 'Authentication method' },
+    { path: 'credentials.username', label: 'Username' },
+    { path: 'credentials.domain', label: 'Domain' },
+    { path: 'credentials.clientId', label: 'Client ID' },
+    { path: 'credentials.tenantId', label: 'Tenant ID' },
+    { path: 'secretStored', label: 'Stored secret' },
+    { path: 'credentials.secret', label: 'Secret', secret: true },
+];
 
 export const FILE_SOURCE_TYPE_SMB = 'smb';
 export const FILE_SOURCE_TYPE_AZURE_FILES = 'azure_files';

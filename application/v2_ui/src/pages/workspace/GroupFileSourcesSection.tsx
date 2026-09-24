@@ -43,8 +43,10 @@ import {
     emptyFileSourceDraft,
     sourcePathText,
     visibleSourceTypes,
+    FILE_SOURCE_REBASE_FIELDS,
     type FileSourceDraft,
 } from '../../lib/fileSourceFields';
+import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
 import { sourceTypeLabel } from './FileSourcesSection';
 import { statusTone } from './WorkflowsSection';
 import { toast } from '../../stores/toastStore';
@@ -130,6 +132,9 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
 
     // Editor state.
     const [draft, setDraft] = useState<FileSourceDraft | null>(null);
+    // The source as the editor loaded it, so a conflict reload can tell the user's edits from the
+    // other writer's. Set only for an edit; a new source cannot conflict.
+    const [baseline, setBaseline] = useState<FileSourceDraft | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -170,6 +175,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
             const minInterval = loadedOptions?.schedule?.min_interval_minutes ?? 1;
             if (source) {
                 setDraft(draftFromSource(source, minInterval));
+                setBaseline(draftFromSource(source, minInterval));
             } else {
                 const firstType = visibleSourceTypes(loadedOptions)[0]?.value ?? 'smb';
                 setDraft(emptyFileSourceDraft(firstType, minInterval));
@@ -183,6 +189,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
 
     const closeEditor = () => {
         setDraft(null);
+        setBaseline(null);
         setEditingId(null);
         setSaveError(null);
         setSaveConflict(false);
@@ -233,9 +240,31 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
     };
 
     const onConflictReload = async () => {
-        setSaveConflict(false);
-        setSaveError(null);
-        await refresh();
+        if (!editingId || !draft || !baseline) {
+            setSaveConflict(false);
+            setSaveError(null);
+            await refresh();
+            return;
+        }
+        try {
+            const fresh = await adapter.list(new AbortController().signal);
+            setItems(fresh);
+            const current = fresh.find((source) => source.id === editingId) ?? null;
+            if (!current) {
+                setSaveConflict(false);
+                setSaveError(REBASE_DELETED_NOTICE);
+                return;
+            }
+            const minInterval = options?.schedule?.min_interval_minutes ?? 1;
+            const freshDraft = draftFromSource(current, minInterval);
+            const { draft: rebased, conflicts } = rebaseDraft(baseline, freshDraft, draft, FILE_SOURCE_REBASE_FIELDS);
+            setDraft(rebased);
+            setBaseline(freshDraft);
+            setSaveConflict(false);
+            setSaveError(rebaseNotice(conflicts));
+        } catch (reloadError) {
+            setSaveError(errorMessage(reloadError, 'Could not reload the latest version.'));
+        }
     };
 
     const onTest = async () => {

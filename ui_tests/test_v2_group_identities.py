@@ -48,6 +48,11 @@ EDITABLE_NAME = "Reporting service account"
 WITHHELD_NAME = "Locked platform credential"
 FILE_SYNC_NAME = "Archive file share"
 IN_USE_NAME = "Bound integration credential"
+REBASE_NOTICE = (
+    "Someone else changed this while you were editing. Their changes are loaded; "
+    "your edits are kept. Review, then save."
+)
+REBASE_DELETED_NOTICE = "This item was deleted. Copy anything you need, then close."
 
 
 def open_identities(ui, group="group-a", **options):
@@ -243,6 +248,97 @@ def test_conflict_keeps_the_draft_and_offers_a_refresh(group_identities_ui):
     expect(page.get_by_label("Name", exact=True)).to_have_value("Draft in flight")
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_be_visible()
     expect(page.get_by_text(re.compile("modified"))).to_be_visible()
+
+
+def test_conflict_refresh_rebases_concurrent_description_and_local_name(group_identities_ui):
+    """Refreshing a stale identity edit adopts untouched fields and keeps the local name."""
+    ui, page = group_identities_ui, group_identities_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_NAME).get_by_role("button", name=f"Edit {EDITABLE_NAME}", exact=True).click()
+    record = ui.record_identity("group-a", EDITABLE_IDENTITY_ID)
+    record["description"] = "Concurrent identity description."
+    ui.touch_identity("group-a", EDITABLE_IDENTITY_ID)
+    page.get_by_label("Name", exact=True).fill("Reporting service account local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/identities"
+    ):
+        page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.get_by_label("Description (optional)", exact=True)).to_have_value("Concurrent identity description.")
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Reporting service account local")
+    expect(page.get_by_text(REBASE_NOTICE, exact=True)).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ) as saved:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    saved_record = ui.record_identity("group-a", EDITABLE_IDENTITY_ID)
+    assert saved_record["description"] == "Concurrent identity description."
+    assert saved_record["name"] == "Reporting service account local"
+
+
+def test_conflict_refresh_reports_name_conflict_and_keeps_local_name(group_identities_ui):
+    """Refreshing reports a same-field identity conflict and keeps the user's name."""
+    ui, page = group_identities_ui, group_identities_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_NAME).get_by_role("button", name=f"Edit {EDITABLE_NAME}", exact=True).click()
+    ui.record_identity("group-a", EDITABLE_IDENTITY_ID)["name"] = "Reporting service account concurrent"
+    ui.touch_identity("group-a", EDITABLE_IDENTITY_ID)
+    page.get_by_label("Name", exact=True).fill("Reporting service account local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/identities"
+    ):
+        page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.get_by_text(f"{REBASE_NOTICE} You and someone else both changed: Name. Your values are shown.", exact=True)).to_be_visible()
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Reporting service account local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ) as saved:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    assert ui.record_identity("group-a", EDITABLE_IDENTITY_ID)["name"] == "Reporting service account local conflict"
+
+
+def test_conflict_refresh_reports_deleted_identity_without_resaving(group_identities_ui):
+    """Refreshing after a stale save shows that the identity was deleted and does not save again."""
+    ui, page = group_identities_ui, group_identities_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_NAME).get_by_role("button", name=f"Edit {EDITABLE_NAME}", exact=True).click()
+    ui.drop_identity_for_conflict("group-a", EDITABLE_IDENTITY_ID)
+    page.get_by_label("Name", exact=True).fill("Reporting service account deleted local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/identities"
+    ):
+        page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.get_by_text(REBASE_DELETED_NOTICE, exact=True)).to_be_visible()
+    writes = [
+        entry for entry in ui.writes
+        if entry.method == "PATCH" and entry.path == f"/api/groups/group-a/identities/{EDITABLE_IDENTITY_ID}"
+    ]
+    assert len(writes) == 1
+    assert ui.record_identity("group-a", EDITABLE_IDENTITY_ID) is None
 
 
 def test_delete_in_use_names_the_references(group_identities_ui):

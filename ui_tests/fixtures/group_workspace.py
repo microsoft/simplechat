@@ -620,6 +620,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_identities = {}
         self.native_identity_revisions = {}
         self.identity_references = {}
+        self.deleted_identity_conflicts = set()
         # Native group model endpoint state, kept apart from every other native store. Endpoints carry
         # an opaque `revision` marker the client round-trips as `expected_revision`, so a per-(group,
         # id) counter backs a SHA-256-shaped revision and `touch_endpoint` advances it to model a
@@ -632,6 +633,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_endpoint_revisions = {}
         self.endpoint_references = {}
         self.endpoint_write_conflicts = set()
+        self.deleted_endpoint_conflicts = set()
         # One test sets this to a reviewed 400 message so the next endpoint create or edit is refused
         # verbatim, proving the editor renders the server's own text and keeps the draft.
         self.next_endpoint_write_error = None
@@ -647,6 +649,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_file_sources = {}
         self.native_file_source_revisions = {}
         self.file_source_runs = {}
+        self.deleted_file_source_conflicts = set()
         self.file_source_active_runs = set()
         self.file_source_delete_plan = {}
         # A test can script a connection-test failure (a message shown verbatim as an HTTP 400) and a
@@ -1147,6 +1150,13 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_identity_revisions[(group_id, identifier)] += 1
         return self._identity_etag(group_id, identifier)
 
+    def drop_identity_for_conflict(self, group_id, identifier):
+        """Remove an identity while making the next stale save look like an etag conflict."""
+        self.native_identities[group_id] = [
+            row for row in self.native_identities[group_id] if row["id"] != identifier
+        ]
+        self.deleted_identity_conflicts.add((group_id, identifier))
+
     def _identity_payload(self, group_id, record):
         """The sanitized identity plus the two fields the native routes add: `etag` and the
         `identity_actions` projection. `usage_contexts` is already normalized on the stored record."""
@@ -1269,6 +1279,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             record = self.record_identity(group_id, tail)
             if record is None:
+                if method == "PATCH" and (group_id, tail) in self.deleted_identity_conflicts:
+                    self._json(route, {
+                        "error": IDENTITY_CONFLICT_ERROR,
+                        "error_code": "etag_conflict",
+                    }, 409)
+                    return
                 self._json(route, {"error": "Identity not found in this group."}, 404)
                 return
             if method == "GET":
@@ -1376,6 +1392,13 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         """Simulate a concurrent edit by another manager: the stored endpoint revision moves on."""
         self.native_endpoint_revisions[(group_id, identifier)] += 1
         return self._endpoint_revision(group_id, identifier)
+
+    def drop_endpoint_for_conflict(self, group_id, identifier):
+        """Remove an endpoint while making the next stale save look like a revision conflict."""
+        self.native_endpoints[group_id] = [
+            row for row in self.native_endpoints[group_id] if row["id"] != identifier
+        ]
+        self.deleted_endpoint_conflicts.add((group_id, identifier))
 
     def _endpoint_payload(self, group_id, record):
         """The stored endpoint projected to its response: drop the private `_actions` marker and add
@@ -1489,6 +1512,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             record = self.record_endpoint(group_id, tail)
             if record is None:
+                if method == "PATCH" and (group_id, tail) in self.deleted_endpoint_conflicts:
+                    self._json(route, {
+                        "error": ENDPOINT_CONFLICT_ERROR,
+                        "error_code": "endpoint_conflict",
+                    }, 409)
+                    return
                 self._json(route, {"error": "Model endpoint not found in this group."}, 404)
                 return
             if method == "GET":
@@ -1730,6 +1759,13 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_file_source_revisions[(group_id, identifier)] += 1
         return self._file_source_config_revision(group_id, identifier)
 
+    def drop_file_source_for_conflict(self, group_id, identifier):
+        """Remove a file source while making the next stale save look like a config conflict."""
+        self.native_file_sources[group_id] = [
+            row for row in self.native_file_sources[group_id] if row["id"] != identifier
+        ]
+        self.deleted_file_source_conflicts.add((group_id, identifier))
+
     def mark_file_source_running(self, group_id, identifier, running=True):
         """Model a run in flight so a sync or delete is refused with `source_busy`."""
         key = (group_id, identifier)
@@ -1934,6 +1970,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         record = self.record_file_source(group_id, source_id) if source_id else None
         if source_id is not None and record is None:
+            if method == "PATCH" and (group_id, source_id) in self.deleted_file_source_conflicts:
+                self._json(route, {
+                    "error": FILE_SOURCE_CONFLICT_ERROR,
+                    "error_code": "config_conflict",
+                }, 409)
+                return
             self._json(route, {"error": "File source not found in this group."}, 404)
             return
         if suffix is None:

@@ -63,6 +63,7 @@ import {
     toEditableConnection,
     validateConnection,
     visibleFields,
+    ENDPOINT_REBASE_FIELDS,
     type ConnectionModel,
     type ConnectionMigrationNotice,
     type EmbeddingConfig,
@@ -72,6 +73,7 @@ import {
     type ModelConnection,
     type ModelConnectionsAdapter,
 } from '../../lib/modelConnections';
+import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
 import { AdminModal } from './AdminModal';
 import { CatalogProfilePicker } from './ModelCatalogManager';
 import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
@@ -367,6 +369,9 @@ function ConnectionEditor({
     // `draft` are preserved across a reload while the conditional-write token refreshes.
     const [current, setCurrent] = useState<ModelConnection>(initial);
     const [draft, setDraft] = useState<ModelConnection>(() => toEditableConnection(initial));
+    // The editable projection of the row the editor opened against, so a conflict reload can tell the
+    // user's field edits from the other writer's. Refreshed alongside `current` on every reload.
+    const [baseline, setBaseline] = useState<ModelConnection>(() => toEditableConnection(initial));
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [discovering, setDiscovering] = useState(false);
@@ -610,11 +615,15 @@ function ConnectionEditor({
         try {
             const fresh = await onReloadEndpoint(current.id);
             if (fresh) {
+                const freshDraft = toEditableConnection(fresh);
+                const { draft: rebased, conflicts } = rebaseDraft(baseline, freshDraft, draft, ENDPOINT_REBASE_FIELDS);
+                setDraft(rebased);
                 setCurrent(fresh);
+                setBaseline(freshDraft);
                 setNeedsReload(false);
-                setFormError('Reloaded the latest saved version. Review your changes, then save again.');
+                setFormError(rebaseNotice(conflicts));
             } else {
-                setFormError('This connection is no longer available. Close the editor and refresh the list.');
+                setFormError(REBASE_DELETED_NOTICE);
             }
         } catch (error) {
             setFormError(errorMessage(error, 'Could not reload the latest version.'));

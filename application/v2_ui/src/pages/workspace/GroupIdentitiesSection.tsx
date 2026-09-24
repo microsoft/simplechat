@@ -38,8 +38,10 @@ import {
     identityAuthType,
     identityCapabilityLabels,
     identityPrincipalText,
+    IDENTITY_REBASE_FIELDS,
     type IdentityDraft,
 } from '../../lib/identityFields';
+import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
 import { authTypeLabel } from './IdentitiesSection';
 import { toast } from '../../stores/toastStore';
 import type { WorkspaceIdentity } from '../../lib/types';
@@ -65,6 +67,9 @@ export function GroupIdentitiesSection({
     const [query, setQuery] = useState('');
     const [busyId, setBusyId] = useState<string | null>(null);
     const [draft, setDraft] = useState<IdentityDraft | null>(null);
+    // The identity as the editor loaded it, so a conflict reload can tell the user's edits from the
+    // other writer's. Set only for an edit; a new identity cannot conflict.
+    const [baseline, setBaseline] = useState<IdentityDraft | null>(null);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     // A conditional-write conflict on a shared identity: the draft stays open and a refresh is
@@ -104,10 +109,12 @@ export function GroupIdentitiesSection({
         setSaveError(null);
         setSaveConflict(false);
         setDraft(identity ? draftFromIdentity(identity) : emptyIdentityDraft());
+        setBaseline(identity ? draftFromIdentity(identity) : null);
     };
 
     const closeEditor = () => {
         setDraft(null);
+        setBaseline(null);
         setSaveError(null);
         setSaveConflict(false);
     };
@@ -152,9 +159,30 @@ export function GroupIdentitiesSection({
     };
 
     const onConflictRefresh = async () => {
-        setSaveConflict(false);
-        setSaveError(null);
-        await refresh();
+        if (!draft?.id || !baseline) {
+            setSaveConflict(false);
+            setSaveError(null);
+            await refresh();
+            return;
+        }
+        try {
+            const fresh = await adapter.list(new AbortController().signal);
+            setItems(fresh);
+            const current = fresh.find((identity) => identity.id === draft.id) ?? null;
+            if (!current) {
+                setSaveConflict(false);
+                setSaveError(REBASE_DELETED_NOTICE);
+                return;
+            }
+            const freshDraft = draftFromIdentity(current);
+            const { draft: rebased, conflicts } = rebaseDraft(baseline, freshDraft, draft, IDENTITY_REBASE_FIELDS);
+            setDraft(rebased);
+            setBaseline(freshDraft);
+            setSaveConflict(false);
+            setSaveError(rebaseNotice(conflicts));
+        } catch (reloadError) {
+            setSaveError(errorMessage(reloadError, 'Could not reload the latest version.'));
+        }
     };
 
     const onDelete = async (identity: WorkspaceIdentity) => {
