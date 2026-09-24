@@ -854,8 +854,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             })
         elif path == "/api/workflows/m365-run-as-users":
             assert entry.query.get("scope") == ["group"]
-            assert entry.query.get("group_id", [None])[0] in self.groups
-            self._json(route, {"users": []})
+            run_as_group = entry.query.get("group_id", [None])[0]
+            assert run_as_group in self.groups
+            if self.groups[run_as_group]["role"] not in ("Owner", "Admin"):
+                # M6C: the route refuses non-managers, and a read-only workflow editor never asks.
+                self.unexpected_requests.append(f"{entry.method} {entry.path} (a group member cannot list run-as accounts)")
+                self._json(route, {"error": "You cannot configure this group workflow."}, 403)
+            else:
+                self._json(route, {"users": []})
         elif path == "/api/group_documents" and method == "GET":
             scope_key = "group_id" if "group_id" in entry.query else "group_ids"
             assert entry.query.get(scope_key, [None])[0] in self.groups
@@ -2357,14 +2363,16 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         """M6: the group workflow File Sync source list, which the real route refuses to non-managers.
 
         The group editor asks only as a manager, so a member request is also recorded as unexpected.
-        Sources default to none; a suite may set `workflow_file_sync_sources[group_id]`.
+        Sources default to none; a suite may set `workflow_file_sync_sources[group_id]`. Since M6C the
+        list carries `file_sync_enabled`, on unless a suite sets `workflow_file_sync_enabled[group_id]`.
         """
         if self.groups[group_id]["role"] not in ("Owner", "Admin", "DocumentManager"):
             self.unexpected_requests.append(f"{entry.method} {entry.path} (a group member cannot list File Sync sources)")
             self._json(route, {"error": "Insufficient permissions for this group"}, 403)
             return
-        sources = getattr(self, "workflow_file_sync_sources", {}).get(group_id, [])
-        self._json(route, {"sources": copy.deepcopy(sources)})
+        enabled = getattr(self, "workflow_file_sync_enabled", {}).get(group_id, True)
+        sources = getattr(self, "workflow_file_sync_sources", {}).get(group_id, []) if enabled else []
+        self._json(route, {"sources": copy.deepcopy(sources), "file_sync_enabled": enabled})
 
 
 @pytest.fixture

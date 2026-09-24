@@ -85,7 +85,7 @@ export interface WorkflowAlertSummary {
 }
 
 /** Python's `str(value or fallback)`: falsy values take the fallback, and other values never match a keyword. */
-function pyText(value: unknown, fallback = ''): string {
+export function pyText(value: unknown, fallback = ''): string {
     if (value === null || value === undefined || value === false || value === 0 || value === '' ||
         Array.isArray(value) && value.length === 0 || isRecord(value) && Object.keys(value).length === 0) {
         return fallback;
@@ -101,7 +101,8 @@ function textLength(text: string): number {
     return [...text].length;
 }
 
-function pyStrip(text: string): string {
+/** Python's `str.strip()` with no arguments, which removes Unicode whitespace from both ends. */
+export function pyStrip(text: string): string {
     return text.replace(PY_STRIP, '');
 }
 

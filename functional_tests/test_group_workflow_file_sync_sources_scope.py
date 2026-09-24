@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the group workflow File Sync source list and its explicit group scope.
-Version: 0.261.141
+Version: 0.261.148
 Implemented in: 0.261.141
 
 This test ensures that ``GET /api/group/workflows/file-sync-sources`` resolves its group the
@@ -10,7 +10,9 @@ same way as every other group workflow route. An explicit ``?group_id`` is autho
 ``assert_group_role`` against the File Sync manager roles, and ``require_active_group`` is
 never consulted. Without ``group_id``, the route keeps the legacy active-group behaviour. A
 non-manager, a non-member or an unknown group is refused before any source is listed, and the
-group workflow feature gates still apply.
+group workflow feature gates still apply. Since 0.261.148 the response also carries
+``file_sync_enabled``, the File Sync gate a group workflow save applies;
+``test_group_workflow_file_sync_enabled_seam.py`` pins that it matches the save.
 
 The route body and its helpers are compiled from ``route_backend_workflows.py``. The group
 role checks (``assert_group_role``, ``get_user_role_in_group`` and ``require_active_group``)
@@ -49,6 +51,7 @@ ROUTE_HELPERS = (
     "_assert_group_workflow_feature_enabled",
     "_resolve_active_group_for_workflows",
     "_serialize_workflow_file_sync_source",
+    "_group_workflow_file_sync_enabled",
     "_collect_group_workflow_file_sync_sources",
 )
 ROUTE_FUNCTION = "get_group_workflow_file_sync_sources"
@@ -236,7 +239,7 @@ def test_explicit_group_id_lists_the_named_group_without_reading_the_active_grou
             "name": "Paused share", "source_type": "smb", "enabled": False,
             "label": "Paused share (Group)",
         },
-    ]}
+    ], "file_sync_enabled": True}
     assert harness.state["active_group"] == ACTIVE_GROUP
     assert harness.active_group_reads == []
     assert harness.role_checks == [("manager", PAGE_GROUP, FILE_SYNC_MANAGER_ROLES)]
@@ -349,7 +352,7 @@ def test_group_file_sync_disabled_returns_no_sources_for_the_explicit_group(harn
     response = harness.get(f"?group_id={PAGE_GROUP}")
 
     assert response.status_code == 200
-    assert response.json == {"sources": []}
+    assert response.json == {"sources": [], "file_sync_enabled": False}
     assert harness.source_listings == []
     assert harness.active_group_reads == []
 

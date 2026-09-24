@@ -35,8 +35,8 @@ import {
     preservedWorkflowFieldLabels,
     sameWorkflowDefinition,
     saveWorkflowDefinition,
+    workflowErrorCode,
     workflowErrorMessage,
-    workflowFileSyncAvailabilityErrors,
     workflowFileSyncConfig,
     workflowForFlowPreview,
     workflowForSave,
@@ -44,8 +44,10 @@ import {
     workflowScopeKey,
     workflowValidationErrors,
     workflowAgentKey,
+    WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE,
     type WorkflowDefinition,
     type WorkflowEditorOptions,
+    type WorkflowFileSyncSourceListing,
     type WorkflowScope,
     type WorkflowTask,
 } from '../../lib/workflowEditor';
@@ -134,10 +136,13 @@ export function WorkflowEditorDialog({
     const fileSyncTriggerOffered = groupScope && (draft.trigger_type === 'file_sync' ||
         fileSyncSources.status === 'ready' && fileSyncSources.sources.length > 0);
     const scheduled = draft.trigger_type === 'interval' || groupScope && draft.trigger_type === 'file_sync';
-    const validationErrors = useMemo(() => [
-        ...workflowValidationErrors(draft, options, original),
-        ...(groupScope && fileSyncSources.status === 'ready' ? workflowFileSyncAvailabilityErrors(draft, fileSyncSources.sources) : []),
-    ], [draft, options, original, groupScope, fileSyncSources.status, fileSyncSources.sources]);
+    // Once loaded, the group's source list lets validation apply the save's File Sync gate and source checks.
+    const fileSyncListing = useMemo<WorkflowFileSyncSourceListing | null>(() => (
+        groupScope && fileSyncSources.status === 'ready' && fileSyncSources.fileSyncEnabled !== null
+            ? { fileSyncEnabled: fileSyncSources.fileSyncEnabled, sources: fileSyncSources.sources } : null
+    ), [groupScope, fileSyncSources.status, fileSyncSources.fileSyncEnabled, fileSyncSources.sources]);
+    const validationErrors = useMemo(() => workflowValidationErrors(draft, options, original, fileSyncListing),
+        [draft, options, original, fileSyncListing]);
     const schemaErrors = useMemo(() => draft.tasks.flatMap((task, index) => {
         if (!task.output_contract?.schema) {
             return [];
@@ -276,9 +281,7 @@ export function WorkflowEditorDialog({
         }
         const savingDraft = history.session.draft;
         const currentErrors = [
-            ...workflowValidationErrors(savingDraft, options, original),
-            ...(groupScope && fileSyncSources.status === 'ready'
-                ? workflowFileSyncAvailabilityErrors(savingDraft, fileSyncSources.sources) : []),
+            ...workflowValidationErrors(savingDraft, options, original, fileSyncListing),
             ...history.session.fields.summary(workflowDraftOwners(savingDraft)).taskSchemaErrors.values(),
         ];
         if (currentErrors.length) {
@@ -297,8 +300,13 @@ export function WorkflowEditorDialog({
             onSaved(saved);
         } catch (cause: unknown) {
             if (!history.session.active) return;
-            if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) onAccessLost(cause.status);
-            else setError(workflowErrorMessage(cause, 'Could not save the workflow. Your draft has been retained.'));
+            if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+                onAccessLost(cause.status);
+                return;
+            }
+            // A source deleted since the list loaded: reload it so the editor marks that source.
+            if (groupScope && workflowErrorCode(cause) === WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE) fileSyncSources.retry();
+            setError(workflowErrorMessage(cause, 'Could not save the workflow. Your draft has been retained.'));
         } finally {
             history.session.setSaving(false);
             setSaving(false);
@@ -485,6 +493,7 @@ export function WorkflowEditorDialog({
                                 scope={scope}
                                 value={draft.m365_run_as_user_id ?? ''}
                                 disabled={readOnly || saving}
+                                canListAccounts={options.can_manage}
                                 onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
                             />
                             <div className="grid gap-3 md:grid-cols-3">

@@ -1,7 +1,7 @@
 # test_workflow_definition_store_integration.py
 """
 Functional tests for real workflow store normalization and conditional saves.
-Version: 0.261.122
+Version: 0.261.148
 Implemented in: 0.261.108
 
 Production store functions run against a JSON-copying Cosmos double. External
@@ -24,9 +24,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 # Worktree modules are imported after module-path setup.
 from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
-from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definition_store import (
+    refuse_save_of_deleted_workflow,
+    save_workflow_definition_record,
+    update_workflow_runtime_record,
+)
 from functions_workflow_definitions import (
     WorkflowDefinitionConflict,
+    WorkflowPublicValidationError,
+    WorkflowSourceUnavailableError,
     normalize_workflow_definition,
     workflow_definition_for_editor,
 )
@@ -103,6 +109,9 @@ def load_group_store():
         "sanitize_workflow_alert_record": sanitize_workflow_alert_record,
         "workflow_definition_for_editor": workflow_definition_for_editor,
         "save_workflow_definition_record": save_workflow_definition_record,
+        "refuse_save_of_deleted_workflow": refuse_save_of_deleted_workflow,
+        "WorkflowPublicValidationError": WorkflowPublicValidationError,
+        "WorkflowSourceUnavailableError": WorkflowSourceUnavailableError,
         "update_workflow_runtime_record": update_workflow_runtime_record,
         "authorize_workflow_reference": lambda workflow, reference, **kwargs: reference_reads.append(
             (workflow, reference, kwargs)

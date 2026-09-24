@@ -780,13 +780,21 @@ def _collect_workflow_file_sync_sources(user_id):
     return [source for source in sources if source.get('source_id')]
 
 
-def _collect_group_workflow_file_sync_sources(user_id, group_id, settings=None):
-    settings = settings or get_settings()
-    user_info = _get_current_user_info_with_roles()
-    if not is_file_sync_enabled_for_group(settings, group_id, user_info=user_info):
-        return []
+def _group_workflow_file_sync_enabled(group_id, settings=None):
+    """Return whether the caller may use File Sync in this group, by the same check a group workflow save makes."""
+    return is_file_sync_enabled_for_group(
+        settings or get_settings(),
+        group_id,
+        user_info=_get_current_user_info_with_roles(),
+    )
 
-    return [
+
+def _collect_group_workflow_file_sync_sources(user_id, group_id, settings=None):
+    """Return the caller's File Sync state for the group and, when it is on, the group's sources."""
+    if not _group_workflow_file_sync_enabled(group_id, settings):
+        return False, []
+
+    return True, [
         _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_GROUP, group_id, source)
         for source in list_file_sync_sources(FILE_SYNC_SCOPE_GROUP, group_id)
         if source.get('id')
@@ -1698,11 +1706,11 @@ def register_route_backend_workflows(bp):
             payload = _prepare_workflow_url_access_payload(payload, user_id)
             workflow = save_personal_workflow(user_id, payload, actor_user_id=user_id)
         except WorkflowDefinitionConflict as exc:
-            return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 409
         except WorkflowDefinitionError as exc:
-            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 400
         except WorkflowPublicValidationError as exc:
-            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_alerts'}), 400
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 400
         except PermissionError as exc:
             return jsonify({'error': 'Workflow settings or sources are not allowed for this account.'}), 403
         except ValueError as exc:
@@ -2039,7 +2047,8 @@ def register_route_backend_workflows(bp):
         user_id = get_current_user_id()
         try:
             group_id, settings = _resolve_active_group_for_workflows(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-            return jsonify({'sources': _collect_group_workflow_file_sync_sources(user_id, group_id, settings=settings)})
+            file_sync_enabled, sources = _collect_group_workflow_file_sync_sources(user_id, group_id, settings=settings)
+            return jsonify({'sources': sources, 'file_sync_enabled': file_sync_enabled})
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
         except LookupError as exc:
@@ -2106,11 +2115,11 @@ def register_route_backend_workflows(bp):
                 user_info=_get_current_user_info_with_roles(),
             )
         except WorkflowDefinitionConflict as exc:
-            return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 409
         except WorkflowDefinitionError as exc:
-            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 400
         except WorkflowPublicValidationError as exc:
-            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_alerts'}), 400
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 400
         except ValueError as exc:
             return jsonify({'error': 'Invalid workflow settings. Review the task, runner, trigger, and document inputs.'}), 400
         except LookupError as exc:

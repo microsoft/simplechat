@@ -24,6 +24,8 @@ const selectClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2
 
 export interface WorkflowFileSyncSourceList {
     status: 'idle' | 'loading' | 'ready' | 'failed';
+    /** The sources route's `file_sync_enabled` once ready: the gate a group workflow save applies. */
+    fileSyncEnabled: boolean | null;
     sources: WorkflowFileSyncSource[];
     retry: () => void;
 }
@@ -31,27 +33,33 @@ export interface WorkflowFileSyncSourceList {
 /**
  * The sources this group offers to its workflows, requested with the page's explicit group.
  * Only managers request them: the route refuses members, and members cannot author triggers.
+ * `retry` also refreshes a ready list, for example after a save finds a deleted source.
  */
 export function useWorkflowFileSyncSources(scope: WorkflowScope, enabled: boolean): WorkflowFileSyncSourceList {
     const scopeKey = workflowScopeKey(scope);
     const groupId = scope.type === 'group' ? scope.groupId : '';
     const [attempt, setAttempt] = useState(0);
-    const [state, setState] = useState<{ key: string; status: WorkflowFileSyncSourceList['status']; sources: WorkflowFileSyncSource[] }>({
-        key: '', status: 'idle', sources: [],
-    });
+    const [state, setState] = useState<{
+        key: string;
+        status: WorkflowFileSyncSourceList['status'];
+        fileSyncEnabled: boolean | null;
+        sources: WorkflowFileSyncSource[];
+    }>({ key: '', status: 'idle', fileSyncEnabled: null, sources: [] });
     const active = enabled && Boolean(groupId);
     useEffect(() => {
         if (!active) {
             return undefined;
         }
         const controller = new AbortController();
-        setState({ key: scopeKey, status: 'loading', sources: [] });
+        setState({ key: scopeKey, status: 'loading', fileSyncEnabled: null, sources: [] });
         void fetchWorkflowFileSyncSources({ type: 'group', groupId }, controller.signal).then(
-            (sources) => {
-                if (!controller.signal.aborted) setState({ key: scopeKey, status: 'ready', sources });
+            (list) => {
+                if (!controller.signal.aborted) {
+                    setState({ key: scopeKey, status: 'ready', fileSyncEnabled: list.fileSyncEnabled, sources: list.sources });
+                }
             },
             () => {
-                if (!controller.signal.aborted) setState({ key: scopeKey, status: 'failed', sources: [] });
+                if (!controller.signal.aborted) setState({ key: scopeKey, status: 'failed', fileSyncEnabled: null, sources: [] });
             },
         );
         return () => controller.abort();
@@ -59,6 +67,7 @@ export function useWorkflowFileSyncSources(scope: WorkflowScope, enabled: boolea
     const current = active && state.key === scopeKey;
     return {
         status: current ? state.status : active ? 'loading' : 'idle',
+        fileSyncEnabled: current ? state.fileSyncEnabled : null,
         sources: current ? state.sources : [],
         retry: () => setAttempt((value) => value + 1),
     };
@@ -87,10 +96,13 @@ export function WorkflowFileSyncFields({
     const monitored = workflow.trigger_type === 'file_sync';
     const active = monitored || config.enabled;
     const selected = new Set(config.sources.map(workflowFileSyncSourceKey));
-    const unavailable = sourceList.status === 'ready' ? workflowUnavailableFileSyncSources(workflow, sourceList.sources) : [];
-    const listed = sourceList.status === 'ready' ? sourceList.sources : [];
+    // Only a list from a group whose File Sync is on can show which selected sources are gone.
+    const verified = sourceList.status === 'ready' && sourceList.fileSyncEnabled === true;
+    const groupFileSyncOff = sourceList.status === 'ready' && sourceList.fileSyncEnabled === false;
+    const unavailable = verified ? workflowUnavailableFileSyncSources(workflow, sourceList.sources) : [];
+    const listed = verified ? sourceList.sources : [];
     // Without a verified list, the saved selection is still shown so it is never silently dropped.
-    const unverified = sourceList.status === 'ready' ? [] : config.sources;
+    const unverified = verified ? [] : config.sources;
     const atLimit = config.sources.length >= WORKFLOW_FILE_SYNC_MAX_SOURCES;
 
     const update = (changes: Partial<WorkflowFileSyncConfig>) => onChange((current) => ({ ...current, ...changes }));
@@ -124,7 +136,7 @@ export function WorkflowFileSyncFields({
             <Toggle
                 label="Run File Sync before each run"
                 checked={active}
-                disabled={disabled || monitored}
+                disabled={disabled || monitored || groupFileSyncOff && !active}
                 onChange={(checked) => update({ enabled: checked })}
                 description={monitored ? 'Required by the Monitor File Sync changes trigger.' : undefined}
             />
@@ -139,7 +151,13 @@ export function WorkflowFileSyncFields({
                         <GlassButton type="button" size="sm" onClick={sourceList.retry}>Retry File Sync sources</GlassButton>
                     </div>
                 ) : null}
-                {sourceList.status === 'ready' && !listed.length ? (
+                {groupFileSyncOff ? (
+                    <p role="status" className="text-xs text-text-3">
+                        Group File Sync is not enabled, so this group&apos;s sources cannot be listed.
+                        {config.sources.length ? ' Your selection is kept, but it cannot be checked.' : ''}
+                    </p>
+                ) : null}
+                {verified && !listed.length ? (
                     <p role="status" className="text-xs text-text-3">No File Sync sources are available to this group.</p>
                 ) : null}
                 <ul className="space-y-1" aria-label="File Sync sources">
@@ -175,7 +193,7 @@ export function WorkflowFileSyncFields({
                                     onChange={(event) => toggleSource(source, event.target.checked)}
                                 />
                                 <span className="min-w-0 break-words">{sourceName(source)}</span>
-                                {sourceList.status === 'ready' ? <Pill tone="warn">No longer available</Pill> : null}
+                                {verified ? <Pill tone="warn">No longer available</Pill> : null}
                             </label>
                         </li>
                     ))}

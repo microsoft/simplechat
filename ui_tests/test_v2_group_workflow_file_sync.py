@@ -1,7 +1,7 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.144
+Version: 0.261.148
 Implemented in: 0.261.141
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
@@ -13,12 +13,14 @@ trigger rules and, since 0.261.144, `normalize_workflow_alert_settings`. They co
 * editing an existing File Sync workflow, including a V2 round trip that keeps alerts, URL
   access, File Sync and document actions unchanged;
 * the source list requested with the page's explicit `?group_id`, and never for members;
-* client-side enforcement of the server rules, and the server's refusal text shown as returned;
+* client-side enforcement of the server rules with the server's reviewed messages (0.261.148),
+  and the server's refusal text shown as returned;
 * the read-only alert summary for members; managers edit alerts natively (0.261.144), so the M6
   classic alerts link is gone (`test_v2_workflow_alerts.py` covers the editor);
 * approval decisions for a group durable run;
 * personal workflows keep their File Sync unchanged, and since 0.261.144 personal Analyze tasks may
-  rely on File Sync's changed files, as the server allows;
+  rely on File Sync's changed files, as the server allows. Since 0.261.148 the fixture validates
+  personal saves with the real personal rules, so personal records are ones the server accepts;
 * the general personal-route trap on group workflow pages.
 """
 
@@ -48,7 +50,7 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
 
 pytestmark = pytest.mark.ui
 MONITOR_ID = "monitor-workflow"
-GENERIC_SAVE_ERROR = "Invalid workflow settings. Review the task, runner, trigger, and document inputs."
+GROUP_FILE_SYNC_OFF = "Group File Sync must be enabled before a group workflow can use File Sync sources."
 ALERT_RULES = [
     {
         "id": "rule-changes", "name": "Files changed", "enabled": True, "severity": "high", "delivery": "popup",
@@ -69,6 +71,11 @@ SUMMARIZE_ACTION = {
     "window_unit": "pages", "window_size": None, "window_percent": None, "max_retries_per_window": 1,
     "document_ids": [], "left_document_id": "", "right_document_ids": [], "analysis_mode": "per_document",
     "target_mode": "selected", "recent_window_minutes": 10,
+}
+PERSONAL_MONITOR_FILE_SYNC = {
+    "enabled": True, "wait_mode": "complete", "continue_mode": "changed", "use_changed_documents": True,
+    "sources": [{"scope_type": "personal", "scope_id": OWNER_ID, "source_id": "home-share",
+                 "name": "Home share", "source_type": "onedrive"}],
 }
 STORED_FINANCE_SOURCE = {
     "scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share",
@@ -311,7 +318,7 @@ def test_file_sync_before_run_follows_the_server_rules_for_manual_triggers(workf
     source_checkbox(page, "Finance share (Group)").check()
     page.get_by_label("Wait for File Sync", exact=True).select_option("queued")
     page.get_by_label("Continue the workflow", exact=True).select_option("changed")
-    message = "File Sync must wait for completion before a workflow can continue only when changes are found."
+    message = "To continue only when changes are found, File Sync must wait for the sync to complete."
     expect(page.get_by_role("status").filter(has_text=message)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text=message)).to_be_visible()
@@ -351,7 +358,7 @@ def test_unavailable_saved_sources_must_be_removed_before_saving(workflow_ui):
     stale = source_checkbox(page, "Deleted share")
     expect(stale).to_be_checked()
     expect(page.get_by_text("No longer available", exact=True)).to_be_visible()
-    message = "Remove File Sync sources that are no longer available before saving: Deleted share."
+    message = "A selected File Sync source is no longer available. Remove it and save again."
     expect(page.get_by_role("status").filter(has_text=message)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text=message)).to_be_visible()
@@ -368,12 +375,17 @@ def test_unavailable_saved_sources_must_be_removed_before_saving(workflow_ui):
 
 
 def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_returned(workflow_ui):
-    """Without sources there is no Monitor trigger; a save the server refuses shows its own text."""
+    """Without group File Sync there is no Monitor trigger; a save the server refuses shows its own text."""
     ui, page = workflow_ui, workflow_ui.page
     ui.group_file_sync_enabled[GROUP_ID] = False
     open_group_workflows(ui)
     page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_text("No File Sync sources are available to this group.", exact=True)).to_be_visible()
+    # 0.261.148: the list says File Sync is off, so the editor neither lists sources nor lets a draft use them.
+    expect(page.get_by_text(
+        "Group File Sync is not enabled, so this group's sources cannot be listed.", exact=True,
+    )).to_be_visible()
+    expect(page.get_by_text("No File Sync sources are available to this group.", exact=True)).to_have_count(0)
+    expect(before_run_toggle(page)).to_be_disabled()
     assert trigger_options(page) == ["Manual", "Interval"]
     page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
 
@@ -382,10 +394,11 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     fill_required_basics(page, "Refused monitor")
     labelled(page, "Trigger").select_option("file_sync")
     source_checkbox(page, "Finance share (Group)").check()
-    # File Sync is turned off for the group after the list loaded, so only the real server rule refuses.
+    # File Sync is turned off for the group after the list loaded, so only the real server rule refuses,
+    # and since 0.261.148 its reviewed message is shown instead of the generic one.
     ui.group_file_sync_enabled[GROUP_ID] = False
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("alert").filter(has_text=GENERIC_SAVE_ERROR)).to_be_visible()
+    expect(page.get_by_role("alert").filter(has_text=GROUP_FILE_SYNC_OFF)).to_be_visible()
     expect(labelled(page, "Workflow name")).to_have_value("Refused monitor")
     assert not ui.workflow_writes
 
@@ -513,9 +526,14 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
 
 
 def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
-    """Personal editors keep their triggers, File Sync and payloads, and never list sources."""
+    """Personal editors keep their triggers, File Sync and payloads, and never list sources.
+
+    0.261.148: the record is a Monitor workflow the real server accepts. Its earlier File Sync was
+    off, which `save_personal_workflow` refuses for this trigger.
+    """
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["trigger_type"] = "file_sync"
+    ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")
     page.get_by_role("button", name="Create workflow", exact=True).click()
     assert trigger_options(page) == ["Manual", "Interval"]
@@ -539,7 +557,9 @@ def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
     expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
     body = workflow_post(ui).body
     assert body["trigger_type"] == "file_sync"
-    assert body["file_sync"] == {"source_id": "legacy-source", "delete_policy": "preserve"}
+    assert body["file_sync"] == PERSONAL_MONITOR_FILE_SYNC
+    # The fixture's real personal rules authorized the stored source.
+    assert ("personal", OWNER_ID, "home-share") in ui.file_sync_source_reads
     assert not source_requests(ui)
 
 

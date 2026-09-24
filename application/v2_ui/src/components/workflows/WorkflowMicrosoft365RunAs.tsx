@@ -19,11 +19,17 @@ export function WorkflowMicrosoft365RunAs({
     scope,
     value,
     disabled = false,
+    canListAccounts = true,
     onChange,
 }: {
     scope: WorkflowScope;
     value: string;
     disabled?: boolean;
+    /**
+     * Whether this caller may list eligible accounts. The route refuses everyone else, so a
+     * read-only viewer is shown only whether an account is stored, and nothing is requested.
+     */
+    canListAccounts?: boolean;
     onChange: (userId: string) => void;
 }) {
     const selectId = useId();
@@ -40,6 +46,9 @@ export function WorkflowMicrosoft365RunAs({
     });
 
     useEffect(() => {
+        if (!canListAccounts) {
+            return undefined;
+        }
         const controller = new AbortController();
         const requestScope: WorkflowScope = scopeType === 'group'
             ? { type: 'group', groupId }
@@ -58,7 +67,38 @@ export function WorkflowMicrosoft365RunAs({
             },
         );
         return () => controller.abort();
-    }, [scopeKey, scopeType, groupId, attempt]);
+    }, [scopeKey, scopeType, groupId, attempt, canListAccounts]);
+
+    const help = (
+        <p id={helpId} className="text-xs text-text-3">
+            Microsoft 365 actions use this account for manual and scheduled runs. The selected person
+            must connect Microsoft 365 and approve this workflow revision. Selecting an account does not grant
+            consent. Changes to instructions, capabilities, or destinations require approval again.
+        </p>
+    );
+
+    if (!canListAccounts) {
+        return (
+            <div className="space-y-2">
+                <label htmlFor={selectId} className="block text-sm text-text-2">
+                    Microsoft 365 Run as
+                </label>
+                <select
+                    id={selectId}
+                    className="w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none"
+                    value={value}
+                    disabled
+                    aria-describedby={`${helpId} ${statusId}`}
+                >
+                    <option value={value}>{value ? 'Account selected' : 'No Microsoft 365 account selected'}</option>
+                </select>
+                {help}
+                <p id={statusId} className="text-xs text-text-3">
+                    Only workflow managers can see which account is selected or change it.
+                </p>
+            </div>
+        );
+    }
 
     const status = choices.scopeKey === scopeKey ? choices.status : 'loading';
     const users = choices.scopeKey === scopeKey ? choices.users : [];
@@ -98,11 +138,7 @@ export function WorkflowMicrosoft365RunAs({
                 {missingSelection ? <option value={value}>{missingLabel}</option> : null}
                 {users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}
             </select>
-            <p id={helpId} className="text-xs text-text-3">
-                Microsoft 365 actions use this account for manual and scheduled runs. The selected person
-                must connect Microsoft 365 and approve this workflow revision. Selecting an account does not grant
-                consent. Changes to instructions, capabilities, or destinations require approval again.
-            </p>
+            {help}
             {statusMessage ? (
                 <p
                     id={statusId}

@@ -1,12 +1,14 @@
 # test_v2_workflow_m365_run_as.py
 """
 Closed-browser tests for native V2 Microsoft 365 Run as authoring.
-Version: 0.261.127
+Version: 0.261.148
 Implemented in: 0.261.122
 
 Use the actual built SPA and existing scoped workflow fixtures. Cover explicit
 selection and clearing, loading and lookup failures, unavailable saved accounts,
 safe labels/errors, dirty/revision guards, and preserved loop/Repeat definitions.
+Since 0.261.148, a group member's read-only editor never requests the manager-only account
+list; the fixture refuses such a request and records it as unexpected.
 No real Microsoft 365 account, workflow run, or application server is contacted.
 """
 
@@ -289,3 +291,40 @@ def test_account_edit_preserves_structured_flow_bindings_limits_and_revision(wor
         for key in ("instructions", "inputs", "reference_ids", "output_contract", "document_action"):
             if key in task:
                 assert tasks[task["id"]][key] == task[key]
+
+
+@pytest.mark.parametrize("stored", ["group-reviewer", ""], ids=["selected", "none"])
+def test_a_members_read_only_editor_never_requests_accounts_and_shows_the_stored_state(workflow_ui, stored):
+    """The account list is manager-only, so a member sees only whether an account is stored."""
+    ui, page = workflow_ui, workflow_ui.page
+    ui.group_can_manage = False
+    ui.group_workflows[GROUP_ID]["group-workflow"]["m365_run_as_user_id"] = stored
+    open_workflows(ui, group=True)
+    page.get_by_role("button", name="View Group review workflow", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    expect(dialog.get_by_text("You have read-only access to workflows in this scope.", exact=True)).to_be_visible()
+    select = account_select(page)
+    expect(select).to_be_disabled()
+    expect(select).to_have_value(stored)
+    expect(select.locator("option")).to_have_text(["Account selected" if stored else "No Microsoft 365 account selected"])
+    expect(dialog.get_by_text(
+        "Only workflow managers can see which account is selected or change it.", exact=True,
+    )).to_be_visible()
+    expect(dialog.get_by_text("Could not load eligible Microsoft 365 accounts", exact=False)).to_have_count(0)
+    assert not [request for request in ui.requests if request.path == RUN_AS_PATH]
+    if stored:
+        assert stored not in dialog.inner_text()
+
+
+def test_the_fixture_refuses_and_records_a_members_account_request(workflow_ui):
+    """Anti-vacuity: a member's request would fail the suites, as the real route refuses it."""
+    ui, page = workflow_ui, workflow_ui.page
+    ui.group_can_manage = False
+    open_workflows(ui, group=True)
+    status = page.evaluate(
+        "(path) => fetch(path).then((response) => response.status)",
+        f"{RUN_AS_PATH}?scope=group&group_id={GROUP_ID}",
+    )
+    assert status == 403
+    assert ui.unexpected_requests == [f"GET {RUN_AS_PATH} (a group member cannot list run-as accounts)"]
+    ui.unexpected_requests.clear()
