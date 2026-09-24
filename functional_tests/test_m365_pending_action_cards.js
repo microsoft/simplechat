@@ -1,6 +1,6 @@
 // test_m365_pending_action_cards.js
-// Version: 0.261.051
-// Implemented in: 0.261.051
+// Version: 0.261.055
+// Implemented in: 0.261.055
 // Offline behavioral checks of the real shared renderer and M365 CSRF helper.
 // Run: node --test functional_tests\test_m365_pending_action_cards.js
 
@@ -457,6 +457,14 @@ test('absent or nonboolean permission flags do not create controls', () => {
     assert.equal(button(view, 'Send'), undefined);
     assert.equal(button(view, 'Cancel'), undefined);
     assert.match(view.card.textContent, /read-only/);
+});
+
+test('conversation startup action recovery stays in the background', () => {
+    const source = fs.readFileSync(path.join(scriptRoot, 'm365-pending-actions.js'), 'utf8');
+    assert.match(source, /async function load\(token = '', \{ background = false \} = \{\}\)/);
+    assert.match(source, /void chat\.collection\.load\('', \{ background: true \}\);/);
+    assert.match(source, /window\.addEventListener\('focus', \(\) => \{ void load\('', \{ background: true \}\); \}, \{ signal: lifecycle\.signal \}\)/);
+    assert.match(source, /if \(!background && \(error\.status === 403 \|\| !chatView \|\| hasKnownActionState\)\)/);
 });
 
 test('legacy recreation never offers Send but preserves authorized cancellation', () => {

@@ -2,6 +2,32 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.055)**
+
+#### Bug Fixes
+
+*   **Invite Acceptance Preserves Visible Shared History**
+    *   When an invitee accepts while already viewing the shared conversation, the client now updates membership and composer state in place instead of selecting the same conversation again and clearing its loaded history.
+    *   (Ref: `chat-collaboration.js`)
+
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Shared History and Live Events Stay Aligned**
+    *   Collaborative history now supplies an event cursor to EventSource, so invitees retain the owner's initial prompt after accepting and browser refreshes do not replay the accepted-invite toast.
+    *   Invitees no longer receive an acceptance toast for their own action; other participants still receive the live notification.
+    *   (Ref: `route_backend_collaboration.py`, `chat-collaboration.js`)
+
+### **(v0.261.053)**
+
+#### Bug Fixes
+
+*   **Invitees Retain Shared Prompts With Redis Enabled**
+    *   Attaching an EventSource session no longer clears the Redis-backed shared event log, so an invitee receives messages published before accepting the invite without needing to refresh.
+    *   Automatic Microsoft 365 action recovery no longer surfaces a warning in normal shared conversations when its lookup is temporarily unavailable; saved actions still render when available and can be refreshed manually.
+    *   (Ref: `app_settings_cache.py`, `m365-pending-actions.js`)
+
 ### **(v0.261.052)**
 
 #### Bug Fixes

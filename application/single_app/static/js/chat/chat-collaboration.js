@@ -965,7 +965,7 @@ async function loadConversationMessages(conversationId) {
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`);
     const chatbox = document.getElementById('chatbox');
     if (!chatbox) {
-        return [];
+        return { messages: [], eventCursor: 0 };
     }
 
     window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
@@ -998,7 +998,10 @@ async function loadConversationMessages(conversationId) {
         cacheCollaborationMessage(message);
     });
     reapplyPendingSearchHighlight();
-    return messages;
+    return {
+        messages,
+        eventCursor: Math.max(0, Number(payload.event_cursor) || 0),
+    };
 }
 
 function handleTypingEvent(payload = {}) {
@@ -1193,7 +1196,9 @@ function handleConversationEvent(eventEnvelope = {}) {
         return;
     }
 
-    if (eventEnvelope.event_type === 'collaboration.invite.accepted' && payload.participant?.display_name) {
+    if (eventEnvelope.event_type === 'collaboration.invite.accepted'
+        && payload.participant?.display_name
+        && String(payload.participant.user_id || '').trim() !== getCurrentUserId()) {
         showToast(`${payload.participant.display_name} accepted the invite.`, 'success');
         return;
     }
@@ -1207,14 +1212,17 @@ function handleConversationEvent(eventEnvelope = {}) {
     }
 }
 
-function subscribeToConversationEvents(conversationId) {
+function subscribeToConversationEvents(conversationId, eventCursor = 0) {
     if (!isCollaborationEnabled() || !conversationId || typeof EventSource === 'undefined') {
         return;
     }
 
     disconnectConversationEvents();
     activeCollaborativeConversationId = conversationId;
-    activeCollaborationEventSource = new EventSource(`/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events`);
+    const query = new URLSearchParams({ start_index: String(Math.max(0, Number(eventCursor) || 0)) });
+    activeCollaborationEventSource = new EventSource(
+        `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events?${query}`
+    );
     activeCollaborationEventSource.onmessage = event => {
         if (!event?.data) {
             return;
@@ -1301,11 +1309,11 @@ async function activateConversation(conversationId, metadata = null) {
         : await fetchConversationMetadata(conversationId);
     updateComposerAvailability(conversationMetadata);
     clearReplyTarget({ focusComposer: false });
-    await loadConversationMessages(conversationId);
+    const { eventCursor } = await loadConversationMessages(conversationId);
     markCollaborationConversationRead(conversationId, { suppressErrorToast: true }).catch(error => {
         console.warn('Failed to clear shared conversation notifications:', error);
     });
-    subscribeToConversationEvents(conversationId);
+    subscribeToConversationEvents(conversationId, eventCursor);
 
     if (conversationMetadata.can_accept_invite && !promptedPendingInviteConversationIds.has(conversationId)) {
         promptedPendingInviteConversationIds.add(conversationId);
@@ -1868,8 +1876,16 @@ async function respondToInvite(conversationId, action) {
         promptedPendingInviteConversationIds.delete(conversationId);
     }
 
-    if (action === 'accept' && payload.conversation?.id && window.chatConversations?.selectConversation) {
-        await window.chatConversations.selectConversation(payload.conversation.id, payload.conversation);
+    if (action === 'accept' && payload.conversation?.id) {
+        const acceptedConversation = cacheCollaborationConversation(payload.conversation);
+        setConversationDataset(acceptedConversation.id, acceptedConversation);
+        applyConversationMetadataUpdate(acceptedConversation.id, acceptedConversation);
+        updateComposerAvailability(acceptedConversation);
+
+        if (window.chatConversations?.getCurrentConversationId?.() !== acceptedConversation.id
+            && window.chatConversations?.selectConversation) {
+            await window.chatConversations.selectConversation(acceptedConversation.id, acceptedConversation);
+        }
     }
 
     window.hideConversationDetails?.();

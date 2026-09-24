@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos cache fallback behavior.
-Version: 0.261.052
-Implemented in: 0.261.052
+Version: 0.261.055
+Implemented in: 0.261.055
 
 This test ensures Redis failures in the app cache layer fall back to
 Cosmos-backed cache/source reads instead of failing callers.
@@ -114,6 +114,80 @@ class FailingRedis:
 class RaisingRedis(FailingRedis):
     def __init__(self, *args, **kwargs):
         raise RedisConnectionError("redis initialization failed")
+
+
+class InMemoryRedisPipeline:
+    def __init__(self, redis_client):
+        self.redis_client = redis_client
+        self.operations = []
+
+    def delete(self, *keys):
+        self.operations.append(('delete', keys))
+        return self
+
+    def set(self, key, value):
+        self.operations.append(('set', (key, value)))
+        return self
+
+    def expire(self, key, seconds):
+        self.operations.append(('expire', (key, seconds)))
+        return self
+
+    def rpush(self, key, value):
+        self.operations.append(('rpush', (key, value)))
+        return self
+
+    def execute(self):
+        for operation, arguments in self.operations:
+            getattr(self.redis_client, operation)(*arguments)
+        return []
+
+
+class InMemoryRedis:
+    def __init__(self, *args, **kwargs):
+        self.values = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value):
+        self.values[key] = value
+        return True
+
+    def setex(self, key, seconds, value):
+        return self.set(key, value)
+
+    def setnx(self, key, value):
+        if key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+    def incr(self, key):
+        value = int(self.values.get(key, 0)) + 1
+        self.values[key] = value
+        return value
+
+    def delete(self, *keys):
+        for key in keys:
+            self.values.pop(key, None)
+
+    def exists(self, key):
+        return key in self.values
+
+    def expire(self, key, seconds):
+        return self.exists(key)
+
+    def rpush(self, key, value):
+        self.values.setdefault(key, []).append(value)
+        return len(self.values[key])
+
+    def lrange(self, key, start, end):
+        values = self.values.get(key, [])
+        return values[start:] if end == -1 else values[start:end + 1]
+
+    def pipeline(self):
+        return InMemoryRedisPipeline(self)
 
 
 def _load_cache_module():
@@ -243,6 +317,30 @@ def test_stream_event_fallback_retries_concurrent_append():
     ]
 
 
+def test_redis_stream_session_initialization_preserves_existing_events():
+    """A second app service must not erase events published before it attaches."""
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({
+        "enable_redis_cache": True,
+        "redis_url": "simplechat.redis.cache.windows.net",
+        "redis_key": "test-key",
+        "redis_auth_type": "key",
+    }, dependencies=_dependencies(cache_module, FakeCosmosContainer(), InMemoryRedis))
+
+    cache_key = "collaboration:redis-test"
+    metadata = {"conversation_id": "redis-test", "active": True}
+    cache_module.initialize_stream_session_cache(cache_key, metadata, ttl_seconds=60)
+    cache_module.append_stream_session_event(cache_key, "data: owner-message\n\n", ttl_seconds=60)
+
+    cache_module.initialize_stream_session_cache(cache_key, metadata, ttl_seconds=60)
+    cache_module.append_stream_session_event(cache_key, "data: invitee-message\n\n", ttl_seconds=60)
+
+    assert cache_module.get_stream_session_events(cache_key) == [
+        "data: owner-message\n\n",
+        "data: invitee-message\n\n",
+    ]
+
+
 if __name__ == "__main__":
     tests = [
         test_redis_runtime_failure_falls_back_to_cosmos_settings,
@@ -250,6 +348,7 @@ if __name__ == "__main__":
         test_redis_initialization_failure_assigns_fallback_functions,
         test_stream_event_fallback_is_shared_between_workers,
         test_stream_event_fallback_retries_concurrent_append,
+        test_redis_stream_session_initialization_preserves_existing_events,
     ]
     results = []
     for test in tests:

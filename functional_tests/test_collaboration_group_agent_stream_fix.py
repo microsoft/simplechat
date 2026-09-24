@@ -2,8 +2,8 @@
 # test_collaboration_group_agent_stream_fix.py
 """
 Functional test for group collaboration agent stream completion.
-Version: 0.241.068
-Implemented in: 0.241.068
+Version: 0.261.055
+Implemented in: 0.261.055
 
 This test ensures group collaborative agent responses complete through the
 shared stream bridge even when mirrored agent citation payloads contain nested
@@ -66,6 +66,13 @@ class FakeEventRegistry:
 
     def publish(self, conversation_id, payload):
         self.events.append((conversation_id, copy.deepcopy(payload)))
+
+    def get_session(self, conversation_id):
+        del conversation_id
+        return self
+
+    def get_event_cursor(self):
+        return len(self.events)
 
 
 def build_group_agent_stream_test_app():

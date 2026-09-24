@@ -168,6 +168,11 @@ class CollaborationEventSession:
         with self._condition:
             self._condition.notify_all()
 
+    def get_event_cursor(self):
+        """Return the next event index before the caller reads persisted history."""
+        self.initialize()
+        return len(app_settings_cache.get_stream_session_events(self.cache_key, start_index=0) or [])
+
     def iter_events(self, start_index=0):
         self.initialize()
         next_index = max(int(start_index or 0), 0)
@@ -1347,10 +1352,11 @@ def register_route_backend_collaboration(bp):
                 conversation_doc,
                 allow_pending=True,
             )
+            event_cursor = COLLABORATION_EVENT_REGISTRY.get_session(conversation_id).get_event_cursor()
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
             attach_generated_file_approval_state(messages, current_user['user_id'])
             messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
-            return jsonify({'messages': messages}), 200
+            return jsonify({'messages': messages, 'event_cursor': event_cursor}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:

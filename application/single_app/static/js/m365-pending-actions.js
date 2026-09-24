@@ -720,7 +720,7 @@
             retryAttempt += 1;
             retryHandle = window.setTimeout(() => {
                 retryHandle = null;
-                void load();
+                void load('', { background: true });
             }, delay);
         }
 
@@ -811,7 +811,7 @@
                 .finally(() => pendingReferences.delete(id));
         }
 
-        async function load(token = '') {
+        async function load(token = '', { background = false } = {}) {
             if (disposed || loadPromise) {
                 return loadPromise;
             }
@@ -865,7 +865,7 @@
                             }
                         });
                         const hasKnownActionState = views.size > 0 || referenceFailures.size > 0;
-                        if (error.status === 403 || !chatView || hasKnownActionState) {
+                        if (!background && (error.status === 403 || !chatView || hasKnownActionState)) {
                             showError(error.status === 403
                                 ? 'You do not have permission to view outgoing actions for this conversation.'
                                 : 'Outgoing actions could not be loaded. Refresh to recover saved actions; this is not an empty inbox.');
@@ -917,8 +917,8 @@
 
         more.addEventListener('click', () => { void load(continuationToken); });
         refresh.addEventListener('click', () => { void load(); });
-        window.addEventListener('focus', () => { void load(); }, { signal: lifecycle.signal });
-        window.addEventListener('online', () => { void load(); }, { signal: lifecycle.signal });
+        window.addEventListener('focus', () => { void load('', { background: true }); }, { signal: lifecycle.signal });
+        window.addEventListener('online', () => { void load('', { background: true }); }, { signal: lifecycle.signal });
         return {
             add, load, trackMessage,
             async refresh() {
@@ -974,7 +974,7 @@
             chatbox.before(root);
         }
         chat = { id, collection: createCollection(root, { conversation_id: id }, { chatView: true }) };
-        void chat.collection.load();
+        void chat.collection.load('', { background: true });
         return chat;
     }
 

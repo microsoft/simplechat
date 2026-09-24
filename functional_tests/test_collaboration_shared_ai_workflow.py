@@ -2,8 +2,8 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.261.052
-Implemented in: 0.261.052
+Version: 0.261.055
+Implemented in: 0.261.055
 
 This test ensures collaborative conversations route shared AI requests through
 the collaboration stream bridge, persist explicit AI-request metadata, and
@@ -111,7 +111,7 @@ def test_collaboration_lifecycle_and_participant_action_wiring():
     assert "convoItem.dataset.canAcceptInvite === 'true'" in conversations_source
     assert "metadata.conversation_kind === 'collaborative'" in conversations_source
     assert 'metadataOverride = null' in conversations_source
-    assert 'selectConversation(payload.conversation.id, payload.conversation)' in collaboration_source
+    assert 'await window.chatConversations.selectConversation(acceptedConversation.id, acceptedConversation);' in collaboration_source
     route_source = read_repo_file('application', 'single_app', 'route_backend_collaboration.py')
     assert "yield event_text" in route_source
     assert "continue" in route_source
@@ -122,6 +122,13 @@ def test_collaboration_lifecycle_and_participant_action_wiring():
     assert 'if (!receivedM365PendingAction)' in streaming_source
     assert 'eventConversationId !== activeCollaborativeConversationId' in collaboration_source
     assert 'eventConversationId !== window.currentConversationId' in collaboration_source
+    assert 'def get_event_cursor(self):' in route_source
+    assert "'event_cursor': event_cursor" in route_source
+    assert 'subscribeToConversationEvents(conversationId, eventCursor);' in collaboration_source
+    assert 'start_index: String(Math.max(0, Number(eventCursor) || 0))' in collaboration_source
+    assert "String(payload.participant.user_id || '').trim() !== getCurrentUserId()" in collaboration_source
+    assert 'window.chatConversations?.getCurrentConversationId?.() !== acceptedConversation.id' in collaboration_source
+    assert 'updateComposerAvailability(acceptedConversation);' in collaboration_source
 
 
 if __name__ == '__main__':

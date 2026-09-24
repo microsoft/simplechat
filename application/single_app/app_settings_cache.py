@@ -733,9 +733,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         def initialize_stream_session_cache_redis(cache_key, metadata, ttl_seconds=None):
             try:
                 metadata_key = get_stream_session_metadata_key(cache_key)
-                events_key = get_stream_session_events_key(cache_key)
                 pipeline = redis_client.pipeline()
-                pipeline.delete(events_key)
                 pipeline.set(metadata_key, json.dumps(metadata))
                 if ttl_seconds is not None:
                     pipeline.expire(metadata_key, int(ttl_seconds))

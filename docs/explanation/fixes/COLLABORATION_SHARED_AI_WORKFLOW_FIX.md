@@ -13,6 +13,9 @@ Shared-event and M365 refresh decoupling completed in: **0.261.049**
 Stream-level M365 refresh gating completed in: **0.261.050**
 Cross-worker collaboration event sharing completed in: **0.261.051**
 Cross-worker event append concurrency hardening completed in: **0.261.052**
+Redis stream-session attachment hardening completed in: **0.261.053**
+History and event replay cursor synchronization completed in: **0.261.054**
+Active invite acceptance history preservation completed in: **0.261.055**
 
 ## Overview
 
@@ -53,6 +56,10 @@ The follow-up defect was in the routing predicate: it only selected the AI strea
 - Gates the generic streaming completion and recovery hooks behind explicit M365 action data, so normal shared AI prompts do not request the pending-actions service or surface its availability failures.
 - Uses the shared Cosmos stream-session fallback when Redis is disabled or unavailable, so EventSource subscribers attached to different application workers receive the same prompts, responses, and typing events.
 - Preserves an existing shared event log during another worker's session initialization and retries optimistic Cosmos writes when two workers publish at the same time, preventing one shared event from overwriting another.
+- Preserves Redis-backed shared event logs when another application worker attaches to a conversation, so accepting an invite cannot erase prompts published before the invitee's EventSource subscription begins.
+- Treats the initial Microsoft 365 saved-action lookup as background recovery, keeping transient lookup failures out of ordinary shared conversation views while retaining manual recovery controls and saved-action rendering.
+- Captures an SSE cursor with each history response and subscribes after that cursor, so persisted prompts remain visible through invite acceptance and retained invite events do not replay as refresh-time notifications.
+- Updates accepted conversation metadata and composer availability in place when the invitee is already viewing that conversation, avoiding a second conversation selection that clears the loaded message history.
 - Split shared chip styling so participant mentions, agent targets, and model targets render with different background colors.
 - Updated the streaming chat bridge so explicit tagged-agent requests stamp `agent_selection` and the actual resolved model onto the hidden source user message metadata, which keeps shared user-message detail panels aligned with the assistant response.
 - Synced source conversation tags and context metadata back into the collaborative conversation record after streaming completes so shared conversation details reflect the resolved agent and actual model used.
