@@ -5,7 +5,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import (
+    CosmosAccessConditionFailedError,
+    CosmosResourceNotFoundError,
+)
 
 from config import (
     cosmos_global_workspace_identities_container,
@@ -16,6 +20,8 @@ from config import (
 from functions_appinsights import log_event
 from functions_keyvault import (
     SecretReturnType,
+    keyvault_identity_cleanup_helper,
+    keyvault_identity_delete_helper,
     retrieve_secret_from_key_vault_by_full_name,
     store_secret_in_key_vault,
     ui_trigger_word,
@@ -408,6 +414,105 @@ def update_workspace_identity(scope_type: str, scope_id: str, identity_id: str, 
 def delete_workspace_identity(scope_type: str, scope_id: str, identity_id: str, deleted_by: str) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
     _get_identities_container(scope_type).delete_item(item=identity["id"], partition_key=scope_id)
+    return {"identity_id": identity_id, "deleted_by": deleted_by}
+
+
+class WorkspaceIdentityConflict(Exception):
+    """A conditional identity write failed because the stored record changed.
+
+    The immutable-target routes translate this to a 409 with a stable message. It
+    is raised when the caller's ``expected_etag`` no longer matches the stored
+    record, either detected at read time or by the ``IfNotModified`` precondition
+    on the Cosmos write.
+    """
+
+
+def update_workspace_identity_conditional(
+    scope_type: str,
+    scope_id: str,
+    identity_id: str,
+    payload: Dict[str, Any],
+    updated_by: str,
+    expected_etag: str,
+) -> Dict[str, Any]:
+    """Update an identity only if its stored ``_etag`` still matches ``expected_etag``.
+
+    Unlike :func:`update_workspace_identity` (which upserts and so can resurrect a
+    record deleted between the read and the write), this reads the current record,
+    refuses a stale etag, normalizes the payload (minting any new secrets), then
+    replaces conditionally with ``IfNotModified`` so a concurrent write or delete
+    never loses. A missing record is a :class:`LookupError` (404) and is never
+    recreated. Superseded Key Vault secrets are removed only after the write
+    commits, best effort.
+    """
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    current_etag = identity.get("_etag")
+    if not expected_etag or expected_etag != current_etag:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the update")
+
+    previous_auth = dict(identity.get("auth") or {})
+    normalized_payload = _normalize_identity_payload(
+        scope_type, scope_id, payload or {}, identity_id, existing_identity=identity
+    )
+    updated = dict(identity)
+    updated.update(normalized_payload)
+    updated["updated_by"] = updated_by
+    updated["updated_at"] = _now_iso()
+
+    container = _get_identities_container(scope_type)
+    try:
+        stored = container.replace_item(
+            item=identity["id"],
+            body=updated,
+            etag=expected_etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except CosmosResourceNotFoundError:
+        raise LookupError("Workspace identity not found")
+    except CosmosAccessConditionFailedError:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the update")
+
+    keyvault_identity_cleanup_helper(
+        previous_auth, normalized_payload.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
+    )
+    return stored if isinstance(stored, dict) else updated
+
+
+def delete_workspace_identity_conditional(
+    scope_type: str,
+    scope_id: str,
+    identity_id: str,
+    deleted_by: str,
+    expected_etag: str,
+) -> Dict[str, Any]:
+    """Delete an identity only if its stored ``_etag`` still matches ``expected_etag``.
+
+    Reads the current record, refuses a stale etag, then deletes conditionally with
+    ``IfNotModified``. A record deleted meanwhile is a :class:`LookupError` (404)
+    and is never recreated. The identity's Key Vault secrets are removed after the
+    delete commits, best effort and logged.
+    """
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    current_etag = identity.get("_etag")
+    if not expected_etag or expected_etag != current_etag:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the delete")
+
+    container = _get_identities_container(scope_type)
+    try:
+        container.delete_item(
+            item=identity["id"],
+            partition_key=scope_id,
+            etag=expected_etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except CosmosResourceNotFoundError:
+        raise LookupError("Workspace identity not found")
+    except CosmosAccessConditionFailedError:
+        raise WorkspaceIdentityConflict("Workspace identity changed before the delete")
+
+    keyvault_identity_delete_helper(
+        dict(identity.get("auth") or {}), scope_id, scope=_keyvault_scope(scope_type)
+    )
     return {"identity_id": identity_id, "deleted_by": deleted_by}
 
 
@@ -805,6 +910,23 @@ def _apply_generic_action_identity_auth(action_auth: Dict[str, Any], identity_au
         action_auth["key"] = _identity_secret(identity_auth)
 
 
+def normalize_identity_usage_contexts(identity: Dict[str, Any]) -> List[str]:
+    """The canonical ``usage_contexts`` for a stored identity.
+
+    One source of truth for both :func:`identity_supports_usage` (the save-time
+    gate) and the native response projection, so a response can never disagree with
+    what the server accepts. Older records may omit the field or hold aliases
+    (``agent``/``plugin``/``general``); this applies the same ``_normalize_list``
+    call, allowed values, ``["action"]`` default and aliases those callers use.
+    """
+    return _normalize_list(
+        identity.get("usage_contexts"),
+        allowed_values=WORKSPACE_IDENTITY_USAGE_CONTEXTS,
+        default_values=["action"],
+        aliases=WORKSPACE_IDENTITY_USAGE_ALIASES,
+    )
+
+
 def identity_supports_usage(
     identity: Dict[str, Any],
     usage_context: str,
@@ -815,14 +937,7 @@ def identity_supports_usage(
         _normalize_text(usage_context, 80).lower(),
         _normalize_text(usage_context, 80).lower(),
     )
-    usage_contexts = set(
-        _normalize_list(
-            identity.get("usage_contexts"),
-            allowed_values=WORKSPACE_IDENTITY_USAGE_CONTEXTS,
-            default_values=["action"],
-            aliases=WORKSPACE_IDENTITY_USAGE_ALIASES,
-        )
-    )
+    usage_contexts = set(normalize_identity_usage_contexts(identity))
     if normalized_usage_context not in usage_contexts:
         return False
     if source_type:

@@ -73,7 +73,7 @@ def test_workspace_identity_action_helpers():
             )
         ) or (
             isinstance(node, ast.FunctionDef)
-            and node.name in {"_normalize_text", "_normalize_list", "identity_supports_usage"}
+            and node.name in {"_normalize_text", "_normalize_list", "normalize_identity_usage_contexts", "identity_supports_usage"}
         )
     ]
     exec(compile(ast.Module(body=selected, type_ignores=[]), "functions_workspace_identities.py", "exec"), namespace)

@@ -1502,6 +1502,89 @@ def keyvault_model_endpoint_cleanup_helper(previous_endpoint, current_endpoint, 
     return current_endpoint
 
 
+# The two secret-reference fields a workspace identity's auth block can carry.
+WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS = ("password_secret_name", "secret_secret_name")
+
+
+def keyvault_identity_delete_helper(auth_dict, scope_value, scope="group"):
+    """Best-effort delete of Key Vault-backed workspace identity auth secrets.
+
+    A workspace identity delete or auth-type change removes the stored secret, but
+    a Key Vault failure must never fail the Cosmos write that already committed, so
+    each delete is logged and swallowed rather than raised (unlike the model
+    endpoint helper). Only values that are valid Key Vault references are deleted;
+    inline plaintext (Key Vault storage off) is left alone.
+
+    Args:
+        auth_dict (dict): The identity ``auth`` block whose secret references to delete.
+        scope_value (str): The scope value the secret was stored under (the scope id).
+        scope (str): The Key Vault scope (e.g. ``group``).
+
+    Returns:
+        dict: The original ``auth_dict``.
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return auth_dict
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return auth_dict
+
+    auth = auth_dict if isinstance(auth_dict, dict) else {}
+    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+    for auth_field in WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS:
+        secret_name = auth.get(auth_field)
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Deleting workspace identity secret '{auth_field}' for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to remove a workspace identity secret.",
+                extra={
+                    "scope": scope,
+                    "auth_field": auth_field,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    return auth_dict
+
+
+def keyvault_identity_cleanup_helper(previous_auth, current_auth, scope_value, scope="group"):
+    """Delete obsolete workspace identity secrets no longer referenced after a write.
+
+    Only a reference that changed (an auth-type switch supersedes the previous
+    field) is deleted. A same-field update mints a new version under the same
+    conventional name, so its reference is unchanged and kept.
+    """
+    previous_auth = previous_auth if isinstance(previous_auth, dict) else {}
+    current_auth = current_auth if isinstance(current_auth, dict) else {}
+
+    obsolete_auth = {}
+    for auth_field in WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS:
+        previous_secret = previous_auth.get(auth_field)
+        current_secret = current_auth.get(auth_field)
+        if previous_secret and validate_secret_name_dynamic(previous_secret) and previous_secret != current_secret:
+            obsolete_auth[auth_field] = previous_secret
+
+    if obsolete_auth:
+        keyvault_identity_delete_helper(obsolete_auth, scope_value, scope=scope)
+
+    return current_auth
+
+
 # Helper to delete plugin secrets from Key Vault
 def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     """

@@ -30,6 +30,7 @@ from functions_group_agent_policy import (
     group_agent_management_operations,
     group_agents_available,
 )
+from functions_group_identity_policy import group_identities_available
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -105,7 +106,14 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     automation_manager = role in get_group_workflow_management_roles(settings)
     semantic_kernel = bool(settings.get("enable_semantic_kernel", False))
     group_kernel = semantic_kernel and bool(settings.get("per_user_semantic_kernel", False))
-    sync_enabled = manager and is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
+    file_sync_enabled = is_file_sync_enabled_for_group(settings, group_id, user_info=user_info)
+    sync_enabled = manager and file_sync_enabled
+    # The single availability predicate the immutable identity routes also call, so
+    # the Identities section and the routes agree on one gate (Semantic Kernel or
+    # File Sync). ``manager`` still gates the section, so this stays manager-only.
+    identities_available, _identities_reason = group_identities_available(
+        settings, group_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
+    )
 
     endpoints_configured = (
         group_kernel
@@ -152,7 +160,7 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "Workflows are not enabled or assigned to this group.",
         ),
         "identities": section(
-            manager and (sync_enabled or semantic_kernel), manager,
+            manager and identities_available, manager,
             manager_reason if not manager else "Identities require File Sync or Semantic Kernel.",
         ),
         "sync": section(
