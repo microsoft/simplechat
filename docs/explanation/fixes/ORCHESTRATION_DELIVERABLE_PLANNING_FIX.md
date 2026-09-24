@@ -107,9 +107,10 @@ The plan panel also never showed which model wrote a plan.
   - If that producer fails, compose still runs and receives `unavailable_inputs` with the
     application-owned reason, and it must disclose the gap. The run completes with the
     failed step shown.
-  - The run is offered a retry only when another step also failed. That retry runs the
-    failed producer again and also runs again every step that completed without it, and
-    everything computed from them. Before, `recovery_projection` reused the answer, and
+  - A retry is offered when the run did not complete, for example when a required step
+    failed or a requested image was not delivered. That retry runs the failed producer
+    again and also runs again every step that completed without it, and everything
+    computed from them. Before, `recovery_projection` reused the answer, and
     the new attempt failed with `recovery_changed` ("Saved step inputs changed") as soon
     as the producer succeeded. `_reuse_invalidated_by_rerun` applies the same rule to
     what a retry offers and what the new attempt restores. A continuation of a waiting
@@ -298,6 +299,41 @@ Root causes 2 and 5 are fixed structurally. The full contract is described in
   finished content and never says files cannot be created. For an unavailable deliverable
   it is told not to promise or apologize for it, because the delivery note states it once.
 
+### Review fixes (0.261.135)
+
+An independent review found four issues. Each is fixed and has a regression test.
+
+- **A retry could not deliver a missing image.** With image 2 of 3 refused, the retry
+  failed with `recovery_changed`, because the report that completed without the image was
+  reused. The 0.261.134 retry fix now runs that report again, and this version adds the
+  end-to-end regression: the retry reuses the two images, generates the missing one, writes
+  the report and the Word file again, and completes with all three images in both. A retry
+  is no longer offered, with reason `retry_would_repeat`, when everything it would run
+  again either failed because a service declined its request (`image_content_refused`,
+  `image_request_invalid`) or runs again only because of such a step. Resending the same
+  prompt would only reproduce the refusal while running the report and file again. The
+  rule is generic: `failure_repeats_on_retry` in the schema names the codes, and any other
+  failed or unfinished step keeps the retry available.
+- **The live chat could show a planned image as an approval card.** The answer rendered
+  before its image messages loaded, so its cards showed **Approve**, and approving paid for
+  a duplicate image. The terminal frame now carries `generated_images` at its top level as
+  well as in the answer's metadata, and the controller reloads the thread from either. A
+  card whose image the answer lists never offers **Approve** or **Approve all**; until the
+  image loads, it says the image was generated with the answer. The approval route also
+  returns the planned image instead of generating another (`find_planned_proposal_image`).
+- **One large or WEBP image failed its whole file.** The asset contract admits PNG, JPEG,
+  and WEBP up to 20 MB, but the Office renderers accept only PNG or JPEG up to 4 MB. A
+  1536x1024 PNG of 4.7 MB failed the Word file with `output_invalid`, and a retry failed
+  the same way. After the digest check, the resolver now embeds a rendition
+  (`document_image_bytes`): unchanged when it already fits, otherwise re-encoded and scaled
+  down only as needed. Generation admits only images this can convert, so size and format
+  can no longer fail a file. The chat keeps the original image.
+- **A retry moved reused images away from the earlier answer.** Finalization re-linked a
+  reused image's `source_assistant_message_id` to the retry's answer, so the earlier
+  answer's cards found no image and offered a paid regeneration. Images are no longer
+  re-linked. Each answer owns the list of images it shows, and React V2, the classic
+  client, and conversation export group images by that list as well as by their source.
+
 ### Files modified (0.261.135)
 
 | File | Change |
@@ -310,16 +346,18 @@ Root causes 2 and 5 are fixed structurally. The full contract is described in
 | `functions_orchestration_planner.py` | Deliverables prompt, server truth, Image control, one repair call, token budget |
 | `functions_orchestration_composition.py` | Deliverable guidance, image tokens, missing images |
 | `functions_orchestration_executor.py` | Image publication policy, explicit-image reconciliation |
-| `functions_orchestration_execution.py` | Chat image projection, delivery notes, image re-linking |
-| `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py` | Per-render image resolver and verified byte reader |
+| `functions_orchestration_execution.py`, `functions_orchestration_events.py` | Chat image projection, delivery notes, the answer's image list in the terminal frame |
+| `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py` | Per-render image resolver, verified byte reader, document renditions |
+| `functions_orchestration_recovery.py` | `retry_would_repeat` when a retry could only resend declined requests |
 | `functions_orchestration_checkpoints.py` | Answer message id helper, deliverables in checkpoint identity |
 | `functions_orchestration_plan_revisions.py`, `functions_orchestration_plan_editing.py` | Deliverables in the editor projection and edit context |
-| `functions_image_generation.py` | Image options and the stored image's digest |
-| `v2_ui/src/...` | You asked for section, image step prompts, image input wording, reload after generated images |
+| `functions_image_generation.py`, `route_backend_chats.py` | Image options, the stored image's digest, returning a planned image instead of generating another |
+| `route_backend_conversation_export.py`, `static/js/chat/chat-messages.js` | Export and the classic client group an answer's listed images |
+| `v2_ui/src/...` | You asked for section, image step prompts, image input wording, reload after generated images, planned image cards without approval |
 
 ### Validation (0.261.135)
 
-- `functional_tests/test_orchestration_deliverables.py`: 34 test cases in the real headless
+- `functional_tests/test_orchestration_deliverables.py`: 44 test cases in the real headless
   harness, covering validation and repair, `generate_image` gating, budget, prompt checks
   and persistence, DOCX/PDF/PPTX embedding, and the reported requests as scenarios. It
   also covers the edge cases found in review:
@@ -330,10 +368,21 @@ Root causes 2 and 5 are fixed structurally. The full contract is described in
   - A plan revision may drop images that were chosen with the Image control; the revised
     plan carries a review warning instead of failing.
   - A plan that repeats the implicit answer beside its real deliverables keeps the answer.
-- `functional_tests/test_v2_orchestration_deliverables.mjs`: browser normalization and
-  deliverable states.
+  - A retry generates the missing image and delivers all three images in the answer and
+    the Word file, while the earlier answer keeps its own; no retry is offered when it
+    could only resend a refused prompt, but one is when other work could still succeed.
+  - A 4.7 MB PNG and WEBP images are embedded in DOCX, PDF, and PPTX as renditions, and
+    the chat keeps the originals.
+  - The terminal frame lists the answer's images; the approval route returns a planned
+    image without calling the image service; export includes a reused image.
+- `functional_tests/test_v2_orchestration_deliverables.mjs`: browser normalization,
+  deliverable states, a terminal frame read through the real run stream client, and a
+  reused image grouped under both answers in React V2 and the classic client.
 - `ui_tests/test_v2_orchestration_dependency_plans.py`: the You asked for section in the
   plan panel and approval card.
+- `ui_tests/test_v2_orchestration_generated_images.py`: the live chat loading generated
+  images after the run, planned image cards that never offer approval, and a reused image
+  under both answers.
 - `ui_tests/test_v2_orchestration_composer.py` and `ui_tests/test_v2_reasoning_controls.py`:
   the new Image control notice.
 - The full `test_orchestration*.py` suite passes apart from the same baseline failures.

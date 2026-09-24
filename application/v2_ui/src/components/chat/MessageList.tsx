@@ -53,9 +53,10 @@ import { ImageLightbox } from './ImageLightbox';
 import { ImageEditor } from './ImageEditor';
 import { ImageProposalScope } from './ImageProposalContext';
 import {
+    answerGeneratedImages,
     extractProposalSpecs,
-    findResultForSpec,
     groupProposalImages,
+    resultForCard,
 } from '../../lib/imageProposalSpec';
 import {
     isAiRequest,
@@ -416,6 +417,8 @@ function MessageBubbleInner({
     // Memoised because it walks the message's mask metadata and is read on every render of
     // the thread, which is often: the list re-renders on each streaming token.
     const masks = useMemo(() => readMaskState(message), [message]);
+    // A stable list, so the image cards' shared scope is not rebuilt on every render.
+    const generatedImages = useMemo(() => answerGeneratedImages(message), [message]);
     const maskingAllowed = canMask(message, currentUserId);
 
     /**
@@ -656,6 +659,7 @@ function MessageBubbleInner({
                                 <ImageProposalScope
                                     assistantMessageId={message.id}
                                     results={proposalImages}
+                                    generatedImages={generatedImages}
                                 >
                                     <AssistantMarkdown
                                         content={message.content}
@@ -1010,8 +1014,9 @@ export function MessageList() {
             if (!candidates?.length) {
                 continue;
             }
+            const generated = answerGeneratedImages(message);
             for (const spec of extractProposalSpecs(message.content)) {
-                const result = findResultForSpec(spec, candidates);
+                const result = resultForCard(spec, candidates, generated);
                 if (result) {
                     claimed.add(result.id);
                 }

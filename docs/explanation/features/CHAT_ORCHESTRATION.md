@@ -1054,10 +1054,13 @@ legacy answer step had, and the planner states what the answer may rely on. See 
   - A producer that feeds only optional inputs does not decide whether the plan
     succeeds. If it fails, the answer is still written, says once what could not be
     gathered, and does not present that content as sourced.
-  - A retry is offered only when another step also failed. It runs that producer again,
-    and also runs again the steps that completed without it and every step computed from
-    them, so the retried work can use what the first attempt missed. Other completed
-    steps are still reused.
+  - A retry is offered when the run did not complete, for example when a required step
+    failed or a requested image was not delivered. It is not offered when it could only
+    send again a request a service declined, such as an image prompt refused under a
+    content policy; asking again plans a new request instead. A retry runs the failed
+    producer again, and also runs again the steps that completed without it and every
+    step computed from them, so the retried work can use what the first attempt missed.
+    Other completed steps are still reused.
   - Required inputs still fail closed.
 - **Retrying a run with files.** Each attempt owns its files, and preparing a retry
   supersedes the previous attempt's files. So a whole-run retry never reuses a render
@@ -1098,9 +1101,20 @@ before its steps, and the server checks that list. See
   orchestrated answer and retained as an `image-asset-v1` result. The answer places it
   with an `[[image:<step_id>]]` token, the chat shows it inline, and DOCX, PDF, and PPTX
   files embed it. Images are captioned as AI-generated illustrations.
+- **Images in files.** A file embeds a rendition of each image that the Office renderers
+  accept: an image over 4 MB or in WEBP is re-encoded and, only if needed, scaled down.
+  The chat keeps the image exactly as generated, so an image never fails its file for its
+  size or format.
+- **Answers own their images.** The answer lists the image messages it shows in
+  `metadata.orchestration.generated_images`, and the run's terminal frame repeats that
+  list so the chat loads them with the answer. Images are never moved between answers: a
+  retry lists the images it reused, and the earlier answer keeps showing them. A card for
+  a planned image never offers approval, and approving one through the API returns the
+  saved image instead of generating another.
 - **Honest delivery.** A run in which an explicit image or file was not delivered is
   reported as incomplete, and a deterministic **Delivery notes** list names each
-  undelivered or unavailable deliverable after the answer.
+  undelivered or unavailable deliverable after the answer. A retry generates a missing
+  image again, unless it could only resend a prompt the image service declined.
 - **You asked for.** The plan panel and the approval card list each deliverable, its state,
   the step that produces it, and the reason when it is unavailable.
 
@@ -1359,8 +1373,9 @@ to the front.
 | `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
 | `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless harness: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, retries that run again what completed without a retried producer, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
 | `functional_tests/test_v2_orchestration_planner_display.mjs` | Browser normalization of the planner descriptor, Auto routing, optional inputs, and answer-basis and visual labels |
-| `functional_tests/test_orchestration_deliverables.py` | Deliverables validation and the single repair call, server truth, `generate_image` gating, budget and persistence, images embedded in DOCX, PDF and PPTX only from the file's own source lineage, and end-to-end scenarios for a CSV, a Word report with images, a report without a file, and failing search, image, and render steps |
-| `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, and generated-image helpers |
+| `functional_tests/test_orchestration_deliverables.py` | Deliverables validation and the single repair call, server truth, `generate_image` gating, budget and persistence, images embedded in DOCX, PDF and PPTX only from the file's own source lineage and as renditions the renderers accept (a 4.7 MB PNG and WEBP), answers that own their images, a retry that generates a missing image and delivers it in the answer and the Word file, no retry when it could only resend a refused prompt, an approval route that never pays twice, export of reused images, and end-to-end scenarios for a CSV, a Word report with images, a report without a file, and failing search, image, and render steps |
+| `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, generated-image helpers, a terminal frame read through the real run stream client, and a retry's image grouped under every answer that lists it, in React V2 and the classic client |
+| `ui_tests/test_v2_orchestration_generated_images.py` | The live chat loading an answer's generated images after the run, planned image cards that never offer Approve or Approve all while their image loads, and a reused image shown under both the earlier and the retried answer |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |

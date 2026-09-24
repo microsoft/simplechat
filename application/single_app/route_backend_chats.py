@@ -297,6 +297,7 @@ from functions_ai_connections import AIConnectionError
 from functions_image_api_route import ImageGenerationError, resolve_selected_image_deployment_name
 from functions_image_generation import (
     build_image_proposal_guidance_message,
+    find_planned_proposal_image,
     generate_chat_image_message,
     image_generation_error_log_context,
     image_generation_error_response,
@@ -17127,6 +17128,7 @@ def register_route_backend_chats(bp):
                 or data.get('source_assistant_message_id')
                 or ''
             ).strip()
+            source_message = None
             if source_assistant_message_id:
                 try:
                     source_message = cosmos_messages_container.read_item(
@@ -17139,21 +17141,44 @@ def register_route_backend_chats(bp):
                         return jsonify({'error': 'Source message must be an assistant message'}), 400
                 except CosmosResourceNotFoundError:
                     source_assistant_message_id = ''
+                    source_message = None
 
-            image_result = generate_chat_image_message(
-                settings=settings,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                prompt=proposal['prompt'],
-                user_info=get_current_user_info(),
-                proposal=proposal,
-                source_assistant_message_id=source_assistant_message_id or None,
-                store_in_blob=True,
+            def read_conversation_image(message_id):
+                try:
+                    return cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+                except CosmosResourceNotFoundError:
+                    return None
+
+            # An orchestrated answer's planned image already exists; approving its card again
+            # returns that image rather than paying for a duplicate.
+            planned_image = (
+                find_planned_proposal_image(source_message, proposal, read_conversation_image)
+                if source_message is not None else None
             )
+            if planned_image is not None:
+                image_result = {
+                    'image_url': planned_image.get('content'),
+                    'conversation_id': conversation_id,
+                    'model_deployment_name': planned_image.get('model_deployment_name'),
+                    'message_id': planned_image.get('id'),
+                    'image_message': planned_image,
+                    'already_generated': True,
+                }
+            else:
+                image_result = generate_chat_image_message(
+                    settings=settings,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    prompt=proposal['prompt'],
+                    user_info=get_current_user_info(),
+                    proposal=proposal,
+                    source_assistant_message_id=source_assistant_message_id or None,
+                    store_in_blob=True,
+                )
 
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
-            invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
             image_doc_metadata = image_doc.get('metadata') if isinstance(image_doc.get('metadata'), dict) else {}

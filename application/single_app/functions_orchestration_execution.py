@@ -1085,29 +1085,6 @@ class HarnessExecution:
         reader.recheck()
         return value
 
-    def _link_generated_images(self, assets, message_id):
-        """Show each generated image under the answer being published.
-
-        An image is saved with the id of its own run's answer. A retry that reuses a completed
-        image step publishes a different answer, so the reused image message follows it.
-        """
-        container = self.lease.message_container
-        for asset in assets.values():
-            try:
-                image = container.read_item(item=asset["message_id"], partition_key=self.record["conversation_id"])
-            except CosmosResourceNotFoundError:
-                continue
-            metadata = image.get("metadata") if isinstance(image.get("metadata"), dict) else {}
-            proposal = metadata.get("image_proposal")
-            if (
-                image.get("role") != "image" or image.get("conversation_id") != self.record["conversation_id"]
-                or not isinstance(proposal, dict) or proposal.get("visualId") != asset["asset_id"]
-                or proposal.get("source_assistant_message_id") == message_id
-            ):
-                continue
-            proposal["source_assistant_message_id"] = message_id
-            container.upsert_item({key: value for key, value in image.items() if not key.startswith("_")})
-
     def _validate_citations(self, citations):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1311,15 +1288,18 @@ class HarnessExecution:
         })
         summary = summarize_plan(self.record["plan"])
         summary.update(status=status, capabilities_used=list(result.get("capabilities_used") or []))
+        # The answer owns the list of image messages it shows. Images are never re-linked:
+        # a retry lists the images it reused from an earlier attempt, and that attempt's
+        # answer keeps showing them too.
+        generated_images = [
+            {"visual_id": asset_id, "message_id": asset["message_id"]}
+            for asset_id, asset in assets.items()
+        ]
         metadata = {
             "orchestration": {
                 "run_id": self.record["id"], "turn_id": self.record.get("turn_id"),
                 "plan_summary": summary, **public, "status": status, "outputs": outputs,
-                # Lets the chat load the image messages its answer shows.
-                **({"generated_images": [
-                    {"visual_id": asset_id, "message_id": asset["message_id"]}
-                    for asset_id, asset in assets.items()
-                ]} if assets else {}),
+                **({"generated_images": generated_images} if generated_images else {}),
             },
             "token_usage": combined_usage, **reasoning,
         }
@@ -1357,8 +1337,6 @@ class HarnessExecution:
             return self._finalize(result, exc, refreshes=refreshes + 1)
         if latest_outputs != outputs or latest_artifacts != artifacts:
             return self._finalize(result, error, refreshes=refreshes + 1)
-        if assets and document.get("role") == "assistant":
-            self._link_generated_images(assets, message_id)
         self.lease.publish_message(document)
         saved = self.lease.message_container.read_item(
             item=message_id, partition_key=self.record["conversation_id"],
@@ -1396,6 +1374,7 @@ class HarnessExecution:
             attempt_index=public["attempt_index"], retry_of_run_id=public["retry_of_run_id"],
             failure=updates["failure"], failures=failures, recovery=public["recovery"],
             message_saved=True, finalization_status=public.get("finalization_status"),
+            generated_images=[] if blocked else generated_images,
             **model_metadata, **reasoning,
         )
         payload = json.loads(frame.partition("data:")[2].strip())

@@ -21,7 +21,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Missing Files And Images Are Never Reported As Delivered**
     *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
     *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
-    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **A Large Or WEBP Image No Longer Fails The Whole File**
+    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
+    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images Never Offer A Paid Second Approval**
+    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
+    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
 
 #### User Interface Enhancements
 

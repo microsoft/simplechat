@@ -68,16 +68,22 @@ own task, writes the report with each image where it belongs, and renders the Wo
 document with the images embedded. Approving the plan is your consent to generate them;
 in Run automatically mode, your request is. The images also appear inline in the chat
 answer, where you can view and edit them as usual. DOCX, PDF, and PowerPoint files embed
-images; CSV, XLSX, JSON, YAML, XML, Markdown, and text files do not.
+images; CSV, XLSX, JSON, YAML, XML, Markdown, and text files do not. A file embeds a copy
+of each image in a format and size the document accepts, so a large or WEBP image is
+converted for the file while the chat keeps the original.
 
 Generated images are AI illustrations, captioned as such, not photographs. Web search
 returns text and links only, so a report links authentic sources rather than copying
 their pictures. A plan generates at most four images; when you ask for more, the rest are
 listed as not available. Images the planner only suggests stay approval cards, which
-never appear in a file.
+never appear in a file. An image the plan generated never shows an **Approve** button, so
+it is never paid for twice.
 
 If an image cannot be generated, the report and file are still produced without it, the
 run is reported as incomplete, and the delivery notes say how many images were created.
+Because the attempt already has its file, the conversation recovers it file by file; ask
+again to generate the missing image. If the image service declined the image prompt, ask
+again with a different description.
 
 ## Review the file tasks before running
 

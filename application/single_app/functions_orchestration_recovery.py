@@ -9,6 +9,7 @@ never replaces the original publication failure with a missing-reply read.
 A retry that runs a failed producer again also runs the steps that completed without it.
 A retry renders its own files: it never reuses a render step or inherits the parent's
 file admissions, because preparing the retry supersedes the parent's files.
+A retry that could only resend requests a service declined is not offered.
 """
 
 import logging
@@ -33,8 +34,8 @@ from functions_orchestration_plan_revisions import PlanRevisionError, read_revis
 from functions_orchestration_output_store import build_output_cleanup_intent
 from functions_orchestration_registry import admitted_export_pairs, get_capability
 from functions_orchestration_schema import (
-    PlanValidationError, build_failure, build_step_result, plan_contract_version, safe_failure, step_input_specs,
-    summarize_plan,
+    PlanValidationError, build_failure, build_step_result, failure_repeats_on_retry, plan_contract_version,
+    safe_failure, step_input_specs, summarize_plan,
 )
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import (
@@ -110,6 +111,32 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         if not added:
             return invalidated
         invalidated |= added
+
+
+def _retry_repeats_refusal(record, steps, retry):
+    """Whether a retry could only resend requests that were declined.
+
+    A checkpoint retry resends the exact planned requests. When every step it would run
+    again either failed because a service declined its request, such as an image prompt
+    refused under a content policy, or runs again only because of what it depends on, the
+    retry would reproduce the same outcome at the cost of running those steps again.
+    Asking again plans a new request instead. Any other failed or unfinished step, such as
+    a render that failed on a timeout, keeps the retry available.
+    """
+    if plan_contract_version(record.get('plan')) != 2:
+        return False
+    saved = {step.get('step_id'): step for step in steps}
+    refused = False
+    for step_id in retry:
+        step = saved.get(step_id) or {}
+        failure = step.get('failure') if isinstance(step.get('failure'), dict) else {}
+        if step.get('status') == 'failed' and failure_repeats_on_retry(failure):
+            refused = True
+        elif step.get('status') not in _retained_statuses(record) and failure.get('code') != 'dependency_unavailable':
+            # Completed steps run again only because a producer they consumed runs again,
+            # and dependency-blocked steps only because theirs failed; anything else is new work.
+            return False
+    return refused
 
 
 class RecoveryError(RuntimeError):
@@ -395,6 +422,7 @@ def recovery_projection(record):
         step['step_id'] for step in record.get('plan', {}).get('steps') or []
         if step.get('enabled', True) and (step['step_id'] not in reused or step.get('capability_id') == 'respond')
     ]
+    repeats_refusal = _retry_repeats_refusal(record, steps, retry)
     uncertain = any(
         step.get('capability_id') in EFFECT_CAPABILITIES and step.get('effects_uncertain')
         for step in steps
@@ -426,6 +454,8 @@ def recovery_projection(record):
         reason, message = 'context_unavailable', build_failure('context_unavailable')['message']
     elif any(not step.get('checkpoint_available') for step in steps if step.get('step_id') in reused):
         reason, message = 'checkpoint_unavailable', build_failure('checkpoint_unavailable')['message']
+    elif repeats_refusal:
+        reason, message = 'retry_would_repeat', build_failure('retry_would_repeat')['message']
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),

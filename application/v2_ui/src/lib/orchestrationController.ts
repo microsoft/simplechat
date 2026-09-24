@@ -49,7 +49,7 @@ import {
     type PlanEdits,
 } from './orchestration';
 import {
-    applyPlanEdits, hasGeneratedImages, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan,
+    applyPlanEdits, doneFrameHasGeneratedImages, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan,
 } from './orchestrationPlan';
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
@@ -797,7 +797,7 @@ async function executeSavedPlan(
                 useOrchestrationStore.getState().endRun(runId, status);
                 // Generated images are saved as their own conversation messages, which the
                 // answer's image cards show. Reading the saved thread brings them in.
-                if (hasGeneratedImages(event.metadata?.orchestration)) {
+                if (doneFrameHasGeneratedImages(event)) {
                     void useChatStore.getState().reloadMessages();
                 }
             },

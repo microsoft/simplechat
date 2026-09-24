@@ -3,8 +3,11 @@
 // Implemented in: 0.261.135
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
+// Also reads a terminal frame shaped as the harness publishes it through the real run
+// stream client, and groups a retry's images under every answer that lists them.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import './test_support/tsResolve.mjs';
 
@@ -15,9 +18,13 @@ globalThis.fetch = () => {
 
 // The repository resolver must be registered before extensionless TypeScript imports load.
 const {
-    bindsGeneratedImage, deliverableKindLabel, deliverableRows, hasGeneratedImages,
+    bindsGeneratedImage, deliverableKindLabel, deliverableRows, doneFrameHasGeneratedImages, hasGeneratedImages,
     normalizeDeliverables, normalizePlan,
 } = await import('../application/v2_ui/src/lib/orchestrationPlan.ts');
+const { runOrchestration } = await import('../application/v2_ui/src/lib/orchestration.ts');
+const {
+    answerGeneratedImages, groupProposalImages, parseImageProposal, plannedImageRef, resultForCard,
+} = await import('../application/v2_ui/src/lib/imageProposalSpec.ts');
 
 function binding(stepId, outputName) {
     return { version: 'orchestration-input-binding-v1', step_id: stepId, output_name: outputName, existing_result: null };
@@ -122,6 +129,130 @@ test('generated image inputs and answers are recognised from structured fields o
     assert.equal(hasGeneratedImages({ generated_images: [] }), false);
     assert.equal(hasGeneratedImages({ generated_images: [{ visual_id: 'a' }] }), false);
     assert.equal(hasGeneratedImages(undefined), false);
+});
+
+// The terminal frame the harness publishes: the saved image messages are listed at the top
+// level and in the answer's metadata (functions_orchestration_execution._finalize).
+function doneFrame(extra = {}) {
+    const images = [{ visual_id: 'washington', message_id: 'conversation-1_image_1' }];
+    return {
+        done: true, type: 'orchestration_done', conversation_id: 'conversation-1',
+        message_id: 'assistant_orchestration_1', run_id: 'run-1', status: 'completed', outcome: 'completed',
+        full_content: 'The report.', replace_content: true, role: 'assistant',
+        generated_images: images,
+        metadata: { orchestration: { run_id: 'run-1', status: 'completed', generated_images: images } },
+        ...extra,
+    };
+}
+
+async function readRun(frames) {
+    const encoder = new TextEncoder();
+    const done = [];
+    const blocked = globalThis.fetch;
+    globalThis.fetch = async () => new Response(new ReadableStream({
+        start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
+            controller.close();
+        },
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+    try {
+        await runOrchestration({ run_id: 'run-1', plan_id: 'plan-1', conversation_id: 'conversation-1' }, {
+            onDone: (event) => done.push(event),
+        });
+    } finally {
+        globalThis.fetch = blocked;
+    }
+    return done;
+}
+
+test('the chat learns about generated images from the real terminal frame', async () => {
+    const [event] = await readRun([
+        { type: 'orchestration_step', step_id: 'washington', status: 'completed' },
+        { content: 'The report.' },
+        doneFrame(),
+    ]);
+    assert.equal(doneFrameHasGeneratedImages(event), true);
+    // Either location is enough, so an older frame shape still loads the images.
+    const [metadataOnly] = await readRun([doneFrame({ generated_images: undefined })]);
+    assert.equal(doneFrameHasGeneratedImages(metadataOnly), true);
+    const [topLevelOnly] = await readRun([doneFrame({ metadata: {} })]);
+    assert.equal(doneFrameHasGeneratedImages(topLevelOnly), true);
+    const [none] = await readRun([doneFrame({ generated_images: undefined, metadata: {} })]);
+    assert.equal(doneFrameHasGeneratedImages(none), false);
+});
+
+test('every answer that lists an image shows it, and its card never offers approval', () => {
+    const image = (id, visualId, source) => ({
+        id, role: 'image', content: `/api/image/${id}`, conversation_id: 'conversation-1',
+        metadata: { image_proposal: { visualId, title: visualId, source_assistant_message_id: source } },
+    });
+    const answer = (id, images) => ({
+        id, role: 'assistant', content: 'A report.', conversation_id: 'conversation-1',
+        metadata: { orchestration: { generated_images: images } },
+    });
+    // The retry reused Washington from the earlier attempt and generated Adams itself.
+    const earlier = answer('assistant_1', [{ visual_id: 'washington', message_id: 'image_w' }]);
+    const retried = answer('assistant_2', [
+        { visual_id: 'washington', message_id: 'image_w' }, { visual_id: 'adams', message_id: 'image_a' },
+    ]);
+    const washington = image('image_w', 'washington', 'assistant_1');
+    const adams = image('image_a', 'adams', 'assistant_2');
+    const grouped = groupProposalImages([earlier, washington, retried, adams]);
+
+    assert.deepEqual(grouped.get('assistant_1').map((message) => message.id), ['image_w']);
+    assert.deepEqual(grouped.get('assistant_2').map((message) => message.id), ['image_a', 'image_w']);
+    assert.deepEqual(answerGeneratedImages(retried), [
+        { visualId: 'washington', messageId: 'image_w' }, { visualId: 'adams', messageId: 'image_a' },
+    ]);
+    assert.deepEqual(answerGeneratedImages({ ...retried, role: 'user' }), []);
+    assert.deepEqual(answerGeneratedImages({ role: 'assistant', metadata: { orchestration: {
+        generated_images: [{ visual_id: 'x' }, 'bad', { message_id: 'm' }],
+    } } }), []);
+
+    const spec = parseImageProposal(JSON.stringify({ visualId: 'washington', title: 'Washington', prompt: 'A portrait' }));
+    assert.equal(spec.ok, true);
+    const generated = answerGeneratedImages(retried);
+    assert.deepEqual(plannedImageRef(spec.spec, generated), { visualId: 'washington', messageId: 'image_w' });
+    assert.equal(resultForCard(spec.spec, grouped.get('assistant_2'), generated).id, 'image_w');
+    // Before the thread has loaded the image, a planned card has nothing to show and no approval to offer.
+    assert.equal(resultForCard(spec.spec, [], generated), null);
+    assert.equal(plannedImageRef(spec.spec, []), null);
+    // A suggested proposal still resolves by its own visual id.
+    assert.equal(resultForCard(spec.spec, [washington], []).id, 'image_w');
+});
+
+/** The classic client's real grouping functions, executed without its DOM startup graph. */
+function loadClassicGrouping() {
+    const source = readFileSync(
+        new URL('../application/single_app/static/js/chat/chat-messages.js', import.meta.url), 'utf8',
+    ).replace(/\r\n/g, '\n');
+    const names = [
+        'getGeneratedImageProposalMetadata', 'getGeneratedImageProposalSourceMessageId',
+        'groupGeneratedImageProposalMessages',
+    ];
+    const bodies = names.map((name) => {
+        const start = source.indexOf(`export function ${name}(`);
+        assert.notEqual(start, -1, `${name} is missing from chat-messages.js`);
+        return source.slice(start + 'export '.length, source.indexOf('\n}\n', start) + 2);
+    });
+    return new Function(`${bodies.join('\n')}\nreturn { ${names.join(', ')} };`)();
+}
+
+test('the classic client also shows a reused image under both answers', () => {
+    const { groupGeneratedImageProposalMessages } = loadClassicGrouping();
+    const washington = {
+        id: 'image_w', role: 'image',
+        metadata: { image_proposal: { visualId: 'washington', source_assistant_message_id: 'assistant_1' } },
+    };
+    const earlier = { id: 'assistant_1', role: 'assistant', metadata: {} };
+    const retried = {
+        id: 'assistant_2', role: 'assistant',
+        metadata: { orchestration: { generated_images: [{ visual_id: 'washington', message_id: 'image_w' }] } },
+    };
+    const grouped = groupGeneratedImageProposalMessages([earlier, washington, retried]);
+    assert.deepEqual(grouped.get('assistant_1'), [washington]);
+    assert.deepEqual(grouped.get('assistant_2'), [washington]);
+    assert.equal(groupGeneratedImageProposalMessages(undefined).size, 0);
 });
 
 test.after(() => {

@@ -162,20 +162,40 @@ everything you asked to receive."
   reference no other image. Image inputs to compose are always optional, so one failed
   image never blocks the answer or a file.
 - **Chat.** Finalization turns each generated image into a `simpleimage` block whose
-  `visualId` is the image step id. The V2 image card finds the saved image message by that
-  id and shows it as already generated, with the existing viewer and editor. The answer's
-  `metadata.orchestration.generated_images` lists the image messages so the browser loads
-  them.
+  `visualId` is the image step id. The answer owns the list of image messages it shows,
+  `metadata.orchestration.generated_images`, and the run's terminal frame repeats that list
+  at its top level, so the browser reads the thread again and loads the images with the
+  answer. The V2 image card finds its saved image by message id from that list and shows
+  it as already generated, with the existing viewer and editor. A card for a planned image
+  never offers Approve or Approve all, even before its image has loaded; it says the image
+  was generated with the answer. As defense in depth, `/api/chat/image-proposals/generate`
+  returns the saved image for a planned image's card instead of generating another. The
+  classic client and conversation export group images by the same list.
 - **Files.** DOCX, PDF, and PPTX rendering receive an `image_resolver` built for each
   render attempt. It resolves only `image-asset-v1` results in the rendered source's own
   retained lineage, reads the bytes from the image's own conversation message and blob,
   and verifies their size and SHA-256 against the retained result. An image the source did
   not consume, a deleted or masked image message, or changed bytes fail the file.
+  After that check, `document_image_bytes` gives the renderer a rendition it accepts:
+  single-frame PNG or JPEG within `EXPORT_VISUAL_ASSET_MAX_BYTES` (4 MB) and a share of the
+  renderer's total pixel budget. An image that already fits is embedded unchanged; a WEBP
+  image or a large PNG is re-encoded (PNG keeps transparency, JPEG is flattened onto white)
+  and scaled down only as far as needed. Generation admits only images this can convert
+  (PNG, JPEG, or WEBP, up to 20 MB and 12 megapixels), so an image never fails its file for
+  its size or format. The chat keeps the original.
 - **Honest completion.** A run in which an explicit image deliverable's steps did not all
   complete is reported as incomplete, as a missing required file already was. After the
   answer and the files summary, a deterministic **Delivery notes** list names each explicit
   deliverable that was not delivered or is unavailable, such as "Not delivered: An image of
   each president. 2 of 3 images were generated."
+- **Retries.** A retry of such a run reuses the images that were generated, generates the
+  missing image again, and runs again the answer and file steps computed without it, so the
+  new answer and file contain every image. The earlier attempt's answer keeps showing its
+  images. A retry is not offered, with reason `retry_would_repeat`, when everything it
+  would run again either failed because a service declined its request (`image_content_refused`
+  or `image_request_invalid`) or runs again only because of such a step: the retry would
+  send the same prompt. Asking again plans a new request instead. Any other failed or
+  unfinished step keeps the retry available.
 
 ### The `generate_image` capability
 
@@ -191,8 +211,8 @@ everything you asked to receive."
 - The adapter reuses `generate_chat_image_message`. The image is saved as a blob-backed
   image message whose `metadata.image_proposal` carries the step id as `visualId`, the
   orchestration run and step, and `source_assistant_message_id` set to the run's
-  deterministic answer message id (`orchestration_answer_message_id`). A retry that reuses
-  the image re-links it to its own answer.
+  deterministic answer message id (`orchestration_answer_message_id`). That link never
+  moves: a retry that reuses the image lists it in its own answer's `generated_images`.
 - The step retains an `image-asset-v1` result: the asset and message ids, title, alt text,
   prompt, MIME type, byte size, SHA-256, and model name. It never contains the image bytes
   or a URL.
@@ -225,10 +245,13 @@ everything you asked to receive."
 | `functions_orchestration_planner.py` | The deliverables prompt, server truth in the context, and the repair call |
 | `functions_orchestration_composition.py` | Deliverable guidance and image placement in prepared content |
 | `functions_orchestration_executor.py` | Image publication policy and explicit-image reconciliation |
-| `functions_orchestration_execution.py` | Images in the chat answer, delivery notes, and image re-linking |
-| `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py` | The per-render image resolver and its byte reader |
-| `functions_image_generation.py` | Size, quality, and background options, and the stored image's digest |
+| `functions_orchestration_execution.py`, `functions_orchestration_events.py` | Images in the chat answer, the answer's image list in the terminal frame, and delivery notes |
+| `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py` | The per-render image resolver, its byte reader, and document renditions |
+| `functions_orchestration_recovery.py` | Retry eligibility, including `retry_would_repeat` for declined requests |
+| `functions_image_generation.py`, `route_backend_chats.py` | Size, quality, and background options, the stored image's digest, and returning a planned image instead of generating another |
+| `route_backend_conversation_export.py`, `static/js/chat/chat-messages.js` | Export and the classic client group an answer's listed images |
 | `application/v2_ui/src/lib/orchestrationPlan.ts`, `OrchestrationDeliverables.tsx` | Deliverable normalization, states, and the You asked for section |
+| `application/v2_ui/src/lib/imageProposalSpec.ts`, `ImageProposalContext.tsx`, `InlineImageProposal.tsx`, `MessageList.tsx` | Answer-owned image lists and planned image cards without approval |
 
 ## Usage
 
@@ -265,16 +288,26 @@ everything you asked to receive."
   - unavailable reasons that must match the server, and render formats that must match
     the file deliverable;
   - the server truth in the planner context and the single repair call;
-  - `generate_image` gating, prompt checks, persistence, and re-linking;
-  - DOCX, PDF, and PPTX embedding, and the refusal of images outside a file's own source;
+  - `generate_image` gating, prompt checks, persistence, and answer-owned image lists;
+  - DOCX, PDF, and PPTX embedding, including WEBP images and a 4.7 MB PNG embedded as
+    renditions while chat keeps the originals, and the refusal of images outside a file's
+    own source;
   - scenarios for a CSV, a Word report with three images, a report without a file, and a
     failing search, image, and render;
+  - a retry that reuses two images, generates the missing one, and delivers all three in the
+    answer and the Word file while the earlier answer keeps its images; no retry when it
+    could only resend a refused prompt; and the approval route returning a planned image
+    without calling the image service;
   - a file step turned off at approval, which keeps the run retryable, and a run in which
     every image fails, which leaves no image tokens in the answer or the file.
-- `functional_tests/test_v2_orchestration_deliverables.mjs` covers browser normalization
-  and deliverable states.
+- `functional_tests/test_v2_orchestration_deliverables.mjs` covers browser normalization,
+  deliverable states, a terminal frame read through the real run stream client, and a
+  reused image grouped under both answers in React V2 and the classic client.
 - `ui_tests/test_v2_orchestration_dependency_plans.py` covers the You asked for section in
   the plan panel and approval card at desktop and mobile widths, including XSS-safe text.
+- `ui_tests/test_v2_orchestration_generated_images.py` covers the live chat loading an
+  answer's images after the run, planned image cards that never offer approval, and a
+  reused image shown under both the earlier and the retried answer.
 
 ### Performance
 
@@ -288,3 +321,9 @@ limits. Running image steps in parallel is a possible follow-up.
   public-domain museum portraits, is not supported; reports link those sources instead.
 - Markdown and plain-text files do not contain images.
 - A plan generates at most four images.
+- React V2 offers **Retry from failed step** only for an attempt without files, because
+  preparing a whole-run retry withdraws the attempt's available files. So a run that
+  delivered its file but missed a requested image offers no whole-run retry in the chat,
+  and **Retry file** cannot generate an image. Ask again to create a new plan. The
+  server-side retry itself delivers the image and the file; only the chat does not offer
+  it for such an attempt.
