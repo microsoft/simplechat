@@ -1,13 +1,13 @@
 # test_v2_workflow_m365_run_as.py
 """
 Closed-browser tests for native V2 Microsoft 365 Run as authoring.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.122
 
 Use the actual built SPA and existing scoped workflow fixtures. Cover explicit
 selection and clearing, loading and lookup failures, unavailable saved accounts,
 safe labels/errors, dirty/revision guards, and preserved loop/Repeat definitions.
-Since 0.261.148, a group member's read-only editor never requests the manager-only account
+Since 0.261.149, a group member's read-only editor never requests the manager-only account
 list; the fixture refuses such a request and records it as unexpected.
 No real Microsoft 365 account, workflow run, or application server is contacted.
 """

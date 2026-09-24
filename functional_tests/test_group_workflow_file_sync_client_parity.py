@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the seam between the V2 workflow editor's settings rules and the save routes.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.141
 
 This test ensures that the V2 editor's client-side File Sync, trigger, schedule and Analyze rules

@@ -1,7 +1,7 @@
 # test_workflow_definition_store_integration.py
 """
 Functional tests for real workflow store normalization and conditional saves.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.108
 
 Production store functions run against a JSON-copying Cosmos double. External

@@ -1,8 +1,8 @@
 // test_workflow_settings_client.js
 /*
 Functional tests for the V2 workflow editor's settings rules and save error handling.
-Version: 0.261.148
-Implemented in: 0.261.148
+Version: 0.261.149
+Implemented in: 0.261.149
 
 Executes the production TypeScript in lib/workflowEditor.ts and lib/workflowSettings.ts. Only HTTP
 transport is replaced. It checks what the parity test against the real server cannot reach: how

@@ -1,7 +1,7 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.141
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
@@ -13,13 +13,13 @@ trigger rules and, since 0.261.144, `normalize_workflow_alert_settings`. They co
 * editing an existing File Sync workflow, including a V2 round trip that keeps alerts, URL
   access, File Sync and document actions unchanged;
 * the source list requested with the page's explicit `?group_id`, and never for members;
-* client-side enforcement of the server rules with the server's reviewed messages (0.261.148),
+* client-side enforcement of the server rules with the server's reviewed messages (0.261.149),
   and the server's refusal text shown as returned;
 * the read-only alert summary for members; managers edit alerts natively (0.261.144), so the M6
   classic alerts link is gone (`test_v2_workflow_alerts.py` covers the editor);
 * approval decisions for a group durable run;
 * personal workflows keep their File Sync unchanged, and since 0.261.144 personal Analyze tasks may
-  rely on File Sync's changed files, as the server allows. Since 0.261.148 the fixture validates
+  rely on File Sync's changed files, as the server allows. Since 0.261.149 the fixture validates
   personal saves with the real personal rules, so personal records are ones the server accepts;
 * the general personal-route trap on group workflow pages.
 """
@@ -380,7 +380,7 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     ui.group_file_sync_enabled[GROUP_ID] = False
     open_group_workflows(ui)
     page.get_by_role("button", name="Create workflow", exact=True).click()
-    # 0.261.148: the list says File Sync is off, so the editor neither lists sources nor lets a draft use them.
+    # 0.261.149: the list says File Sync is off, so the editor neither lists sources nor lets a draft use them.
     expect(page.get_by_text(
         "Group File Sync is not enabled, so this group's sources cannot be listed.", exact=True,
     )).to_be_visible()
@@ -395,7 +395,7 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     labelled(page, "Trigger").select_option("file_sync")
     source_checkbox(page, "Finance share (Group)").check()
     # File Sync is turned off for the group after the list loaded, so only the real server rule refuses,
-    # and since 0.261.148 its reviewed message is shown instead of the generic one.
+    # and since 0.261.149 its reviewed message is shown instead of the generic one.
     ui.group_file_sync_enabled[GROUP_ID] = False
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text=GROUP_FILE_SYNC_OFF)).to_be_visible()
@@ -528,7 +528,7 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
 def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
     """Personal editors keep their triggers, File Sync and payloads, and never list sources.
 
-    0.261.148: the record is a Monitor workflow the real server accepts. Its earlier File Sync was
+    0.261.149: the record is a Monitor workflow the real server accepts. Its earlier File Sync was
     off, which `save_personal_workflow` refuses for this trigger.
     """
     ui, page = workflow_ui, workflow_ui.page

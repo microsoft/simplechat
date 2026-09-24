@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for reviewed workflow alert validation messages on both save routes.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.144
 
 This test ensures that every validation failure of ``normalize_workflow_alert_settings`` reaches

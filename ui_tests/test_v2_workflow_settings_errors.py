@@ -1,8 +1,8 @@
 # test_v2_workflow_settings_errors.py
 """
 UI tests for reviewed workflow settings errors, deleted File Sync sources and deleted workflows.
-Version: 0.261.148
-Implemented in: 0.261.148
+Version: 0.261.149
+Implemented in: 0.261.149
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture validates both
 save routes with the real File Sync normalizers, trigger rules and `_normalize_schedule`, returns

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for reviewed workflow settings messages, deleted File Sync sources and deleted workflows.
-Version: 0.261.148
-Implemented in: 0.261.148
+Version: 0.261.149
+Implemented in: 0.261.149
 
 This test ensures that, on both ``POST /api/user/workflows`` and ``POST /api/group/workflows``:
 

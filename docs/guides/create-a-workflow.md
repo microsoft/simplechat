@@ -50,6 +50,13 @@ opened in V2. Advanced definitions cannot be saved through the classic editor
 because it cannot represent their data-flow fields. A stale edit retains its
 draft instead of overwriting another editor's changes.
 
+From version **0.261.149**, a refused save names the rule that failed, such as
+"Schedule value for minutes must be between 1 and 59.", and the editor checks
+the same rules before you save. If someone deletes the workflow while you have
+it open, saving is refused with "This workflow was deleted after it was opened,
+so your changes were not saved." The draft stays open so you can copy anything
+you need; saving in V2 never brings a deleted workflow back.
+
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
@@ -69,7 +76,12 @@ group has File Sync sources:
   selected documents work on the files each sync changed.
 
 Choose between 1 and 10 of the group's own sources. A source the group no
-longer offers is marked **No longer available**; remove it before saving.
+longer offers is marked **No longer available**; remove it before saving. From
+version **0.261.149**, if a source is deleted while you're editing, saving is
+refused with "A selected File Sync source is no longer available. Remove it and
+save again." Your changes stay in the editor, and the source is marked so you
+can remove it. When File Sync is turned off for the group, the editor says so
+instead of showing an empty list.
 Personal workflows keep the File Sync settings they already have, but can't
 create new ones in V2 yet. From version **0.261.144**, a personal workflow
 whose Analyze task works on the files File Sync changed can be saved in V2.
@@ -136,6 +148,9 @@ changing that account, subject to the usual workflow permissions and validation.
 In a structured workflow, Undo and Redo also restore unsaved Run as selections
 across List and Flow, including an explicitly cleared account (version
 **0.261.124**). This does not grant consent or restore an earlier approval.
+
+People who can't manage the workflow see only whether an account is selected
+(version **0.261.149**). Only workflow managers can see who it is or change it.
 
 ## Choose branches and optional work
 

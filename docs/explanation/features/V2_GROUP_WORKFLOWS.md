@@ -30,7 +30,10 @@ group directly. It now resolves the group through
 - without it, the route behaves as before.
 
 A member is refused with 403, and an unknown group is 404. When File Sync isn't
-enabled for the group, the list is empty.
+enabled for the group, the list is empty. From version **0.261.149** the
+response also carries `file_sync_enabled`, so a client can tell "File Sync is
+off" from "no sources". It is computed by the same
+`is_file_sync_enabled_for_group` call the save uses.
 
 Each source is:
 
@@ -64,10 +67,14 @@ requested with the page's explicit group.
   - **Use changed files as Analyze targets**.
 - **Validation.** The editor applies the same rules `save_group_workflow`,
   `_normalize_file_sync_config` and `_normalize_schedule` enforce. So a save the
-  editor allows is one the server accepts. That matters because the server
-  answers every refused workflow with one generic message, which the editor
-  shows as returned. The schedule ranges are 1-59 for seconds and minutes, and
-  1-24 for hours.
+  editor allows is one the server accepts. The schedule ranges are 1-59 for
+  seconds and minutes, and 1-24 for hours. Until 0.261.149 the server answered
+  every refused setting with one generic message. From **0.261.149** it names
+  the rule, and the editor checks personal and group workflows with the same
+  messages; see the
+  [reviewed messages fix](../fixes/WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md).
+  When File Sync is off for the group, the editor says so and applies the
+  save's rule.
 - **Preservation.** A save sends `file_sync` only when it changed. An untouched
   stored value goes back exactly as it was loaded.
 
@@ -103,29 +110,36 @@ runtime read also carries `group_id`. No change was needed.
 | `application/v2_ui/src/components/workflows/WorkflowFileSyncFields.tsx` | New: the File Sync section |
 | `application/v2_ui/src/components/workflows/WorkflowAlertSummary.tsx` | New: the alert summary (read-only viewers only from 0.261.144) |
 | `application/v2_ui/src/components/workflows/WorkflowEditorDialog.tsx`, `WorkflowTaskFields.tsx` | Trigger choice, schedule fields, the new sections, Analyze targets |
+| `application/v2_ui/src/lib/workflowSettings.ts` (0.261.149) | New: the client mirror of the server's File Sync, schedule and trigger rules and messages, for both scopes |
 
 ## Known limitations
 
-- **Deleted sources.** A source deleted after the editor loaded its list makes
-  the save fail with 404. The editor treats that as lost access and closes the
-  draft. The editor prevents this whenever its list was loaded after the
-  deletion.
 - **Personal workflows.** Personal File Sync authoring isn't part of this
   release. From 0.261.144, a personal workflow that analyzes changed files can
   be saved in V2; see the [Analyze changed files fix](../fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md).
-- **Member view.** A member's read-only editor asks for the group's Microsoft 365
-  run-as accounts. The route refuses members, so the editor shows "Could not load
-  eligible Microsoft 365 accounts". This is pre-existing.
+  So a personal workflow whose stored source was deleted can't be fixed in V2:
+  the save is refused with a reviewed message and the draft is kept.
+
+Fixed in 0.261.149, and listed here as limitations until then:
+- **Deleted sources.** A source deleted after the editor loaded its list made
+  the save fail with 404, which the editor treated as lost access, losing the
+  draft. The save is now refused with a reviewed 400 that keeps the draft and
+  marks the source; see the [save after deletion fix](../fixes/WORKFLOW_SAVE_AFTER_DELETION_FIX.md).
+- **Member view.** A member's read-only editor asked for the group's Microsoft
+  365 run-as accounts, and showed an error when the route refused. It no longer
+  asks; see the [run-as read-only view fix](../fixes/WORKFLOW_RUN_AS_READ_ONLY_VIEW_FIX.md).
 
 ## Testing and validation
 
 | Suite | Cases | Coverage |
 |---|---|---|
-| `functional_tests/test_group_workflow_file_sync_sources_scope.py` | 12 | The explicit group is listed and the active group is never read; the `groupId` and whitespace spellings; DocumentManager allowed; a member refused with a group ID; a non-member and an unknown group; the legacy path without `group_id` unchanged; the disabled and unassigned gates; File Sync off gives an empty list |
+| `functional_tests/test_group_workflow_file_sync_sources_scope.py` | 12 | The explicit group is listed and the active group is never read; the `groupId` and whitespace spellings; DocumentManager allowed; a member refused with a group ID; a non-member and an unknown group; the legacy path without `group_id` unchanged; the disabled and unassigned gates; File Sync off gives an empty list, and from 0.261.149 `file_sync_enabled: false` |
+| `functional_tests/test_group_workflow_file_sync_enabled_seam.py` | 22 (0.261.149) | `file_sync_enabled` equals the save's File Sync gate, across the File Sync states, the admin-only setting and the caller's app roles |
 | `functional_tests/test_group_workflow_round_trip_preservation.py` | 5 | A workflow with alert rules, URL access, a Monitor File Sync trigger and an Analyze action is saved, loaded and sent back unchanged. Every stored field matches except the modification stamps, and a second round trip is stable. Runs through the real workflow modules |
-| `functional_tests/test_group_workflow_file_sync_client_parity.py` | 25 (24 from 0.261.144) | The production TypeScript runs under Node, and each payload goes through the real `save_group_workflow`. The editor allows a save if and only if the server accepts it, over 21 cases. The alert summary matches the server. The classic-predicate case was removed with the link in 0.261.144 |
-| `ui_tests/test_v2_group_workflow_file_sync.py` | 12 | Authoring checked on the saved body; editing and the round trip, including Analyze on changed files; File Sync before a manual run; unavailable sources; no sources and the server's refusal text; the member view; responsive layout |
-| `functional_tests/test_workflow_*.js` | 112 | The existing workflow editor logic, unchanged |
+| `functional_tests/test_group_workflow_file_sync_client_parity.py` | 173 (25 before 0.261.149) | The production TypeScript runs under Node, and each payload goes through the real save routes. The editor allows a save if and only if the server accepts it, and from 0.261.149 shows the same message, in both scopes. The alert summary matches the server |
+| `ui_tests/test_v2_group_workflow_file_sync.py` | 13 | Authoring checked on the saved body; editing and the round trip, including Analyze on changed files; File Sync before a manual run; unavailable sources; no sources and the server's refusal text; the member view; responsive layout |
+| `ui_tests/test_v2_workflow_settings_errors.py` | 6 (0.261.149) | Deleted sources and workflows keep the draft; personal schedules are checked with the server's message; the File-Sync-off state |
+| `functional_tests/test_workflow_*.js` | 167 | The workflow editor logic, including the settings mirror from 0.261.149 |
 
 The existing V2 workflow browser suites and the group workspace browser suites
 show the same results before and after this change.

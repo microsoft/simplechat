@@ -45,7 +45,9 @@ Two things combined:
 - If a save still reaches the server with an invalid alert setting, the reply
   names the problem and the rule's position, instead of the generic message. The
   classic editor shows the same text.
-- Every other invalid workflow setting keeps the generic message.
+- Every other invalid workflow setting keeps the generic message. From
+  0.261.149, File Sync, schedule and trigger refusals also name their rule; see
+  the [reviewed messages fix](WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md).
 
 ## Validation
 

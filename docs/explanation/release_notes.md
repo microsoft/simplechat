@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.149)**
+
+#### Bug Fixes
+
+*   **Workflow Saves After A Deletion Keep The Draft**
+    *   Fixed a File Sync source deleted while the V2 editor was open. A group workflow's save failed with a 404, which the editor treated as lost access, losing the draft. A personal workflow's save failed with a server error. Both now get a 400 naming the problem, with the draft kept, and a group editor marks the source so it can be removed.
+    *   Fixed a V2 save of a workflow deleted after the editor opened it. The save silently recreated the workflow; it's now refused with a 409 that writes nothing, and the draft stays open to copy.
+    *   (Ref: `WorkflowSourceUnavailableError`, `WorkflowDeletedConflict`, `refuse_save_of_deleted_workflow`, [Workflow Save After Deletion Fix](fixes/WORKFLOW_SAVE_AFTER_DELETION_FIX.md))
+
+*   **Workflow Settings Refusals Name The Rule**
+    *   File Sync, schedule and trigger refusals used to share one generic message. Each now has a reviewed message with the code `invalid_workflow_settings`, on both save routes and in the classic editor.
+    *   The V2 editor checks the same rules, with the same messages, before saving personal and group workflows. When File Sync is off for a group, the editor says so, from a new `file_sync_enabled` field on the group File Sync sources route.
+    *   A non-finite schedule value no longer causes a server error.
+    *   (Ref: `lib/workflowSettings.ts`, `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Workflow Settings Reviewed Messages Fix](fixes/WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md))
+
+*   **Read-Only Workflow Editors No Longer Request Run As Accounts**
+    *   A group member's read-only workflow editor asked for the run-as accounts, which only workflow managers may list, and showed a load error. It now shows only whether an account is selected, and requests nothing.
+    *   (Ref: `WorkflowMicrosoft365RunAs.tsx`, [Workflow Run As Read-Only View Fix](fixes/WORKFLOW_RUN_AS_READ_ONLY_VIEW_FIX.md))
+
 ### **(v0.261.148)**
 
 #### Bug Fixes

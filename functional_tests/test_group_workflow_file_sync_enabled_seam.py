@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the File Sync gate shared by the group workflow sources route and the save.
-Version: 0.261.148
-Implemented in: 0.261.148
+Version: 0.261.149
+Implemented in: 0.261.149
 
 This test ensures that ``file_sync_enabled`` from ``GET /api/group/workflows/file-sync-sources``
 is exactly the gate ``POST /api/group/workflows`` applies before a workflow can use File Sync

@@ -95,15 +95,21 @@ syntax, the server's reviewed 400 is shown as returned.
 The save routes, `POST /api/user/workflows` and `POST /api/group/workflows`,
 used to answer every invalid alert setting with the generic "Invalid workflow
 settings. Review the task, runner, trigger, and document inputs." The alert
-normalizer now raises `WorkflowPublicValidationError`, defined in
-`functions_workflow_definitions.py`. Both routes return it as:
+normalizer now raises a reviewed error defined in
+`functions_workflow_definitions.py`: `WorkflowPublicValidationError`, and from
+0.261.149 its subclass `WorkflowAlertValidationError`. Both routes return it
+as:
 
 ```json
 {"error": "<reviewed message>", "code": "invalid_workflow_alerts"}
 ```
 
-Every other invalid setting keeps the generic message. The messages name a rule
-by its position, `{n}`, and only fixed limits. They never echo text you entered:
+In 0.261.144 every other invalid setting kept the generic message. From
+**0.261.149**, File Sync, schedule and trigger refusals also get reviewed
+messages, with the code `invalid_workflow_settings`; see the
+[reviewed messages fix](../fixes/WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md).
+The alert messages name a rule by its position, `{n}`, and only fixed limits.
+They never echo text you entered:
 
 | Area | Messages |
 |---|---|

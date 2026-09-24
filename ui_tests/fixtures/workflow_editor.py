@@ -1,11 +1,11 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.148
+Version: 0.261.149
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
-Reviewed settings errors, personal File Sync rules, deleted workflows and the run-as member trap added in: 0.261.148
+Reviewed settings errors, personal File Sync rules, deleted workflows and the run-as member trap added in: 0.261.149
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
