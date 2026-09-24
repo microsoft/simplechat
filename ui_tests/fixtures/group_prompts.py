@@ -26,6 +26,16 @@ PROMPT_OPERATIONS = ("create", "edit", "delete")
 PROMPT_ACTIONS = ("edit", "delete")
 WRITER_ROLES = ("Owner", "Admin", "DocumentManager")
 
+# The exact bodies the scoped route returns, mirrored so the per-route parity pin
+# (functional_tests/test_group_prompt_fixture_parity.py) holds. The workbench keys a conflict off
+# the 409 status and ignores the delete body, but a fixture that invents `success` where the server
+# sends `message`, or drops the server's `error_code`, is the F1/F2 seam class this pin closes.
+PROMPT_CONFLICT_BODY = {
+    "error": "The prompt was changed by someone else. Refresh and try again.",
+    "error_code": "prompt_changed",
+}
+PROMPT_DELETED_BODY = {"message": "Prompt deleted successfully."}
+
 
 def group_prompt(group_id, identifier, name, *, content, actions=PROMPT_ACTIONS, **overrides):
     """One shared prompt as the group projector returns it, carrying its own etag."""
@@ -183,7 +193,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
             record = next((row for row in self.prompts.get(group_id, []) if row["id"] == identifier), None)
             if record is None:
                 if method == "PATCH" and (group_id, identifier) in self.deleted_prompt_conflicts:
-                    self._json(route, {"error": "prompt_changed"}, 409)
+                    self._json(route, copy.deepcopy(PROMPT_CONFLICT_BODY), 409)
                     return
                 self._json(route, {"error": "Prompt not found in this group."}, 404)
                 return
@@ -192,7 +202,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                 assert "expected_etag" in entry.body, "A conditional edit must carry expected_etag."
                 assert "is_favorite" not in entry.body, "Group prompts must not carry favourites."
                 if entry.body["expected_etag"] != record["etag"]:
-                    self._json(route, {"error": "prompt_changed"}, 409)
+                    self._json(route, copy.deepcopy(PROMPT_CONFLICT_BODY), 409)
                     return
                 self.etag_counter[identifier] = self.etag_counter.get(identifier, 0) + 1
                 record["etag"] = f'"etag-{identifier}-{self.etag_counter[identifier]}"'
@@ -208,10 +218,10 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
                     "A conditional delete must carry expected_etag in its JSON body."
                 )
                 if entry.body["expected_etag"] != record["etag"]:
-                    self._json(route, {"error": "prompt_changed"}, 409)
+                    self._json(route, copy.deepcopy(PROMPT_CONFLICT_BODY), 409)
                     return
                 self.prompts[group_id] = [row for row in self.prompts[group_id] if row["id"] != identifier]
-                self._json(route, {"success": True})
+                self._json(route, copy.deepcopy(PROMPT_DELETED_BODY))
                 return
         self.unexpected_requests.append(f"{method} {entry.path}")
         self._json(route, {"error": "Unexpected group prompt request."}, 500)

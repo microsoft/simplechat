@@ -228,7 +228,7 @@ def test_conditional_conflict_keeps_draft_open(group_prompts_ui):
     conflicts = [
         entry for entry in ui.responses
         if entry[0].endswith("/api/groups/group-a/prompts/weekly-status")
-        and isinstance(entry[1], dict) and entry[1].get("error") == "prompt_changed"
+        and isinstance(entry[1], dict) and entry[1].get("error_code") == "prompt_changed"
     ]
     assert conflicts, "The stale-etag edit should have produced a 409 prompt_changed."
 
