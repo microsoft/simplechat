@@ -2032,8 +2032,7 @@ def register_route_backend_workflows(bp):
     def get_group_workflow_file_sync_sources():
         user_id = get_current_user_id()
         try:
-            group_id = require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-            settings = _assert_group_workflow_feature_enabled(group_id)
+            group_id, settings = _resolve_active_group_for_workflows(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
             return jsonify({'sources': _collect_group_workflow_file_sync_sources(user_id, group_id, settings=settings)})
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400

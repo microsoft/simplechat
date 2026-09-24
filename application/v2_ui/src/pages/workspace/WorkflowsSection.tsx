@@ -53,12 +53,15 @@ export function WorkflowsSection({
     scope = DEFAULT_WORKFLOW_SCOPE,
     onDirtyChange,
     onBusyChange,
+    onOpenClassic,
     allowManage = true,
     interactionDisabled = false,
 }: {
     scope?: WorkflowScope;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
+    /** Group pages pass their classic handoff, which selects this group before leaving V2. */
+    onOpenClassic?: () => void;
     allowManage?: boolean;
     interactionDisabled?: boolean;
 }) {
@@ -233,8 +236,9 @@ export function WorkflowsSection({
             />
 
             <p className="text-xs text-text-3">
-                Native V2 authoring is available for manual and interval workflows. File sync,
-                alert and publication settings from existing workflows are preserved unchanged.
+                {scope.type === 'group'
+                    ? 'Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows. Alert and publication settings from existing workflows are preserved unchanged.'
+                    : 'Native V2 authoring is available for manual and interval workflows. File sync, alert and publication settings from existing workflows are preserved unchanged.'}
             </p>
             {scope.type === 'group' ? (
                 <p className="text-xs text-text-3">Workflow requests stay scoped to this group, even if your active workspace changes elsewhere.</p>
@@ -362,6 +366,7 @@ export function WorkflowsSection({
                     workflow={editing === 'new' ? null : editing}
                     options={{ ...options, can_manage: options.can_manage && allowManage }}
                     interactionDisabled={interactionDisabled}
+                    onOpenClassic={onOpenClassic}
                     onBusyChange={setEditorSaving}
                     onDirtyChange={setEditorDirty}
                     onClose={() => {
