@@ -2,9 +2,10 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.154
+Version: 0.261.155
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
+Members navigation section (M7B): 0.261.155
 
 The real context module and Flask route body run against isolated service seams.
 Existing group-role/status and Flask authentication definitions execute unchanged.
@@ -269,6 +270,64 @@ def test_statuses_never_advertise_unavailable_operations(environment, status, vi
         assert all(not section["can_manage"] for section in body["sections"].values())
     if not view:
         assert all(not section["enabled"] and section["reason"] for section in body["sections"].values())
+
+
+@pytest.mark.parametrize("user_id,manager", [
+    ("owner", True), ("admin", True), ("manager", False), ("reader", False),
+])
+@pytest.mark.parametrize("status,viewable", [
+    ("active", True), ("locked", True), ("upload_disabled", True),
+    ("inactive", False), ("unexpected-status", False),
+])
+def test_members_section_is_open_to_every_member_in_a_viewable_group(environment, user_id, manager, status, viewable):
+    """M7B: Members sits in the group-only "manage" group. Every member may open it whenever the
+    group is viewable, and only the Owner and Admins manage it, in an active group, like every
+    other section. It is navigation only: the membership hints stay in the member list."""
+    environment.records["group-a"]["status"] = status
+    response = read_as(environment, user_id)
+    body = response.get_json()
+    assert response.status_code == 200
+    members = body["sections"]["members"]
+    assert members["group"] == "manage"
+    assert members["enabled"] is viewable
+    assert members["can_manage"] is (viewable and manager and status == "active")
+    if viewable:
+        assert members["reason"] is None
+    else:
+        assert members["reason"] and members["reason"] == body["sections"]["documents"]["reason"]
+    assert "membership_management" not in body
+    assert "pendingUsers" not in response.get_data(as_text=True)
+
+
+def test_members_section_needs_no_capability_setting(environment):
+    """Membership is part of every group workspace, so no feature gate turns the section off."""
+    for key in (
+        "enable_semantic_kernel", "per_user_semantic_kernel", "allow_group_agents", "allow_group_plugins",
+        "allow_group_custom_endpoints", "enable_multi_model_endpoints", "allow_group_workflows",
+    ):
+        environment.settings[key] = False
+    environment.sync.return_value = False
+    environment.governance.return_value = False
+    body = read_as(environment, "reader").get_json()
+    assert body["sections"]["members"] == {"enabled": True, "can_manage": False, "reason": None, "group": "manage"}
+
+
+def test_members_section_managers_are_the_membership_policy_managers():
+    """The context reads the manager roles from the membership policy rather than restating them."""
+    tree = ast.parse((APP_ROOT / "functions_workspace_context.py").read_text(encoding="utf-8"))
+    imported = {
+        (node.module, alias.name)
+        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert ("functions_group_membership_policy", "GROUP_MEMBERSHIP_MANAGER_ROLES") in imported
+    policy_tree = ast.parse((APP_ROOT / "functions_group_membership_policy.py").read_text(encoding="utf-8"))
+    [roles] = [
+        ast.literal_eval(node.value) for node in policy_tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "GROUP_MEMBERSHIP_MANAGER_ROLES" for target in node.targets)
+    ]
+    assert roles == ("Owner", "Admin")
 
 
 def test_owner_only_management_does_not_change_endpoint_roles(environment):

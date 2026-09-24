@@ -1076,8 +1076,13 @@ export interface BootstrapPayload {
     settings: Json;
 }
 
-/** The group a workspace section belongs to, as reported by the server. */
-export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections';
+/**
+ * The group a workspace section belongs to, as reported by the server.
+ *
+ * `manage` is group-only: the group workspace context reports its management sections
+ * (Members) there, and the personal workspace never uses it.
+ */
+export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections' | 'manage';
 
 export interface WorkspaceSectionAvailability {
     enabled: boolean;

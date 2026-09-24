@@ -1,7 +1,8 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.127
+// Version: 0.261.155
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
+// Members section validation (M7B): 0.261.155
 // Executes the real context API and stores with controlled HTTP ordering.
 
 import assert from 'node:assert/strict';
@@ -150,6 +151,33 @@ try {
             mutate(changed);
             assert.equal(isGroupWorkspaceContext(changed, 'viewer', 'group-a'), false);
         }
+    });
+    await run('a reported Members section must be a valid manage section; an absent one stays unavailable', async () => {
+        const valid = context('group-a');
+        assert.equal(isGroupWorkspaceContext(valid, 'viewer', 'group-a'), true, 'A context without it is still valid.');
+        const withMembers = structuredClone(valid);
+        withMembers.sections.members = { enabled: true, can_manage: true, reason: null, group: 'manage' };
+        assert.equal(isGroupWorkspaceContext(withMembers, 'viewer', 'group-a'), true);
+        for (const members of [
+            { enabled: true, can_manage: true, reason: null, group: 'knowledge' },
+            { enabled: false, can_manage: true, reason: 'Denied', group: 'manage' },
+            { enabled: false, can_manage: false, reason: ' ', group: 'manage' },
+            { enabled: 'true', can_manage: false, reason: null, group: 'manage' },
+            null,
+        ]) {
+            const changed = structuredClone(valid);
+            changed.sections.members = members;
+            assert.equal(isGroupWorkspaceContext(changed, 'viewer', 'group-a'), false);
+        }
+        const misfiled = structuredClone(withMembers);
+        misfiled.sections.documents.group = 'manage';
+        assert.equal(isGroupWorkspaceContext(misfiled, 'viewer', 'group-a'), false, 'A content section never claims the manage group.');
+        const missing = resolveWorkspaceSections([{ id: 'members', group: 'manage' }], valid);
+        assert.deepEqual(missing.map((entry) => entry.enabled), [false], 'An unreported section is unavailable, never assumed.');
+        const reported = resolveWorkspaceSections([{ id: 'members', group: 'manage' }], withMembers);
+        assert.deepEqual(reported.map((entry) => entry.enabled), [true]);
+        assert.equal(groupWorkspacePath('group-a', 'members'), '/groups/group-a/members');
+        assert.equal(groupWorkspacePath('group-a', 'settings'), '/groups/group-a');
     });
     await run('explicit reads work without paging or changing the saved active group', async () => {
         const result = await useGroupWorkspaceStore.getState().load('group-1001');

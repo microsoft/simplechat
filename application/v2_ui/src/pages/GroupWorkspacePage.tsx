@@ -13,7 +13,7 @@ import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
     GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupRoleLabel, groupWorkspaceNavigationAvailability,
-    groupWorkspacePath, isGroupWorkspaceSection, readGroupDocumentTarget,
+    groupWorkspacePath, isGroupManageSection, isGroupWorkspaceSection, readGroupDocumentTarget,
 } from '../lib/groupWorkspaceNavigation';
 import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { resolveWorkspaceSections } from '../lib/workspaceSections';
@@ -27,6 +27,8 @@ import { GroupPromptsSection } from './workspace/PromptsSection';
 import { GroupIdentitiesSection } from './workspace/GroupIdentitiesSection';
 import { GroupEndpointsSection } from './workspace/GroupEndpointsSection';
 import { GroupFileSourcesSection } from './workspace/GroupFileSourcesSection';
+import { GroupMembersSection } from './workspace/GroupMembersSection';
+import { GROUP_MANAGE_SECTIONS } from './workspace/groupManageSections';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
 import { AgentsSection } from './workspace/AgentsSection';
@@ -156,8 +158,10 @@ export function GroupWorkspacePage() {
                 ? 'Call agent' : undefined,
         };
     }), [context?.sections.actions.enabled, context?.native_delegation?.enabled]);
+    // The Manage group's sections (M7B Members) resolve against the same server context, so one
+    // navigation tree serves the whole group workspace.
     const resolved = useMemo(() => resolveWorkspaceSections(
-        sections, context ? groupWorkspaceNavigationAvailability(context) : null,
+        [...sections, ...GROUP_MANAGE_SECTIONS], context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
     const selected = resolved.find((entry) => entry.section.id === section);
     const nativeDocuments = Boolean(ready && section === 'documents' && !resourceId
@@ -238,14 +242,16 @@ export function GroupWorkspacePage() {
         setResourceBusy(false);
     }, [viewerId]);
 
-    // A stray resource segment on a section that has no resource route -- every native group section
-    // except the actions and agents editors -- must never fall through to a classic handoff. Once the
-    // context is loaded, drop the segment so the section itself renders, turning a /workflows/<id>
-    // deep link into the ?workflow_id= query the workflows section already understands. Actions and
-    // agents keep their editor route while that section is available; when it is off they have no
-    // editor, so their stray segment is dropped too and the section (or its lock) shows instead.
+    // A stray resource segment on a section that has no resource route -- every native group section,
+    // including the Manage sections, except the actions and agents editors -- must never fall through
+    // to a classic handoff. Once the context is loaded, drop the segment so the section itself
+    // renders, turning a /workflows/<id> deep link into the ?workflow_id= query the workflows section
+    // already understands. Actions and agents keep their editor route while that section is
+    // available; when it is off they have no editor, so their stray segment is dropped too and the
+    // section (or its lock) shows instead.
     useEffect(() => {
-        if (!context || !groupId || !section || !resourceId || !isGroupWorkspaceSection(section)) return;
+        if (!context || !groupId || !section || !resourceId
+            || !(isGroupWorkspaceSection(section) || isGroupManageSection(section))) return;
         if (section === 'actions' && context.sections.actions.enabled) return;
         if (section === 'agents' && context.sections.agents.enabled) return;
         const target = section === 'workflows'
@@ -300,6 +306,13 @@ export function GroupWorkspacePage() {
         if (dirtyRef.current || busyRef.current) setExternalPrompt(href);
         else setExternalTarget(href);
     };
+    // After leaving, the group is no longer the caller's: re-read the bootstrap so the picker and
+    // the saved active group drop it, then go back to /groups.
+    const leftGroup = useCallback(async () => {
+        reportDocumentBusy(false);
+        await useBootstrapStore.getState().refresh();
+        navigate('/groups', { replace: true });
+    }, [navigate, reportDocumentBusy]);
     useEffect(() => {
         if (!externalTarget || !groupId) return;
         let mounted = true;
@@ -405,6 +418,11 @@ export function GroupWorkspacePage() {
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
+                            : section === 'members' && !resourceId ? (
+                                <GroupMembersSection groupId={context.scope.id} groupName={context.workspace.name}
+                                    viewerId={context.viewer_id} interactionDisabled={accessUnconfirmed}
+                                    onBusyChange={reportDocumentBusy} onAccessChanged={revalidate} onLeft={leftGroup} />
+                            )
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <GroupDocumentsSection context={context}
                                     interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}

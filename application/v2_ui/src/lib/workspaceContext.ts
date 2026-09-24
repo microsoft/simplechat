@@ -14,7 +14,15 @@ export const GROUP_WORKSPACE_SECTION_IDS = [
     'workflows', 'identities', 'endpoints',
 ] as const;
 
+/**
+ * The group-only management sections, reported in the context's `manage` group. Kept apart
+ * from GROUP_WORKSPACE_SECTION_IDS, which the public workspace context shares, so a public
+ * workspace is never expected to report them. M7C adds settings, activity and statistics.
+ */
+export const GROUP_MANAGE_SECTION_IDS = ['members'] as const;
+
 export type GroupWorkspaceSectionId = typeof GROUP_WORKSPACE_SECTION_IDS[number];
+export type GroupManageSectionId = typeof GROUP_MANAGE_SECTION_IDS[number];
 export type GroupWorkspaceRole = 'Owner' | 'Admin' | 'DocumentManager' | 'User';
 export type GroupWorkspaceStatus = 'active' | 'locked' | 'upload_disabled' | 'inactive' | 'unknown';
 
@@ -37,7 +45,14 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
     role: GroupWorkspaceRole;
     status: GroupWorkspaceStatus;
     can_manage_workspace: boolean;
-    sections: Record<GroupWorkspaceSectionId, WorkspaceSectionAccess>;
+    /**
+     * The content sections, plus the group-only `manage` sections (M7B `members`). A manage
+     * section the server does not report is unavailable, never assumed; when reported it must
+     * be a valid section in the `manage` group. Its `can_manage` is navigation only: every
+     * membership control is gated by the member list's own hints.
+     */
+    sections: Record<GroupWorkspaceSectionId, WorkspaceSectionAccess>
+        & Partial<Record<GroupManageSectionId, WorkspaceSectionAccess>>;
     /** The already-shipped Call agent surface has its own eligibility, independent of the personal kernel. */
     native_delegation?: WorkspaceSectionAccess;
     document_permissions: {
@@ -190,12 +205,14 @@ export function workspaceBasePath(scope: WorkspaceRef): string {
     return `/${scope.kind === 'group' ? 'groups' : 'public'}/${id}`;
 }
 
-function isSectionAccess(value: unknown): value is WorkspaceSectionAccess {
+const CONTENT_SECTION_GROUPS = ['knowledge', 'automation', 'connections'];
+
+function isSectionAccess(value: unknown, groups: readonly string[] = CONTENT_SECTION_GROUPS): value is WorkspaceSectionAccess {
     return isRecord(value)
         && typeof value.enabled === 'boolean'
         && typeof value.can_manage === 'boolean'
         && typeof value.group === 'string'
-        && ['knowledge', 'automation', 'connections'].includes(value.group)
+        && groups.includes(value.group)
         && (!value.can_manage || value.enabled)
         && (value.enabled ? value.reason === null : typeof value.reason === 'string' && Boolean(value.reason.trim()));
 }
@@ -239,7 +256,12 @@ export function isGroupWorkspaceContext(
     groupId: string,
 ): value is GroupWorkspaceContext {
     return matchesWorkspaceContextShape(value, viewerId, groupId, 'group',
-        `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`);
+        `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`)
+        && isRecord(value) && isRecord(value.sections)
+        && GROUP_MANAGE_SECTION_IDS.every((sectionId) => {
+            const sections = value.sections as Record<string, unknown>;
+            return sections[sectionId] === undefined || isSectionAccess(sections[sectionId], ['manage']);
+        });
 }
 
 /**
