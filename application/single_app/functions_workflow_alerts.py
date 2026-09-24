@@ -29,7 +29,7 @@ from functions_workflow_alert_safety import (
     WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE,
     WORKFLOW_ALERT_EVALUATOR_UNAVAILABLE_MESSAGE,
 )
-from functions_workflow_definitions import WorkflowPublicValidationError
+from functions_workflow_definitions import WorkflowAlertValidationError
 
 
 # Severity ladder, ordered from quietest to loudest.
@@ -141,7 +141,7 @@ def _normalize_reason(text):
 def _normalize_legacy_alert_priority(value):
     normalized = str(value or 'none').strip().lower() or 'none'
     if normalized not in WORKFLOW_ALERT_LEGACY_PRIORITIES:
-        raise WorkflowPublicValidationError('Alert priority must be none, low, medium or high.')
+        raise WorkflowAlertValidationError('Alert priority must be none, low, medium or high.')
     return normalized
 
 
@@ -164,7 +164,7 @@ def validate_alert_regex(pattern):
 
 
 # Save-path validation. Every failure below raises a reviewed, data-free
-# WorkflowPublicValidationError naming the 1-based rule position, never user text.
+# WorkflowAlertValidationError naming the 1-based rule position, never user text.
 
 def _or_list(values):
     """Render ``('a', 'b', 'c')`` as ``a, b or c`` for a reviewed message."""
@@ -175,20 +175,20 @@ def _or_list(values):
 def _validate_rule_regex(pattern, position):
     """Check a saved regex with reviewed messages; the run-time check is ``validate_alert_regex``."""
     if not pattern:
-        raise WorkflowPublicValidationError(f'Alert rule {position} needs a regex pattern.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} needs a regex pattern.')
     if len(pattern) > WORKFLOW_ALERT_REGEX_MAX_LENGTH:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} regex pattern must be {WORKFLOW_ALERT_REGEX_MAX_LENGTH} characters or fewer.'
         )
     if _NESTED_QUANTIFIER_PATTERN.search(pattern):
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} regex pattern uses nested quantifiers, which are not allowed.'
         )
     try:
         validate_alert_regex(pattern)
     except ValueError as exc:
         # The compiler's text describes the caller's pattern, so it is never returned.
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} regex pattern is not a valid regular expression.'
         ) from exc
 
@@ -197,7 +197,7 @@ def _normalize_match_values(values, position):
     if isinstance(values, str):
         values = [values]
     if not isinstance(values, list):
-        raise WorkflowPublicValidationError(f'Alert rule {position} match values must be a list of text.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} match values must be a list of text.')
 
     normalized_values = []
     for raw_value in values:
@@ -205,7 +205,7 @@ def _normalize_match_values(values, position):
         if not normalized_value:
             continue
         if len(normalized_value) > WORKFLOW_ALERT_TEXT_VALUE_MAX_LENGTH:
-            raise WorkflowPublicValidationError(
+            raise WorkflowAlertValidationError(
                 f'Alert rule {position} match values must each be '
                 f'{WORKFLOW_ALERT_TEXT_VALUE_MAX_LENGTH} characters or fewer.'
             )
@@ -213,9 +213,9 @@ def _normalize_match_values(values, position):
             normalized_values.append(normalized_value)
 
     if not normalized_values:
-        raise WorkflowPublicValidationError(f'Alert rule {position} needs at least one match value.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} needs at least one match value.')
     if len(normalized_values) > WORKFLOW_ALERT_MAX_TEXT_VALUES:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} can match up to {WORKFLOW_ALERT_MAX_TEXT_VALUES} values.'
         )
     return normalized_values
@@ -226,7 +226,7 @@ def _normalize_status_list(values, allowed_statuses, position, kind):
     if isinstance(values, str):
         values = [values]
     if not isinstance(values, list):
-        raise WorkflowPublicValidationError(f'Alert rule {position} {kind} statuses must be a list.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} {kind} statuses must be a list.')
 
     normalized_values = []
     for raw_value in values:
@@ -234,12 +234,12 @@ def _normalize_status_list(values, allowed_statuses, position, kind):
         if not normalized_value:
             continue
         if normalized_value not in allowed_statuses:
-            raise WorkflowPublicValidationError(f'Alert rule {position} has an unsupported {kind} status.')
+            raise WorkflowAlertValidationError(f'Alert rule {position} has an unsupported {kind} status.')
         if normalized_value not in normalized_values:
             normalized_values.append(normalized_value)
 
     if not normalized_values:
-        raise WorkflowPublicValidationError(f'Alert rule {position} needs at least one {kind} status.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} needs at least one {kind} status.')
     return normalized_values
 
 
@@ -247,7 +247,7 @@ def _normalize_alert_rule_scope(raw_scope, task_ids=None, position=1):
     raw_scope = raw_scope if isinstance(raw_scope, dict) else {}
     scope_type = str(raw_scope.get('type') or 'final').strip().lower() or 'final'
     if scope_type not in WORKFLOW_ALERT_SCOPE_TYPES:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} must look at the final output, any task output, or a specific task.'
         )
 
@@ -256,9 +256,9 @@ def _normalize_alert_rule_scope(raw_scope, task_ids=None, position=1):
         return {'type': scope_type, 'task_id': ''}
 
     if not task_id:
-        raise WorkflowPublicValidationError(f'Alert rule {position} needs a task to watch.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} needs a task to watch.')
     if task_ids is not None and task_id not in set(task_ids):
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} watches a task that is no longer in this workflow.'
         )
     return {'type': scope_type, 'task_id': task_id}
@@ -268,7 +268,7 @@ def _normalize_alert_condition(raw_condition, task_ids=None, position=1):
     raw_condition = raw_condition if isinstance(raw_condition, dict) else {}
     condition_type = str(raw_condition.get('type') or '').strip().lower()
     if condition_type not in WORKFLOW_ALERT_CONDITION_TYPES:
-        raise WorkflowPublicValidationError(f'Alert rule {position} has an unsupported condition type.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} has an unsupported condition type.')
 
     if condition_type == 'run_status':
         return {
@@ -289,7 +289,7 @@ def _normalize_alert_condition(raw_condition, task_ids=None, position=1):
     if condition_type == 'text_match':
         match_mode = str(raw_condition.get('mode') or 'contains_any').strip().lower() or 'contains_any'
         if match_mode not in WORKFLOW_ALERT_TEXT_MATCH_MODES:
-            raise WorkflowPublicValidationError(
+            raise WorkflowAlertValidationError(
                 f'Alert rule {position} text match must be contains_any, contains_all, not_contains or regex.'
             )
 
@@ -315,7 +315,7 @@ def _normalize_alert_condition(raw_condition, task_ids=None, position=1):
     if condition_type == 'file_sync':
         outcome = str(raw_condition.get('outcome') or '').strip().lower()
         if outcome not in WORKFLOW_ALERT_FILE_SYNC_OUTCOMES:
-            raise WorkflowPublicValidationError(
+            raise WorkflowAlertValidationError(
                 f'Alert rule {position} File Sync result must be changes_found, no_changes or sync_failed.'
             )
         return {'type': condition_type, 'outcome': outcome}
@@ -326,9 +326,9 @@ def _normalize_alert_condition(raw_condition, task_ids=None, position=1):
     if condition_type == 'model_evaluation':
         prompt = str(raw_condition.get('prompt') or '').strip()
         if not prompt:
-            raise WorkflowPublicValidationError(f'Alert rule {position} needs a condition for the model to judge.')
+            raise WorkflowAlertValidationError(f'Alert rule {position} needs a condition for the model to judge.')
         if len(prompt) > WORKFLOW_ALERT_EVALUATION_PROMPT_MAX_LENGTH:
-            raise WorkflowPublicValidationError(
+            raise WorkflowAlertValidationError(
                 f'Alert rule {position} model condition must be '
                 f'{WORKFLOW_ALERT_EVALUATION_PROMPT_MAX_LENGTH} characters or fewer.'
             )
@@ -336,7 +336,7 @@ def _normalize_alert_condition(raw_condition, task_ids=None, position=1):
 
     signal_name = str(raw_condition.get('signal_name') or '').strip()
     if len(signal_name) > WORKFLOW_ALERT_RULE_NAME_MAX_LENGTH:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} signal name must be {WORKFLOW_ALERT_RULE_NAME_MAX_LENGTH} characters or fewer.'
         )
     return {
@@ -382,7 +382,7 @@ def normalize_alert_rule(raw_rule, task_ids=None, index=0):
     """Normalize and validate a single alert rule."""
     position = index + 1
     if not isinstance(raw_rule, dict):
-        raise WorkflowPublicValidationError(f'Alert rule {position} is invalid.')
+        raise WorkflowAlertValidationError(f'Alert rule {position} is invalid.')
 
     condition = _normalize_alert_condition(raw_rule.get('condition'), task_ids=task_ids, position=position)
     scope = _normalize_alert_rule_scope(raw_rule.get('scope'), task_ids=task_ids, position=position)
@@ -391,19 +391,19 @@ def normalize_alert_rule(raw_rule, task_ids=None, index=0):
     if not name:
         name = describe_alert_condition(condition)
     if len(name) > WORKFLOW_ALERT_RULE_NAME_MAX_LENGTH:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} name must be {WORKFLOW_ALERT_RULE_NAME_MAX_LENGTH} characters or fewer.'
         )
 
     delivery = str(raw_rule.get('delivery') or 'default').strip().lower() or 'default'
     if delivery not in WORKFLOW_ALERT_DELIVERIES:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} delivery must be default, notify_only or popup.'
         )
 
     severity = str(raw_rule.get('severity') or WORKFLOW_ALERT_DEFAULT_SEVERITY).strip().lower()
     if severity not in WORKFLOW_ALERT_SEVERITIES:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             f'Alert rule {position} severity must be {_or_list(WORKFLOW_ALERT_SEVERITY_ORDER)}.'
         )
 
@@ -428,9 +428,9 @@ def normalize_alert_rules(raw_rules, task_ids=None):
     if raw_rules is None:
         return []
     if not isinstance(raw_rules, list):
-        raise WorkflowPublicValidationError('Alert rules must be a list.')
+        raise WorkflowAlertValidationError('Alert rules must be a list.')
     if len(raw_rules) > WORKFLOW_ALERT_MAX_RULES:
-        raise WorkflowPublicValidationError(f'A workflow can have up to {WORKFLOW_ALERT_MAX_RULES} alert rules.')
+        raise WorkflowAlertValidationError(f'A workflow can have up to {WORKFLOW_ALERT_MAX_RULES} alert rules.')
 
     normalized_rules = []
     seen_rule_ids = set()
@@ -447,7 +447,7 @@ def _normalize_alert_evaluation(raw_evaluation):
     raw_evaluation = raw_evaluation if isinstance(raw_evaluation, dict) else {}
     on_error = str(raw_evaluation.get('on_error') or 'skip').strip().lower() or 'skip'
     if on_error not in WORKFLOW_ALERT_EVALUATION_ERROR_MODES:
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             'Choose skip or alert for model-evaluated conditions that cannot be judged.'
         )
     return {'on_error': on_error}
@@ -547,7 +547,7 @@ def normalize_workflow_alert_settings(workflow_data, existing_workflow=None, tas
     if 'alert_mode' in workflow_data:
         alert_mode = str(workflow_data.get('alert_mode') or '').strip().lower()
         if alert_mode not in WORKFLOW_ALERT_MODES:
-            raise WorkflowPublicValidationError('Alert mode must be off, every_run or rules.')
+            raise WorkflowAlertValidationError('Alert mode must be off, every_run or rules.')
     elif 'alert_rules' in workflow_data:
         alert_mode = 'rules' if alert_rules else 'off'
     else:
@@ -559,9 +559,9 @@ def normalize_workflow_alert_settings(workflow_data, existing_workflow=None, tas
             alert_mode = 'rules'
 
     if alert_mode == 'rules' and not alert_rules:
-        raise WorkflowPublicValidationError('Add at least one alert rule, or choose a different alert mode.')
+        raise WorkflowAlertValidationError('Add at least one alert rule, or choose a different alert mode.')
     if alert_mode == 'every_run' and alert_priority == 'none':
-        raise WorkflowPublicValidationError(
+        raise WorkflowAlertValidationError(
             'Choose a pop-up priority for alerts on every run, or choose a different alert mode.'
         )
 

@@ -39,6 +39,8 @@ _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 class WorkflowDefinitionError(ValueError):
     """A safe, actionable definition error which can be shown in the editor."""
 
+    code = "invalid_workflow_definition"
+
     def __init__(self, public_message):
         self.public_message = public_message
         super().__init__(public_message)
@@ -47,16 +49,56 @@ class WorkflowDefinitionError(ValueError):
 class WorkflowDefinitionConflict(WorkflowDefinitionError):
     """The editor is stale or cannot preserve the stored definition."""
 
+    code = "workflow_definition_conflict"
+
+
+WORKFLOW_DELETED_MESSAGE = "This workflow was deleted after it was opened, so your changes were not saved."
+
+
+class WorkflowDeletedConflict(WorkflowDefinitionConflict):
+    """A save names a workflow that was deleted after the editor opened it, so it must not recreate it."""
+
+    code = "workflow_deleted"
+
+    def __init__(self, public_message=WORKFLOW_DELETED_MESSAGE):
+        super().__init__(public_message)
+
 
 class WorkflowPublicValidationError(ValueError):
     """A reviewed, data-free workflow settings error which a save route may return as written.
 
     Its message names only positions and fixed limits, never caller-supplied text. It remains a
-    ``ValueError`` so every existing caller that handles ``ValueError`` behaves as before.
+    ``ValueError`` so every existing caller that handles ``ValueError`` behaves as before. The save
+    routes return ``code`` beside the message, so clients can tell the rule families apart.
     """
+
+    code = "invalid_workflow_settings"
 
     def __init__(self, public_message):
         self.public_message = public_message
+        super().__init__(public_message)
+
+
+class WorkflowAlertValidationError(WorkflowPublicValidationError):
+    """A reviewed alert settings error, raised by the alert normalizer."""
+
+    code = "invalid_workflow_alerts"
+
+
+WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE = (
+    "A selected File Sync source is no longer available. Remove it and save again."
+)
+
+
+class WorkflowSourceUnavailableError(WorkflowPublicValidationError):
+    """A selected File Sync source, or the workspace that owned it, was deleted after it was chosen.
+
+    Its own code lets an editor refresh its source list and mark the source, without matching text.
+    """
+
+    code = "file_sync_source_unavailable"
+
+    def __init__(self, public_message=WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE):
         super().__init__(public_message)
 
 

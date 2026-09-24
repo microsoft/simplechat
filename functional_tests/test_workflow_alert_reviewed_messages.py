@@ -2,15 +2,16 @@
 #!/usr/bin/env python3
 """
 Functional test for reviewed workflow alert validation messages on both save routes.
-Version: 0.261.144
+Version: 0.261.148
 Implemented in: 0.261.144
 
 This test ensures that every validation failure of ``normalize_workflow_alert_settings`` reaches
 the client as its own reviewed, data-free message: HTTP 400 with
 ``{"error": <message>, "code": "invalid_workflow_alerts"}``, on both ``POST /api/user/workflows``
-and ``POST /api/group/workflows``. Any other ``ValueError`` still returns the generic
-"Invalid workflow settings" message. The run-time regex check and alert evaluation are
-unchanged.
+and ``POST /api/group/workflows``. A ``ValueError`` outside the reviewed families still returns
+the generic "Invalid workflow settings" message; the File Sync, schedule and trigger families are
+covered by ``test_workflow_settings_reviewed_messages.py``. The run-time regex check and alert
+evaluation are unchanged.
 
 The two route bodies are compiled from ``route_backend_workflows.py`` and call the REAL
 ``save_personal_workflow`` and ``save_group_workflow``. These run the real alert, definition,
@@ -254,8 +255,8 @@ def test_every_condition_type_saves_on_both_routes(routes, scope):
 
 @pytest.mark.parametrize("scope", ["personal", "group"])
 def test_other_value_errors_stay_generic(routes, scope):
-    """A non-alert ValueError keeps the generic message and carries no alerts code."""
-    payload = _payload(scope, trigger_type="interval", schedule={"unit": "minutes", "value": 90})
+    """A ValueError outside the reviewed families keeps the generic message and carries no code."""
+    payload = _payload(scope, runner_type="robot")
 
     response = routes.post(scope, payload)
 

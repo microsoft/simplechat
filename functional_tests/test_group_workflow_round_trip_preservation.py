@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflow save round-trip preservation.
-Version: 0.261.141
+Version: 0.261.148
 Implemented in: 0.261.141
 
 This test ensures that existing group workflow definitions survive load, edit and save. A group
@@ -490,7 +490,7 @@ def test_the_real_server_rules_run_in_this_harness(store):
     base = monitored_workflow()
     with pytest.raises(ValueError, match="continue only when changes are found"):
         store.save({**base, "file_sync": {**base["file_sync"], "continue_mode": "always"}})
-    with pytest.raises(ValueError, match="must wait for completion"):
+    with pytest.raises(ValueError, match="must wait for the sync to complete"):
         store.save({**base, "file_sync": {**base["file_sync"], "wait_mode": "queued"}})
     with pytest.raises(ValueError, match="only use File Sync sources from this group"):
         store.save({**base, "file_sync": {**base["file_sync"], "sources": [
@@ -498,7 +498,8 @@ def test_the_real_server_rules_run_in_this_harness(store):
         ]}})
     with pytest.raises(ValueError, match="at least one group File Sync source"):
         store.save({**base, "file_sync": {**base["file_sync"], "sources": []}})
-    with pytest.raises(LookupError):
+    # A deleted source is a reviewed 400 since 0.261.148, not the LookupError the route mapped to 404.
+    with pytest.raises(store.modules["functions_workflow_definitions"].WorkflowSourceUnavailableError):
         store.save({**base, "file_sync": {**base["file_sync"], "sources": [
             {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "deleted-share"},
         ]}})
