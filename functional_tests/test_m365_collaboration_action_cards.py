@@ -1,8 +1,8 @@
 # test_m365_collaboration_action_cards.py
 """
 Shared-conversation action-card projection and live stream regression tests.
-Version: 0.261.055
-Implemented in: 0.261.055
+Version: 0.261.045
+Implemented in: 0.261.045
 
 The fresh-process probe imports the real routes with network access blocked and
 reuses scoped storage/Graph fixtures. It verifies owner-only details never enter

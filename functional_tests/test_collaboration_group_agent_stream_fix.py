@@ -2,8 +2,8 @@
 # test_collaboration_group_agent_stream_fix.py
 """
 Functional test for group collaboration agent stream completion.
-Version: 0.261.055
-Implemented in: 0.261.055
+Version: 0.261.045
+Implemented in: 0.261.045
 
 This test ensures group collaborative agent responses complete through the
 shared stream bridge even when mirrored agent citation payloads contain nested

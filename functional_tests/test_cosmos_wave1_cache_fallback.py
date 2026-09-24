@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos cache fallback behavior.
-Version: 0.261.055
-Implemented in: 0.261.055
+Version: 0.261.045
+Implemented in: 0.261.045
 
 This test ensures Redis failures in the app cache layer fall back to
 Cosmos-backed cache/source reads instead of failing callers.

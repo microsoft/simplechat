@@ -2,97 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.055)**
-
-#### Bug Fixes
-
-*   **Invite Acceptance Preserves Visible Shared History**
-    *   When an invitee accepts while already viewing the shared conversation, the client now updates membership and composer state in place instead of selecting the same conversation again and clearing its loaded history.
-    *   (Ref: `chat-collaboration.js`)
-
-### **(v0.261.054)**
-
-#### Bug Fixes
-
-*   **Shared History and Live Events Stay Aligned**
-    *   Collaborative history now supplies an event cursor to EventSource, so invitees retain the owner's initial prompt after accepting and browser refreshes do not replay the accepted-invite toast.
-    *   Invitees no longer receive an acceptance toast for their own action; other participants still receive the live notification.
-    *   (Ref: `route_backend_collaboration.py`, `chat-collaboration.js`)
-
-### **(v0.261.053)**
-
-#### Bug Fixes
-
-*   **Invitees Retain Shared Prompts With Redis Enabled**
-    *   Attaching an EventSource session no longer clears the Redis-backed shared event log, so an invitee receives messages published before accepting the invite without needing to refresh.
-    *   Automatic Microsoft 365 action recovery no longer surfaces a warning in normal shared conversations when its lookup is temporarily unavailable; saved actions still render when available and can be refreshed manually.
-    *   (Ref: `app_settings_cache.py`, `m365-pending-actions.js`)
-
-### **(v0.261.052)**
-
-#### Bug Fixes
-
-*   **Concurrent Shared Events Remain Ordered and Visible**
-    *   Cosmos-backed collaboration event storage now preserves an existing stream during worker attachment and retries conflicting appends, preventing simultaneous prompts or typing updates from overwriting one another.
-    *   (Ref: `app_settings_cache.py`)
-
-### **(v0.261.051)**
-
-#### Bug Fixes
-
-*   **Shared Conversation Events Reach Every Application Worker**
-    *   When Redis is disabled or unavailable, collaboration event sessions now use the Cosmos-backed stream cache instead of isolated worker memory.
-    *   Participants connected through different workers now receive the same shared prompts, responses, and typing updates.
-    *   (Ref: `app_settings_cache.py`)
-
-### **(v0.261.050)**
-
-#### Bug Fixes
-
-*   **Normal Shared Prompts Skip Pending-Action Recovery**
-    *   The shared AI streaming lifecycle now contacts Microsoft 365 pending actions only after receiving explicit action data, preventing unrelated `500` responses and warning states in ordinary shared conversations.
-    *   (Ref: `chat-streaming.js`)
-
-### **(v0.261.049)**
-
-#### Bug Fixes
-
-*   **Shared Chat Updates No Longer Trigger Unrelated M365 Requests**
-    *   Shared prompts, responses, typing indicators, and EventSource reconnects now process independently from Microsoft 365 pending-action refreshes.
-    *   M365 recovery remains available for messages that explicitly reference a saved action, while ordinary shared conversations avoid both unnecessary requests and unrelated warnings.
-    *   (Ref: `chat-collaboration.js`, `m365-pending-actions.js`)
-
-### **(v0.261.048)**
-
-#### Bug Fixes
-
-*   **Shared Updates Survive Viewer-Specific M365 Errors**
-    *   Unexpected Microsoft 365 action-card projection errors no longer stop an individual participant's live collaboration stream.
-    *   (Ref: `route_backend_collaboration.py`)
-
-### **(v0.261.047)**
-
-#### Bug Fixes
-
-*   **Participant Updates Survive M365 Projection Failures**
-    *   A viewer-specific Microsoft 365 action-card hydration failure no longer terminates the shared conversation event stream, so typing indicators, prompts, and model responses continue to arrive.
-    *   (Ref: `route_backend_collaboration.py`)
-
-### **(v0.261.046)**
-
-#### Bug Fixes
-
-*   **M365 Startup Warnings Stay Out of Unrelated Chats**
-    *   Generic transient M365 action-load failures now retry silently in conversations without known actions, so unrelated chats do not display an alarming outgoing-actions warning during container warm-up.
-    *   (Ref: `m365-pending-actions.js`)
-
 ### **(v0.261.045)**
 
 #### Bug Fixes
 
-*   **Transient M365 Action Errors Recover Automatically**
-    *   Temporary outgoing-action load failures during container startup now retry automatically, clearing the warning once the service is available instead of requiring a manual refresh.
-    *   (Ref: `m365-pending-actions.js`)
+*   **Shared Conversation Delivery Remains Reliable Across Workers**
+    *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
+    *   History supplies an EventSource cursor, so retained events do not replay after history loads and invitees retain the owner's existing prompts.
+    *   Accepting an invite while already viewing the conversation now updates membership and composer state in place instead of clearing the rendered history.
+    *   (Ref: `app_settings_cache.py`, `route_backend_collaboration.py`, `chat-collaboration.js`)
+
+*   **Microsoft 365 Enhancements Do Not Interrupt Shared Chat**
+    *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
+    *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
+    *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
 
 ### **(v0.261.044)**
 

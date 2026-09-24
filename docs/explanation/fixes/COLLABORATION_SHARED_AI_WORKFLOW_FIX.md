@@ -1,21 +1,8 @@
 # Collaboration Shared AI Workflow Fix
 
 Original implementation: **0.241.021**
-Plain-prompt coverage completed in: **0.261.040**
-Conversation lifecycle follow-up completed in: **0.261.041**
-Participant menu synchronization follow-up completed in: **0.261.043**
-Invite approval message-loading follow-up completed in: **0.261.044**
-M365 startup recovery follow-up completed in: **0.261.045**
-Unrelated chat warning suppression follow-up completed in: **0.261.046**
-M365 projection stream-isolation follow-up completed in: **0.261.047**
-Viewer-specific projection exception hardening completed in: **0.261.048**
-Shared-event and M365 refresh decoupling completed in: **0.261.049**
-Stream-level M365 refresh gating completed in: **0.261.050**
-Cross-worker collaboration event sharing completed in: **0.261.051**
-Cross-worker event append concurrency hardening completed in: **0.261.052**
-Redis stream-session attachment hardening completed in: **0.261.053**
-History and event replay cursor synchronization completed in: **0.261.054**
-Active invite acceptance history preservation completed in: **0.261.055**
+Plain-prompt coverage completed in: **0.261.040** ([PR #1515](https://github.com/microsoft/simplechat/pull/1515))
+Cross-worker delivery and invite-acceptance follow-up completed in: **0.261.045**
 
 ## Overview
 
