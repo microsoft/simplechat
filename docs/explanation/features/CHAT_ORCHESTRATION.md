@@ -688,7 +688,10 @@ resolution, plan generation and research review as well as the answer. A configu
 planner deployment or endpoint remains separate and does not override the answer model.
 Planner endpoint selections use the existing planner model/endpoint/provider settings and
 the caller's normal model access checks. A deployment-only planner override retains the
-classic single-endpoint/APIM connection.
+classic single-endpoint/APIM connection. Since **0.261.137**, administrators choose the
+planner from a **Planner model** dropdown on both admin pages, which writes those settings
+from a listed model instead of typed identifiers; see
+[Orchestration settings](../../admin/orchestration.md#chat-orchestration-planner-model-section).
 
 Planning resolves its client on the request thread after restoring canonical turn state,
 with authenticated streaming context retained for endpoint authorization. Execution

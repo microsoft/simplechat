@@ -19,6 +19,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Auto - choose per step** is the default wherever a connected model has a catalog profile rated for general answering. Auto is not offered when no model qualifies, and when an administrator hides Manual controls, Orchestrate uses Auto without a picker.
     *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md), [Choose models for orchestration](../guides/model-catalog-routing.md))
 
+*   **Planner Model Dropdown In Admin Settings**
+    *   Orchestration → Planner model is now one dropdown on both the V2 and classic Admin Settings pages, replacing four text boxes for the deployment name, model ID, endpoint ID, and provider.
+    *   It lists the same models as the default chat model picker, or the classic deployments when AI Connections are off, and writes the four settings for you. **Use the answer model (default)** keeps planning on whichever model answers.
+    *   A saved planner model that is no longer listed stays selected and is labelled as missing rather than being cleared, and V2 refuses saves the runtime could never resolve.
+    *   (Ref: `OrchestrationPlannerModelPicker.tsx`, `admin_orchestration_planner_model.js`, `chat-orchestration.html`, `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md#chat-orchestration-planner-model-section))
+
 ### **(v0.261.134)**
 
 #### Bug Fixes

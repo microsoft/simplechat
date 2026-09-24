@@ -387,6 +387,24 @@ configured model connection, supply its endpoint and model IDs; the deployment a
 provider, when supplied, must agree with that selection. Model access is checked for
 the requesting user. A deployment-only override uses the classic chat/APIM connection.
 
+Since **0.261.137**, both admin pages set this with one **Planner model** dropdown
+instead of four text boxes. The dropdown lists the same models the default chat model
+picker offers: the chat models your AI Connections publish, or the classic
+(single-endpoint or APIM) deployments when connections are off. **Use the answer
+model (default)** leaves all four settings blank. Choosing a connection model saves its
+endpoint, model ID, and provider and leaves the deployment blank, so the runtime reads
+the request model from the connection. Choosing a classic deployment saves only its
+name. The V2 page lists saved connections, so save a new connection there before choosing
+it; the classic page lists connections as they are edited on the page and saves them
+together with the planner choice.
+
+A saved planner model that no longer appears in the list, for example after its
+connection was removed, is shown as not in the current model list and kept until you
+choose another. It is never replaced automatically; planning fails with a model
+availability error instead. A V2 save that could never resolve is refused, such as a
+model ID without its endpoint, or a classic deployment with a provider other than
+Azure OpenAI.
+
 The answer choice is saved with the plan and checked again when it runs. Changing the
 admin default during approval does not switch that answer to a different model.
 Plan edits and editor questions retain that saved choice, unless a separate planner
@@ -400,12 +418,14 @@ First turns without history and simple acknowledgments skip that call.
 
 #### Settings
 
+The **Planner model** dropdown writes these four stored settings together.
+
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Planner deployment name | Names a separate planning deployment without changing the answer model. When all planner fields are blank, planning uses the manual selection or admin default. | Empty | `chat_orchestration_planner_deployment` |
-| Planner model id | Identifies the model when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_id` |
-| Planner model endpoint id | Identifies the endpoint when planning through a configured model endpoint rather than the default deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
-| Planner model provider | Identifies the provider when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_provider` |
+| Planner deployment name | Names a separate classic planning deployment without changing the answer model. When all planner fields are blank, planning uses the manual selection or admin default. | Empty | `chat_orchestration_planner_deployment`; blank for a connection model |
+| Planner model id | Identifies the model when planning through a configured model connection. | Empty | `chat_orchestration_planner_model_id` |
+| Planner model endpoint id | Identifies the connection when planning through a configured model connection rather than the classic deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
+| Planner model provider | Records the connection's provider for a connection model. | Empty | `chat_orchestration_planner_model_provider` |
 
 ## Run history and switching devices
 
@@ -464,8 +484,8 @@ deletion and archive-and-remove; existing archived messages are unaffected.
    verify: pilot users see an orchestration control in the V2 composer, and a plan appears
    for review before any work runs.
 
-2. **Reduce planning cost.** Set a smaller planner deployment. Outcome to verify: plans are
-   still produced for document questions, and the planner deployment shows the traffic.
+2. **Reduce planning cost.** Choose a smaller model in the **Planner model** dropdown. Outcome
+   to verify: plans are still produced for document questions, and the planner model shows the traffic.
 
 3. **Adopt orchestration for search only.** Clear document analysis and document comparison
    in Capabilities. Outcome to verify: plans use document search and answering, and never
@@ -491,6 +511,7 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
+| The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
