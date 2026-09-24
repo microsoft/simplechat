@@ -1,7 +1,7 @@
 # group_endpoints.py
 """
 Closed M5C group model endpoint HTTP fixtures for the real production V2 SPA.
-Version: 0.261.143
+Version: 0.261.144
 Implemented in: 0.261.143
 
 The fixture serves the immutable `/api/groups/<group_id>/model-endpoints[...]` CRUD family
@@ -21,6 +21,12 @@ enable, edit and delete beside the editable control, a Foundry one whose editor 
 models, and one still referenced by an agent so a delete returns the in-use 409 with its
 references. group-b is an ordinary member: its `endpoint_management` hint is empty and its rows
 carry no `endpoint_actions`, so its section renders read-only with no write affordance.
+
+group-c is a DocumentManager workspace and group-d is a manager of a `locked` group. Neither
+role nor status is writable on the server (`GROUP_ENDPOINT_WRITE_ROLES` is Owner/Admin and writes
+need an `active` group), so both recompute to an empty `endpoint_management` hint and empty per-row
+`endpoint_actions` -- a read-only section whose discovery and test routes 403 -- while `locked`
+stays inside `GROUP_ENDPOINT_READ_STATUSES` so the collection still lists.
 """
 
 import pytest
@@ -36,12 +42,21 @@ WITHHELD_ENDPOINT_ID = "group-a-withheld-endpoint"
 FOUNDRY_ENDPOINT_ID = "group-a-foundry-endpoint"
 IN_USE_ENDPOINT_ID = "group-a-in-use-endpoint"
 DISCOVERY_ENDPOINT_ID = "group-a-discovery-endpoint"
+DOCMANAGER_ENDPOINT_ID = "group-c-shared-endpoint"
+LOCKED_ENDPOINT_ID = "group-d-shared-endpoint"
 
 EDITABLE_ENDPOINT_NAME = "Research chat connection"
 WITHHELD_ENDPOINT_NAME = "Locked platform connection"
 FOUNDRY_ENDPOINT_NAME = "Group Foundry connection"
 IN_USE_ENDPOINT_NAME = "Bound reviewer connection"
 DISCOVERY_ENDPOINT_NAME = "Discovery-ready connection"
+DOCMANAGER_ENDPOINT_NAME = "Curator reference connection"
+LOCKED_ENDPOINT_NAME = "Frozen platform connection"
+
+# A DocumentManager reads but never writes, and a manager of a `locked` group reads but cannot
+# write until it is active again; both are read-only scopes distinct from the ordinary member.
+DOCMANAGER_GROUP = "group-c"
+LOCKED_GROUP = "group-d"
 
 
 class GroupEndpointsFixture(GroupWorkspaceFixture):
@@ -80,6 +95,22 @@ class GroupEndpointsFixture(GroupWorkspaceFixture):
         self._seed_endpoints("group-b", [
             group_model_endpoint("group-b-shared-endpoint", "Shared team connection",
                                  has_api_key=True, actions=()),
+        ])
+        # group-c: a DocumentManager. The server's write roles are Owner and Admin only, so a
+        # DocumentManager recomputes to an empty endpoint_management hint. The row seeds the full
+        # action set on purpose, proving the read-only projection comes from the empty operations
+        # hint (endpoint_actions = operations ∩ seeded = ∅), not from a withheld per-row override.
+        self.set_endpoint_policy(DOCMANAGER_GROUP, role="DocumentManager", status="active")
+        self._seed_endpoints(DOCMANAGER_GROUP, [
+            group_model_endpoint(DOCMANAGER_ENDPOINT_ID, DOCMANAGER_ENDPOINT_NAME, has_api_key=True),
+        ])
+        # group-d: an Owner of a `locked` group. Writes need an `active` group, so the manager's
+        # endpoint_management hint is empty and every row is read-only; `locked` stays inside
+        # GROUP_ENDPOINT_READ_STATUSES, so the collection still lists and the discovery and test
+        # routes 403 exactly as the server refuses a non-`active` group.
+        self.set_endpoint_policy(LOCKED_GROUP, role="Owner", status="locked")
+        self._seed_endpoints(LOCKED_GROUP, [
+            group_model_endpoint(LOCKED_ENDPOINT_ID, LOCKED_ENDPOINT_NAME, has_api_key=True),
         ])
 
 

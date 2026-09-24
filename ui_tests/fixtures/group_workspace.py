@@ -307,16 +307,28 @@ def _sanitize_identity(record):
 # its group and the reader validates the list shape instead.
 ENDPOINT_OPERATIONS = ("create", "edit", "enable", "delete", "test")
 ENDPOINT_ACTIONS = ("edit", "enable", "delete", "test")
-ENDPOINT_MANAGE_ROLES = ("Owner", "Admin", "DocumentManager")
+# The server's GROUP_ENDPOINT_WRITE_ROLES: only Owner and Admin may write. A DocumentManager reads
+# the collection but never manages it, so it is deliberately excluded and left read-only.
+ENDPOINT_MANAGE_ROLES = ("Owner", "Admin")
 
 # The strict write body the native endpoint routes accept; `expected_revision` rides the PATCH.
 ENDPOINT_CONFLICT_ERROR = "This model endpoint changed. Reload it before saving."
 GROUP_WRITE_CONFLICT_ERROR = "The group changed while this model endpoint was being saved. Try again."
-ENDPOINT_IN_USE_ERROR = "This model endpoint is still in use."
+# The server's exact in-use and no-change texts (functions_group_endpoint_access.py), shown verbatim
+# by the editor so a test proves the server's own wording renders (§11 F3.5).
+ENDPOINT_IN_USE_ERROR = (
+    "This model endpoint is used by group agents or workflows. "
+    "Change them to another endpoint, or disable this endpoint instead."
+)
+ENDPOINT_NO_CHANGE_ERROR = "No fields provided for update."
 # The reviewed stored-credential 400s the native routes raise verbatim (§10); shown as-is so a test
-# proves the editor renders the server's own text.
+# proves the editor renders the server's own text. Mirroring `_check_client_credentials`, a Key Vault
+# reference is refused outright, while a masked placeholder is refused only where nothing is stored.
 ENDPOINT_STORED_CREDENTIAL_SUPPLIED = "Stored credential references cannot be supplied in a request."
 ENDPOINT_STORED_CREDENTIAL_UNAVAILABLE = "A stored credential is unavailable. Re-enter its value."
+ENDPOINT_SECRET_FIELDS = ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token")
+ENDPOINT_KEYVAULT_REFERENCE_MARKER = "--model-endpoint--"
+ENDPOINT_STORED_SECRET_PLACEHOLDERS = ("Stored_In_KeyVault", "***REDACTED***")
 
 
 def endpoint_management(role, status):
@@ -1165,6 +1177,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
     def record_endpoint(self, group_id, identifier):
         return next((row for row in self.native_endpoints.get(group_id, []) if row["id"] == identifier), None)
 
+    def _endpoint_operations(self, group_id):
+        """The group's current `endpoint_management` operations, the single source the payload
+        projection and the writer-only discovery/test gates both read."""
+        return set(self.groups[group_id].get("endpoint_management", {}).get("operations", []))
+
     def _endpoint_revision(self, group_id, identifier):
         """A SHA-256-shaped revision marker the client round-trips as `expected_revision`, so a stale
         value proves a conditional write rather than a bare integer the client might reason about."""
@@ -1179,10 +1196,20 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
     def _endpoint_payload(self, group_id, record):
         """The stored endpoint projected to its response: drop the private `_actions` marker and add
         the two fields the native routes attach -- the opaque `revision` and the `endpoint_actions`
-        projection that gates edit, enable, delete and test per row."""
+        projection that gates edit, enable, delete and test per row.
+
+        `endpoint_actions` is computed per response like the server's `group_endpoint_actions`: the
+        group's current `endpoint_management` operations intersected with the manageable subset and
+        the seeded per-row override. It never comes from the seed alone, so a member, a DocumentManager
+        or a manager of a non-`active` group -- all of whom carry no operations -- see an empty action
+        list and a read-only row, exactly as the server projects it."""
         payload = {key: copy.deepcopy(value) for key, value in record.items() if key != "_actions"}
         payload["revision"] = self._endpoint_revision(group_id, record["id"])
-        payload["endpoint_actions"] = list(record.get("_actions", ()))
+        operations = self._endpoint_operations(group_id)
+        seeded = set(record.get("_actions", ()))
+        payload["endpoint_actions"] = [
+            action for action in ENDPOINT_ACTIONS if action in operations and action in seeded
+        ]
         return payload
 
     def set_endpoint_policy(self, group_id, *, role=None, status="active"):
@@ -1215,6 +1242,29 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         merged["has_api_key"] = bool(incoming_key) or stored_key
         merged["_actions"] = tuple(prior.get("_actions", ENDPOINT_ACTIONS)) if prior is not None else tuple(ENDPOINT_ACTIONS)
         return merged
+
+    def _stored_credential_error(self, body, prior):
+        """Mirror the server's `_check_client_credentials`: refuse a Key Vault reference outright, and
+        a masked placeholder only where nothing is stored. The editor omits a blank secret and never
+        sends a reference or a placeholder, so any such value in an auth secret field is a UI
+        regression -- recorded as unexpected -- and returns the server's exact 400 text."""
+        auth = body.get("auth")
+        if not isinstance(auth, dict):
+            return None
+        stored_auth = prior.get("auth") if isinstance(prior, dict) and isinstance(prior.get("auth"), dict) else {}
+        for field in ENDPOINT_SECRET_FIELDS:
+            value = auth.get(field)
+            if not isinstance(value, str) or value == "":
+                continue
+            if ENDPOINT_KEYVAULT_REFERENCE_MARKER in value:
+                self.unexpected_requests.append(f"endpoint write carried a Key Vault reference in auth.{field}")
+                return ENDPOINT_STORED_CREDENTIAL_SUPPLIED
+            if value in ENDPOINT_STORED_SECRET_PLACEHOLDERS and not stored_auth.get(field):
+                self.unexpected_requests.append(
+                    f"endpoint write carried a stored-secret placeholder in auth.{field} with nothing stored"
+                )
+                return ENDPOINT_STORED_CREDENTIAL_UNAVAILABLE
+        return None
 
     def _model_endpoints(self, route, entry):
         parts = entry.path.split("/")
@@ -1275,6 +1325,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if "expected_revision" in body:
             self._json(route, {"error": "A new model endpoint carries no version marker."}, 400)
             return
+        credential_error = self._stored_credential_error(body, prior=None)
+        if credential_error:
+            self._json(route, {"error": credential_error}, 400)
+            return
         if self.next_endpoint_write_error:
             self._json(route, {"error": self.next_endpoint_write_error}, 400)
             self.next_endpoint_write_error = None
@@ -1295,6 +1349,15 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         )
         if "expected_revision" not in body:
             self._json(route, {"error": "This model endpoint is missing its version marker."}, 400)
+            return
+        if set(body) - {"expected_revision"} == set():
+            # A PATCH that carries only its version marker changes nothing; the server refuses it with
+            # this exact text (§11 F3.5), which the editor surfaces verbatim.
+            self._json(route, {"error": ENDPOINT_NO_CHANGE_ERROR}, 400)
+            return
+        credential_error = self._stored_credential_error(body, prior=record)
+        if credential_error:
+            self._json(route, {"error": credential_error}, 400)
             return
         if body["expected_revision"] != self._endpoint_revision(group_id, identifier):
             self._json(route, {"error": ENDPOINT_CONFLICT_ERROR, "error_code": "endpoint_conflict"}, 409)
@@ -1351,6 +1414,22 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": "You do not have access to this group's models."}, 403)
             return
         assert entry.method == "POST", entry
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        if not isinstance(entry.body, dict):
+            self._json(route, {"error": "A model discovery or test requires a JSON object body."}, 400)
+            return
+        if "test" not in self._endpoint_operations(group_id):
+            # Discovery and model tests are writer-only on the server: it refuses a member, a
+            # DocumentManager or a manager of a non-`active` group with a 403. After F1 and F2 the UI
+            # never offers Discover models or Test chat to those callers, so a request here is a UI
+            # regression -- record it as unexpected rather than answering it.
+            self.unexpected_requests.append(
+                f"{entry.method} {entry.path} (discovery or model test without the test operation)"
+            )
+            self._json(route, {"error": "You cannot test this group's models."}, 403)
+            return
         if action == "fetch":
             self._json(route, {"models": [
                 {"deploymentName": "discovered-chat", "modelName": "gpt-4o-mini", "id": "discovered-chat"},
@@ -1372,6 +1451,21 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         assert group_id in self.groups, f"Unknown group Foundry scope: {entry}"
         if group_id in self.denied_groups:
             self._json(route, {"error": "You do not have access to this group's models."}, 403)
+            return
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        if not isinstance(entry.body, dict):
+            self._json(route, {"error": "A group Foundry discovery requires a JSON object body."}, 400)
+            return
+        if "test" not in self._endpoint_operations(group_id):
+            # Foundry discovery is writer-only on the server too, so a non-writer or a non-`active`
+            # group is refused with a 403. The group agent editor only offers discovery to a writer,
+            # so a request here is a regression -- recorded as unexpected.
+            self.unexpected_requests.append(
+                f"POST {entry.path} (Foundry discovery without the test operation)"
+            )
+            self._json(route, {"error": "You cannot test this group's models."}, 403)
             return
         body = entry.body if isinstance(entry.body, dict) else {}
         if not body.get("endpoint_id"):

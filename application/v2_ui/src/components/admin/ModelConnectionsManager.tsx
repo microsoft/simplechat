@@ -387,10 +387,13 @@ function ConnectionEditor({
     const usesModelName = connectionUsesModelName(draft);
     const authType = String(draft.auth?.type ?? (custom || embeddingOnly ? 'api_key' : 'managed_identity'));
     const authOptions = custom ? CUSTOM_AUTH_TYPE_OPTIONS : AUTH_TYPE_OPTIONS.filter((option) => !embeddingOnly || option.value === 'api_key');
-    // A saved endpoint may run a chat model test when the scope allows testing: admin always, a
-    // group manager when the row carries the `test` action. The image and embedding capability tests
-    // use an admin-settings route with no group equivalent, so they render only for the admin scope.
-    const canTestChat = adapter.canTestConnection || adapter.allows('test', initial);
+    // Model discovery and chat model tests share one gate: admin always; a group writer when a new
+    // draft's scope advertises `test`, or an existing row carries the `test` action. This mirrors the
+    // server, which lets a writer test an unsaved configuration but refuses members and locked groups
+    // with a 403, so those callers never see Discover models or Test chat. The image and embedding
+    // capability tests use an admin-settings route with no group equivalent, so they stay admin-only.
+    const canTest = adapter.scope.kind === 'admin'
+        || (isNew ? adapter.supported.has('test') : adapter.allows('test', initial));
     const canTestCapabilities = adapter.canTestCapabilities;
     // Whether this scope may persist the editor: a new row needs create, an existing one needs edit.
     // Admin allows both, so its editor is unchanged; a group member viewing a row cannot save.
@@ -670,6 +673,13 @@ function ConnectionEditor({
                 </p>
             ) : null}
 
+            {!canSave ? (
+                <p className="mb-3 rounded-lg border border-edge bg-surface-soft p-3 text-sm text-text-3">
+                    You can view this connection. Only group Owners and Admins can change it while the group is active.
+                </p>
+            ) : null}
+
+            <fieldset disabled={!canSave} className="min-w-0">
             <SectionHeading>Identity</SectionHeading>
 
             <Field label="Name" error={errors.name} htmlFor="connection-name" help="Shown wherever a model from this connection is offered.">
@@ -1113,6 +1123,7 @@ function ConnectionEditor({
 
             <div className="mb-3 flex flex-wrap gap-2">
                 {!custom && !embeddingOnly ? <>
+                {canTest ? (
                 <GlassButton
                     type="button"
                     variant="subtle"
@@ -1127,6 +1138,7 @@ function ConnectionEditor({
                     )}
                     Discover models
                 </GlassButton>
+                ) : null}
                 {adapter.canTestConnection ? (
                     <GlassButton
                         type="button"
@@ -1284,7 +1296,7 @@ function ConnectionEditor({
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                 />
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                    {canTestChat && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
+                                    {canTest && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'chat')}>
                                             Test chat
                                         </GlassButton>
@@ -1364,6 +1376,7 @@ function ConnectionEditor({
                     </Field>
                 </>
             ) : null}
+            </fieldset>
         </AdminModal>
     );
 }

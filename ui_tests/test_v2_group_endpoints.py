@@ -1,7 +1,7 @@
 # test_v2_group_endpoints.py
 """
 Production-SPA coverage for the native scope-aware V2 group model endpoints section.
-Version: 0.261.143
+Version: 0.261.144
 Implemented in: 0.261.143
 
 Exercises the real Endpoints section -- the admin ModelConnectionsManager driven by a
@@ -31,9 +31,10 @@ from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 from ui_tests.fixtures.group_endpoints import (  # noqa: F401
     GroupEndpointsFixture, group_endpoints_ui,
     EDITABLE_ENDPOINT_ID, WITHHELD_ENDPOINT_ID, FOUNDRY_ENDPOINT_ID, IN_USE_ENDPOINT_ID,
-    DISCOVERY_ENDPOINT_ID,
+    DISCOVERY_ENDPOINT_ID, DOCMANAGER_ENDPOINT_ID, LOCKED_ENDPOINT_ID,
     EDITABLE_ENDPOINT_NAME, WITHHELD_ENDPOINT_NAME, FOUNDRY_ENDPOINT_NAME, IN_USE_ENDPOINT_NAME,
-    DISCOVERY_ENDPOINT_NAME,
+    DISCOVERY_ENDPOINT_NAME, DOCMANAGER_ENDPOINT_NAME, LOCKED_ENDPOINT_NAME,
+    DOCMANAGER_GROUP, LOCKED_GROUP,
 )
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
     ENDPOINT_STORED_CREDENTIAL_SUPPLIED,
@@ -376,3 +377,85 @@ def test_member_sees_a_read_only_list(group_endpoints_ui, theme, width, height):
     assert endpoints_get(ui, group="group-b"), "The member's read-only section still lists from the group route."
     assert_no_admin_or_personal_reads(ui)
     ui.assert_no_overflow()
+
+
+# The neutral notice the shared editor shows a caller who may read but not change an endpoint.
+READ_ONLY_NOTICE = (
+    "You can view this connection. Only group Owners and Admins can change it while the group is active."
+)
+
+
+@pytest.mark.parametrize("group,endpoint_name", [
+    pytest.param(DOCMANAGER_GROUP, DOCMANAGER_ENDPOINT_NAME, id="document-manager"),
+    pytest.param(LOCKED_GROUP, LOCKED_ENDPOINT_NAME, id="locked-group-manager"),
+])
+def test_read_only_scope_offers_no_write_discovery_or_test(group_endpoints_ui, group, endpoint_name):
+    """A DocumentManager, and a manager of a `locked` group, read the collection but are offered no
+    create, per-row write, discovery or test control. The seeded row carries the full action set on
+    purpose, so the read-only projection is proved to come from the empty management hint alone; and
+    because the surface never fires a discovery or test request, the fixture's trap stays clean."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_endpoints(ui, group=group)
+    expect(page.get_by_role("heading", name="Endpoints", exact=True)).to_be_visible()
+    expect(row(ui, endpoint_name)).to_be_visible()
+    # No create affordance and no per-row write affordance beyond the read-only View control.
+    expect(page.get_by_role("button", name="Add connection", exact=True)).to_have_count(0)
+    entry = row(ui, endpoint_name)
+    expect(entry.get_by_role("button", name=f"Edit {endpoint_name}", exact=True)).to_have_count(0)
+    expect(entry.get_by_role("button", name=f"Disable {endpoint_name}", exact=True)).to_have_count(0)
+    expect(entry.get_by_role("button", name=f"Delete {endpoint_name}", exact=True)).to_have_count(0)
+    expect(entry.get_by_role("button", name=f"View {endpoint_name}", exact=True)).to_be_visible()
+    # Opening View surfaces the read-only editor: the neutral notice, a disabled body, and neither
+    # the discovery nor the save control -- so no group discovery or test route is ever reached.
+    entry.get_by_role("button", name=f"View {endpoint_name}", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text(READ_ONLY_NOTICE, exact=True)).to_be_visible()
+    expect(dialog.get_by_label("Name", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("button", name="Discover models", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Save changes", exact=True)).to_have_count(0)
+    assert endpoints_get(ui, group=group), "The read-only section still lists from the group route."
+    assert_no_admin_or_personal_reads(ui)
+    ui.assert_clean()
+
+
+def test_member_view_dialog_is_read_only_with_no_discovery(group_endpoints_ui):
+    """A member opening View gets the read-only editor -- the neutral notice, disabled inputs, and
+    neither the discovery nor the save control -- and the surface fires no discovery or test route."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_endpoints(ui, group="group-b")
+    row(ui, "Shared team connection").get_by_role(
+        "button", name="View Shared team connection", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text(READ_ONLY_NOTICE, exact=True)).to_be_visible()
+    expect(dialog.get_by_label("Name", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("button", name="Discover models", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Save changes", exact=True)).to_have_count(0)
+    # The read-only footer offers Close rather than Cancel. The header X control also carries a
+    # "Close" accessible name, so target the footer button (the last match) explicitly.
+    expect(dialog.get_by_role("button", name="Close", exact=True).last).to_be_visible()
+    assert_no_admin_or_personal_reads(ui)
+    ui.assert_clean()
+
+
+def test_manager_tests_chat_on_a_new_draft_through_the_group_route(group_endpoints_ui):
+    """A manager may test chat on a NEW unsaved draft: the shared editor posts to the group
+    /models/test-model route, never the admin one, with no expected_revision on an unsaved draft."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_manager(ui)
+    page.get_by_role("button", name="Add connection", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Name", exact=True).fill("Draft chat connection")
+    dialog.get_by_label("Endpoint URL", exact=True).fill("https://draft.openai.azure.com")
+    # Add a model by deployment name, then enable it so the chat test becomes available.
+    dialog.get_by_role("button", name="Add manually", exact=True).click()
+    dialog.get_by_label("Deployment name", exact=True).fill("gpt-4o-draft")
+    dialog.get_by_role("checkbox", name="Enable gpt-4o-draft", exact=True).check()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == "/api/groups/group-a/models/test-model"
+    ) as response:
+        dialog.get_by_role("button", name="Test chat", exact=True).click()
+    assert response.value.ok
+    assert_no_admin_or_personal_reads(ui)
