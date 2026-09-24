@@ -78,14 +78,14 @@ def test_classic_join_on_a_missing_group(env):
     assert answer(env.call("POST", "/api/groups/g-missing/requests")) == (404, {"error": "Group not found"})
 
 
-def test_classic_join_without_a_pending_list_fails(env):
-    """The classic route indexes ``pendingUsers`` directly (a 500 in production)."""
+def test_classic_join_creates_a_missing_pending_list(env):
+    """Decision 1: the guarded join creates the list instead of failing on it."""
     document = group_document("g-1", "Team")
     del document["pendingUsers"]
     env.seed_document(document)
     env.as_user("outsider-1")
-    with pytest.raises(KeyError):
-        env.call("POST", "/api/groups/g-1/requests")
+    assert answer(env.call("POST", "/api/groups/g-1/requests")) == (201, {"message": "Membership request created"})
+    assert env.stored_group("g-1")["pendingUsers"] == [person("outsider-1")]
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +298,12 @@ def test_classic_remove_refusals(env, caller, target, expected):
     ("owner-1", "outsider-1", (404, {"error": "User not found in group"})),
     ("outsider-1", "outsider-1", (404, {"error": "You are not in this group"})),
 ])
-def test_classic_remove_of_a_non_member_writes_and_answers_404(env, caller, target, expected):
-    """Recorded: the guard conversion writes only when something changes."""
+def test_classic_remove_of_a_non_member_answers_404_without_writing(env, caller, target, expected):
+    """Decision 1: the guarded removal writes only when something changes."""
     seed(env)
     env.as_user(caller)
     assert answer(env.call("DELETE", f"/api/groups/g-1/members/{target}")) == expected
-    assert [call[0] for call in env.write_calls()] == ["upsert_item"]
+    assert env.write_calls() == []
     assert env.bumps == [] and env.activity_records() == []
 
 
@@ -314,6 +314,7 @@ def test_classic_remove_of_a_role_holder_without_a_users_entry_cleans_up(env):
     env.as_user("owner-1")
     assert answer(env.call("DELETE", "/api/groups/g-1/members/manager-1")) == (404, {"error": "User not found in group"})
     assert env.stored_group("g-1")["documentManagers"] == []
+    assert [call[0] for call in env.write_calls()] == ["replace_item"]
     assert env.bumps == [] and env.activity_records() == []
 
 

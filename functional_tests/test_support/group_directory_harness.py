@@ -555,6 +555,7 @@ def group_directory_environment():
             "get_user_role_in_group": group.get_user_role_in_group,
             "update_group_document_with_etag_guard": group.update_group_document_with_etag_guard,
             "GroupDocumentWriteConflict": group.GroupDocumentWriteConflict,
+            "functions_group": group,
             "cosmos_groups_container": env.groups,
             "cosmos_activity_logs_container": env.activity_logs,
             "bump_chat_bootstrap_global_cache_version": lambda reason=None, **kwargs: env.bumps.append(reason),
