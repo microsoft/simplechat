@@ -36,6 +36,13 @@ export const WORKSPACE_GROUPS: WorkspaceGroupMeta[] = [
         label: 'Connections',
         blurb: 'Shared setup the other sections reuse.',
     },
+    {
+        // Group workspaces only. A personal workspace has no section here, and an empty group
+        // is dropped from the rail and the overview, so it never renders there.
+        id: 'manage',
+        label: 'Manage',
+        blurb: 'Who belongs to this group, and how it is run.',
+    },
 ];
 
 export interface WorkspaceSectionDescriptor {

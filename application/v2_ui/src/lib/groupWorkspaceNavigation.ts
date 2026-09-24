@@ -2,8 +2,8 @@
 
 import type { WorkspaceAvailability } from './types';
 import {
-    GROUP_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
-    type GroupWorkspaceContext, type GroupWorkspaceSectionId,
+    GROUP_MANAGE_SECTION_IDS, GROUP_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
+    type GroupManageSectionId, type GroupWorkspaceContext, type GroupWorkspaceSectionId,
 } from './workspaceContext';
 
 export const GROUP_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
@@ -28,9 +28,13 @@ export function isGroupWorkspaceSection(value: string | undefined): value is Gro
     return GROUP_WORKSPACE_SECTION_IDS.some((id) => id === value);
 }
 
+export function isGroupManageSection(value: string | undefined): value is GroupManageSectionId {
+    return GROUP_MANAGE_SECTION_IDS.some((id) => id === value);
+}
+
 export function groupWorkspacePath(groupId: string, section?: string): string {
     const base = workspaceBasePath({ kind: 'group', id: groupId });
-    return isGroupWorkspaceSection(section) ? `${base}/${section}` : base;
+    return isGroupWorkspaceSection(section) || isGroupManageSection(section) ? `${base}/${section}` : base;
 }
 
 export function groupWorkspaceDocumentPath(groupId: string, documentId: string): string {

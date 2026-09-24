@@ -1,8 +1,9 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.149
+Version: 0.261.155
 Implemented in: 0.261.127
+Members section in the group context (M7B): 0.261.155
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -540,6 +541,12 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         sections[section]["can_manage"] = manager and status == "active"
         if readable and not manager:
             sections[section]["reason"] = "Your role does not permit managing group connections."
+    # M7B: Members is a group-only section in the "manage" group, open to every member of a
+    # viewable group and managed by the Owner and Admins in an active one, as the context builds it.
+    sections["members"] = {
+        "group": "manage", "enabled": readable, "reason": None if readable else "This group is inactive.",
+        "can_manage": readable and status == "active" and automation,
+    }
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
         "scope": {"kind": "group", "id": identifier},
