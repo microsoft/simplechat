@@ -3,6 +3,7 @@
 Closed M4C group agent HTTP fixtures for the real production V2 SPA.
 Version: 0.261.157
 Implemented in: 0.261.138
+Seeds held to the real routes (test_group_agent_fixture_parity.py): 0.261.157
 
 The fixture serves the immutable `/api/groups/<group_id>/agents[...]` family, the
 `/api/groups/<group_id>/agent-options` editor options and the
@@ -54,18 +55,22 @@ class GroupAgentsFixture(GroupWorkspaceFixture):
         # edit, delete and use-in-chat affordances stay hidden beside the editable control.
         self.set_agent_policy("group-a", role="Owner", status="active")
         # A provided (global) agent merged into the group list read-only. It carries is_global with an
-        # empty inline agent_actions and no owning group_id, so no edit or delete is offered and the
-        # group read route still answers for it.
+        # empty inline agent_actions and, like every agent in the global container, no group_id, so
+        # no edit or delete is offered and the group read route still answers for it.
         provided_agent = group_agent("group-a", PROVIDED_AGENT_ID, "Shared platform agent",
                                       actions=(), is_global=True, is_group=False)
-        provided_agent["group_id"] = None
+        provided_agent.pop("group_id")
         # A Foundry agent bound to a group-scoped connection. M5C re-enables its discovery through
         # the named-group route (which resolves this page's group from the path), while a global
         # connection keeps the legacy active-group route. It is fully editable so a manager reaches
-        # the control.
+        # the control. Its settings hold the Foundry agent id the server requires of every stored
+        # Azure AI Foundry agent (`sanitize_agent_payload`).
         foundry_agent = group_agent(
             "group-a", FOUNDRY_AGENT_ID, "Foundry reviewer", agent_type="aifoundry",
             model_endpoint_id=GROUP_FOUNDRY_ENDPOINT_ID, model_id="", model_provider="aifoundry",
+            other_settings={"azure_ai_foundry": {
+                "agent_id": "group-foundry-assistant", "authentication_type": "delegated_user",
+            }},
         )
         self._seed_agents("group-a", [
             group_agent("group-a", EDITABLE_AGENT_ID, "Weekly reviewer",
