@@ -15,6 +15,8 @@ import { WorkflowStructuredList } from './WorkflowStructuredList';
 import { WorkflowMicrosoft365RunAs } from './WorkflowMicrosoft365RunAs';
 import { WorkflowFlowAuthoring } from './WorkflowFlowAuthoring';
 import { WorkflowFlowLimitFields } from './WorkflowStructuredFields';
+import { WorkflowFileSyncFields, useWorkflowFileSyncSources } from './WorkflowFileSyncFields';
+import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
 import { ApiError } from '../../lib/apiClient';
 import {
@@ -33,8 +35,11 @@ import {
     sameWorkflowDefinition,
     saveWorkflowDefinition,
     workflowErrorMessage,
+    workflowFileSyncAvailabilityErrors,
+    workflowFileSyncConfig,
     workflowForFlowPreview,
     workflowForSave,
+    workflowMonitorFileSyncConfig,
     workflowScopeKey,
     workflowValidationErrors,
     workflowAgentKey,
@@ -83,6 +88,7 @@ export function WorkflowEditorDialog({
     onSaved,
     onDirtyChange,
     onBusyChange,
+    onOpenClassic,
     interactionDisabled = false,
 }: {
     scope: WorkflowScope;
@@ -92,6 +98,8 @@ export function WorkflowEditorDialog({
     onSaved: (workflow: WorkflowDefinition) => void;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
+    /** Group pages hand off to the classic group workspace with this group selected first. */
+    onOpenClassic?: () => void;
     interactionDisabled?: boolean;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
@@ -122,8 +130,16 @@ export function WorkflowEditorDialog({
         task.runner.type === 'inherit' && !task.publication &&
         (task.input_processing === 'saved_record_report' || enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length > 0));
     const dirty = !sameWorkflowDefinition(baseline, draft) || fieldDrafts.pending;
-    const preserved = preservedWorkflowFieldLabels(original);
-    const validationErrors = useMemo(() => workflowValidationErrors(draft, options), [draft, options]);
+    const preserved = preservedWorkflowFieldLabels(original, scope);
+    const groupScope = scope.type === 'group';
+    const fileSyncSources = useWorkflowFileSyncSources(scope, groupScope && !readOnly);
+    const fileSyncTriggerOffered = groupScope && (draft.trigger_type === 'file_sync' ||
+        fileSyncSources.status === 'ready' && fileSyncSources.sources.length > 0);
+    const scheduled = draft.trigger_type === 'interval' || groupScope && draft.trigger_type === 'file_sync';
+    const validationErrors = useMemo(() => [
+        ...workflowValidationErrors(draft, options),
+        ...(groupScope && fileSyncSources.status === 'ready' ? workflowFileSyncAvailabilityErrors(draft, fileSyncSources.sources) : []),
+    ], [draft, options, groupScope, fileSyncSources.status, fileSyncSources.sources]);
     const schemaErrors = useMemo(() => draft.tasks.flatMap((task, index) => {
         if (!task.output_contract?.schema) {
             return [];
@@ -263,6 +279,8 @@ export function WorkflowEditorDialog({
         const savingDraft = history.session.draft;
         const currentErrors = [
             ...workflowValidationErrors(savingDraft, options),
+            ...(groupScope && fileSyncSources.status === 'ready'
+                ? workflowFileSyncAvailabilityErrors(savingDraft, fileSyncSources.sources) : []),
             ...history.session.fields.summary(workflowDraftOwners(savingDraft)).taskSchemaErrors.values(),
         ];
         if (currentErrors.length) {
@@ -478,11 +496,20 @@ export function WorkflowEditorDialog({
                                         className={`${inputClass} mt-1`}
                                         aria-label="Trigger"
                                         value={draft.trigger_type}
-                                        onChange={(event) => setWorkflow((current) => ({ ...current, trigger_type: event.target.value as WorkflowDefinition['trigger_type'] }))}
+                                        onChange={(event) => {
+                                            const trigger = event.target.value as WorkflowDefinition['trigger_type'];
+                                            setWorkflow((current) => groupScope && trigger === 'file_sync' ? {
+                                                ...current,
+                                                trigger_type: trigger,
+                                                file_sync: workflowMonitorFileSyncConfig(current.file_sync),
+                                            } : { ...current, trigger_type: trigger });
+                                        }}
                                     >
                                         <option value="manual">Manual</option>
                                         <option value="interval">Interval</option>
-                                        {draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}
+                                        {groupScope
+                                            ? fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null
+                                            : draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}
                                     </select>
                                 </label>
                                 <label className="text-sm text-text-2">
@@ -493,7 +520,7 @@ export function WorkflowEditorDialog({
                                         min={1}
                                         aria-label="Interval value"
                                         value={draft.schedule.value}
-                                        disabled={draft.trigger_type !== 'interval'}
+                                        disabled={!scheduled}
                                         onChange={(event) => setWorkflow((current) => ({
                                             ...current,
                                             schedule: { ...current.schedule, value: Math.max(1, Math.trunc(Number(event.target.value) || 1)) },
@@ -506,7 +533,7 @@ export function WorkflowEditorDialog({
                                         className={`${inputClass} mt-1`}
                                         aria-label="Interval unit"
                                         value={draft.schedule.unit}
-                                        disabled={draft.trigger_type !== 'interval'}
+                                        disabled={!scheduled}
                                         onChange={(event) => setWorkflow((current) => ({
                                             ...current,
                                             schedule: { ...current.schedule, unit: event.target.value as WorkflowDefinition['schedule']['unit'] },
@@ -583,6 +610,26 @@ export function WorkflowEditorDialog({
                                 Effective runner: {workflowRunnerSummary(draft, options)}
                             </p>
                         </section>
+                        {scope.type === 'group' ? (
+                            <WorkflowFileSyncFields
+                                scope={scope}
+                                workflow={draft}
+                                sourceList={fileSyncSources}
+                                disabled={readOnly || saving}
+                                onChange={(update) => setWorkflow((current) => ({
+                                    ...current,
+                                    file_sync: update(workflowFileSyncConfig(current.file_sync)),
+                                }))}
+                            />
+                        ) : null}
+                        {scope.type === 'group' ? (
+                            <WorkflowAlertSummary
+                                workflow={draft}
+                                original={original}
+                                canEdit={options.can_manage && !readOnly}
+                                onOpenClassic={onOpenClassic}
+                            />
+                        ) : null}
                         <section className="rounded-2xl border border-edge p-4" aria-label="Workflow shared references">
                             <WorkflowDocumentPicker
                                 scope={scope}

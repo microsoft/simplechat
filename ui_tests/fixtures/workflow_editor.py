@@ -1,11 +1,23 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.127
+Version: 0.261.141
 Implemented in: 0.261.108
+Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
+
+Group File Sync requests are answered by the real server functions, compiled from source:
+`_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
+`_normalize_schedule` and the Monitor File Sync trigger rules of `save_group_workflow` validate a
+group save, with the save route's status mapping. Only the source store, group File Sync
+enablement and the viewer's group role are fixture state.
+
+Every request made while the page is a group page (`/v2/groups...`) is checked with the general
+`personal_scope_leak` trap, in `_route`, so every workflow fixture subclass enforces it.
 """
 
+import ast
 import copy
+import json
 import re
 import sys
 from pathlib import Path
@@ -24,6 +36,7 @@ from ui_tests.fixtures.workspace_authoring import (
     ApiRequest,
     WorkspaceAuthoringFixture,
     connect_options,  # noqa: F401
+    personal_scope_leak,
 )
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
@@ -43,6 +56,55 @@ UNSUPPORTED_WORKFLOW_ID = "workflow-v3-future"
 GROUP_ID = "group-alpha"
 SECOND_GROUP_ID = "group-beta"
 SPA_INDEX = STATIC_ROOT / "v2" / "index.html"
+FILE_SYNC_SOURCES_PATH = "/api/group/workflows/file-sync-sources"
+FILE_SYNC_FIXTURE_SECRET = "fixture-file-sync-password"
+# The group save route's status mapping (`save_group_workflow_route`).
+GROUP_SAVE_ERRORS = {
+    ValueError: (400, "Invalid workflow settings. Review the task, runner, trigger, and document inputs."),
+    LookupError: (404, "The workflow or one of its sources is not available."),
+    PermissionError: (403, "The selected group or workflow sources are not allowed."),
+}
+
+
+def _production_code(module_name, names):
+    """Compile named functions and literal constants from a production module, without importing it."""
+    source_file = APP_ROOT / module_name
+    tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+    nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
+        or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
+    ]
+    found = {
+        node.name if isinstance(node, ast.FunctionDef)
+        else next(target.id for target in node.targets if isinstance(target, ast.Name) and target.id in names)
+        for node in nodes
+    }
+    assert found == set(names), f"{module_name} no longer defines {sorted(set(names) - found)}"
+    return compile(ast.Module(body=nodes, type_ignores=[]), str(source_file), "exec")
+
+
+# The real server rules for group File Sync, compiled once and bound to each fixture's state.
+FILE_SYNC_CODE = (
+    _production_code("functions_file_sync.py", (
+        "FILE_SYNC_SCOPE_PERSONAL", "FILE_SYNC_SCOPE_GROUP", "FILE_SYNC_SCOPE_PUBLIC", "FILE_SYNC_MANAGER_ROLES",
+    )),
+    _production_code("functions_personal_workflows.py", (
+        "WORKFLOW_SCHEDULE_UNITS", "WORKFLOW_FILE_SYNC_WAIT_MODES", "WORKFLOW_FILE_SYNC_CONTINUE_MODES",
+        "WORKFLOW_FILE_SYNC_MAX_SOURCES", "_normalize_text", "_normalize_bool", "_normalize_schedule",
+    )),
+    _production_code("functions_group_workflows.py", ("_normalize_file_sync_config",)),
+    _production_code("route_backend_workflows.py", ("_serialize_workflow_file_sync_source",)),
+)
+
+
+def group_file_sync_source(group_id, source_id, name, **fields):
+    """A stored group File Sync source, including a credential the list must never return."""
+    return {
+        "id": source_id, "scope_type": "group", "group_id": group_id, "name": name,
+        "source_type": "smb", "enabled": True, "auth": {"password": FILE_SYNC_FIXTURE_SECRET},
+        **fields,
+    }
 
 
 def workflow_record(identifier=WORKFLOW_ID, **overrides):
@@ -306,6 +368,95 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             }
         ]
         self.fail_next_run = False
+        # Group File Sync state behind the real source-list and save rules compiled above.
+        self.group_file_sync_enabled = {GROUP_ID: True, SECOND_GROUP_ID: True}
+        self.group_file_sync_sources = {
+            GROUP_ID: [
+                group_file_sync_source(GROUP_ID, "finance-share", "Finance share"),
+                group_file_sync_source(GROUP_ID, "archive-share", "Archive share", source_type="azure_blob", enabled=False),
+            ],
+            SECOND_GROUP_ID: [group_file_sync_source(SECOND_GROUP_ID, "beta-share", "Beta share")],
+        }
+        self.file_sync_source_reads = []
+        self.classic_visits = []
+        self.file_sync_rules = self._bind_file_sync_rules()
+
+    def _group_role(self):
+        return "Admin" if getattr(self, "group_can_manage", True) else "User"
+
+    def _bind_file_sync_rules(self):
+        """Run the compiled server functions against this fixture's source store and group role."""
+
+        def get_authorized_sync_source(scope_type, source_id, user_id, scope_id=None, allowed_roles=None):
+            self.file_sync_source_reads.append((scope_type, scope_id, source_id))
+            if self._group_role() not in (allowed_roles or rules["FILE_SYNC_MANAGER_ROLES"]):
+                raise PermissionError("Insufficient permissions for this group")
+            for source in self.group_file_sync_sources.get(scope_id, []):
+                if source.get("id") == source_id:
+                    return copy.deepcopy(source)
+            raise LookupError("File sync source not found")
+
+        def sanitize_file_sync_source(source):
+            sanitized = dict(source or {})
+            sanitized.pop("auth", None)
+            return sanitized
+
+        rules = {
+            "get_settings": dict,
+            "get_authorized_sync_source": get_authorized_sync_source,
+            "sanitize_file_sync_source": sanitize_file_sync_source,
+            "is_file_sync_enabled_for_group": lambda settings, group_id, user_info=None: bool(
+                self.group_file_sync_enabled.get(group_id)
+            ),
+        }
+        for code in FILE_SYNC_CODE:
+            exec(code, rules)
+        return rules
+
+    def _group_file_sync_sources(self, route, entry):
+        """GET /api/group/workflows/file-sync-sources, resolved like the real route with ?group_id."""
+        group_id = entry.query.get("group_id", [""])[0].strip()
+        if not group_id:
+            # Without group_id the real route falls back to the account's active group, which a
+            # group page must never rely on.
+            self.unexpected_requests.append(f"GET {entry.path} without an explicit group_id")
+            self._json(route, {"error": "No active group selected"}, 400)
+            return
+        if group_id not in self.group_file_sync_sources:
+            self._json(route, {"error": "Group not found"}, 404)
+            return
+        if self._group_role() not in self.file_sync_rules["FILE_SYNC_MANAGER_ROLES"]:
+            # The route refuses members, and a member's read-only editor has no reason to ask.
+            self.unexpected_requests.append(f"GET {entry.path} (a group member cannot list File Sync sources)")
+            self._json(route, {"error": "Insufficient permissions for this group"}, 403)
+            return
+        if not self.group_file_sync_enabled.get(group_id):
+            self._json(route, {"sources": []})
+            return
+        serialize = self.file_sync_rules["_serialize_workflow_file_sync_source"]
+        self._json(route, {"sources": [
+            serialize("group", group_id, source)
+            for source in self.group_file_sync_sources[group_id]
+            if source.get("id")
+        ]})
+
+    def _group_save_refusal(self, body, existing, group_id):
+        """Apply the server's File Sync, trigger and schedule rules to a group save; return the stored file_sync."""
+        file_sync = self.file_sync_rules["_normalize_file_sync_config"](
+            OWNER_ID, group_id, body, existing_workflow=existing, user_info={"roles": ["User"]},
+        )
+        # The Monitor File Sync trigger and schedule rules inline in `save_group_workflow`.
+        trigger_type = str(body.get("trigger_type") or "").strip().lower()
+        if trigger_type == "file_sync":
+            if not file_sync.get("enabled"):
+                raise ValueError("Monitor File Sync Changes workflows require File Sync before run.")
+            if file_sync.get("wait_mode") != "complete":
+                raise ValueError("Monitor File Sync Changes workflows must wait for sync completion.")
+            if file_sync.get("continue_mode") != "changed":
+                raise ValueError("Monitor File Sync Changes workflows must continue only when changes are found.")
+        if trigger_type in {"interval", "file_sync"}:
+            self.file_sync_rules["_normalize_schedule"](body.get("schedule"))
+        return file_sync
 
     def runtime_projection(self, state="running", version=1, gate=None, can_resume=False):
         runtime = {
@@ -388,6 +539,11 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         ):
             route.fulfill(path=str(SPA_INDEX), content_type="text/html")
             return
+        if request.method == "GET" and path == "/group_workspaces":
+            # The classic handoff target. The active group at arrival is what classic would show.
+            self.classic_visits.append((path, self.active_group_id))
+            route.fulfill(content_type="text/html", body="<html><body>Classic handoff target</body></html>")
+            return
         if request.method == "GET" and path.startswith("/static/"):
             asset = (STATIC_ROOT / path.removeprefix("/static/")).resolve()
             if asset.is_relative_to(STATIC_ROOT.resolve()) and asset.is_file():
@@ -407,6 +563,13 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         self.requests.append(entry)
         if request.method != "GET":
             self.writes.append(entry)
+        leak = personal_scope_leak(path, entry.query)
+        if leak and urlsplit(self.page.url).path.startswith("/v2/groups"):
+            # A group workflow page resolves every resource through a group-scoped route, so a
+            # personal read here is a leak. It is recorded, never answered, and never allowlisted.
+            self.unexpected_requests.append(f"{request.method} {path} ({leak} from a group page)")
+            self._json(route, {"error": "Personal-scope reads are not available on group pages."}, 500)
+            return
         for index, (method, failed_path, status, payload) in enumerate(self.failures):
             if (method, failed_path) == (entry.method, path):
                 self.failures.pop(index)
@@ -456,10 +619,15 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         elif path in ("/api/user/workflows/editor-options", "/api/group/workflows/editor-options") and method == "GET":
             if path.startswith("/api/group/"):
                 assert entry.query.get("group_id") == [GROUP_ID], entry
-                self._json(route, editor_options("group", GROUP_ID))
+                options = editor_options("group", GROUP_ID)
+                # The real options grant management from the viewer's group role.
+                options["can_manage"] = getattr(self, "group_can_manage", True)
+                self._json(route, options)
             else:
                 assert not entry.query, entry
                 self._json(route, editor_options())
+        elif path == FILE_SYNC_SOURCES_PATH and method == "GET":
+            self._group_file_sync_sources(route, entry)
         elif path == "/api/workflows/m365-run-as-users" and method == "GET":
             if entry.query.get("scope") == ["group"]:
                 group_id = entry.query.get("group_id", [None])[0]
@@ -511,6 +679,20 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         if existing and entry.body.get("definition_revision") != existing.get("definition_revision"):
             self._json(route, {"error": "stale workflow definition"}, 409)
             return
+        file_sync = None
+        if scope_type == "group":
+            if self._group_role() not in ("Owner", "Admin"):
+                self.unexpected_requests.append(f"POST {entry.path} (a group member cannot save workflows)")
+                self._json(route, {"error": GROUP_SAVE_ERRORS[PermissionError][1]}, 403)
+                return
+            try:
+                file_sync = self._group_save_refusal(entry.body, existing, group_id)
+            except (ValueError, LookupError, PermissionError) as exc:
+                status, message = next(
+                    mapped for error_type, mapped in GROUP_SAVE_ERRORS.items() if isinstance(exc, error_type)
+                )
+                self._json(route, {"error": message}, status)
+                return
         validation_payload = copy.deepcopy(entry.body)
         if existing:
             # Human-readable fixture revisions are checked above. The structural
@@ -525,6 +707,9 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": str(exc)}, 400)
             return
         saved = {**copy.deepcopy(entry.body), **definition}
+        if file_sync is not None:
+            # The server stores its own normalization, including each source's current name and type.
+            saved["file_sync"] = file_sync
         saved["id"] = identifier
         saved["definition_revision"] = f"revision:{identifier}:{len(self.workflow_writes) + 2}"
         workflows[identifier] = saved
@@ -819,6 +1004,11 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
 
     def mutate_revision(self, workflow_id=WORKFLOW_ID):
         self.personal_workflows[workflow_id]["definition_revision"] = "revision:external-change"
+
+    def assert_clean(self):
+        super().assert_clean()
+        for _, payload in self.responses:
+            assert FILE_SYNC_FIXTURE_SECRET not in json.dumps(payload), "A File Sync credential crossed the fixture API boundary."
 
     def fail_next_workflow_run(self):
         self.fail_next_run = True

@@ -25,6 +25,7 @@ import {
     isWorkflowPublicationSourceKind,
     safeWorkflowAlias,
     savedOutputPublicationFormats,
+    workflowFileSyncProvidesAnalyzeTargets,
     workflowInputProcessingErrors,
     WORKFLOW_APPROVAL_MESSAGE_LIMIT,
     workflowSchemaErrors,
@@ -768,11 +769,14 @@ function DocumentActionFields({
     task,
     onChange,
     loops = [],
+    changedFileTargets = false,
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
     onChange: (task: WorkflowTask) => void;
     loops?: WorkflowForEachNode[];
+    /** File Sync supplies the changed files, so Analyze may run without selected evidence. */
+    changedFileTargets?: boolean;
 }) {
     const [mode, setMode] = useState(() => actionMode(task.document_action));
     const [evidence, setEvidence] = useState(() => evidenceFromAction(task.document_action));
@@ -828,7 +832,8 @@ function DocumentActionFields({
     };
 
     const needsSelectedEvidence = ['analyze', 'search_selected', 'comparison'].includes(mode);
-    const missingEvidence = needsSelectedEvidence && evidence.length === 0;
+    const syncedAnalyzeTargets = mode === 'analyze' && changedFileTargets && evidence.length === 0;
+    const missingEvidence = needsSelectedEvidence && evidence.length === 0 && !syncedAnalyzeTargets;
     const missingComparison = mode === 'comparison' && (!comparison.left || comparison.right.length === 0);
 
     return (
@@ -913,6 +918,9 @@ function DocumentActionFields({
             ) : null}
             {missingEvidence ? (
                 <p role="alert" className="text-xs text-danger">Select at least one evidence document for this document action.</p>
+            ) : null}
+            {syncedAnalyzeTargets ? (
+                <p className="text-xs text-text-3">No evidence is selected, so this task analyzes the files each File Sync run changed.</p>
             ) : null}
             {mode === 'comparison' && evidence.length ? (
                 <div className="space-y-3 rounded-xl border border-edge p-3">
@@ -1078,6 +1086,7 @@ export function WorkflowTaskFields({
                         onChange={onChange}
                     />
                     {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange}
+                        changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow, scope)}
                         loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} /> : null}
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}

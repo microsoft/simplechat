@@ -461,6 +461,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                     "max_tasks": 8, "agents": [], "models": [],
                     "default_model": {"label": "Default app model", "valid": True},
                 })
+            elif path == "/api/group/workflows/file-sync-sources" and method == "GET":
+                self._workflow_file_sync_sources(route, entry, group_id)
             elif path.endswith("/runs"):
                 self._json(route, {"runs": []})
             elif path.endswith("/run") or path.endswith("/cancel"):
@@ -889,6 +891,19 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_agents[group_id][index] = candidate
         self.native_agent_revisions[(group_id, identifier)] += 1
         self._json(route, self._agent_envelope(group_id, candidate))
+
+    def _workflow_file_sync_sources(self, route, entry, group_id):
+        """M6: the group workflow File Sync source list, which the real route refuses to non-managers.
+
+        The group editor asks only as a manager, so a member request is also recorded as unexpected.
+        Sources default to none; a suite may set `workflow_file_sync_sources[group_id]`.
+        """
+        if self.groups[group_id]["role"] not in ("Owner", "Admin", "DocumentManager"):
+            self.unexpected_requests.append(f"{entry.method} {entry.path} (a group member cannot list File Sync sources)")
+            self._json(route, {"error": "Insufficient permissions for this group"}, 403)
+            return
+        sources = getattr(self, "workflow_file_sync_sources", {}).get(group_id, [])
+        self._json(route, {"sources": copy.deepcopy(sources)})
 
 
 @pytest.fixture

@@ -352,6 +352,7 @@ export function GroupWorkspacePage() {
                             )
                             : section === 'workflows' && !resourceId ? <WorkflowsSection scope={{ type: 'group', groupId: context.scope.id }}
                                 allowManage={context.sections.workflows.can_manage} interactionDisabled={accessUnconfirmed}
+                                onOpenClassic={() => openClassic('/group_workspaces')}
                                 onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
                                 : section === 'actions' && resourceId && groupActionAdapter ? (
                                     <ActionEditorPage adapter={groupActionAdapter} />
