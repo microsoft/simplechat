@@ -126,7 +126,7 @@ GROUP_FOUNDRY_ENDPOINT_ID = "group-foundry-connection"
 GLOBAL_FOUNDRY_ENDPOINT_ID = "global-foundry-connection"
 
 
-def group_agent_options(group_id, *, can_author=True, template_submission=True):
+def group_agent_options(group_id, *, can_author=True, template_submission=True, empty_models=False):
     """The group agent editor options.
 
     Derived from the shared editor options but carrying no personal endpoint permissions: every
@@ -140,6 +140,10 @@ def group_agent_options(group_id, *, can_author=True, template_submission=True):
     whose discovery route resolves the account's active group -- for which the editor offers no
     discovery -- and a global one with no group dependency, for which discovery is kept.
 
+    `empty_models` models a manager on a legacy-default-model tenant with no multi-model endpoints:
+    the list is empty but the caller can still author, so the editable editor keeps its actionable
+    "configure a custom connection" guidance rather than the member's neutral read-only copy.
+
     `agent_template_submission_allowed` is always present, computed server-side for the caller, so
     the group template panel gates on it rather than on the absent personal submission flag.
     """
@@ -150,7 +154,7 @@ def group_agent_options(group_id, *, can_author=True, template_submission=True):
             settings.pop(key)
     settings["allow_group_custom_endpoints"] = True
     settings["agent_template_submission_allowed"] = bool(can_author and template_submission)
-    if not can_author:
+    if not can_author or empty_models:
         options["model_endpoints"] = []
         return options
     options["model_endpoints"].extend([
@@ -248,6 +252,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         # Groups whose server-computed template-submission gate is off despite a manager viewer, so a
         # manager who still sees no submit button is proven, not just an incidental member read-only.
         self.template_submission_denied = set()
+        # Groups whose manager options carry no model endpoints (a legacy-default-model tenant), so
+        # a manager still gets actionable authoring guidance rather than the member's neutral copy.
+        self.empty_model_groups = set()
         # The submission decision of the last group options served, so a POST /api/agent-templates
         # from a group page whose gate is off is recorded as unexpected rather than answered.
         self._template_submission_allowed = True
@@ -729,7 +736,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         template_submission = group_id not in self.template_submission_denied
         self._template_submission_allowed = bool(can_author and template_submission)
         self._json(route, group_agent_options(
-            group_id, can_author=can_author, template_submission=template_submission))
+            group_id, can_author=can_author, template_submission=template_submission,
+            empty_models=group_id in self.empty_model_groups))
 
     def _foundry_discovery(self, route, entry):
         # POST /api/models/foundry/agents -- Foundry resource discovery. The server route resolves a
