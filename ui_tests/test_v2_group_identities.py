@@ -1,8 +1,8 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.138
-Implemented in: 0.261.138
+Version: 0.261.139
+Implemented in: 0.261.139
 
 Exercises the real identities section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/identities` family and

@@ -1,8 +1,8 @@
 # group_identities.py
 """
 Closed M5A group identity HTTP fixtures for the real production V2 SPA.
-Version: 0.261.138
-Implemented in: 0.261.138
+Version: 0.261.139
+Implemented in: 0.261.139
 
 The fixture serves the immutable `/api/groups/<group_id>/identities[...]` family and
 injects the `identity_management` context hint that gates create, and the per-row
