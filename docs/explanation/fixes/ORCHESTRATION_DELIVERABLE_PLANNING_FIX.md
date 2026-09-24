@@ -513,4 +513,38 @@ legacy-record message and stops loading.
 
 ### Validation (0.261.139)
 
-VALIDATION_PLACEHOLDER
+- `functional_tests/test_orchestration_single_contract.py` (new, 53 tests): the toggle is gone
+  from the settings defaults, sanitization, admin fields, admin route, template and docs
+  inventories; a stored toggle and `respond` capability are retired on load and save; one
+  registry has no phases or `respond`; discovery and planning treat runtime services
+  correctly; the one planner prompt keeps each piece of ported guidance; new plans always use
+  the single contract; legacy plans are detected, while unknown markers are refused as changed
+  plans; the executor, headless runtime, checkpoints, recovery, plan revisions and
+  continuation refuse legacy runs; listings omit them; and every by-id route answers
+  `409 legacy_plan` without binding services or changing the saved record.
+- `functional_tests/test_orchestration_route_recovery.py` and
+  `test_orchestration_elicitation_routes.py` (new), plus the migrated conversation context,
+  plan revision, memory, elicitation, research selection, deep research, planner
+  diagnostics, schema, registry, executor, adapter, citation, context picker, visual output
+  and catalog execution suites, re-express the earlier behavior that still matters.
+- The full `functional_tests/test_orchestration*.py` suite passes: 115 files.
+  `test_orchestration_harness_execution.py` (649 tests) can time out only under the parallel
+  runner. The earlier baseline failures in the conversation context, conversation context
+  routes, elicitation and memory suites no longer occur, because those suites now run on the
+  current contract.
+- The three route policy tests and both docs checks pass.
+- V2 UI: `npm run typecheck`, the six `functional_tests/test_v2_orchestration*.mjs` files and
+  all 20 `ui_tests/test_v2_orchestration_*.py` files pass. That includes the browser-to-Flask
+  recovery suite, which now runs against real Gather / Reason / Render execution. The admin
+  actions, planner model, reasoning controls, model catalog, context selection, elicitation
+  composer and prompt composer UI suites pass too.
+- Baselines are unchanged: `test_*image*.py` 22/31 and `test_*admin*.py` 58/74.
+  `ui_tests/test_v2_orchestration_auto_open.py` run as a script and
+  `ui_tests/test_chat_three_document_smoke.py` fail as they do on the base.
+- Key suites also pass under `python -O`, and the XSS and broken access control guardrails
+  pass on the changed files.
+
+Before this layer, new plans used Gather / Reason / Render only when an administrator turned
+on a preview setting, and other plans used the phase-based contract with its separate
+answer step. Now every plan uses Gather / Reason / Render, a plan saved by the earlier
+contract shows one clear message instead of opening, and no code path interprets it.
