@@ -37,7 +37,9 @@ If no valid selection exists, the page asks you to choose rather than selecting
 an arbitrary group.
 
 **Search your groups** searches the full membership list, not just the displayed
-page. A selected group stays selected when searching or changing result pages.
+page. From version **0.261.162** it ignores case and matches a group's name or
+description, like the group directory. A selected group stays selected when
+searching or changing result pages.
 Section URLs include the group ID, so a bookmark opens the intended group.
 
 ### Find, join, or create a group

@@ -28,7 +28,9 @@ The journeys tested in this suite:
   it again, with the exact activation requests asserted.
 - **Selector reach (J2):** with more than a thousand groups, a group that
   isn't on the picker's first page opens by its ID and can be reached through
-  the picker, and the picker never asks for the whole list at once.
+  the picker, and the picker never asks for the whole list at once. From
+  0.261.162, a lowercase name or a word from the group's description reaches it
+  too.
 - **Revoked membership (J3):** when the member is removed mid-session, the page
   says why and the cached documents and authoring content are cleared. An open
   editor's draft freezes group switching rather than being navigated away from
@@ -79,12 +81,17 @@ activation answer (success, missing ID, unknown group and non-member).
 
 ## Findings
 
-One product finding is pinned as a strict `xfail`,
-`test_j2_picker_search_is_case_sensitive_XFAIL`. The V2 group picker, and the
-Settings **Groups** tab, search through the classic groups list, whose search is
-case-sensitive and matches names only. So "research" doesn't find "Research
-group", although the V2 group directory and public workspace search ignore case
+The suite found one product issue. The V2 group picker, and the Settings
+**Groups** tab, search through the classic groups list, whose search was
+case-sensitive and matched names only. So "research" didn't find "Research
+Group", although the V2 group directory and public workspace search ignore case
 and match descriptions too.
+
+It was pinned in 0.261.161 as the strict `xfail`
+`test_j2_picker_search_is_case_sensitive_XFAIL` and fixed in 0.261.162; see the
+[Group Picker Search Casefold Fix](../fixes/GROUP_PICKER_SEARCH_CASEFOLD_FIX.md).
+The test is now `test_j2_picker_search_ignores_case_and_matches_descriptions`,
+and it passes.
 
 ## Running the suite
 
@@ -99,7 +106,8 @@ python -m pytest functional_tests\test_group_picker_fixture_parity.py
 ## Validation and limitations
 
 When it was added, the suite passed 44 tests on three consecutive runs, with
-the one strict `xfail` expected, and the picker pin passed 8.
+the one strict `xfail` expected, and the picker pin passed 8. From 0.261.162 it
+passes all 45, with no `xfail`.
 
 - The Settings delete link (J8) and the Settings editor (J9) are pending the
   native Settings section.

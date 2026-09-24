@@ -1,7 +1,7 @@
 # test_group_picker_fixture_parity.py
 """
 Per-route shape parity between the M8 group picker UI fixture and the real classic routes.
-Version: 0.261.161
+Version: 0.261.162
 Implemented in: 0.261.161
 
 The M8 group journeys reach every group through the workspace picker: J1 activates a group and
@@ -268,8 +268,8 @@ def test_list_search_shape_parity(env):
     real_payload = real.get_json()
     assert_no_invented_keys("list-search", payload, real_payload)
     assert_shared_keys("list-search", payload, real_payload, LIST_ENVELOPE_KEYS)
-    # `Alpha` is a case-exact substring of one name only, so the case-sensitive, name-only server
-    # filter (`CONTAINS(c.name, @search)`) and the fixture agree on the single match and its count.
+    # `Alpha` matches one name only (and neither description), so the server's casefolded name-or-
+    # description filter and the fixture agree on the single match and its count.
     assert payload["total_count"] == 1 and real_payload["total_count"] == 1
     assert [row["id"] for row in payload["groups"]] == ["group-alpha"]
     assert [row["id"] for row in real_payload["groups"]] == ["group-alpha"]
@@ -282,37 +282,45 @@ def _search(fixture, env, term):
     return [row["id"] for row in payload["groups"]], [row["id"] for row in real.get_json()["groups"]]
 
 
-def test_list_search_is_case_sensitive_and_name_only_like_the_server(env):
-    """The fixture's search must model the server exactly: case-sensitive and over the name only.
+def test_list_search_ignores_case_and_matches_descriptions_like_the_server(env):
+    """The fixture's search must model the server exactly: casefolded, over the name or the description.
 
-    The server searches through `functions_group.search_groups`, whose Cosmos filter is
-    `CONTAINS(c.name, @search)` -- a case-sensitive substring over the group name, never the
-    description. A fixture that casefolded the term, or matched the description too (as the shared
-    base handler still does), would let a browser journey pass on a search the server answers with
-    nothing. These terms fail on that looser fixture and agree only when it models the server.
+    From 0.261.162 the server searches through `functions_group.search_groups` with
+    `CONTAINS(LOWER(c.name), @search) OR (IS_DEFINED(c.description) AND
+    CONTAINS(LOWER(c.description), @search))` over a lowercased term, as the group directory and the
+    admin search do. A fixture that kept the old case-sensitive, name-only match would strand a
+    browser journey on a search the server answers. These terms agree only when the fixture models
+    the server.
     """
-    env.seed_group("group-research", "Research Group", members=(CALLER,))
+    # group_context gives every fixture group the description "Shared knowledge for <name>.", so the
+    # server-side group gets the same description, making `knowledge` a description-only term.
+    env.seed_group(
+        "group-research", "Research Group", members=(CALLER,),
+        description="Shared knowledge for Research Group.",
+    )
+    env.seed_group("group-finance", "Finance Group", members=(CALLER,), description="Budgets and forecasts.")
     fixture = new_fixture()
-    # group_context gives every group the description "Shared knowledge for <name>.", so `knowledge`
-    # is a description-only term, and `research` is a lowercase fragment of the name.
-    seed_fixture_groups(fixture, [("group-research", "Research Group", "User")])
+    seed_fixture_groups(
+        fixture, [("group-research", "Research Group", "User"), ("group-finance", "Finance Group", "User")]
+    )
+    fixture.groups["group-finance"]["workspace"]["description"] = "Budgets and forecasts."
 
-    # A lowercase fragment of the name: the case-sensitive server matches nothing, and a fixture that
-    # lowercased the term would have matched -- so both sides must be empty.
+    # A lowercase fragment of a name finds the group on both sides.
     fixture_lower, server_lower = _search(fixture, env, "research")
-    assert fixture_lower == server_lower == [], (
-        f"case-sensitive drift: fixture {fixture_lower}, server {server_lower}"
+    assert fixture_lower == server_lower == ["group-research"], (
+        f"case drift: fixture {fixture_lower}, server {server_lower}"
     )
-    # A description-only term: the name-only server matches nothing, and a fixture that searched the
-    # description would have matched -- so both sides must be empty.
-    fixture_desc, server_desc = _search(fixture, env, "knowledge")
-    assert fixture_desc == server_desc == [], (
-        f"name-only drift: fixture {fixture_desc}, server {server_desc}"
+    # A description-only term finds it too.
+    fixture_desc, server_desc = _search(fixture, env, "KNOWLEDGE")
+    assert fixture_desc == server_desc == ["group-research"], (
+        f"description drift: fixture {fixture_desc}, server {server_desc}"
     )
-    # The case-exact name fragment still matches on both, so the fixture is not simply refusing all
-    # searches.
-    fixture_exact, server_exact = _search(fixture, env, "Research")
-    assert fixture_exact == server_exact == ["group-research"]
+    # Surrounding spaces are ignored, and a term in neither field matches nothing, so the fixture
+    # isn't simply answering every search.
+    fixture_spaced, server_spaced = _search(fixture, env, "  forecasts  ")
+    assert fixture_spaced == server_spaced == ["group-finance"]
+    fixture_none, server_none = _search(fixture, env, "marketing")
+    assert fixture_none == server_none == []
 
 
 # --------------------------------------------------------------------------

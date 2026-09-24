@@ -74,10 +74,10 @@ def create_group(name, description):
 
 def search_groups(search_query, user_id):
     """
-    Return a list of groups the user is in. 
-    For simplicity, this only returns groups where the user is a member.
+    Return the groups the user is a member of whose name or description contains the
+    search term, ignoring case, as the group directory and the admin search do.
     """
-    query = query = """
+    query = """
         SELECT *
         FROM c
         WHERE EXISTS (
@@ -90,9 +90,13 @@ def search_groups(search_query, user_id):
     params = [
         { "name": "@user_id", "value": user_id }
     ]
-    if search_query:
-        query += " AND CONTAINS(c.name, @search) "
-        params.append({"name": "@search", "value": search_query})
+    normalized_query = str(search_query or "").strip().lower()
+    if normalized_query:
+        query += (
+            " AND (CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))) "
+        )
+        params.append({"name": "@search", "value": normalized_query})
 
     results = list(cosmos_groups_container.query_items(
         query=query,

@@ -1,7 +1,7 @@
 # group_directory_harness.py
 """Shared, isolated harness for the native group directory and membership tests (M7A, M7B).
 
-Version: 0.261.161
+Version: 0.261.162
 Implemented in: 0.261.146
 
 Loaded unchanged from their files:
@@ -105,14 +105,16 @@ EXPECTED_DIRECTORY_QUERY = (
 # leave role, logo, hero-colour and active-group projection to the route. Their text is kept here,
 # beside the directory query, so a change to either module fails the picker parity test until the
 # model below is reviewed. `get_user_groups` (no search) iterates `x`; `search_groups` (always with
-# a search term) iterates `u` and adds the case-sensitive `CONTAINS(c.name, @search)` filter. Neither
-# carries the directory query's `c.type` filter.
+# a search term) iterates `u` and adds a casefolded name-or-description filter, as the admin search
+# (`search_all_groups`) does, with the term lowercased by the function. Neither carries the directory
+# query's `c.type` filter.
 EXPECTED_PICKER_QUERY = (
     "SELECT * FROM c WHERE EXISTS ( SELECT VALUE x FROM x IN c.users WHERE x.userId = @user_id )"
 )
 EXPECTED_PICKER_SEARCH_QUERY = (
     "SELECT * FROM c WHERE EXISTS ( SELECT VALUE u FROM u IN c.users WHERE u.userId = @user_id ) "
-    "AND CONTAINS(c.name, @search)"
+    "AND (CONTAINS(LOWER(c.name), @search) "
+    "OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search)))"
 )
 
 _UNDEFINED = object()
@@ -251,12 +253,15 @@ class DirectoryGroupsContainer(FakeContainer):
         ]
 
     def _picker_rows(self, parameters, partition_key, enable_cross_partition_query):
-        """Model the picker's member filter and optional `CONTAINS(c.name, @search)`.
+        """Model the picker's member filter and its optional casefolded search.
 
         The picker query selects whole documents, so the route does its own role, logo and
         active-group projection; the model returns the stored documents a member matches, in
-        insertion order, with the same type-strict membership test and case-sensitive name
-        containment Cosmos applies. Unlike the directory query, it carries no `c.type` filter.
+        insertion order, with the same type-strict membership test Cosmos applies. The search is
+        `CONTAINS(LOWER(c.name), @search) OR (IS_DEFINED(c.description) AND
+        CONTAINS(LOWER(c.description), @search))` over a lowercased term: `LOWER` of a value that
+        isn't a string is undefined in Cosmos, so it never matches. Unlike the directory query, it
+        carries no `c.type` filter.
         """
         if enable_cross_partition_query is not True or partition_key is not None:
             raise AssertionError("The picker query must fan out across partitions")
@@ -276,8 +281,13 @@ class DirectoryGroupsContainer(FakeContainer):
             )
             if not member:
                 continue
-            if isinstance(search, str) and search not in str(_path(record, "name") or ""):
-                continue
+            if isinstance(search, str):
+                name = _path(record, "name")
+                description = _path(record, "description")
+                name_hit = isinstance(name, str) and search in name.lower()
+                description_hit = isinstance(description, str) and search in description.lower()
+                if not (name_hit or description_hit):
+                    continue
             rows.append(copy.deepcopy(record))
         return rows
 

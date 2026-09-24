@@ -1,7 +1,7 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.161
+Version: 0.261.162
 Implemented in: 0.261.161
 
 These ride one composite group store (`group_journeys_ui`) that answers the
@@ -25,7 +25,9 @@ Coverage table (contract sec 4 / M8_GROUP_PARITY_MATRIX sec 8; every row names i
   J1  Settings activation ...... shell::test_settings_activation_refreshes_catalogs_and_restores_in_group_page
   J2  selector reach ........... test_j2_selector_reaches_an_off_page_group_without_capping (here)
                                   + parity test_group_picker_fixture_parity.py (page/search/cap pins)
-  J2  case-sensitive search .... test_j2_picker_search_is_case_sensitive_XFAIL (here, product finding)
+  J2  search ignores case ...... test_j2_picker_search_ignores_case_and_matches_descriptions (here)
+                                  + parity test_group_picker_fixture_parity.py::
+                                    test_list_search_ignores_case_and_matches_descriptions_like_the_server
   J3  revocation ............... test_j3_membership_revoked_mid_session_clears_documents_and_authoring (here)
   J4  status change ............ test_j4_lock_disables_write_controls_across_sections (here)
                                   + test_j4_inactive_status_bars_viewing_and_keeps_the_classic_link (here)
@@ -61,11 +63,11 @@ Coverage table (contract sec 4 / M8_GROUP_PARITY_MATRIX sec 8; every row names i
                                   + test_v2_group_prompts.py::test_conflict_refresh_rebases_concurrent_description_and_local_name
                                   + test_v2_workflow_control_flow.py::test_skip_dependency_is_rejected_and_stale_save_retains_flow
 
-xfail product findings:
-  - test_j2_picker_search_is_case_sensitive_XFAIL: the picker searches server-side through the
-    case-sensitive, name-only `search_groups`, so a lowercase or description fragment misses a
-    group the casefolded V2 directory would find. Reason carried on the mark. The only strict
-    xfail in the suite; every other journey passes.
+Product findings:
+  - Fixed in 0.261.162: the picker searched server-side through a case-sensitive, name-only
+    `search_groups`, so a lowercase or description fragment missed a group the V2 directory would
+    find. `test_j2_picker_search_ignores_case_and_matches_descriptions` was the suite's one strict
+    xfail and now passes; no journey is expected to fail.
 """
 
 import copy
@@ -183,9 +185,11 @@ def test_j1_active_group_changed_elsewhere_is_reconcilable(group_journeys_ui):
 # --- J2: selector reach --------------------------------------------------------------------------
 
 # The unique name of the group seeded last, after the padding, so it is only reachable off the first
-# page. Case-exact so the case-sensitive picker search can find it.
+# page, and a description word no other group carries.
 _OFF_PAGE_NAME = "Zulu Frontier Workspace"
 _OFF_PAGE_ID = "group-off-page-target"
+_OFF_PAGE_DESCRIPTION = "Expedition logistics for the northern route."
+_OFF_PAGE_DESCRIPTION_WORD = "expedition"
 
 
 def _pad_directory(ui, count):
@@ -217,8 +221,8 @@ def test_j2_selector_reaches_an_off_page_group_without_capping(group_journeys_ui
     assert len(ui.groups) == 1003
     expect(picker.get_by_role("option", name=_OFF_PAGE_NAME, exact=True)).to_have_count(0)
 
-    # The user reaches it through the picker by typing its (case-exact) name; the server-accurate
-    # search narrows the list and the option becomes selectable.
+    # The user reaches it through the picker by typing part of its name; the server-accurate search
+    # narrows the list and the option becomes selectable.
     search = ui.page.get_by_role("searchbox", name="Search your groups", exact=True)
     search.fill("Zulu")
     expect(picker.get_by_role("option", name=_OFF_PAGE_NAME, exact=True)).to_have_count(1)
@@ -230,30 +234,33 @@ def test_j2_selector_reaches_an_off_page_group_without_capping(group_journeys_ui
     assert [entry.body.get("groupId") for entry in setactive_writes(ui)] == [_OFF_PAGE_ID]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (J2): the V2 group picker searches server-side through route_backend_groups "
-    "GET /api/groups -> functions_group.search_groups, whose Cosmos filter is CONTAINS(c.name, "
-    "@search): case-sensitive and name-only. A lowercase fragment of an off-page group's name -- "
-    "which the casefolded V2 directory search would find -- returns nothing, so the group is "
-    "unreachable by that fragment. Flip to a passing test once the picker search casefolds like the "
-    "directory."
-))
-def test_j2_picker_search_is_case_sensitive_XFAIL(group_journeys_ui):
+def test_j2_picker_search_ignores_case_and_matches_descriptions(group_journeys_ui):
     ui = group_journeys_ui
     # The target sits off page one, so the picker can only surface it through the server search --
     # never the always-rendered selected-group fallback option or the first, unfiltered page. That
-    # removes the debounce race: the option is 0 before and after the search unless the search itself
+    # removes the debounce race: the option is 0 before and after each search unless the search itself
     # matches, so a passing assertion here means the server search really found the group.
     _pad_directory(ui, 1000)
     ui.groups[_OFF_PAGE_ID] = group_context(_OFF_PAGE_ID, _OFF_PAGE_NAME)
+    ui.groups[_OFF_PAGE_ID]["workspace"]["description"] = _OFF_PAGE_DESCRIPTION
     ui.active_group = None
     ui.open("/groups")
     picker = ui.page.get_by_role("combobox", name="Group workspace", exact=True)
     search = ui.page.get_by_role("searchbox", name="Search your groups", exact=True)
-    # The user types the group's name in lowercase and expects to reach it, exactly as they can in the
-    # casefolded V2 directory. The case-sensitive picker search strands it (xfail today).
+    target = picker.get_by_role("option", name=_OFF_PAGE_NAME, exact=True)
+    # The user types the group's name in lowercase and reaches it, exactly as they can in the V2
+    # directory.
     search.fill(_OFF_PAGE_NAME.lower())
-    expect(picker.get_by_role("option", name=_OFF_PAGE_NAME, exact=True)).to_have_count(1)
+    expect(target).to_have_count(1)
+    # Clearing the search restores the unfiltered first page, where the target is absent again, so
+    # the next assertion can't pass on this result.
+    search.fill("")
+    expect(target).to_have_count(0)
+    # A word only the description carries reaches it too.
+    search.fill(_OFF_PAGE_DESCRIPTION_WORD)
+    expect(target).to_have_count(1)
+    searched = [entry.query.get("search") for entry in ui.requests if entry.path == "/api/groups"]
+    assert [_OFF_PAGE_NAME.lower()] in searched and [_OFF_PAGE_DESCRIPTION_WORD] in searched
 
 
 # --- J3: membership revoked mid-session ----------------------------------------------------------
