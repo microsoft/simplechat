@@ -78,6 +78,8 @@ export interface TagMutationOutcome {
 export interface DocumentOperationAdapter {
     scope: DocumentReadScope;
     supported: ReadonlySet<DocumentOperation>;
+    /** Whether the server's management hint was recognized; personal operations need none. */
+    advertised: boolean;
     allows: (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => boolean;
     upload: (files: File[]) => Promise<DocumentUploadOutcome>;
     editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<'updated' | 'queued'>;
@@ -91,11 +93,16 @@ export interface DocumentOperationAdapter {
     deleteTag: (name: string) => Promise<TagMutationOutcome>;
 }
 
-export function advertisedDocumentOperations(value: unknown): ReadonlySet<DocumentOperation> {
+/** The operation names a recognized management hint offers, or null for a missing or unknown hint. */
+function offeredDocumentOperations(value: unknown): readonly string[] | null {
     if (!isRecord(value) || value.schema_version !== 1 || !Array.isArray(value.operations)
-        || !value.operations.every((operation) => typeof operation === 'string')) return new Set();
-    const offered = value.operations;
-    return new Set(DOCUMENT_OPERATIONS.filter((operation) => offered.includes(operation)));
+        || !value.operations.every((operation) => typeof operation === 'string')) return null;
+    return value.operations;
+}
+
+export function advertisedDocumentOperations(value: unknown): ReadonlySet<DocumentOperation> {
+    const offered = offeredDocumentOperations(value);
+    return new Set(offered ? DOCUMENT_OPERATIONS.filter((operation) => offered.includes(operation)) : []);
 }
 
 export function documentOperationAllowed(
@@ -348,7 +355,9 @@ function deletePayload(options: DocumentDeleteOptions) {
     };
 }
 
-function createOperations(scope: DocumentReadScope, supported: ReadonlySet<DocumentOperation>): DocumentOperationAdapter {
+function createOperations(
+    scope: DocumentReadScope, supported: ReadonlySet<DocumentOperation>, advertised: boolean,
+): DocumentOperationAdapter {
     const native = scope.kind !== 'personal';
     const scopeField = scope.kind === 'public' ? 'public_workspace_id' : 'group_id';
     const base = scope.kind === 'group'
@@ -384,7 +393,7 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
         }
     };
     return {
-        scope, supported, allows,
+        scope, supported, advertised, allows,
         upload: async (files) => {
             requireOperation('upload');
             if (!files.length) throw new Error('Choose at least one file to upload.');
@@ -534,14 +543,17 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
 }
 
 export const PERSONAL_DOCUMENT_OPERATIONS = createOperations(
-    { kind: 'personal' }, new Set(DOCUMENT_OPERATIONS),
+    { kind: 'personal' }, new Set(DOCUMENT_OPERATIONS), true,
 );
 
 export function createGroupDocumentOperations(
     scope: Extract<DocumentReadScope, { kind: 'group' }>, management: unknown,
 ): DocumentOperationAdapter {
     if (scope.kind !== 'group') throw new Error('Group operations require an explicit group scope.');
-    return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management));
+    return createOperations(
+        { ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management),
+        offeredDocumentOperations(management) !== null,
+    );
 }
 
 /**
@@ -555,5 +567,8 @@ export function createPublicDocumentOperations(
     scope: Extract<DocumentReadScope, { kind: 'public' }>, management: unknown,
 ): DocumentOperationAdapter {
     if (scope.kind !== 'public') throw new Error('Public operations require an explicit public workspace scope.');
-    return createOperations({ ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management));
+    return createOperations(
+        { ...scope, id: requireWorkspaceId(scope.id) }, advertisedDocumentOperations(management),
+        offeredDocumentOperations(management) !== null,
+    );
 }

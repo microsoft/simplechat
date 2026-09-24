@@ -22,6 +22,7 @@ import { groupScope, publicScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { isScreeningBusy } from '../../lib/contentScreening';
 import { ApiError } from '../../lib/apiClient';
 import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
+import { documentManagementRefusal, emptyDocumentsDescription } from '../../lib/documentAccessCopy';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
     supportedDocumentQuery, type DocumentReadAdapter,
@@ -31,6 +32,7 @@ import {
     type DocumentBatchOutcome, type DocumentDeleteOptions, type DocumentOperation,
     type DocumentOperationAdapter, type DocumentOperationError, type TagOperationError,
 } from '../../lib/documentOperations';
+import type { GroupWorkspaceStatus } from '../../lib/workspaceContext';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -152,7 +154,8 @@ interface DocumentExplorerProps {
     onClearLinkedDocument?: () => void;
     canChat?: boolean;
     interactionDisabled?: boolean;
-    onOpenClassic?: () => void;
+    /** A shared workspace's status from its context, so the explorer can say who can change its documents. */
+    workspaceStatus?: GroupWorkspaceStatus;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
 }
@@ -179,7 +182,7 @@ export function DocumentExplorer({
 }
 
 function ScopedDocumentExplorer({
-    reader, operations, scopeKey, canChat = true, interactionDisabled = false, onOpenClassic,
+    reader, operations, scopeKey, canChat = true, interactionDisabled = false, workspaceStatus,
     onDirtyChange, onBusyChange, collaboration, linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
 }: DocumentExplorerProps & { reader: DocumentReadAdapter; operations: DocumentOperationAdapter; scopeKey: string }) {
     const navigate = useNavigate();
@@ -267,8 +270,8 @@ function ScopedDocumentExplorer({
     const operationDocuments = inspectedDocument && documentId(inspectedDocument) === inspectedId
         && !documents.some((document) => documentId(document) === inspectedId)
         ? [...documents, inspectedDocument] : documents;
-    const operationContext = useRef({ operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features });
-    operationContext.current = { operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features };
+    const operationContext = useRef({ operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features, workspaceStatus });
+    operationContext.current = { operations, documents: operationDocuments, interactionDisabled, loading, downloadsEnabled, features, workspaceStatus };
 
     useEffect(() => {
         onDirtyChange?.(dialog?.kind === 'collaboration' ? collaborationDirty : dialog !== null);
@@ -364,8 +367,9 @@ function ScopedDocumentExplorer({
         if (!mounted.current) return null;
         if (!canPerform(operation, targets)) {
             const current = operationContext.current;
-            const message = current.operations.scope.kind === 'group' && current.operations.supported.size === 0
-                ? 'Document management is available in the classic group workspace.'
+            const { scope, supported, advertised } = current.operations;
+            const message = scope.kind !== 'personal' && supported.size === 0
+                ? documentManagementRefusal(scope.kind, { status: current.workspaceStatus, advertised })
                 : 'This operation is not currently permitted for every selected document. Refresh access or adjust the selection.';
             setDialogError(message);
             toast.error(message);
@@ -1236,8 +1240,9 @@ function ScopedDocumentExplorer({
                     description={
                         filtered
                             ? undefined
-                            : !availability.upload ? 'This group has no visible documents. Use the classic workspace to manage files.'
-                                : 'Upload a file to make it available for grounded chat.'
+                            : availability.upload || reader.scope.kind === 'personal'
+                                ? 'Upload a file to make it available for grounded chat.'
+                                : emptyDocumentsDescription(reader.scope.kind, { status: workspaceStatus, advertised: operations.advertised })
                     }
                     action={
                         filtered ? (
@@ -1251,9 +1256,7 @@ function ScopedDocumentExplorer({
                             >
                                 Clear filters
                             </GlassButton>
-                        ) : !availability.upload ? (
-                            onOpenClassic ? <GlassButton size="sm" onClick={onOpenClassic}>Manage files in classic</GlassButton> : undefined
-                        ) : (
+                        ) : availability.upload ? (
                             <GlassButton
                                 variant="primary"
                                 size="sm"
@@ -1262,7 +1265,7 @@ function ScopedDocumentExplorer({
                                 <Upload size={14} />
                                 Upload a document
                             </GlassButton>
-                        )
+                        ) : undefined
                     }
                 />
             );

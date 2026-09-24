@@ -1,8 +1,10 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.133
+Version: 0.261.166
 Implemented in: 0.261.132
+Every context carries the server's document_management hint, as build_public_workspace_context
+sends it: 0.261.166
 
 The public surface mirrors the group shell. In M3A it is read-only; from M3B a
 manager role can be granted document management. It never advertises collaboration
@@ -22,11 +24,32 @@ from ui_tests.fixtures.workspace_authoring import (
 
 
 PUBLIC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+# functions_public_document_policy.PUBLIC_DOCUMENT_OPERATIONS, in the server's order.
+PUBLIC_DOCUMENT_OPERATIONS = (
+    "upload", "edit_metadata", "tag_documents", "manage_tags",
+    "delete", "download", "extract_metadata", "reprocess",
+)
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "agents": "automation", "actions": "automation", "workflows": "automation",
     "identities": "connections", "endpoints": "connections",
 }
+
+
+def public_document_management(role, status):
+    """`public_document_management_operations` for a deployment that allows downloads and extracts
+    metadata. The server sends this hint in every public context, with no operations for a reader."""
+    operations = set()
+    if role in PUBLIC_MANAGER_ROLES and status in ("active", "locked", "upload_disabled"):
+        operations.add("download")
+        if status == "active":
+            operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags", "extract_metadata"})
+        if status in ("active", "upload_disabled"):
+            operations.update({"delete", "reprocess"})
+    return {
+        "schema_version": 1,
+        "operations": [operation for operation in PUBLIC_DOCUMENT_OPERATIONS if operation in operations],
+    }
 
 
 def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
@@ -64,6 +87,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             ],
             "facets": True, "places": True,
         },
+        "document_management": public_document_management(role, status),
     }
 
 

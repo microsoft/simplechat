@@ -5,7 +5,8 @@ Version: 0.261.166
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
 the server's name: 0.261.164
-A tag vocabulary conflict shows its sentence and keeps the draft: 0.261.166
+A tag vocabulary conflict shows its sentence; the empty explorer and a refused change say who can
+change documents, or why no one can, and never point at classic: 0.261.166
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -204,7 +205,8 @@ def test_missing_or_unknown_handshake_keeps_every_entry_point_read_only(group_ma
             }));
         }""")
         expect(ui.page.get_by_text(
-            "Document management is available in the classic group workspace.", exact=True,
+            "This group's document permissions couldn't be confirmed. Refresh this workspace before managing documents.",
+            exact=True,
         )).to_be_visible()
         page_size = ui.page.get_by_label("Documents per page", exact=True)
         current_size = page_size.input_value()
@@ -217,7 +219,61 @@ def test_missing_or_unknown_handshake_keeps_every_entry_point_read_only(group_ma
     ui.documents["group-a"] = []
     ui.open("/groups/group-a/documents")
     expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    # An unreadable hint is never read as the viewer's role: an Owner here is asked to refresh.
+    expect(explorer(ui).get_by_text(
+        "This group's document permissions couldn't be confirmed. Refresh this workspace to check whether you can "
+        "add documents.", exact=True,
+    )).to_be_visible()
     assert_read_only(ui)
+
+
+EMPTY_GROUP_CASES = [
+    ("Owner", "active", None),
+    ("User", "active", "This group's owner, admins and document managers can add documents."),
+    ("DocumentManager", "upload_disabled", "Document uploads are disabled for this group."),
+    ("User", "upload_disabled", "Document uploads are disabled for this group."),
+    ("Owner", "locked", "This group is locked (read-only), so documents can't be added."),
+]
+
+
+@pytest.mark.parametrize("role, status, description", EMPTY_GROUP_CASES)
+def test_an_empty_group_says_who_can_add_documents_and_never_offers_classic(group_management_ui, role, status, description):
+    ui = group_management_ui
+    ui.set_policy(role=role, status=status)
+    ui.documents["group-a"] = []
+    ui.open("/groups/group-a/documents")
+    expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    upload = explorer(ui).get_by_role("button", name="Upload a document", exact=True)
+    if description is None:
+        expect(explorer(ui).get_by_text("Upload a file to make it available for grounded chat.", exact=True)).to_be_visible()
+        expect(upload).to_be_visible()
+    else:
+        expect(explorer(ui).get_by_text(description, exact=True)).to_be_visible()
+        expect(upload).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_have_count(0)
+    expect(explorer(ui).get_by_text(re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    assert not ui.operation_requests
+
+
+@pytest.mark.parametrize("status, refusal", [
+    ("active", "Only this group's owner, admins and document managers can manage its documents."),
+    ("locked", "This group is locked (read-only), so its documents can't be changed."),
+])
+def test_a_member_who_drops_files_is_told_who_manages_documents(group_management_ui, status, refusal):
+    ui = group_management_ui
+    ui.set_policy(role="User", status=status)
+    open_documents(ui)
+    assert_read_only(ui)
+    ui.page.get_by_role("table").evaluate("""element => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['blocked'], 'blocked.txt', {type: 'text/plain'}));
+        element.dispatchEvent(new DragEvent('drop', {
+            bubbles: true, cancelable: true, dataTransfer: transfer,
+        }));
+    }""")
+    expect(ui.page.get_by_text(refusal, exact=True).first).to_be_visible()
+    expect(ui.page.get_by_text("Document management is available in the classic group workspace.", exact=True)).to_have_count(0)
+    assert not ui.operation_requests
 
 
 def test_user_role_is_read_only_in_documents_and_native_tags(group_management_ui):

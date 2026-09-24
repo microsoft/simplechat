@@ -1,8 +1,9 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.161
+Version: 0.261.166
 Implemented in: 0.261.128
+A member's empty explorer and refused change say who manages documents, never classic: 0.261.166
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The API fixture never permits personal document requests or document writes, and
@@ -206,7 +207,10 @@ def test_restricted_selection_and_writes(group_documents_ui):
         dataTransfer.items.add(new File(['fixture'], 'blocked-upload.txt', {type: 'text/plain'}));
         element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
     }""")
-    expect(ui.page.get_by_text("Document management is available in the classic group workspace.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text(
+        "Only this group's owner, admins and document managers can manage its documents.", exact=True,
+    ).first).to_be_visible()
+    expect(ui.page.get_by_text("Document management is available in the classic group workspace.", exact=True)).to_have_count(0)
     assert not [entry for entry in ui.writes if entry.path.startswith("/api/group_documents")]
 
 
@@ -444,7 +448,13 @@ def test_empty_group_stays_read_only(group_documents_ui):
     ui.documents["group-a"] = []
     ui.open("/groups/group-a/documents")
     expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
-    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_be_visible()
+    # A member can't add documents here or in classic, which applies the same policy, so the empty
+    # explorer says who can and offers no classic hand-off.
+    expect(explorer(ui).get_by_text(
+        "This group's owner, admins and document managers can add documents.", exact=True,
+    )).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_have_count(0)
+    expect(explorer(ui).get_by_text(re.compile("classic", re.IGNORECASE))).to_have_count(0)
     expect(explorer(ui).get_by_role("button", name="Chat", exact=True)).to_be_disabled()
     assert_read_only(ui)
 
