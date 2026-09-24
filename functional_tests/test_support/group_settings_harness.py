@@ -492,6 +492,11 @@ def group_settings_environment():
                 "functions_simplechat_operations",
                 create_group_for_current_user=_refuse("create_group_for_current_user"),
                 add_group_member_for_current_user=_refuse("add_group_member_for_current_user"),
+                # functions_group_membership, which route_backend_groups imports, reads these.
+                # No settings or insights route calls them.
+                _get_directory_user_by_id=_refuse("_get_directory_user_by_id"),
+                _log_group_member_addition=_refuse("_log_group_member_addition"),
+                _notify_group_member_addition=_refuse("_notify_group_member_addition"),
             ),
             "functions_group_document_reads": module_stub(
                 "functions_group_document_reads",
