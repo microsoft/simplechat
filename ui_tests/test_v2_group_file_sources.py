@@ -123,6 +123,21 @@ def test_group_file_source_layout(group_file_sources_ui, theme, width, height):
     ui.assert_no_overflow()
 
 
+def test_overview_offers_file_sources_as_native(group_file_sources_ui):
+    """The overview card links to the native section and no longer carries the Classic label."""
+    ui = group_file_sources_ui
+    ui.open("/groups/group-a")
+    expect(ui.page.get_by_role("heading", name="Overview", exact=True)).to_be_visible()
+    card = ui.page.get_by_role("link").filter(has_text="Bring approved files into this group from other systems.")
+    expect(card).to_have_count(1)
+    expect(card).to_have_attribute("href", re.compile(r"/groups/group-a/sync$"))
+    expect(card).not_to_contain_text("Classic")
+    card.click()
+    expect(ui.page.get_by_role("heading", name="File sources", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Open classic group workspace", exact=True)).to_have_count(0)
+    assert_no_personal_reads(ui)
+
+
 def test_group_file_sources_read_from_the_group_route_only(group_file_sources_ui):
     """Every list is a group read with no query; no personal file sync request is ever made."""
     ui = group_file_sources_ui

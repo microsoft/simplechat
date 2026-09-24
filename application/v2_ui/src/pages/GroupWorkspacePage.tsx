@@ -152,11 +152,12 @@ export function GroupWorkspacePage() {
                 : id === 'agents' ? (context?.sections.agents.enabled ? undefined : 'Classic')
                 : id === 'identities' ? (context?.sections.identities.enabled ? undefined : 'Classic')
                 : id === 'endpoints' ? (context?.sections.endpoints.enabled ? undefined : 'Classic')
+                : id === 'sync' ? (context?.sections.sync.enabled ? undefined : 'Classic')
                 : id === 'actions' ? (context?.sections.actions.enabled ? undefined
                     : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
                 : 'Classic',
         };
-    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled, context?.sections.endpoints.enabled]);
+    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled, context?.sections.endpoints.enabled, context?.sections.sync.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
