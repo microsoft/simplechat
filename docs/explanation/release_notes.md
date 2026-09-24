@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.137)**
+
+#### Bug Fixes
+
+*   **Orchestrate Remembers Auto And Pinned Models**
+    *   Fixed the Orchestrate model choice resetting to a specific model whenever you left the chat or opened a new chat, which meant choosing **Auto - choose per step** again on every visit.
+    *   The choice is now saved to your account, so Auto or a pinned model stays selected across chats, reloads, and devices. A model pinned for Orchestrate does not change the model normal chat uses.
+    *   Fixed the normal chat model sometimes snapping back to the model that was selected when the page loaded after you left the chat and returned.
+    *   (Ref: `Composer.tsx`, `orchestrationModelRouting.ts`, `route_backend_users.py`, [Model Picker Persistence Fix](fixes/ORCHESTRATION_MODEL_PICKER_PERSISTENCE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Orchestrate Model Picker Under Manual Controls**
+    *   The Orchestrate model picker now sits in the normal model picker's place under **Manual controls**, instead of appearing above the message box, so the toolbar keeps its shape when Orchestrate is switched on.
+    *   **Auto - choose per step** is the default wherever a connected model has a catalog profile rated for general answering. Auto is not offered when no model qualifies, and when an administrator hides Manual controls, Orchestrate uses Auto without a picker.
+    *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md), [Choose models for orchestration](../guides/model-catalog-routing.md))
+
+*   **Planner Model Dropdown In Admin Settings**
+    *   Orchestration → Planner model is now one dropdown on both the V2 and classic Admin Settings pages, replacing four text boxes for the deployment name, model ID, endpoint ID, and provider.
+    *   It lists the same models as the default chat model picker, or the classic deployments when AI Connections are off, and writes the four settings for you. **Use the answer model (default)** keeps planning on whichever model answers.
+    *   A saved planner model that is no longer listed stays selected and is labelled as missing rather than being cleared, and V2 refuses saves the runtime could never resolve.
+    *   (Ref: `OrchestrationPlannerModelPicker.tsx`, `admin_orchestration_planner_model.js`, `chat-orchestration.html`, `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md#chat-orchestration-planner-model-section))
+
 ### **(v0.261.134)**
 
 #### Bug Fixes

@@ -9,7 +9,7 @@
 // them on window.OrchHarness so a test can seed the stores, mount a component into a real DOM, and
 // drive it with genuine clicks. Nothing here is stubbed: the code under test is the code that ships.
 
-import { createElement, StrictMode, useEffect, type ComponentProps, type ReactElement } from 'react';
+import { createElement, StrictMode, useEffect, useState, type ComponentProps, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -38,6 +38,9 @@ import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
+import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
+import { PLANNER_MODEL_KEYS } from '../../../application/v2_ui/src/lib/orchestrationPlannerModel';
+import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields';
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
@@ -99,6 +102,39 @@ function ApprovalPreferenceWorkflow() {
     );
 }
 
+/**
+ * The real planner model picker over an in-memory settings draft, the way Admin Settings
+ * holds unsaved edits. The four planner values are reported as JSON for assertions.
+ */
+function PlannerModelWorkflow({
+    settings,
+    connectionsEnabled,
+}: {
+    settings: Record<string, unknown>;
+    connectionsEnabled: boolean;
+}) {
+    const [values, setValues] = useState<Record<string, unknown>>(settings);
+    const field: AdminField = {
+        type: 'component', component: 'orchestration-planner-model',
+        label: 'Planner Model', help: 'Which model writes the plan.',
+    };
+    return (
+        <>
+            <OrchestrationPlannerModelPicker
+                field={field}
+                connectionsEnabled={connectionsEnabled}
+                read={(key) => values[key]}
+                onChange={(updates) => setValues((current) => ({ ...current, ...updates }))}
+            />
+            <output aria-label="Planner settings">
+                {JSON.stringify(Object.fromEntries(
+                    Object.values(PLANNER_MODEL_KEYS).map((key) => [key, values[key] ?? '']),
+                ))}
+            </output>
+        </>
+    );
+}
+
 type ComponentName =
     | 'ModelCatalogManager'
     | 'OrchestrationPlanCard'
@@ -111,6 +147,7 @@ type ComponentName =
     | 'PromptExperience'
     | 'ChatExperience'
     | 'ApprovalPreferenceWorkflow'
+    | 'PlannerModelWorkflow'
     | 'PlanEditorExperience'
     | 'OrchestrationPlanEditorHost'
     | 'ContextWorkflow'
@@ -130,6 +167,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     PromptExperience,
     ChatExperience,
     ApprovalPreferenceWorkflow,
+    PlannerModelWorkflow,
     PlanEditorExperience,
     OrchestrationPlanEditorHost,
     ContextWorkflow,
