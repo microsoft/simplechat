@@ -280,10 +280,7 @@ def _orchestration_enabled(settings):
 
 
 def _new_plan_contract_version(settings, seeds):
-    """Admit dependency plans only where their executor can honor the model selection."""
-    if (seeds or {}).get('model_routing') == 'auto':
-        # Only the standard step executor enforces per-step Auto model bindings.
-        return 1
+    """Select the plan contract for new work; Auto routing is enforced by both executors."""
     return get_new_plan_contract_version(
         settings, admission_ready=harness_admission.HARNESS_ADMISSION_READY,
     )

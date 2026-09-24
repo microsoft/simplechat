@@ -28,6 +28,7 @@ import type {
     OrchestrationPlanAction,
     OrchestrationPlanDocument,
     OrchestrationPlanInputs,
+    OrchestrationPlanner,
     OrchestrationStep,
     OrchestrationRole,
     OrchestrationValidation,
@@ -210,6 +211,7 @@ function normalizeNamedInputs(raw: unknown): Record<string, OrchestrationNamedIn
         return [name, {
             binding: normalizeInputBinding(input.binding),
             allow_partial: input.allow_partial === true,
+            ...(input.optional === true ? { optional: true } : {}),
         }];
     }));
 }
@@ -268,6 +270,49 @@ function normalizeValidation(raw: unknown): OrchestrationValidation {
     };
 }
 
+const PLANNER_SOURCES: readonly OrchestrationPlanner['source'][] = ['selected', 'planner_setting', 'default'];
+
+/** The model that wrote a plan, or undefined for plans saved before it was recorded. */
+export function normalizePlanner(raw: unknown): OrchestrationPlanner | undefined {
+    const source = asRecord(raw);
+    const label = asString(source.label).trim();
+    if (!label) return undefined;
+    return {
+        label,
+        source: oneOf(source.source, PLANNER_SOURCES, 'default'),
+        ...(typeof source.reasoning_effort === 'string' && source.reasoning_effort.trim()
+            ? { reasoning_effort: source.reasoning_effort.trim() } : {}),
+    };
+}
+
+const PLANNER_SOURCE_LABELS: Record<OrchestrationPlanner['source'], string> = {
+    selected: 'the model you selected',
+    planner_setting: "the administrator's planning model",
+    default: 'the default model',
+};
+
+/** "Planned by gpt-5.4 (the model you selected)", or null when the plan does not say. */
+export function describePlanner(plan: Pick<OrchestrationPlan, 'planner' | 'model_routing'>): string | null {
+    if (!plan.planner) return null;
+    const origin = PLANNER_SOURCE_LABELS[plan.planner.source];
+    const routing = plan.model_routing === 'auto' ? '; each step uses its own Auto-routed model' : '';
+    return `Planned by ${plan.planner.label} (${origin})${routing}`;
+}
+
+/** What an answer step may rely on, as the plan panel names it. */
+export const KNOWLEDGE_BASIS_LABELS: Record<string, string> = {
+    general_knowledge: 'General knowledge',
+    sources: 'Gathered sources only',
+    sources_and_general_knowledge: 'Gathered sources, plus general knowledge for stable facts',
+};
+
+/** Visual kinds a step was asked to author. */
+export const VISUAL_KIND_LABELS: Record<string, string> = {
+    chart: 'Chart',
+    diagram: 'Mermaid diagram',
+    image_proposal: 'Image proposals',
+};
+
 /**
  * Coerce a raw plan object into the typed shape, or return null when it is not a usable plan.
  *
@@ -305,6 +350,8 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         outputs: Array.isArray(source.outputs) ? (source.outputs as Json[]) : undefined,
         ...(contractVersion === 2 && source.final_response !== undefined
             ? { final_response: normalizeInputBinding(source.final_response) } : {}),
+        ...(normalizePlanner(source.planner) ? { planner: normalizePlanner(source.planner) } : {}),
+        ...(source.model_routing === 'auto' ? { model_routing: 'auto' as const } : {}),
         approval: normalizeApproval(source.approval),
         validation: normalizeValidation(source.validation),
         status: oneOf(source.status, PLAN_STATUSES, 'awaiting_approval'),

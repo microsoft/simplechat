@@ -32,6 +32,7 @@ import {
 } from '../../stores/orchestrationStore';
 import {
     applyPlanEdits,
+    describePlanner,
     isPlanRunnable,
     isPlanTerminal,
     planBindingIssues,
@@ -293,6 +294,14 @@ export function OrchestrationPlanCard({
                             <>
                                 <span aria-hidden="true">·</span>
                                 <span className={costTone[cost]}>{cost} cost</span>
+                            </>
+                        ) : null}
+                        {plan.planner ? (
+                            <>
+                                <span aria-hidden="true">·</span>
+                                <span data-testid="orchestration-plan-card-planner" title={describePlanner(plan) ?? undefined}>
+                                    planned by {plan.planner.label}
+                                </span>
                             </>
                         ) : null}
                     </p>

@@ -113,6 +113,22 @@ CAPABILITY_ACTION_INVOKE = 'action_invoke'
 CAPABILITY_RESPOND = 'respond'
 CAPABILITY_COMPOSE = 'compose'
 
+# What an answer-writing step may rely on. The planner declares one per compose step; the
+# step's policy follows it. Stable, widely established facts can come from the model's own
+# knowledge, while time-sensitive, local, private or source-specific facts need sources.
+KNOWLEDGE_BASIS_GENERAL = 'general_knowledge'
+KNOWLEDGE_BASIS_SOURCES = 'sources'
+KNOWLEDGE_BASIS_MIXED = 'sources_and_general_knowledge'
+KNOWLEDGE_BASES = (KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_SOURCES, KNOWLEDGE_BASIS_MIXED)
+GENERAL_KNOWLEDGE_BASES = (KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED)
+
+# Visual output kinds a planned step can be asked to author, named by the planner rather than
+# guessed from keywords in the request.
+VISUAL_CHART = 'chart'
+VISUAL_DIAGRAM = 'diagram'
+VISUAL_IMAGE_PROPOSAL = 'image_proposal'
+VISUAL_KINDS = (VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL)
+
 # Workspace scopes a capability may need at least one of.
 SCOPE_PERSONAL = 'personal'
 SCOPE_GROUP = 'group'
@@ -301,6 +317,8 @@ CAPABILITY_REGISTRY = (
         'max_per_plan': 3,
         'adapter': CAPABILITY_DOCUMENT_SEARCH,
         'terminal': False,
+        # Read-only and idempotent: one bounded retry on a transient provider failure.
+        'retry_on_transient': True,
     },
     {
         'id': CAPABILITY_DOCUMENT_ANALYZE,
@@ -473,6 +491,7 @@ CAPABILITY_REGISTRY = (
         'max_per_plan': 2,
         'adapter': CAPABILITY_WEB_SEARCH,
         'terminal': False,
+        'retry_on_transient': True,
     },
     {
         'id': CAPABILITY_URL_FETCH,
@@ -509,6 +528,7 @@ CAPABILITY_REGISTRY = (
         'max_per_plan': 1,
         'adapter': CAPABILITY_URL_FETCH,
         'terminal': False,
+        'retry_on_transient': True,
     },
     {
         'id': CAPABILITY_DEEP_RESEARCH,
@@ -545,6 +565,7 @@ CAPABILITY_REGISTRY = (
         'max_per_plan': 1,
         'adapter': CAPABILITY_DEEP_RESEARCH,
         'terminal': False,
+        'retry_on_transient': True,
     },
     {
         'id': CAPABILITY_ACTION_INVOKE,
@@ -826,6 +847,24 @@ def _dependency_capabilities():
                 'runtime_binding_unavailable_reason': 'external_result_lineage_unavailable',
             })
         capability['inputs']['properties'].pop('documents_from_step', None)
+        if capability['id'] == CAPABILITY_ACTION_INVOKE:
+            capability['inputs']['properties']['visuals'] = {
+                'type': 'array', 'items': {'type': 'string', 'enum': [VISUAL_CHART]},
+                'uniqueItems': True, 'maxItems': 1,
+                'description': (
+                    'Include "chart" to have this step chart the exact rows its functions '
+                    'return. The chart is drawn from the retrieved data, not from the prose findings.'
+                ),
+            }
+        elif capability['id'] == CAPABILITY_AGENT_INVOKE:
+            capability['inputs']['properties']['visuals'] = {
+                'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
+                'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
+                'description': (
+                    'Visuals the answer will include, so the agent keeps the values, '
+                    'relationships or visual details they need.'
+                ),
+            }
         if capability['id'] == CAPABILITY_DOCUMENT_ANALYZE:
             capability['when_to_use'] += ' This contract currently accepts narrative documents; native tabular handoff is not admitted.'
             capability['result_input_kinds'] = {'sources': ('source-set-v1',)}
@@ -873,7 +912,14 @@ def _dependency_capabilities():
             'Explicitly draft an answer or report, or prepare structured data. Bind every '
             'retained input by name. Source-free content is supported. This does not create '
             'files, infer a file format, retrieve sources, or call tools. Declare each output '
-            'and select final_response when its text should become the chat answer.'
+            'and select final_response when its text should become the chat answer. Set '
+            'knowledge_basis: general_knowledge for stable, widely known facts that need no '
+            'retrieval; sources when every claim must come from the named inputs (private '
+            'documents, current or local facts); sources_and_general_knowledge when named inputs '
+            'lead but stable general knowledge may fill gaps. Mark an input optional only when '
+            'the answer can still be written from general knowledge if that input fails. Name '
+            'the visuals the Markdown answer should author: chart, diagram (Mermaid), or '
+            'image_proposal (cards the user approves before generation).'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -882,12 +928,20 @@ def _dependency_capabilities():
         'requires_scope': (),
         'inputs': {
             'type': 'object',
-            'properties': {'instruction': {'type': 'string', 'minLength': 1}},
+            'properties': {
+                'instruction': {'type': 'string', 'minLength': 1},
+                'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
+                'visuals': {
+                    'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
+                    'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
+                },
+            },
             'required': ['instruction'],
             'additionalProperties': False,
         },
         'result_input_kinds': {'*': tuple(sorted(RESULT_KINDS))},
         'partial_inputs_supported': True,
+        'optional_inputs_supported': True,
         'result_outputs': {},
         'result_output_kinds': ('text-v1', 'markdown-v1', 'records-v1', 'structured-v1'),
         'produces': ('retained_results',),
@@ -1214,6 +1268,7 @@ def build_planner_capability_projection(capabilities):
                     name: list(kinds) for name, kinds in capability['result_input_kinds'].items()
                 },
                 'partial_inputs_supported': capability['partial_inputs_supported'],
+                **({'optional_inputs_supported': True} if capability.get('optional_inputs_supported') else {}),
                 **({'required_result_inputs': list(capability['required_result_inputs'])}
                    if capability.get('required_result_inputs') else {}),
                 'result_outputs': capability['result_outputs'],

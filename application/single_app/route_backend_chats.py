@@ -218,6 +218,7 @@ from functions_assistant_table_exports import (
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
+from functions_web_search_results import describe_web_search_exception, format_linked_search_results
 from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
@@ -28475,7 +28476,10 @@ def perform_web_search(
     initial_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else 0
     run_started_at = datetime.utcnow().isoformat()
 
-    def record_web_search_run(success, status, error=None, result_message_length=0, raw_citation_count=0):
+    def record_web_search_run(
+        success, status, error=None, result_message_length=0, raw_citation_count=0,
+        error_type=None, provider_status=None, provider_timeout=False, provider_connection=False,
+    ):
         if not isinstance(web_search_runs_list, list):
             return
         final_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else initial_seed_url_count
@@ -28492,6 +28496,11 @@ def perform_web_search(
             'result_message_length': int(result_message_length or 0),
             'raw_citation_count': int(raw_citation_count or 0),
             'error': str(error or '')[:500],
+            # Structured, provider-text-free facts a caller can classify without the message.
+            'error_type': str(error_type or '')[:100],
+            'provider_status': provider_status if isinstance(provider_status, int) else None,
+            'provider_timeout': bool(provider_timeout),
+            'provider_connection': bool(provider_connection),
         })
 
     enable_web_search = settings.get("enable_web_search")
@@ -28586,6 +28595,11 @@ def perform_web_search(
             )
         )
     except FoundryAgentInvocationError as exc:
+        # Record structured facts first, so a caller can still classify the provider failure
+        # when the capture check below reports that nothing had been acquired yet.
+        record_web_search_run(
+            False, 'foundry_invocation_error', error=str(exc), **describe_web_search_exception(exc),
+        )
         if invocation_capture is not None:
             invocation_capture.require_valid(captured=True)
         log_event(
@@ -28603,9 +28617,11 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
-        record_web_search_run(False, 'foundry_invocation_error', error=str(exc))
         return False  # Search failed
     except Exception as exc:
+        record_web_search_run(
+            False, 'unexpected_error', error=str(exc), **describe_web_search_exception(exc),
+        )
         if invocation_capture is not None:
             invocation_capture.require_valid(captured=True)
         log_event(
@@ -28623,7 +28639,6 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
-        record_web_search_run(False, 'unexpected_error', error=str(exc))
         return False  # Search failed
 
     debug_print("[WEB_SEARCH] ========== FOUNDRY AGENT RESULT ==========")
@@ -28660,9 +28675,12 @@ def perform_web_search(
         result_heading = "Web search results"
         if search_context_label:
             result_heading = f"Web search results ({search_context_label})"
+        # Foundry marks citations with placeholders such as 【3:1†source】 that mean nothing
+        # to a reader or to the model writing the answer. Replace each with a numbered link
+        # to the source it annotates, and list the sources so they can be cited by number.
         system_messages_for_augmentation.append({
             "role": "system",
-            "content": f"{result_heading}:\n{result.message}",
+            "content": format_linked_search_results(result_heading, result.message, result.citations or []),
         })
         debug_print(f"[WEB_SEARCH] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
 

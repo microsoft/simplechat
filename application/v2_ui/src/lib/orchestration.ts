@@ -224,6 +224,8 @@ export interface OrchestrationInputBinding {
 export interface OrchestrationNamedInput {
     binding: OrchestrationInputBinding | null;
     allow_partial?: boolean;
+    /** The consumer runs without this input, and says so, when its producer fails. */
+    optional?: boolean;
 }
 
 export interface OrchestrationNamedOutput {
@@ -354,6 +356,16 @@ export interface OrchestrationPlanInputs {
 }
 
 /**
+ * The model that wrote a plan, as the server described it: a display label and how it was
+ * chosen. Connection details never reach the browser.
+ */
+export interface OrchestrationPlanner {
+    label: string;
+    source: 'selected' | 'planner_setting' | 'default';
+    reasoning_effort?: string;
+}
+
+/**
  * A validated, runnable plan.
  *
  * `outputs` is carried opaquely: its shape is owned by the executor work being built in
@@ -387,6 +399,10 @@ export interface OrchestrationPlan {
     outputs?: Json[];
     /** V2's prepared answer selection, not the executor's private result reference. */
     final_response?: OrchestrationInputBinding | null;
+    /** Who planned this run; older plans do not carry it. */
+    planner?: OrchestrationPlanner;
+    /** Present when each model-backed step was bound to its own model by Auto routing. */
+    model_routing?: 'auto';
     approval: OrchestrationApproval;
     validation: OrchestrationValidation;
     status: PlanStatus;

@@ -50,6 +50,10 @@ def resolve_step_inputs(step, context):
     consumer = context.result_producer(step)
     readers = {}
     for spec in step_input_specs(step):
+        if spec.optional and spec.binding.step_id is not None and spec.binding.step_id not in context.task_results:
+            # The optional producer did not complete. Its consumer runs without a reader and
+            # discloses the gap; a failed or partial result is never made readable.
+            continue
         if spec.binding.step_id is not None:
             task = context.task_results.get(spec.binding.step_id)
             if isinstance(task, TaskResult) and (

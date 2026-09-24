@@ -424,7 +424,8 @@ renderer. Ask a focused clarification or explain an unsupported request instead.
 
 Return {"kind":"plan","intent":{"summary":"...","complexity":"simple","confidence":0.9},
 "assumptions":[],"steps":[{"step_id":"draft","capability_id":"compose",
-"title":"Prepare answer","rationale":"...","arguments":{"instruction":"A self-contained task"},
+"title":"Prepare answer","rationale":"...","arguments":{"instruction":"A self-contained task",
+"knowledge_basis":"general_knowledge"},
 "inputs":{},"outputs":[{"name":"answer","kind":"markdown-v1"}],"depends_on":[]}],
 "final_response":{"version":"orchestration-input-binding-v1","step_id":"draft",
 "output_name":"answer","existing_result":null}}.
@@ -465,6 +466,36 @@ Honor the contextualized request, latest explicit edits, original selections, an
 authorized conversation/memory constraints. Earlier run summaries are activity, not evidence.
 Keep each query and instruction self-contained and choose the least costly sufficient work.
 
+Answer basis. Every compose step sets knowledge_basis. Use general_knowledge for stable,
+widely known facts (historical dates, geography, definitions) that need no retrieval; a
+one-step compose plan is right for those. Use sources when every claim must come from named
+inputs: the user's documents, private or integration data, and current, local or changing
+facts such as prices, schedules or opening hours. Use sources_and_general_knowledge when
+gathered inputs lead but stable general knowledge may fill gaps. Mark a named input
+"optional": true only on a compose step whose basis includes general knowledge and only when
+the answer can still be written if that producer fails; compose then discloses the missing
+input instead of the plan failing. compose also receives saved memory and the resolved
+conversation references, so it can transform an earlier answer, but earlier answers are
+never evidence.
+
+Visuals. Markdown answers can include inline charts, Mermaid diagrams and, when
+capability_availability.visual_outputs.image_proposals is true, image proposal cards the user
+approves before an AI image is generated. Decide from the request whether a visual materially
+helps, even unasked, and list it in compose "visuals" (chart, diagram, image_proposal). When a
+chart needs rows an action retrieves, set that action_invoke step's visuals to ["chart"]; it
+charts the exact rows. When user_selected.image_proposals is true, include image_proposal.
+Web search returns text and links only: it cannot retrieve images or place existing pictures
+into an answer or file. Saved instructions in memory about visuals decide which visuals you
+plan and how, unless the current message explicitly asks otherwise.
+
+Files. A file the user asks for (CSV, Excel, Word, PDF, PowerPoint, JSON, Markdown...) is
+delivered only by render_file: prepare its content with compose (records-v1 with explicit
+columns for CSV/XLSX; markdown-v1 for DOCX/PDF), then render it. Writing the content into the
+chat answer does not create a file. Never title or describe a step as creating or saving a
+file unless a render_file step delivers it; if render_file is not offered or cannot produce the
+requested format, say so plainly in "assumptions" instead of promising a file. Titles describe
+the work each step actually does.
+
 If essential information is missing, return the existing flat elicitation contract:
 {"kind":"elicitation","message":"...","requested_schema":{"type":"object",
 "properties":{"detail":{"type":"string","title":"..."}},"required":["detail"]},
@@ -502,10 +533,7 @@ def build_planner_messages(planner_context, replan_hint=None, edit_context=None,
         {
             'role': 'system',
             'content': system_prompt + (
-                # Auto bindings are enforced by the legacy step executor only.
-                '\n' + ROUTING_INSTRUCTIONS
-                if contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION and payload.get('model_routing') == 'auto'
-                else ''
+                '\n' + ROUTING_INSTRUCTIONS if payload.get('model_routing') == 'auto' else ''
             ) + (
                 '\n\n' + editing if edit_context is not None else ''
             ),
@@ -825,6 +853,34 @@ def resolve_conversation_request(
 # Planning
 # --------------------------------------------------------------------------------------
 
+# How the planning model was chosen, in the words the plan panel shows. A request selection
+# is the user's own model; an administrator can set a dedicated planner model; otherwise the
+# deployment default plans, which is also the case under Auto routing.
+PLANNER_MODEL_SOURCES = {'request': 'selected', 'planner_override': 'planner_setting'}
+
+
+def describe_planner_model(planner_model, deployment):
+    """A browser-safe description of the model that wrote a plan: its label and source.
+
+    Only display names are read from the model metadata. Connection details, endpoint ids
+    and credentials never leave the server.
+    """
+    metadata = getattr(planner_model, 'model_metadata', None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    label = next((
+        value.strip() for value in (
+            metadata.get('displayName'), metadata.get('display_name'),
+            getattr(planner_model, 'deployment', None), deployment,
+        ) if isinstance(value, str) and value.strip()
+    ), '')
+    reasoning = getattr(planner_model, 'reasoning_resolution', None)
+    effort = reasoning.get('effective_effort') if isinstance(reasoning, dict) else None
+    return {
+        'label': label[:200],
+        'source': PLANNER_MODEL_SOURCES.get(getattr(planner_model, 'source', None), 'default'),
+        **({'reasoning_effort': effort} if isinstance(effort, str) and effort else {}),
+    }
+
 def plan_request(
     user_message,
     planner_context,
@@ -881,12 +937,6 @@ def plan_request(
     context = dict(planner_context or {})
     model_candidates = []
     if (seeds or {}).get('model_routing') == 'auto':
-        if contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
-            # Dependency plans do not execute per-step bindings; never display unenforced choices.
-            raise ModelCatalogError(
-                'Auto model routing is not available for this plan type. Choose a specific model.',
-                'model_routing', 'model_routing_unsupported',
-            )
         model_candidates = authorized_routing_candidates(settings, user_id)
         context.update(model_routing='auto', model_tasks=TASKS, model_candidates=model_candidates)
     context['capabilities'] = build_planner_capability_projection(capabilities)
@@ -903,12 +953,10 @@ def plan_request(
         'available': available_ids,
         'unavailable': unavailable,
         'web_discovery_enabled': bool(settings.get('enable_web_search')),
+        'visual_outputs': planner_visual_outputs(settings),
     }
-    if contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION:
-        # Dependency plans answer through compose/render and do not carry visual outputs yet.
-        context['capability_availability']['visual_outputs'] = planner_visual_outputs(settings)
-        if image_requested_by_user(seeds) and image_proposals_available(settings):
-            context['user_selected'] = {**(context.get('user_selected') or {}), 'image_proposals': True}
+    if image_requested_by_user(seeds) and image_proposals_available(settings):
+        context['user_selected'] = {**(context.get('user_selected') or {}), 'image_proposals': True}
     agent_names = [
         agent.get('name') for agent in context.get('agents') or () if isinstance(agent, dict)
     ]
@@ -1106,6 +1154,7 @@ def plan_request(
     if (seeds or {}).get('model_routing') == 'auto':
         assign_step_models(plan, model_candidates)
     plan['planner_model'] = deployment
+    plan['planner'] = describe_planner_model(planner_model, deployment)
     plan['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
     if usage is not None:
         plan['token_usage'] = {

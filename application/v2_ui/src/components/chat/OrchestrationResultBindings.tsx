@@ -29,6 +29,9 @@ export function OrchestrationResultBindings({
                                 <dd>
                                     {describeInputBinding(plan, input.binding)}.
                                     {' '}{input.allow_partial ? 'Partial results accepted.' : 'Complete results required.'}
+                                    {input.optional
+                                        ? ' Optional: if it cannot be gathered, the answer continues from general knowledge and says so.'
+                                        : ''}
                                 </dd>
                             </div>
                         ))}

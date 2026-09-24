@@ -412,14 +412,19 @@ def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, 
 # Planner and composer seeds
 # --------------------------------------------------------------------------------------
 
-def test_planner_prompt_describes_visual_outputs_only_for_the_legacy_contract(modules):
+def test_planner_prompt_describes_visual_outputs_for_both_contracts(modules):
     legacy = ' '.join(modules.planner.build_planner_messages({}, contract_version=1)[0]['content'].split())
     assert 'image proposal cards' in legacy
     assert 'Charting the values an action retrieves is part of that knowledge step' in legacy
     assert 'Saved instructions in "memory" about visuals' in legacy
     assert 'the respond instruction must ask for at least one image proposal' in legacy
+    # Gather/Reason/Render plans name visuals as structured compose/action arguments.
     dependency = ' '.join(modules.planner.build_planner_messages({}, contract_version=2)[0]['content'].split())
-    assert 'image proposal cards' not in dependency
+    assert 'image proposal cards' in dependency
+    assert 'compose "visuals" (chart, diagram, image_proposal)' in dependency
+    assert "set that action_invoke step's visuals to [\"chart\"]" in dependency
+    assert 'Web search returns text and links only' in dependency
+    assert 'Saved instructions in memory about visuals' in dependency
     respond_capability = modules.registry.get_capability('respond')
     assert 'Mermaid diagrams' in respond_capability['when_to_use']
 

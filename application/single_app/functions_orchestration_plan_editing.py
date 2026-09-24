@@ -28,6 +28,8 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
 )
+from functions_model_catalog import ModelCatalogError
+from functions_orchestration_model_routing import assign_step_models, authorized_routing_candidates
 from functions_orchestration_models import OrchestrationModelError, resolve_orchestration_model
 from functions_orchestration_memory import load_orchestration_memory, validate_memory_audience
 from functions_orchestration_events import merge_reasoning_adjustments
@@ -267,6 +269,16 @@ def validate_edited_plan(
         *checked['validation']['repairs'],
     ]))
     validate_plan_requirements(checked, seeds, allow_changes=True)
+    if seeds.get('model_routing') == 'auto':
+        # normalize_plan strips server-owned bindings. Re-bind an Auto plan to the current
+        # authorized inventory instead of letting an edit silently turn Auto routing off.
+        try:
+            assign_step_models(checked, authorized_routing_candidates(settings, user_id))
+        except ModelCatalogError as exc:
+            raise PlanRevisionError(
+                'No eligible model is available for that version. Your current plan is unchanged.',
+                code='model_unavailable', status_code=403,
+            ) from exc
     return checked
 
 

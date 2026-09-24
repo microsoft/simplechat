@@ -134,6 +134,10 @@ from functions_orchestration_memory import (
     validate_memory_audience,
     validate_memory_context,
 )
+from functions_model_catalog import ModelCatalogError
+from functions_orchestration_model_routing import (
+    STEP_TASKS, answer_selection, step_model_context, validate_auto_bindings,
+)
 from functions_orchestration_models import (
     REASONING_COMPLETION_BUDGET,
     OrchestrationModelError,
@@ -556,8 +560,13 @@ class HarnessExecution:
         self.settings = deepcopy(bootstrap.get_settings() if settings is None else settings)
         if type(self.settings) is not dict or not self.settings.get("enable_chat_orchestration"):
             raise HarnessExecutionError("context_unavailable")
-        if self.record["plan"].get("model_routing") == "auto":
-            # Dependency execution cannot enforce per-step Auto bindings; never ignore them.
+        plan = self.record["plan"]
+        auto_routing = plan.get("model_routing") == "auto"
+        if auto_routing and any(
+            step.get("enabled", True) and step.get("capability_id") in STEP_TASKS and not step.get("model_binding")
+            for step in plan.get("steps") or []
+        ):
+            # An Auto plan without its approved bindings is never run on a substituted model.
             raise HarnessExecutionError("model_routing_changed")
         user_id, conversation_id = self.record["user_id"], self.record["conversation_id"]
         seeds = self.record.get("seeds") or {}
@@ -651,8 +660,21 @@ class HarnessExecution:
             settings=self.settings, seeds=seeds, expected_audience=self.record.get("memory_audience"),
         )
         assert_current_request_sources_available(user_id)
+
+        def resolve_step_model(step_seeds, current_settings):
+            return resolve_orchestration_model(
+                current_settings, user_id=user_id, seeds=step_seeds, identity_context=identity,
+            )
+
+        try:
+            if auto_routing:
+                # Reauthorize every approved binding before any step, never rerouting one.
+                validate_auto_bindings(plan, seeds, self.settings, resolve_step_model)
+            answer_seeds = answer_selection(plan, seeds)
+        except ModelCatalogError as exc:
+            raise HarnessExecutionError("model_routing_changed") from exc
         self.answer_model = resolve_orchestration_model(
-            self.settings, user_id=user_id, seeds=seeds, identity_context=identity,
+            self.settings, user_id=user_id, seeds=answer_seeds, identity_context=identity,
         )
         self.research_model = (
             resolve_orchestration_model(
@@ -700,6 +722,26 @@ class HarnessExecution:
             agent_execution_identity=principal, plan_contract_version=2,
         )
         self.context.prompt_token_usage = self.prompt_token_usage
+        if auto_routing:
+            def guarded_planner_client(model):
+                client = model.as_planner_client()
+                client.chat.completions.create = strict_source_authority()(
+                    guard_model_callable(client.chat.completions.create, (), user_id),
+                )
+                return client
+
+            def step_scope(step, target=None):
+                return step_model_context(
+                    step, target if target is not None else self.context,
+                    settings=self._bootstrap.get_settings(), seeds=seeds,
+                    resolve_model=resolve_step_model,
+                    invoke_factory=lambda model: build_harness_invoke_prompt(
+                        model, token_usage=self.prompt_token_usage, revalidate=self._revalidate_context,
+                    ),
+                    planner_client_factory=guarded_planner_client,
+                )
+
+            self.context.step_model_scope = step_scope
 
         def checkpoint_factory(step_id):
             return analysis_checkpoints_for_orchestration(
@@ -965,7 +1007,7 @@ class HarnessExecution:
             return
         extra = {
             key: event[key] for key in (
-                "failure", "reused", "reused_from_run_id", "checkpoint_available", "role",
+                "failure", "reused", "reused_from_run_id", "checkpoint_available", "role", "model_binding",
             ) if key in event
         }
         if event.get("role") == "render":

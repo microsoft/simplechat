@@ -1548,10 +1548,11 @@ with offline_app_imports() as environment:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_auto_model_routing_keeps_new_plans_on_the_enforcing_executor(modules):
+def test_auto_model_routing_uses_the_dependency_contract_when_admitted(modules):
     enabled = {"enable_chat_orchestration": True, "enable_chat_orchestration_harness": True}
     assert modules.route._new_plan_contract_version(enabled, {}) == 2
-    assert modules.route._new_plan_contract_version(enabled, {"model_routing": "auto"}) == 1
+    # Both executors now enforce per-step Auto bindings, so Auto no longer forces legacy plans.
+    assert modules.route._new_plan_contract_version(enabled, {"model_routing": "auto"}) == 2
     assert modules.route._new_plan_contract_version(
         {**enabled, "enable_chat_orchestration_harness": False}, {},
     ) == 1

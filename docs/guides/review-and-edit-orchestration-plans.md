@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.133"
 ---
 
 ## Decide what should run
@@ -104,6 +104,33 @@ retains its declared bindings: use **Ask planner** to change or remove the
 consumer and its requested outputs in a validated revision. A saved edit with
 an unavailable producer blocks approval and identifies the affected inputs.
 Restoring the producer clears that conflict; it does not discard any edges.
+
+### Check who planned the work and what the answer may rely on
+
+Since **0.261.133**, the plan panel's first line under the summary names the model
+that wrote the plan and how it was chosen: the model you selected, your
+administrator's planning model, or the default model. When the request used
+**Auto**, it also says that each step uses its own Auto-routed model. Each step still
+shows its own **Execution model**.
+
+An answer-writing task shows its **answer basis**:
+
+- **General knowledge**: stable, widely known facts such as state capitals or
+  historical dates, with no retrieval planned.
+- **Gathered sources only**: every claim must come from the named inputs. The
+  planner uses this for your documents, integration data, and current or local
+  facts.
+- **Gathered sources, plus general knowledge for stable facts**: gathered sources
+  lead, and well-established knowledge may fill gaps.
+
+A named input marked **Optional** means the answer is still written if that input
+cannot be gathered, for example when a web search service is temporarily
+unavailable. The answer then says what could not be gathered, and the failed task
+remains visible with its reason. Read-only gathering retries once on its own after
+a temporary service error.
+
+**Visuals** lists the charts, Mermaid diagrams, or image proposal cards the planner
+asked the answer to include.
 
 File-format reference information is optional and uses only the shared catalog
 supplied by the server. It is not a separate browser format list or permission

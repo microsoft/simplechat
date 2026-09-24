@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.131"
+version: "0.261.133"
 ---
 
 
@@ -103,9 +103,11 @@ preview switch never bypasses current capability or source access. Until all
 three conditions hold, enabled orchestration keeps the legacy **contract v1** path.
 When Enable Chat Orchestration is off, new orchestration remains unavailable.
 
-Since **0.261.131**, a request that selects **Auto - choose per step** stays on
-contract v1 even when the preview is admitted. Only that standard step executor
-enforces per-step model bindings. Choose a specific model to use the harness.
+Since **0.261.131**, a request that selected **Auto - choose per step** stayed on
+contract v1 even when the preview was admitted. Since **0.261.133**, the harness
+executor enforces per-step model bindings too, so Auto requests use the harness once
+it is admitted. Each model-backed task, including content preparation, is bound to an
+authorized connected model, and every binding is checked again before the run starts.
 Harness replies, including later model-free file-status updates, pass the same
 [chat output content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }})
 as ordinary chat before they are saved.
@@ -326,8 +328,10 @@ image proposal cards, without an extra setting:
   Image control is usable in Orchestrate and asks for at least one card.
 
 Users' saved Instruction memories shape these visuals; for example, a saved "no charts"
-instruction stops charts they did not ask for. The Gather/Reason/Render harness preview
-does not produce these visuals yet.
+instruction stops charts they did not ask for. Since **0.261.133**, Gather/Reason/Render
+harness plans produce these visuals too: the planner names them on the task that
+authors them, and a charted action step works under the harness's invocation capture
+without calling the integration again.
 
 ### Limits {#chat-orchestration-limits-section}
 

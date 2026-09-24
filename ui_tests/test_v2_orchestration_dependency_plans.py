@@ -206,6 +206,42 @@ def test_legacy_step_with_unknown_phase_remains_visible_without_current_capabili
     expect(view.locator("h3")).to_have_text(["Gathering knowledge", "Reasoning"])
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_plan_panel_names_the_planner_answer_basis_visuals_and_optional_inputs(editor_ui, width):
+    """Version 0.261.133: who planned the work, what the answer may rely on, and optional inputs."""
+    page, api = editor_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    plan = dependency_plan()
+    plan["planner"] = {"label": "gpt-5.4", "source": "selected"}
+    plan["model_routing"] = "auto"
+    answer = plan["steps"][3]
+    answer["arguments"].update(
+        knowledge_basis="sources_and_general_knowledge", visuals=["chart", "image_proposal"],
+    )
+    answer["inputs"]["followup"]["optional"] = True
+    view = mount_run_view(page, api, plan)
+
+    expect(view.get_by_test_id("orchestration-plan-planner")).to_have_text(
+        "Planned by gpt-5.4 (the model you selected); each step uses its own Auto-routed model"
+    )
+    step = view.locator("[data-step-id='prepare_answer']")
+    expect(step).to_contain_text("Gathered sources, plus general knowledge for stable facts")
+    expect(step).to_contain_text("Chart, Image proposals")
+    bindings = view.get_by_role("region", name="Result bindings for Prepare answer")
+    expect(bindings).to_contain_text(
+        "Optional: if it cannot be gathered, the answer continues from general knowledge and says so."
+    )
+    expect(bindings).to_contain_text("Output findings from Prepare findings (records-v1). Complete results required.")
+    overflow = page.evaluate("() => document.documentElement.scrollWidth > window.innerWidth")
+    assert not overflow
+
+
+def test_plans_without_a_recorded_planner_show_no_planner_line(editor_ui):
+    page, api = editor_ui
+    view = mount_run_view(page, api)
+    expect(view.get_by_test_id("orchestration-plan-planner")).to_have_count(0)
+
+
 def test_untrusted_producer_titles_and_column_names_remain_text(editor_ui):
     page, api = editor_ui
     plan = dependency_plan()

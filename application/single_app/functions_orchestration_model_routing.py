@@ -14,6 +14,7 @@ STEP_TASKS = {
     "deep_research": "reasoning",
     "action_invoke": "tool_use",
     "respond": "general",
+    "compose": "general",
 }
 MODEL_FIELDS = ("model_deployment", "model_id", "model_endpoint_id", "model_provider")
 ROUTING_INSTRUCTIONS = """
@@ -114,10 +115,23 @@ def assign_step_models(plan, candidates):
 
 
 def answer_selection(plan, seeds):
+    """The model that writes the chat answer: the respond step, or the final-response producer."""
     if plan.get("model_routing") != "auto":
         return seeds
+    steps = [step for step in plan.get("steps", []) if step.get("enabled", True)]
+    if plan.get("planner_contract_version") == 2:
+        final_step = ((plan.get("final_response") or {}).get("step_id"))
+        candidates = (
+            [step for step in steps if step.get("step_id") == final_step]
+            + [step for step in reversed(steps) if step.get("capability_id") == "compose"]
+            + steps
+        )
+        binding = next((step["model_binding"] for step in candidates if step.get("model_binding")), None)
+        # A plan with no model-backed step (for example rendering an existing result) still
+        # needs a context model; it keeps the default selection rather than inventing one.
+        return binding_seeds(seeds, binding) if binding else seeds
     binding = next((
-        step.get("model_binding") for step in plan.get("steps", [])
+        step.get("model_binding") for step in steps
         if step.get("capability_id") == "respond"
     ), None)
     if not binding:
@@ -165,8 +179,14 @@ def validate_auto_bindings(plan, seeds, settings, resolve_model):
 
 
 @contextmanager
-def step_model_context(step, context, *, settings, seeds, resolve_model, invoke_factory):
-    """Install one coherent binding for all model-backed calls within a serial step."""
+def step_model_context(
+    step, context, *, settings, seeds, resolve_model, invoke_factory, planner_client_factory=None,
+):
+    """Install one coherent binding for all model-backed calls within a serial step.
+
+    ``planner_client_factory`` lets a runtime wrap the step's planner client with the same
+    authority guards it applies to its default client.
+    """
     binding = step.get("model_binding")
     if not binding:
         if step.get("capability_id") in STEP_TASKS and step.get("enabled", True):
@@ -185,7 +205,9 @@ def step_model_context(step, context, *, settings, seeds, resolve_model, invoke_
             "provider": model.provider, "model_deployment": model.deployment,
             "user_id": context.user_id, "active_group_ids": binding_seeds(seeds, binding)["active_group_ids"],
         }
-        context.planner_client = model.as_planner_client()
+        context.planner_client = (
+            planner_client_factory(model) if callable(planner_client_factory) else model.as_planner_client()
+        )
         context.planner_deployment = model.deployment
         context.step_model = model
         if step.get("capability_id") == "respond":
