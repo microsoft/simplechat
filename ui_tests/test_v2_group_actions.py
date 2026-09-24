@@ -1,7 +1,7 @@
 # test_v2_group_actions.py
 """
 Production-SPA coverage for the native scope-aware V2 group actions workbench.
-Version: 0.261.147
+Version: 0.261.153
 Implemented in: 0.261.137
 
 Exercises the real action collection, editor and connection-test path against closed

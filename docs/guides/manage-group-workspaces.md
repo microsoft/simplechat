@@ -203,8 +203,10 @@ Use **Workflows** for the native workflow editor and run history. From version
 **0.261.141**, workflow managers can also set a group workflow to run when File
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
-**Open classic group workspace** confirms the
-selected group before navigating; choose the relevant classic tab there.
+From version **0.261.153** every section of the group workspace is native, so
+none of them sends you to the classic page. **Classic tools**, in Documents,
+still opens the classic group workspace for its one remaining tool: upgrading
+legacy documents. It confirms the selected group before navigating.
 Owners and administrators also have **Manage group (classic)** for members,
 join requests, and group settings. From version **0.261.151**, membership
 changes made there no longer overwrite each other. For example, two admins

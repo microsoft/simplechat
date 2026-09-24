@@ -1,7 +1,7 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.128
+Version: 0.261.153
 Implemented in: 0.261.127
 """
 

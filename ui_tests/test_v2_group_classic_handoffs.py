@@ -1,8 +1,8 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.154
-Implemented in: 0.261.154
+Version: 0.261.153
+Implemented in: 0.261.153
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
 classic where classic offers nothing more. This suite pins that the "Classic" availability labels

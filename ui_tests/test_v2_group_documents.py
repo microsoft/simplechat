@@ -1,7 +1,7 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.129
+Version: 0.261.153
 Implemented in: 0.261.128
 
 Exercises real components, stores and navigation with closed synthetic HTTP.

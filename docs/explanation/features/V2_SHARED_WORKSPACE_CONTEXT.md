@@ -150,8 +150,13 @@ Existing workflow query links are routed to the Workflows section. Changing
 groups clears an old workflow target rather than opening a same-ID record in
 another group.
 
-Available-but-unported sections show a Classic label and a working handoff,
-not a false disabled-by-administrator state. Disabled sections explain the
+Available-but-unported sections showed a Classic label and a working handoff,
+not a false disabled-by-administrator state. From version **0.261.153** every
+group section is native, so no section carries the Classic label or hands off
+to classic. A section URL with an item segment that the section doesn't
+support, such as `/v2/groups/<group_id>/prompts/<id>`, opens the section itself.
+A `/workflows/<id>` segment becomes the `?workflow_id=` link the Workflows
+section already understands. Disabled sections explain the
 server's reason. Call agent availability remains separate from full group
 agent/action authoring, preserving the existing tool under its own policy.
 

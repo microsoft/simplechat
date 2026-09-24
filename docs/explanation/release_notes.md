@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.153)**
+
+#### User Interface Enhancements
+
+*   **V2 Group Workspace No Longer Points To Classic For Native Sections**
+    *   Every group workspace section is native, so the navigation and overview no longer label unavailable sections "Classic". An unavailable section shows why it's unavailable instead.
+    *   The Tags classic button and the classic hand-off panel are gone. A section link with an item the section doesn't support, such as `/v2/groups/<id>/prompts/<prompt>`, now opens the section, and a workflow link opens that workflow.
+    *   When group actions are off, **Actions** says so and keeps the Call agent manager, with no classic link.
+    *   Documents' classic link is now **Classic tools**, for upgrading legacy documents, the one classic tool with no V2 equivalent yet.
+    *   (Ref: `GroupWorkspacePage.tsx`, `DocumentsSection.tsx`, `TagsSection.tsx`, [V2 Shared Workspace Context](features/V2_SHARED_WORKSPACE_CONTEXT.md))
+
 ### **(v0.261.152)**
 
 #### Bug Fixes
