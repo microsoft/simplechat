@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.134"
+version: "0.261.137"
 ---
 
 
@@ -68,12 +68,19 @@ governance; this is not a read-only mode.
 ### Chat Orchestration {#chat-orchestration-section}
 
 Adds an orchestration mode to the V2 chat composer. While it is on, capability
-toggles and advanced agent/reasoning controls collapse behind a disclosure.
-Since **0.261.126**, the orchestration model picker remains visible: choose a
-specific model to pin it, or **Auto - choose per step** to select connected
-models using catalog suitability, administrator priority, and favorites.
-This is separate from automatic plan approval. See
-[Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
+toggles and the model, agent, and reasoning pickers collapse behind a **Manual
+controls** disclosure. The orchestration model picker offers **Auto - choose per
+step**, which selects connected models using catalog suitability, administrator
+priority, and favorites, or a specific model to pin. This is separate from automatic
+plan approval. See [Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
+
+Since **0.261.137**, the picker sits under **Manual controls** in the normal model
+picker's place (from **0.261.126** it was shown above the message box). Auto is the
+default wherever a connected model has a catalog profile that allows per-step
+selection and is rated for general answering, and each user's choice is saved to their
+account. When **Keep The Manual
+Composer Controls Available** is off, users cannot reach the picker, so orchestration
+uses Auto (or the default model when Auto cannot be used) regardless of a saved pin.
 
 #### Settings
 

@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.134** (tracked in `application/single_app/config.py`)
+**Version: 0.261.137** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -20,6 +20,7 @@
 **Runtime boundary hardening implemented in version: 0.261.129**
 **Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
 **Gather / Reason / Render answer parity implemented in version: 0.261.134**
+**Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
 
 ## Overview
 
@@ -662,9 +663,18 @@ model setting or API version is required.
 
 #### Model selection
 
-The answer model comes from **Manual controls** when one is selected, otherwise from
-the administrator's default model connection. Classic single-endpoint or APIM settings
-remain the fallback only when no connection-based selection or default applies.
+With **Auto - choose per step**, the default wherever a connected model has a catalog
+profile rated for general answering, the server binds a model to each model-backed step, and the
+answer is attributed to the step that writes it: the `respond` step in a standard
+plan, or the task that `final_response` names in a Gather / Reason / Render plan. When
+no step in the run writes the reply, for example when it reuses an earlier turn's result
+or the plan only delivers files, the reply keeps the default model. See
+[Model catalog profiles and per-step Auto routing](MODEL_CATALOG_PROFILES_AND_AUTO_ROUTING.md).
+
+With a pinned model, the answer model comes from **Manual controls** when one is
+selected, otherwise from the administrator's default model connection. Classic
+single-endpoint or APIM settings remain the fallback only when no connection-based
+selection or default applies.
 The selected deployment, provider, endpoint ID and model ID are resolved together:
 changing only the deployment on a legacy client could send it to the wrong endpoint.
 
@@ -1263,7 +1273,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 3. Open a V2 chat. Where orchestration is enabled the composer opens in it, with the
    capability toggles and the model, agent and reasoning pickers folded behind **Manual
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
-   turns it off again for anyone who wants the classic composer.
+   turns it off again for anyone who wants the classic composer. The model picker under
+   **Manual controls** starts on **Auto - choose per step** wherever Auto can be used.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
 5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
    explicitly run the accepted version or cancel the plan.
@@ -1285,6 +1296,14 @@ loaded, the composer keeps the draft and offers **Retry loading approval prefere
 before orchestration can start. An unsuccessful save shows an error and rolls back
 to the last confirmed selection unless a newer choice is still pending. Choose the
 mode again to retry saving. Existing plans retain their own approval state.
+
+The Orchestrate model choice is saved the same way, since **0.261.137**:
+`orchestrationModelRouting` records Auto or a pinned model, and
+`orchestrationPreferredModelId` records the pinned model's catalog selection key.
+Both are separate from the normal chat model. A pin whose model is no longer in the
+catalog falls back to the default, and a pin is ignored while an administrator hides
+Manual controls. Sending waits until the saved choice has loaded; a failed load
+does not block sending, because the picker shows what will be used.
 
 See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
 for the persistence contract and failure handling.

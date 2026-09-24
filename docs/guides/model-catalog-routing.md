@@ -4,7 +4,7 @@ title: "Choose models for orchestration"
 description: "Use explicit per-step Auto selection or pin a model while keeping ordinary chat selections separate."
 section: "Guides"
 audience: user
-version: "0.261.134"
+version: "0.261.137"
 ---
 
 # Choose models for orchestration
@@ -29,18 +29,26 @@ agents take no model assignment.
 
 ## Select and review
 
-In the V2 composer, enable **Orchestrate** and use the visible model picker.
-Choose **Auto - choose per step**, enter the request, and inspect the plan.
-Each model-backed step shows its planned model and selection reason. The ranking
-prefers task suitability before administrator priority and favorites.
+In the V2 composer, enable **Orchestrate** and open **Manual controls**. The model
+picker sits where the normal model picker does, and since **0.261.137** it starts on
+**Auto - choose per step** wherever a connected model can be chosen per step. Enter
+the request and inspect the plan. Each model-backed step shows its planned model and
+selection reason. The ranking prefers task suitability before administrator priority
+and favorites.
 
-Choose a specific model instead when you need a pinned deployment. The separate
+Choose a specific model instead when you need a pinned deployment. Your choice, Auto
+or a pinned model, is saved to your account, so it stays selected when you leave the
+chat, start a new chat, reload the page, or sign in on another device. Auto is not
+offered when no connected model has a catalog profile rated for general answering; ask
+an administrator to review the profiles. When an administrator hides Manual controls,
+orchestration uses Auto (or the default model when Auto cannot be used). The separate
 planner configuration can still use its administrator-selected model. Delegated
 agents retain their own model configuration in either mode, and deterministic
 search/fetch operations do not receive a model assignment.
 
 Normal V2 chat and classic chat remain manual-only. Switching out of orchestration
-retains the ordinary-chat model choice; no Auto sentinel is sent as a deployment.
+retains the ordinary-chat model choice; no Auto sentinel is sent as a deployment, and
+a model pinned for orchestration does not change the ordinary-chat model.
 Per-model reasoning preferences apply to explicit selections. Auto uses each
 chosen model's default reasoning behavior instead of borrowing the normal-chat
 model's reasoning level.
