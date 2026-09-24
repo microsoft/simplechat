@@ -1,11 +1,12 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.153
+Version: 0.261.158
 Implemented in: 0.261.128
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
-The API fixture never permits personal document requests or document writes.
+The API fixture never permits personal document requests or document writes, and
+views the groups as an ordinary member, whose server context offers no management.
 """
 
 import copy
@@ -20,6 +21,7 @@ from playwright.sync_api import expect
 from ui_tests.fixtures.group_documents import (
     NUMERIC_SORT_FIELDS, SORT_FIELDS, connect_options, group_documents_ui, restricted,  # noqa: F401
 )
+from ui_tests.fixtures.group_workspace import GROUP_INACTIVE_REASON, group_context
 from ui_tests.fixtures.workspace_authoring import ORIGIN
 
 
@@ -353,7 +355,17 @@ def test_access_revalidation(group_documents_ui):
 
 def test_lifecycle_and_chat_ceiling(group_documents_ui):
     ui = group_documents_ui
-    ui.groups["group-a"]["status"] = "locked"
+    # A locked group is read-only, not closed to chat: the server keeps chat on in every status it
+    # lets a member view.
+    ui.groups["group-a"] = group_context(
+        "group-a", "Research group", role="User", status="locked", enable_extract_meta_data=True,
+    )
+    open_documents(ui)
+    expect(row(ui, "Research brief").get_by_role("checkbox")).to_be_enabled()
+    assert_read_only(ui)
+    # The chat ceiling is the explorer's own gate on `can_chat`. No server state withholds chat from
+    # a group its member can view today, so this pins the client's defensive gate for a context the
+    # schema allows, not a production one.
     ui.groups["group-a"]["document_permissions"]["can_chat"] = False
     open_documents(ui)
     expect(row(ui, "Research brief").get_by_role("checkbox")).to_be_disabled()
@@ -361,11 +373,14 @@ def test_lifecycle_and_chat_ceiling(group_documents_ui):
     expect(ui.page.get_by_text("Chat is not currently available for this group.", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Approved metadata for Research brief.", exact=True)).to_be_visible()
     assert_read_only(ui)
-    ui.groups["group-a"]["sections"]["documents"].update({"enabled": False, "can_manage": False, "reason": "This group is inactive."})
-    ui.groups["group-a"]["document_permissions"]["can_view"] = False
+    # The group then goes inactive: the server withholds the section with its own reason, and the
+    # explorer reads nothing more.
+    ui.groups["group-a"] = group_context(
+        "group-a", "Research group", role="User", status="inactive", enable_extract_meta_data=True,
+    )
     reads = len([entry for entry in ui.requests if entry.path.startswith("/api/group_documents")])
     ui.page.evaluate("window.dispatchEvent(new Event('focus'))")
-    expect(ui.page.get_by_text("This group is inactive.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text(GROUP_INACTIVE_REASON, exact=True)).to_be_visible()
     assert len([entry for entry in ui.requests if entry.path.startswith("/api/group_documents")]) == reads
 
 

@@ -1,7 +1,7 @@
 # group_actions.py
 """
 Closed M4 group action HTTP fixtures for the real production V2 SPA.
-Version: 0.261.137
+Version: 0.261.158
 Implemented in: 0.261.137
 
 The fixture serves the immutable `/api/groups/<group_id>/actions[...]` family and
@@ -83,17 +83,13 @@ class GroupActionsFixture(GroupWorkspaceFixture):
         self._seed("group-b", [
             group_action("group-b", MEMBER_ACTION_ID, "Team charter API", actions=()),
         ])
-        # group-c: group agents are on but group actions are off. Navigation still surfaces the
-        # Actions slot through native_delegation, so the pre-M4 Call agent view must render and no
-        # /api/groups/group-c/actions request may be made.
-        delegation_only = group_context("group-c", "Delegation only workspace", role="Owner", status="active")
-        delegation_only["sections"]["actions"]["enabled"] = False
-        delegation_only["sections"]["actions"]["can_manage"] = False
-        delegation_only["sections"]["actions"]["reason"] = "Group actions are turned off for this workspace."
-        # The backend empties the management hint when the capability is off; mirror that so nothing
-        # can read create rights for a workspace whose native routes are refused.
-        delegation_only["action_management"] = {"schema_version": 1, "operations": []}
-        self.groups["group-c"] = delegation_only
+        # group-c: group plugins are off, while group agents stay on. The server withholds the Actions
+        # section with its own reason and empties the action hint, but keeps the Call agent tools
+        # (native_delegation) open -- read-only, since managing them needs group plugins too -- so the
+        # pre-M4 Call agent view must render and no /api/groups/group-c/actions request may be made.
+        self.groups["group-c"] = group_context(
+            "group-c", "Delegation only workspace", role="Owner", status="active", allow_group_plugins=False,
+        )
         # group-c is added after the parent seeded its per-group delegation stores, so mirror that
         # seeding here: the Call agent view reads the group's caller agent when actions are off.
         self.group_agents["group-c"] = [{
