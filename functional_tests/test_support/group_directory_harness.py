@@ -15,7 +15,8 @@ Loaded unchanged from their files:
 
 The session decorators, ``create_group_role_required`` and ``enabled_required`` are
 the real definitions, and ``create_group_for_current_user`` runs with the real
-helpers it calls: the configuration checks and the creator's notification.
+helpers it calls: the configuration checks and the creator's notification. The
+member-added notification helper is loaded too, for the notification link pins.
 
 Only services outside the application are replaced:
 
@@ -47,6 +48,7 @@ from functools import wraps
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import quote
 
 from azure.cosmos import exceptions as cosmos_exceptions
 from flask import Blueprint, Flask, jsonify, redirect, request, send_file, session, url_for
@@ -256,6 +258,7 @@ class GroupDirectoryEnvironment:
     def __init__(self):
         self.settings = dict(BASE_SETTINGS)
         self.groups = DirectoryGroupsContainer()
+        self.activity_logs = FakeContainer("cosmos_activity_logs_container", "id")
         self.notifications = []
         self.bumps = []
         self.logs = []
@@ -287,6 +290,8 @@ class GroupDirectoryEnvironment:
         self.groups.calls.clear()
         self.groups.queries.clear()
         self.groups.before_replace.clear()
+        self.activity_logs.records.clear()
+        self.activity_logs.calls.clear()
         self.notifications.clear()
         self.bumps.clear()
         self.logs.clear()
@@ -382,6 +387,7 @@ def group_directory_environment():
             request=request, session=session, jsonify=jsonify, send_file=send_file,
             redirect=redirect, url_for=url_for,
             cosmos_groups_container=env.groups,
+            cosmos_activity_logs_container=env.activity_logs,
         )
         appinsights = module_stub(
             "functions_appinsights",
@@ -452,7 +458,7 @@ def group_directory_environment():
         # create_group_for_current_user with the real helpers it calls.
         operations_namespace = {
             "Any": typing.Any, "Dict": typing.Dict, "List": typing.List, "Optional": typing.Optional,
-            "logging": logging, "session": session,
+            "logging": logging, "session": session, "quote": quote,
             "get_settings": env.get_settings,
             "get_current_user_info": auth_namespace["get_current_user_info"],
             "create_group": group.create_group,
@@ -463,6 +469,7 @@ def group_directory_environment():
             "create_group_for_current_user", "_require_group_workspaces_enabled",
             "_require_group_creation_enabled", "_require_current_user_info",
             "_notify_group_created", "_create_personal_notification", "_build_group_link_context",
+            "_build_group_manage_url", "_notify_group_member_addition",
         }, operations_namespace)
         env.operations_namespace = operations_namespace
         stack.enter_context(patch.dict(sys.modules, {

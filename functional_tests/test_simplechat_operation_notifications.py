@@ -2,8 +2,9 @@
 # test_simplechat_operation_notifications.py
 """
 Functional test for SimpleChat operation notifications.
-Version: 0.241.030
+Version: 0.261.147
 Implemented in: 0.241.030
+Group notification links point at /groups/<group_id>: 0.261.147
 
 This test ensures SimpleChat group creation, direct group member additions,
 and conversation creation fan out notifications into the notifications inbox
@@ -117,7 +118,7 @@ def test_simplechat_notifications_for_group_and_conversation_actions(monkeypatch
     assert group_doc['id'] == 'group-001'
     assert created_notifications[0]['notification_type'] == 'group_created'
     assert created_notifications[0]['user_id'] == 'owner-001'
-    assert created_notifications[0]['link_url'] == '/manage_group/group-001'
+    assert created_notifications[0]['link_url'] == '/groups/group-001'
 
     created_notifications.clear()
     conversation_doc, current_user, resolved_group = module.create_group_collaboration_conversation_for_current_user(

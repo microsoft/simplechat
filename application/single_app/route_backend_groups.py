@@ -1,5 +1,7 @@
 # route_backend_groups.py
 
+from urllib.parse import quote
+
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
@@ -828,7 +830,7 @@ def register_route_backend_groups(bp):
                 notification_type='system_announcement',
                 title='Role Changed',
                 message=f"Your role in group '{group_doc.get('name', 'Unknown')}' has been changed from {target_role} to {new_role} by {user_email}.",
-                link_url=f"/manage_group/{group_id}",
+                link_url=f"/groups/{quote(group_id, safe='')}",
                 metadata={
                     'group_id': group_id,
                     'group_name': group_doc.get('name', 'Unknown'),
