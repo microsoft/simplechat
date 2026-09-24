@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
+    *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
+    *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
+    *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
+    *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Public Workspace Selector Dark Theme Styling**
+    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
+    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
+    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
 ### **(v0.261.044)**
 
 #### New Features
