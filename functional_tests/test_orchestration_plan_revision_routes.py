@@ -1,9 +1,10 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.104
+Version: 0.261.134
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
+Unroutable Auto revisions report model_unavailable: 0.261.134
 
 Exercises the real Flask routes, planner, executor, and atomic revision persistence.
 Only model, search, source-access, and Cosmos service boundaries are replaced.
@@ -246,6 +247,27 @@ class PlanRevisionRouteTests(unittest.TestCase):
         revised, _body = self.revise(current, revised_plan())
         self.assertNotEqual(revised['plan']['run_id'], current['plan']['run_id'])
         self.assertEqual(self.edit_calls[0]['model'], 'gpt-5.6-terra')
+
+    def test_unroutable_auto_revision_keeps_the_plan_and_reports_model_unavailable(self):
+        """Version 0.261.134: an Auto revision with no eligible model is not an opaque failure."""
+        catalog_error = self.route.build_plan_edit_outcome.__globals__['ModelCatalogError']
+        self.use_modern_models()
+        editor = self.open_editor()
+        attempts = []
+
+        def unroutable(*args, **kwargs):
+            attempts.append(kwargs.get('contract_version'))
+            raise catalog_error('No eligible connected model for Reasoning. Review model profiles and availability.')
+
+        with patch.dict(self.route.build_plan_edit_outcome.__globals__, {'plan_request': unroutable}):
+            _response, events, _body = self.request_revision(editor)
+        self.assertEqual(len(attempts), 1)
+        self.assertTrue(any(event.get('code') == 'model_unavailable' for event in events), events)
+        current = self.editor(editor['plan']['run_id'])
+        self.assertEqual(current['version'], editor['version'])
+        self.assertFalse(current['busy'])
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
 
     def test_failed_model_edit_closes_its_client_and_preserves_the_plan(self):
         self.use_modern_models()

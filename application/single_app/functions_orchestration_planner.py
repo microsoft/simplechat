@@ -39,7 +39,7 @@ from functions_orchestration_context import conversation_reference_messages, res
 from functions_orchestration_events import build_model_reasoning_metadata
 from functions_model_catalog import TASKS, ModelCatalogError
 from functions_orchestration_model_routing import (
-    ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
+    DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
 )
 from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
@@ -533,7 +533,9 @@ def build_planner_messages(planner_context, replan_hint=None, edit_context=None,
         {
             'role': 'system',
             'content': system_prompt + (
-                '\n' + ROUTING_INSTRUCTIONS if payload.get('model_routing') == 'auto' else ''
+                '\n' + ROUTING_INSTRUCTIONS + (
+                    DEPENDENCY_ROUTING_INSTRUCTIONS + '\n' if contract_version == 2 else ''
+                ) if payload.get('model_routing') == 'auto' else ''
             ) + (
                 '\n\n' + editing if edit_context is not None else ''
             ),

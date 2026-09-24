@@ -4,7 +4,7 @@ title: "Choose models for orchestration"
 description: "Use explicit per-step Auto selection or pin a model while keeping ordinary chat selections separate."
 section: "Guides"
 audience: user
-version: "0.261.131"
+version: "0.261.134"
 ---
 
 # Choose models for orchestration
@@ -22,10 +22,10 @@ and publish usable connections with suitable catalog profiles.
 This is not the **Auto** approval preference: approval controls whether a plan
 runs automatically; model Auto controls which model each step uses.
 
-When an administrator enables the **Gather / Reason / Render harness (preview)**,
-Auto requests still use standard orchestration, where these per-step bindings are
-enforced. Since **0.261.131**, harness plans require a specific model selection;
-the server never shows harness bindings that its executor would not apply.
+Since **0.261.134**, Auto also applies to **Gather / Reason / Render** plans, the
+ones that can save files. Each model-backed step, including the step that writes
+the answer, runs on its planned model. Searches, file rendering, and delegated
+agents take no model assignment.
 
 ## Select and review
 
@@ -58,9 +58,18 @@ model. Request context, generation limits, and provider errors can still block a
 otherwise eligible model. Auto does not guarantee that an unknown future document
 or tool result will fit, and it does not discard source content to make it fit.
 
-If no connected model is suitable, ask an administrator to review the profile
-and connection rather than favoriting an incompatible model. A custom profile
-does not install tools, create credentials, or grant workspace access.
+Few catalog profiles rate specialist tasks such as structured data analysis or
+reasoning. When no connected model is rated for a step's task, the step runs on
+the capable model best rated for general answering, and its reason starts with
+"General answering, because no connected model is rated for ...". A model rated
+as unsuitable for the task, or lacking a required capability such as tool calling
+for actions, is never chosen this way. Planning stops with "No eligible connected
+model for ..." only when this fallback finds no model either.
+
+In that case, ask an administrator to review the profile and connection rather
+than favoriting an incompatible model. The plan is not created, and a plan
+revision that cannot be assigned models keeps your previous plan. A custom
+profile does not install tools, create credentials, or grant workspace access.
 
 See [Model Catalog]({{ '/admin/model-catalog/' | relative_url }}) for profile
 management, precedence, evidence, and limits.

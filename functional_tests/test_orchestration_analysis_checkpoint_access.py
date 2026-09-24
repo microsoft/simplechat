@@ -1,7 +1,7 @@
 # test_orchestration_analysis_checkpoint_access.py
 """Functional regressions for saved Analyze access during checkpoint recovery.
 
-Version: 0.261.127
+Version: 0.261.134
 Implemented in: 0.261.109
 
 Exercise the real saved-result manifest authorizer and recovery logic. The
@@ -37,7 +37,8 @@ def recovery_functions(fixture):
         )},
     }
     load_functions('functions_orchestration_recovery.py', {
-        '_validate_payload_sources', '_execution_steps', '_retained_statuses', 'validate_resume',
+        '_validate_payload_sources', '_execution_steps', '_retained_statuses', '_reuse_invalidated_by_rerun',
+        'validate_resume',
     }, namespace)
     return SimpleNamespace(**namespace)
 

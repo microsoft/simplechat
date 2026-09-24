@@ -8,15 +8,16 @@ Uses the initialized headless harness (real bootstrap, model resolution, leases,
 checkpoints, retained results and renderer) with offline model replies. Covers:
 Auto model routing on dependency plans, saved memory and conversation references in
 compose, the declared knowledge basis, optional inputs that let an answer disclose a
-failed gather step instead of failing, planner-named visuals, the planner descriptor,
-web search failure classification with one transient retry, and Foundry citation
-placeholders turned into links.
+failed gather step instead of failing, retries that run again the steps completed without
+a retried producer, planner-named visuals, the planner descriptor, web search failure
+classification with one transient retry, and Foundry citation placeholders turned into
+links.
 """
 
 import importlib
 import importlib.util
 import json
-from copy import deepcopy
+from copy import copy, deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -123,6 +124,12 @@ def test_dependency_planning_binds_auto_models_and_records_the_planner(harness, 
     assert plan["planner"] == {"label": "gpt-4o", "source": "default"}
     system = harness.model_calls[0]["messages"][0]["content"]
     assert "When model_routing is auto" in system
+    assert "only these steps are model-backed and take a model_task" in system
+    assert "Every other step" in system and "takes no model_task" in system
+    # The dependency-step list belongs only to the dependency contract; v1 keeps its own rules.
+    v1_system = harness.planner.build_planner_messages({"model_routing": "auto"}, contract_version=1)[0]["content"]
+    assert "When model_routing is auto" in v1_system
+    assert "only these steps are model-backed" not in v1_system
     assert "knowledge_basis" in system and "render_file" in system
 
 
@@ -211,6 +218,17 @@ def test_answer_selection_prefers_the_final_response_producer():
     assert routing.answer_selection(render_only, {"model": {"model_deployment": "default"}}) == {
         "model": {"model_deployment": "default"},
     }
+    # A reply taken from an earlier turn's result is written by no step in this run, so it is
+    # not credited to whichever compose step happens to be bound.
+    reused = {**plan, "final_response": {
+        "version": "orchestration-input-binding-v1", "step_id": None, "output_name": None,
+        "existing_result": "reused_answer",
+    }}
+    assert routing.answer_selection(reused, {"model": {"model_deployment": "default"}}) == {
+        "model": {"model_deployment": "default"},
+    }
+    no_answer = {key: value for key, value in plan.items() if key != "final_response"}
+    assert routing.answer_selection(no_answer, {"model": None}) == {"model": None}
 
 
 # ------------------------------------------------------------------------------------------
@@ -408,6 +426,121 @@ def test_a_producer_the_final_response_needs_stays_required(harness):
     )
     steps = {step["step_id"]: step for step in harness.read()["plan"]["steps"]}
     assert steps["draft"]["optional"] is False
+
+
+def _instructed(step, instruction):
+    step["arguments"] = {**step["arguments"], "instruction": instruction}
+    return step
+
+
+def _payloads_for(harness, instruction):
+    payloads = [json.loads(call["messages"][-1]["content"]) for call in harness.model_calls]
+    return [payload for payload in payloads if payload.get("instruction") == instruction]
+
+
+def test_a_retry_reruns_steps_that_completed_without_a_retried_producer(harness):
+    """Version 0.261.134: a retry delivers what the first attempt missed, not recovery_changed."""
+    harness.create(
+        [
+            _instructed(compose_step("facts"), "List the facts."),
+            _instructed(compose_step("context"), "Describe the context."),
+            _instructed(_mixed_compose(inputs={
+                "facts": {"binding": input_binding("facts"), "allow_partial": False, "optional": True},
+            }), "Write the answer."),
+            _instructed(compose_step("finish", inputs={
+                "answer": {"binding": input_binding("prepare"), "allow_partial": False},
+                "context": {"binding": input_binding("context"), "allow_partial": False},
+            }), "Finish the report."),
+        ],
+        replies=[
+            RuntimeError("FACTS_UNAVAILABLE"), "Context kept from the first attempt.",
+            "An answer written without the facts.", RuntimeError("FINISH_UNAVAILABLE"),
+        ],
+        final_response=input_binding("finish"),
+    )
+    execution = harness.prepare()
+    try:
+        first = harness.run_engine(execution)
+    finally:
+        execution.close()
+    parent = harness.read()
+    recovery = harness.recovery.recovery_projection(parent)
+
+    assert first["status"] == "failed"
+    assert [payload["unavailable_inputs"][0]["name"] for payload in _payloads_for(harness, "Write the answer.")] == ["facts"]
+    # The answer completed, but only without the facts the retry is about to fetch again.
+    assert recovery["eligible"], recovery
+    assert recovery["reused_step_ids"] == ["context"]
+    assert recovery["retry_step_ids"] == ["facts", "prepare", "finish"]
+
+    authorize = lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1")
+    probe = copy(execution.context)
+    probe.result_service = harness.services().results
+    child = harness.recovery.prepare_retry(
+        "run-1", "owner", {
+            "conversation_id": "conversation-1", "submission_id": "retry-missing-facts",
+            "expected_version": parent["recovery_version"],
+        },
+        authorize=authorize, message_container=harness.messages,
+        validate=lambda current: harness.recovery.validate_resume(
+            current, probe, harness.settings, authorize, source_run_id=current["id"],
+        ),
+    )
+    assert child["retry_reused_step_ids"] == ["context"]
+    services = harness.services()
+    claimed = harness.revisions.claim_plan_run(
+        child["id"], "owner", "conversation-1", expected_version=child["edit_version"],
+        settings=harness.settings,
+        result_alias_resolver=lambda current: harness.service_bindings.admitted_result_aliases(
+            current, services.results,
+        ),
+    )
+    lease = harness.recovery.ExecutionLease(claimed, authorize, message_container=harness.messages)
+    retried = harness.execution.prepare_harness_execution(claimed, settings=harness.settings, lease=lease)
+    harness.replies.extend([
+        "Washington, Adams and Jefferson.", "An answer that uses the facts.", "The finished report.",
+    ])
+    try:
+        second = harness.run_engine(retried)
+    finally:
+        retried.close()
+    answers = _payloads_for(harness, "Write the answer.")
+    steps = {
+        row["step_id"]: row
+        for row in harness.runs.read_item(child["id"], "conversation-1")["execution_steps"]
+    }
+
+    assert second["status"] == "completed", second
+    assert len(harness.model_calls) == 7
+    assert len(_payloads_for(harness, "Describe the context.")) == 1
+    assert len(answers) == 2 and "facts" in answers[1]["inputs"]
+    assert not answers[1].get("unavailable_inputs")
+    assert steps["context"].get("reused") is True
+    assert steps["prepare"]["status"] == "completed" and not steps["prepare"].get("reused")
+
+
+def test_retry_invalidation_follows_consumers_and_ignores_disabled_producers(harness):
+    optional = {"binding": input_binding("facts"), "allow_partial": False, "optional": True}
+    harness.create(
+        [
+            compose_step("facts"), compose_step("context"), _mixed_compose(inputs={"facts": optional}),
+            compose_step("finish", inputs={
+                "answer": {"binding": input_binding("prepare"), "allow_partial": False},
+            }),
+        ],
+        final_response=input_binding("finish"),
+    )
+    record = harness.read()
+    stale = harness.recovery._reuse_invalidated_by_rerun
+
+    assert stale(record, {"context", "prepare", "finish"}) == {"prepare", "finish"}
+    assert stale(record, {"facts", "context", "prepare", "finish"}) == set()
+    for step in record["plan"]["steps"]:
+        if step["step_id"] == "facts":
+            step["enabled"] = False
+    # A disabled producer does not run again, so what completed without it stays reusable.
+    assert stale(record, {"context", "prepare", "finish"}) == set()
+    assert stale({"plan": {"planner_contract_version": 1, "steps": []}}, set()) == set()
 
 
 # ------------------------------------------------------------------------------------------

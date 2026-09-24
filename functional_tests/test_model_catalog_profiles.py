@@ -193,7 +193,7 @@ class RoutingTests(unittest.TestCase):
         second = assign_step_models({"steps": [{"capability_id": "respond"}]}, list(reversed(rows)))
         self.assertEqual(second["steps"][0]["model_binding"]["label"], "a")
 
-    def test_incompatibility_archival_and_unknown_suitability_are_not_fallbacks(self):
+    def test_incompatibility_and_archival_are_never_bypassed(self):
         row = candidate("favorite", {"tool_use": "strong"}, favorite=True, priority="preferred")
         with self.assertRaises(ModelCatalogError):
             assign_step_models({"steps": [{"capability_id": "action_invoke"}]}, [row])
@@ -201,9 +201,73 @@ class RoutingTests(unittest.TestCase):
         row["profile"]["archived"] = True
         with self.assertRaises(ModelCatalogError):
             assign_step_models({"steps": [{"capability_id": "action_invoke"}]}, [row])
+
+    def test_unrated_task_uses_the_best_general_model_instead_of_failing(self):
+        rows = [
+            candidate("steady", {"general": "suitable"}, priority="preferred"),
+            candidate("strong", {"general": "strong"}),
+        ]
+        plan = assign_step_models({"steps": [
+            {"capability_id": "respond", "model_task": "coding"},
+            {"capability_id": "tabular_analyze"},
+            {"capability_id": "deep_research"},
+        ]}, rows)
+        for step in plan["steps"]:
+            binding = step["model_binding"]
+            self.assertEqual(binding["label"], "strong")
+            self.assertIn("because no connected model is rated for", binding["reason"])
+        self.assertEqual([step["model_binding"]["task"] for step in plan["steps"]],
+                         ["coding", "data_analysis", "reasoning"])
+
+    def test_a_rated_specialist_always_outranks_the_general_fallback(self):
+        rows = [
+            candidate("generalist", {"general": "strong"}, favorite=True, priority="preferred"),
+            candidate("coder", {"coding": "suitable"}, priority="lower"),
+        ]
+        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, rows)
+        self.assertEqual(plan["steps"][0]["model_binding"]["label"], "coder")
+        self.assertEqual(plan["steps"][0]["model_binding"]["reason"], "Coding; lower priority")
+
+    def test_general_fallback_never_chooses_a_model_rated_unsuitable_or_unrated(self):
         with self.assertRaises(ModelCatalogError):
-            assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]},
-                               [candidate("general", {"general": "strong"})])
+            assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, [
+                candidate("refuses-code", {"general": "strong", "coding": "unsuitable"}),
+                candidate("undescribed", {}),
+            ])
+        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, [
+            candidate("refuses-code", {"general": "strong", "coding": "unsuitable"}),
+            candidate("plain", {"general": "suitable"}),
+        ])
+        self.assertEqual(plan["steps"][0]["model_binding"]["label"], "plain")
+
+    def test_general_fallback_keeps_the_task_capability_requirements(self):
+        text_only = candidate("text-only", {"general": "strong"})
+        with self.assertRaises(ModelCatalogError):
+            assign_step_models({"steps": [{"capability_id": "respond", "model_task": "vision"}]}, [text_only])
+        sighted = candidate("sighted", {"general": "suitable"}, capabilities={
+            "processesText": True, "generatesText": True, "processesImages": True,
+        })
+        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "vision"}]}, [text_only, sighted])
+        binding = plan["steps"][0]["model_binding"]
+        self.assertEqual(binding["label"], "sighted")
+        self.assertIn("processesImages", binding["required_capabilities"])
+
+    def test_built_in_profiles_route_every_dependency_task_for_common_deployments(self):
+        """Standard deployments must never fail to plan a Gather / Reason / Render request."""
+        tasks = ("compose", "document_analyze", "document_compare", "tabular_analyze", "deep_research", "action_invoke")
+        for names in (["gpt-4o"], ["gpt-4o", "gpt-4o-mini"], ["gpt-4.1", "gpt-4.1-mini"], ["gpt-5", "gpt-5-mini"]):
+            rows = []
+            for name in names:
+                metadata = apply_model_profile({"deploymentName": name, "modelName": name}, {}, {})
+                rows.append({
+                    "key": name, "label": name, "selection": {"model_deployment": name},
+                    "profile": metadata["_catalog_profile"], "capabilities": metadata["capabilities"],
+                })
+            with self.subTest(models=names):
+                plan = assign_step_models({"planner_contract_version": 2, "steps": [
+                    {"step_id": capability, "capability_id": capability} for capability in tasks
+                ]}, rows)
+                self.assertTrue(all(step.get("model_binding") for step in plan["steps"]))
 
     def test_manual_selection_is_unchanged(self):
         seeds = {"model": {"model_deployment": "pinned"}, "reasoning_effort": "high"}

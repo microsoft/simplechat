@@ -1030,7 +1030,9 @@ legacy answer step had, and the planner states what the answer may rely on. See 
   authorized connected model at planning time. The binding is checked again before
   execution, and the step runs on that model. An Auto request no longer falls back to a
   legacy plan. The answer model is the one bound to the step that produces
-  `final_response`.
+  `final_response`; a reply that reuses an earlier turn's result keeps the default
+  selection. When no connected model is rated for a step's task, the step uses the
+  capable model best rated for general answering instead of failing the plan.
 - **Saved memory and follow-ups.** `compose` reads saved instruction and fact memory with
   the same precedence as before, plus the conversation messages the resolver selected. A
   follow-up can transform an earlier answer, but that answer is not treated as evidence.
@@ -1048,6 +1050,10 @@ legacy answer step had, and the planner states what the answer may rely on. See 
   - A producer that feeds only optional inputs does not decide whether the plan
     succeeds. If it fails, the answer is still written, says once what could not be
     gathered, and does not present that content as sourced.
+  - A retry is offered only when another step also failed. It runs that producer again,
+    and also runs again the steps that completed without it and every step computed from
+    them, so the retried answer and files can use what the first attempt missed. Other
+    completed steps are still reused.
   - Required inputs still fail closed.
 - **Visuals.** The planner names the visuals a Markdown answer should author, and a chart
   over an action's rows, as structured `visuals` arguments. Keyword detection is not
@@ -1314,7 +1320,7 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup; the chart sub-step charts exact rows, cannot reach the action, and receives only saved instructions |
 | `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
-| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless harness: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
+| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless harness: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, retries that run again what completed without a retried producer, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
 | `functional_tests/test_v2_orchestration_planner_display.mjs` | Browser normalization of the planner descriptor, Auto routing, optional inputs, and answer-basis and visual labels |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
