@@ -90,6 +90,7 @@ from route_backend_group_agents_scoped import *
 from route_backend_group_identities_scoped import *
 from route_backend_group_endpoints_scoped import *
 from route_backend_group_file_sources_scoped import *
+from route_backend_group_directory import register_route_backend_group_directory
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
@@ -1498,6 +1499,9 @@ register_route_blueprint('backend_group_endpoints_scoped', register_route_backen
 
 # ------------------- API Group File Sources Routes -----
 register_route_blueprint('backend_group_file_sources_scoped', register_route_backend_group_file_sources_scoped, user_required_blueprint)
+
+# ------------------- API Group Directory Routes --------
+register_route_blueprint('backend_group_directory', register_route_backend_group_directory, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)

@@ -4054,7 +4054,7 @@ def _notify_group_member_addition(
                 f"You have been added to the group '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display} by {added_by_email}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -4087,7 +4087,7 @@ def _notify_group_member_addition(
                 f"Added {member_doc.get('displayName', 'a new member')} to '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -4149,6 +4149,11 @@ def _build_group_link_context(group_doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_group_manage_url(group_id: Any) -> str:
+    """Link to the group management page, served by ``route_frontend_groups.manage_group``."""
+    return f"/groups/{quote(str(group_id or '').strip(), safe='')}"
+
+
 def _build_conversation_link_context(conversation_doc: Dict[str, Any]) -> Dict[str, Any]:
     conversation_doc = conversation_doc if isinstance(conversation_doc, dict) else {}
     scope = conversation_doc.get("scope") if isinstance(conversation_doc.get("scope"), dict) else {}
@@ -4199,7 +4204,7 @@ def _notify_group_created(group_doc: Dict[str, Any], actor_user: Dict[str, str])
         notification_type="group_created",
         title=f"Group created: {group_name}",
         message=f"You created the group '{group_name}'.",
-        link_url=f"/manage_group/{group_id}",
+        link_url=_build_group_manage_url(group_id),
         link_context=_build_group_link_context(group_doc),
         metadata={
             "group_id": group_id,
