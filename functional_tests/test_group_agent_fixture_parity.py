@@ -1,8 +1,9 @@
 # test_group_agent_fixture_parity.py
 """
 Per-route shape parity between the M4C group agent UI fixture and the real routes.
-Version: 0.261.157
+Version: 0.261.163
 Implemented in: 0.261.157
+Group agents keep group knowledge only (agentWorkbench.ts knowledgeScopes): 0.261.163
 
 The V2 group Agents workbench and its editor mock the network with the closed HTTP fixture
 ``ui_tests/fixtures/group_agents.py``, whose dispatch lives in the shared
@@ -38,8 +39,9 @@ The fixture handlers are the production browser-test code, exercised through the
 capture the fulfilled status and JSON. The named-group Foundry discovery route the editor also
 calls is pinned by ``test_group_endpoint_fixture_parity.py``.
 
-One product finding is pinned as a strict xfail for the coordinator's decision: the group editor
-offers public knowledge, which the server neither lists for a group nor stores on a group agent.
+One product finding the backfill pinned is now fixed (0.261.163): the group editor offered public
+knowledge, which the server neither lists for a group nor stores on a group agent. Each workbench's
+knowledge scopes are pinned to the server's scope policy.
 """
 
 import ast
@@ -740,29 +742,31 @@ def test_knowledge_shape_parity(modelled, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Product finding, reported for the coordinator's decision (R3).
+# Knowledge scopes: each workbench offers exactly the scopes its agents keep.
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding: the group agent workbench offers 'public' as an assignable knowledge scope "
-    "(agentWorkbench.ts, knowledgeScopes: ['group', 'public']), but the server never lists a public "
-    "source in a group catalogue, and _enforce_scope_policy stores no public workspace for a group "
-    "agent. The old fixture hid this by inventing a public source. Awaiting the coordinator's call."
-))
-def test_group_agent_knowledge_scopes_are_the_ones_the_server_stores():
-    """The group editor should offer exactly the knowledge scopes a group agent can keep."""
+@pytest.mark.parametrize("anchor, agent_scope", [
+    ("export function createGroupAgentWorkbench", "group"),
+    ("export const PERSONAL_AGENT_WORKBENCH", "personal"),
+])
+def test_agent_knowledge_scopes_are_the_ones_the_server_stores(anchor, agent_scope):
+    """A workbench offers exactly the knowledge scopes the server keeps for its agents: a group
+    agent keeps only its group's knowledge, and a personal agent personal and public knowledge."""
     source = (ROOT / "application" / "v2_ui" / "src" / "lib" / "agentWorkbench.ts").read_text(encoding="utf-8")
-    group_adapter = source[source.index("export function createGroupAgentWorkbench"):]
-    listed = re.search(r"knowledgeScopes:\s*\[([^\]]*)\]", group_adapter).group(1)
+    adapter = source[source.index(anchor):]
+    listed = re.search(r"knowledgeScopes:\s*\[([^\]]*)\]", adapter).group(1)
     offered = {scope.strip().strip("'\"") for scope in listed.split(",") if scope.strip()}
     namespace = {"Any": Any, "Dict": Dict, "Optional": Optional, "AssignedKnowledgeError": ValueError}
     execute_functions("functions_assigned_knowledge.py", {"_enforce_scope_policy"}, namespace)
     kept = namespace["_enforce_scope_policy"](
         {"personal": True, "group_ids": ["another-group"], "public_workspace_ids": ["public-handbook"]},
-        agent_scope="group", group_id=GROUP_A,
+        agent_scope=agent_scope, group_id=GROUP_A,
     )
-    storable = {"group"} | ({"public"} if kept["public_workspace_ids"] else set()) | ({"personal"} if kept["personal"] else set())
-    assert offered == storable, f"the editor offers {sorted(offered)}; a group agent keeps {sorted(storable)}"
+    storable = (
+        ({"group"} if kept["group_ids"] else set()) | ({"public"} if kept["public_workspace_ids"] else set())
+        | ({"personal"} if kept["personal"] else set())
+    )
+    assert offered == storable, f"the {agent_scope} editor offers {sorted(offered)}; its agents keep {sorted(storable)}"
 
 
 if __name__ == "__main__":
