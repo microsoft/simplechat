@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowUpRight, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
+import { ArrowUpRight, Compass, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
@@ -12,7 +12,7 @@ import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
-    GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupWorkspaceNavigationAvailability,
+    GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupRoleLabel, groupWorkspaceNavigationAvailability,
     groupWorkspacePath, classicGroupSectionLabel, readGroupDocumentTarget,
 } from '../lib/groupWorkspaceNavigation';
 import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
@@ -302,7 +302,13 @@ export function GroupWorkspacePage() {
 
     const header = (
         <>
-            <PageHeader title="Group workspaces" description="Shared knowledge and tools for your team" leading={<Users size={20} className="text-accent" />} />
+            <PageHeader title="Group workspaces" description="Shared knowledge and tools for your team"
+                leading={<Users size={20} className="text-accent" />}
+                actions={(
+                    <GlassButton size="sm" variant="subtle" onClick={() => navigate('/groups/directory')}>
+                        <Compass size={14} />Browse all groups
+                    </GlassButton>
+                )} />
             <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
                 <GroupWorkspacePicker key={viewerId} value={state.pendingGroupId ?? groupId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.groups?.find((group) => group.id === groupId)?.name}
@@ -318,7 +324,7 @@ export function GroupWorkspacePage() {
                         </div>
                         <div className="min-w-0 flex-1 basis-48">
                             <p className="break-words text-sm font-semibold text-text-1">{context.workspace.name}</p>
-                            <p className="text-xs text-text-3">Role: {context.role === 'DocumentManager' ? 'Document manager' : context.role === 'User' ? 'Member' : context.role}</p>
+                            <p className="text-xs text-text-3">Role: {groupRoleLabel(context.role)}</p>
                         </div>
                         <Pill tone={context.status === 'active' ? 'neutral' : 'warn'}>Status: {GROUP_STATUS_LABELS[context.status]}</Pill>
                         {context.can_manage_workspace ? <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed}
@@ -369,7 +375,8 @@ export function GroupWorkspacePage() {
                 <EmptyState icon={<Users size={28} />} title="Choose a group workspace"
                     description={hasDocumentLink ? 'A document link must include its explicit group. Choose a group and open the document from that workspace.'
                         : 'Select a group above to load its details and shared tools.'}
-                    action={<a href="/profile?tab=groups" className="text-sm text-accent underline">Find or manage your groups in classic</a>} />
+                    action={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/groups/directory')}>
+                        <Compass size={14} />Browse the group directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
                     className={nativeDocuments || nativePrompts || nativeActions || nativeAgents ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>

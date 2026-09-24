@@ -19,6 +19,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
+import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
 import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
@@ -201,6 +202,7 @@ export function App() {
                     }
                 />
                 <Route path="/groups" element={<GroupWorkspacePage />} />
+                <Route path="/groups/directory" element={<GroupDirectoryPage />} />
                 <Route path="/groups/:groupId" element={<GroupWorkspacePage />} />
                 <Route path="/groups/:groupId/:section" element={<GroupWorkspacePage />} />
                 <Route path="/groups/:groupId/:section/:resourceId" element={<GroupWorkspacePage />} />

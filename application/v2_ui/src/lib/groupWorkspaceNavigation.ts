@@ -72,3 +72,17 @@ export const GROUP_STATUS_LABELS: Record<GroupWorkspaceContext['status'], string
     inactive: 'Inactive',
     unknown: 'Status unavailable',
 };
+
+// The friendly label for a group membership role, shared by the group header and the directory
+// row badge so the two can never drift (a raw "DocumentManager" or "User" would leak otherwise).
+// An unrecognized role falls back to its raw value rather than a guess.
+export const GROUP_ROLE_LABELS: Record<string, string> = {
+    Owner: 'Owner',
+    Admin: 'Admin',
+    DocumentManager: 'Document manager',
+    User: 'Member',
+};
+
+export function groupRoleLabel(role: string): string {
+    return GROUP_ROLE_LABELS[role] ?? role;
+}
