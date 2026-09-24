@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.156)**
+
+#### Bug Fixes
+
+*   **Editing A File Source No Longer Erases Its Tenant**
+    *   Saving a group file source in V2 that signs in with a service principal, even just to rename it, removed its stored tenant ID, so the next sync signed in to the wrong tenant. The editor also showed **Tenant ID** empty. The tenant is now shown and kept.
+    *   Editing a source in either the V2 or the classic editor also removed a managed identity's client ID set through the API. It's now kept too.
+    *   If a source was affected, open it, enter the tenant ID again, and save.
+    *   (Ref: `sanitize_file_sync_source`, `fileSourceFields.ts`, [File Source Credential Round Trip Fix](fixes/FILE_SOURCE_CREDENTIAL_ROUND_TRIP_FIX.md))
+
 ### **(v0.261.155)**
 
 #### New Features
