@@ -59,9 +59,10 @@ class GroupAgentsFixture(GroupWorkspaceFixture):
         provided_agent = group_agent("group-a", PROVIDED_AGENT_ID, "Shared platform agent",
                                       actions=(), is_global=True, is_group=False)
         provided_agent["group_id"] = None
-        # A Foundry agent bound to a group-scoped connection. Its discovery route resolves the
-        # account's active group, not this page's, so the editor withholds discovery for it while
-        # keeping it for a global connection. It is fully editable so a manager reaches the control.
+        # A Foundry agent bound to a group-scoped connection. M5C re-enables its discovery through
+        # the named-group route (which resolves this page's group from the path), while a global
+        # connection keeps the legacy active-group route. It is fully editable so a manager reaches
+        # the control.
         foundry_agent = group_agent(
             "group-a", FOUNDRY_AGENT_ID, "Foundry reviewer", agent_type="aifoundry",
             model_endpoint_id=GROUP_FOUNDRY_ENDPOINT_ID, model_id="", model_provider="aifoundry",

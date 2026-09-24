@@ -25,6 +25,7 @@ import { GroupDocumentsSection } from './workspace/DocumentsSection';
 import { GroupTagsSection } from './workspace/TagsSection';
 import { GroupPromptsSection } from './workspace/PromptsSection';
 import { GroupIdentitiesSection } from './workspace/GroupIdentitiesSection';
+import { GroupEndpointsSection } from './workspace/GroupEndpointsSection';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
 import { AgentsSection } from './workspace/AgentsSection';
@@ -32,6 +33,7 @@ import { AgentEditorPage } from './workspace/AgentEditorPage';
 import { createGroupActionWorkbench } from '../lib/actionWorkbench';
 import { createGroupAgentWorkbench } from '../lib/agentWorkbench';
 import { createGroupIdentityWorkbench } from '../lib/identityWorkbench';
+import { createGroupModelConnectionsAdapter } from '../lib/modelConnections';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -147,11 +149,12 @@ export function GroupWorkspacePage() {
             availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' || id === 'prompts' ? undefined
                 : id === 'agents' ? (context?.sections.agents.enabled ? undefined : 'Classic')
                 : id === 'identities' ? (context?.sections.identities.enabled ? undefined : 'Classic')
+                : id === 'endpoints' ? (context?.sections.endpoints.enabled ? undefined : 'Classic')
                 : id === 'actions' ? (context?.sections.actions.enabled ? undefined
                     : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
                 : 'Classic',
         };
-    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled]);
+    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled, context?.sections.endpoints.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
@@ -197,6 +200,19 @@ export function GroupWorkspacePage() {
             ? createGroupIdentityWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.identity_management)
             : null,
         [context?.scope.id, context?.workspace.name, context?.sections.identities.enabled, context?.identity_management],
+    );
+    // Native group model endpoints render only when the workspace advertises the Endpoints section
+    // as available (context.sections.endpoints.enabled), which requires the group model endpoint
+    // capability. Create is gated on the endpoint_management hint; edit, enable, delete and test are
+    // gated per row via each endpoint's endpoint_actions -- never a tenant-admin fallback. A member
+    // gets an available section with an empty endpoint_management hint, so they see a read-only list.
+    // The section reuses the admin ModelConnectionsManager through the scope-aware adapter, which
+    // hides every admin-only affordance in group scope.
+    const groupEndpointAdapter = useMemo(
+        () => context?.sections.endpoints.enabled
+            ? createGroupModelConnectionsAdapter({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.endpoint_management)
+            : null,
+        [context?.scope.id, context?.workspace.name, context?.sections.endpoints.enabled, context?.endpoint_management],
     );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
@@ -401,6 +417,8 @@ export function GroupWorkspacePage() {
                                     <GroupIdentitiesSection adapter={groupIdentityAdapter}
                                         syncEnabled={context.sections.sync.enabled}
                                         actionsEnabled={context.sections.actions.enabled} />
+                                ) : section === 'endpoints' && !resourceId && groupEndpointAdapter ? (
+                                    <GroupEndpointsSection adapter={groupEndpointAdapter} />
                                 ) : (
                                     <GlassPanel elevation="flat" className="space-y-4 p-5">
                                         <SectionIntro title={selected.section.label} description={selected.section.blurb} />

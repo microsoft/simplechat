@@ -41,15 +41,15 @@ import {
     PROVIDER_OPTIONS,
     authTypeLabel,
     buildConnectionPayload,
-    createModelConnection,
-    deleteModelConnection,
+    createAdminModelConnectionsAdapter,
     defaultOpenAiApiVersion,
     defaultEmbeddingApi,
-    discoverModels,
     emptyConnection,
     embeddingConnectionUnavailableReason,
     enabledModelCount,
-    fetchModelConnections,
+    EndpointConflictError,
+    EndpointInUseError,
+    GroupWriteConflictError,
     isFoundryProvider,
     isKnownEmbeddingModel,
     mergeDiscoveredModels,
@@ -60,18 +60,17 @@ import {
     providerLabel,
     setModelCapabilityEnabled,
     setEmbeddingOperation,
-    testConnection,
-    testConnectionModel,
     toEditableConnection,
-    updateModelConnection,
     validateConnection,
     visibleFields,
     type ConnectionModel,
     type ConnectionMigrationNotice,
     type EmbeddingConfig,
     type EmbeddingOperationSettings,
+    type EndpointReference,
     type ImplementedCapability,
     type ModelConnection,
+    type ModelConnectionsAdapter,
 } from '../../lib/modelConnections';
 import { AdminModal } from './AdminModal';
 import { CatalogProfilePicker } from './ModelCatalogManager';
@@ -80,6 +79,11 @@ import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
+
+// The admin surface's adapter, built once. It routes every call straight to the global
+// /api/v2/admin/model-endpoints and shared /api/models/* routes and fires the shared revision store,
+// so the admin experience stays byte-identical to the pre-adapter direct calls.
+const ADMIN_MODEL_CONNECTIONS_ADAPTER: ModelConnectionsAdapter = createAdminModelConnectionsAdapter(modelConnectionsChanged);
 
 const inputClass = clsx(
     'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
@@ -341,14 +345,27 @@ function ModelCapabilities({ model, connection, disabled, errors, onChange }: {
 function ConnectionEditor({
     initial,
     customApiTypes,
+    adapter,
     onClose,
     onSaved,
+    onReloadEndpoint,
 }: {
     initial: ModelConnection;
     customApiTypes: CustomApiTypeDescriptor[];
+    adapter: ModelConnectionsAdapter;
     onClose: () => void;
     onSaved: (saved: ModelConnection, created: boolean) => void;
+    /**
+     * Reload the latest stored copy of this endpoint after a stale-revision conflict, returning the
+     * fresh row so a re-save carries its new revision. Provided only in group scope; admin never
+     * conflicts, so it stays undefined and the reload affordance never appears.
+     */
+    onReloadEndpoint?: (id: string) => Promise<ModelConnection | null>;
 }) {
+    // The baseline the editor saves against. It starts as the row that opened the editor and is
+    // replaced only when a conflict reload pulls the latest revision, so the user's field edits in
+    // `draft` are preserved across a reload while the conditional-write token refreshes.
+    const [current, setCurrent] = useState<ModelConnection>(initial);
     const [draft, setDraft] = useState<ModelConnection>(() => toEditableConnection(initial));
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
@@ -356,6 +373,9 @@ function ConnectionEditor({
     const [testing, setTesting] = useState(false);
     const [testingModelId, setTestingModelId] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
+    // A stale-revision conflict keeps the draft and offers a reload rather than losing the edit.
+    const [needsReload, setNeedsReload] = useState(false);
+    const [reloading, setReloading] = useState(false);
 
     const isNew = !initial.id;
     const foundry = isFoundryProvider(draft.provider);
@@ -367,10 +387,21 @@ function ConnectionEditor({
     const usesModelName = connectionUsesModelName(draft);
     const authType = String(draft.auth?.type ?? (custom || embeddingOnly ? 'api_key' : 'managed_identity'));
     const authOptions = custom ? CUSTOM_AUTH_TYPE_OPTIONS : AUTH_TYPE_OPTIONS.filter((option) => !embeddingOnly || option.value === 'api_key');
+    // Model discovery and chat model tests share one gate: admin always; a group writer when a new
+    // draft's scope advertises `test`, or an existing row carries the `test` action. This mirrors the
+    // server, which lets a writer test an unsaved configuration but refuses members and locked groups
+    // with a 403, so those callers never see Discover models or Test chat. The image and embedding
+    // capability tests use an admin-settings route with no group equivalent, so they stay admin-only.
+    const canTest = adapter.scope.kind === 'admin'
+        || (isNew ? adapter.supported.has('test') : adapter.allows('test', initial));
+    const canTestCapabilities = adapter.canTestCapabilities;
+    // Whether this scope may persist the editor: a new row needs create, an existing one needs edit.
+    // Admin allows both, so its editor is unchanged; a group member viewing a row cannot save.
+    const canSave = isNew ? adapter.canCreate : adapter.allows('edit', initial);
 
     const shown = useMemo(() => visibleFields(draft), [draft]);
     const savedBinding = !isNew && JSON.stringify(buildConnectionPayload(draft)) ===
-        JSON.stringify(buildConnectionPayload(toEditableConnection(initial)));
+        JSON.stringify(buildConnectionPayload(toEditableConnection(current)));
 
     const setField = useCallback((path: string, value: unknown) => {
         setErrors((current) => {
@@ -447,7 +478,7 @@ function ConnectionEditor({
         setDiscovering(true);
         setFormError(null);
         try {
-            const response = await discoverModels(buildConnectionPayload(draft));
+            const response = await adapter.discover(buildConnectionPayload(draft));
             const discovered = Array.isArray(response.models) ? response.models : [];
             const { models, added } = mergeDiscoveredModels(draft.models ?? [], discovered);
             setModels(models);
@@ -476,7 +507,7 @@ function ConnectionEditor({
         setTesting(true);
         setFormError(null);
         try {
-            const response = await testConnection(buildConnectionPayload(draft));
+            const response = await adapter.testConnection(buildConnectionPayload(draft));
             toast.success(
                 response.validation_only
                     ? response.message || 'Configuration validated. Inference was not tested.'
@@ -511,9 +542,9 @@ function ConnectionEditor({
         try {
             if (capability !== 'chat') {
                 const response = await testCapabilityModel(capability, {
-                    endpoint_id: initial.id,
-                    model_id: String(model.id || connectionRequestModel(initial, model)),
-                    provider: String(initial.provider || ''),
+                    endpoint_id: current.id,
+                    model_id: String(model.id || connectionRequestModel(current, model)),
+                    provider: String(current.provider || ''),
                 });
                 if (response.success !== true) {
                     throw new Error(response.error || 'The saved model did not return a valid result.');
@@ -527,7 +558,7 @@ function ConnectionEditor({
                     toast.success(`${deploymentName} generated an image.`);
                 }
             } else {
-                await testConnectionModel(buildConnectionPayload(draft), model);
+                await adapter.testConnectionModel(buildConnectionPayload(draft), model);
                 toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
             }
         } catch (error) {
@@ -547,20 +578,52 @@ function ConnectionEditor({
 
         setSaving(true);
         setFormError(null);
+        setNeedsReload(false);
         try {
             const payload = buildConnectionPayload(draft);
             const response = initial.id
-                ? await updateModelConnection(initial.id, payload)
-                : await createModelConnection(payload);
+                ? await adapter.update(current, payload)
+                : await adapter.create(payload);
             onSaved(response.endpoint ?? {}, !initial.id);
         } catch (error) {
-            setFormError(errorMessage(error, 'The connection could not be saved.'));
+            // A stale-revision conflict keeps the draft and offers a reload; a concurrent unrelated
+            // group write keeps the draft for a plain retry; anything else, including the server's
+            // reviewed 400 text, is shown verbatim with the draft preserved.
+            if (error instanceof EndpointConflictError) {
+                setFormError(error.message);
+                setNeedsReload(Boolean(onReloadEndpoint));
+            } else if (error instanceof GroupWriteConflictError) {
+                setFormError(error.message);
+            } else {
+                setFormError(errorMessage(error, 'The connection could not be saved.'));
+            }
         } finally {
             setSaving(false);
         }
     };
 
-    const busy = saving || discovering || testing || testingModelId !== null;
+    const reloadLatest = async () => {
+        if (!onReloadEndpoint || !current.id) {
+            return;
+        }
+        setReloading(true);
+        try {
+            const fresh = await onReloadEndpoint(current.id);
+            if (fresh) {
+                setCurrent(fresh);
+                setNeedsReload(false);
+                setFormError('Reloaded the latest saved version. Review your changes, then save again.');
+            } else {
+                setFormError('This connection is no longer available. Close the editor and refresh the list.');
+            }
+        } catch (error) {
+            setFormError(errorMessage(error, 'Could not reload the latest version.'));
+        } finally {
+            setReloading(false);
+        }
+    };
+
+    const busy = saving || discovering || testing || reloading || testingModelId !== null;
     const models = draft.models ?? [];
     const projectHint = foundry ? projectNameFromEndpoint(draft.connection?.endpoint) : '';
 
@@ -577,18 +640,20 @@ function ConnectionEditor({
             footer={
                 <>
                     <GlassButton type="button" variant="ghost" size="sm" onClick={onClose} disabled={saving}>
-                        Cancel
+                        {canSave ? 'Cancel' : 'Close'}
                     </GlassButton>
-                    <GlassButton
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        onClick={() => void save()}
-                        disabled={busy}
-                    >
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        {isNew ? 'Create connection' : 'Save changes'}
-                    </GlassButton>
+                    {canSave ? (
+                        <GlassButton
+                            type="button"
+                            variant="primary"
+                            size="sm"
+                            onClick={() => void save()}
+                            disabled={busy}
+                        >
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                            {isNew ? 'Create connection' : 'Save changes'}
+                        </GlassButton>
+                    ) : null}
                 </>
             }
         >
@@ -598,10 +663,23 @@ function ConnectionEditor({
                     className="mb-3 flex items-start gap-2 rounded-lg border border-edge bg-danger-soft p-3 text-sm text-danger"
                 >
                     <AlertCircle size={15} className="mt-0.5 shrink-0" />
-                    {formError}
+                    <span className="flex-1">{formError}</span>
+                    {needsReload ? (
+                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void reloadLatest()}>
+                            {reloading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                            Reload latest
+                        </GlassButton>
+                    ) : null}
                 </p>
             ) : null}
 
+            {!canSave ? (
+                <p className="mb-3 rounded-lg border border-edge bg-surface-soft p-3 text-sm text-text-3">
+                    You can view this connection. Only group Owners and Admins can change it while the group is active.
+                </p>
+            ) : null}
+
+            <fieldset disabled={!canSave} className="min-w-0">
             <SectionHeading>Identity</SectionHeading>
 
             <Field label="Name" error={errors.name} htmlFor="connection-name" help="Shown wherever a model from this connection is offered.">
@@ -1045,6 +1123,7 @@ function ConnectionEditor({
 
             <div className="mb-3 flex flex-wrap gap-2">
                 {!custom && !embeddingOnly ? <>
+                {canTest ? (
                 <GlassButton
                     type="button"
                     variant="subtle"
@@ -1059,16 +1138,19 @@ function ConnectionEditor({
                     )}
                     Discover models
                 </GlassButton>
-                <GlassButton
-                    type="button"
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => void runConnectionTest()}
-                    disabled={busy}
-                >
-                    {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-                    {embeddingOnly ? 'Validate configuration' : 'Test connection'}
-                </GlassButton>
+                ) : null}
+                {adapter.canTestConnection ? (
+                    <GlassButton
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => void runConnectionTest()}
+                        disabled={busy}
+                    >
+                        {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                        {embeddingOnly ? 'Validate configuration' : 'Test connection'}
+                    </GlassButton>
+                ) : null}
                 </> : null}
                 <GlassButton
                     type="button"
@@ -1214,17 +1296,17 @@ function ConnectionEditor({
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                 />
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                    {!embeddingOnly && modelPublishesCapability(model, 'chat') ? (
+                                    {canTest && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'chat')}>
                                             Test chat
                                         </GlassButton>
                                     ) : null}
-                                    {!embeddingOnly && modelSupportsCapability(model, 'image_generation') ? (
+                                    {canTestCapabilities && !embeddingOnly && modelSupportsCapability(model, 'image_generation') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'image_generation')}>
                                             Test image generation
                                         </GlassButton>
                                     ) : null}
-                                    {!embeddingUnavailableReason && modelSupportsCapability(model, 'embeddings') ? (
+                                    {canTestCapabilities && !embeddingUnavailableReason && modelSupportsCapability(model, 'embeddings') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'embeddings')}>
                                             Test embeddings
                                         </GlassButton>
@@ -1294,6 +1376,7 @@ function ConnectionEditor({
                     </Field>
                 </>
             ) : null}
+            </fieldset>
         </AdminModal>
     );
 }
@@ -1302,7 +1385,7 @@ function ConnectionEditor({
 /* Manager                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export function ModelConnectionsManager({ help }: { help?: string }) {
+export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTIONS_ADAPTER }: { help?: string; adapter?: ModelConnectionsAdapter }) {
     const [connections, setConnections] = useState<ModelConnection[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -1310,6 +1393,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const [editing, setEditing] = useState<ModelConnection | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const [inUse, setInUse] = useState<{ name: string; references: EndpointReference[] } | null>(null);
     const [migration, setMigration] = useState<ConnectionMigrationNotice | null>(null);
     const [embeddingMigration, setEmbeddingMigration] = useState<ConnectionMigrationNotice | null>(null);
     const [defaultNotices, setDefaultNotices] = useState<string[]>([]);
@@ -1323,7 +1407,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
 
     const load = useCallback(async (signal?: AbortSignal) => {
         try {
-            const response = await fetchModelConnections(signal);
+            const response = await adapter.list(signal);
             setConnections(Array.isArray(response.endpoints) ? response.endpoints : []);
             setCustomApiTypes(response.custom_api_types ?? []);
             setCustomNetworkPolicy(response.custom_network_policy ?? EMPTY_CUSTOM_NETWORK_POLICY);
@@ -1339,7 +1423,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [adapter]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -1371,11 +1455,28 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         try {
             // A partial update, so the stripped secrets in the copy held here are never
             // sent back and cannot overwrite what is stored.
-            await updateModelConnection(connection.id, { enabled: next });
-            modelConnectionsChanged();
+            const result = await adapter.update(connection, { enabled: next });
+            // Group rows carry a revision that advances on every write; refresh it so a follow-up
+            // toggle is not rejected as stale. Admin responses omit it, so the row is unchanged.
+            const savedRevision = result.endpoint?.revision;
+            if (savedRevision) {
+                setConnections((current) =>
+                    current.map((item) =>
+                        item.id === connection.id ? { ...item, enabled: next, revision: savedRevision } : item,
+                    ),
+                );
+            }
+            adapter.onChanged();
         } catch (toggleError) {
             setConnections(previous);
-            setError(errorMessage(toggleError, 'The connection could not be updated.'));
+            if (toggleError instanceof EndpointConflictError) {
+                // The stored copy moved on, so reload the list to pick up its current state
+                // rather than leaving a stale row on screen.
+                setError(toggleError.message);
+                void load();
+            } else {
+                setError(errorMessage(toggleError, 'The connection could not be updated.'));
+            }
         } finally {
             setBusyId(null);
         }
@@ -1387,12 +1488,21 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         setConfirmDeleteId(null);
         setConnections(connections.filter((item) => item.id !== connection.id));
         try {
-            await deleteModelConnection(connection.id);
-            modelConnectionsChanged();
+            await adapter.remove(connection);
+            adapter.onChanged();
             toast.success(`Deleted ${connection.name || 'connection'}.`);
         } catch (deleteError) {
             setConnections(previous);
-            setError(errorMessage(deleteError, 'The connection could not be deleted.'));
+            if (deleteError instanceof EndpointInUseError) {
+                // Something still binds this connection, so name what and let the manager clear it
+                // before deleting rather than reporting a bare failure.
+                setInUse({ name: connection.name || 'This connection', references: deleteError.references });
+            } else if (deleteError instanceof EndpointConflictError) {
+                setError(deleteError.message);
+                void load();
+            } else {
+                setError(errorMessage(deleteError, 'The connection could not be deleted.'));
+            }
         } finally {
             setBusyId(null);
         }
@@ -1401,7 +1511,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const onSaved = (saved: ModelConnection, created: boolean) => {
         setEditing(null);
         setError(null);
-        modelConnectionsChanged();
+        adapter.onChanged();
         if (created) {
             setConnections((current) => [...current, saved]);
             toast.success(`Created ${saved.name || 'connection'}.`);
@@ -1417,28 +1527,30 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         <div className="py-3" role="region" aria-label="AI Connections">
             <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-text-1">AI Connections</span>
-                <GlassButton
-                    type="button"
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => setEditing(emptyConnection())}
-                >
-                    <Plus size={14} />
-                    Add connection
-                </GlassButton>
+                {adapter.canCreate ? (
+                    <GlassButton
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => setEditing(emptyConnection())}
+                    >
+                        <Plus size={14} />
+                        Add connection
+                    </GlassButton>
+                ) : null}
             </div>
 
             {help ? <p className="mb-3 text-xs leading-relaxed text-text-3">{help}</p> : null}
             <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat, image and embedding defaults. Images and embeddings remain available when chat uses its classic endpoint.</p>
-            {!loading ? <CustomNetworkPolicyEditor policy={customNetworkPolicy} onSaved={setCustomNetworkPolicy} /> : null}
-            {[migration, embeddingMigration].map((notice, index) => notice?.message ? (
+            {adapter.canEditNetworkPolicy && !loading ? <CustomNetworkPolicyEditor policy={customNetworkPolicy} onSaved={setCustomNetworkPolicy} /> : null}
+            {adapter.showMigrationNotices ? [migration, embeddingMigration].map((notice, index) => notice?.message ? (
                 <p key={index} role="status" className={`mb-3 rounded-lg p-3 text-xs ${notice.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>
                     {notice.message}
                 </p>
-            ) : null)}
-            {defaultNotices.map((notice, index) => (
+            ) : null) : null}
+            {adapter.showMigrationNotices ? defaultNotices.map((notice, index) => (
                 <p key={index} role="status" className="mb-2 text-xs text-warn">{notice}</p>
-            ))}
+            )) : null}
 
             {error ? (
                 <p
@@ -1531,39 +1643,43 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
                                 </div>
 
                                 <div className="flex shrink-0 items-center gap-1">
+                                    {adapter.allows('enable', connection) ? (
+                                        <button
+                                            type="button"
+                                            title={connection.enabled === false ? 'Enable' : 'Disable'}
+                                            aria-label={`${connection.enabled === false ? 'Enable' : 'Disable'} ${connection.name ?? 'connection'}`}
+                                            disabled={busyId === connection.id}
+                                            onClick={() => void onToggle(connection)}
+                                            className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:opacity-50"
+                                        >
+                                            {busyId === connection.id ? (
+                                                <Loader2 size={15} className="animate-spin" />
+                                            ) : (
+                                                <Power size={15} />
+                                            )}
+                                        </button>
+                                    ) : null}
                                     <button
                                         type="button"
-                                        title={connection.enabled === false ? 'Enable' : 'Disable'}
-                                        aria-label={`${connection.enabled === false ? 'Enable' : 'Disable'} ${connection.name ?? 'connection'}`}
-                                        disabled={busyId === connection.id}
-                                        onClick={() => void onToggle(connection)}
-                                        className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:opacity-50"
-                                    >
-                                        {busyId === connection.id ? (
-                                            <Loader2 size={15} className="animate-spin" />
-                                        ) : (
-                                            <Power size={15} />
-                                        )}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        title="Edit"
-                                        aria-label={`Edit ${connection.name ?? 'connection'}`}
+                                        title={adapter.allows('edit', connection) ? 'Edit' : 'View'}
+                                        aria-label={`${adapter.allows('edit', connection) ? 'Edit' : 'View'} ${connection.name ?? 'connection'}`}
                                         onClick={() => setEditing(connection)}
                                         className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                                     >
                                         <Pencil size={15} />
                                     </button>
-                                    <button
-                                        type="button"
-                                        title="Delete"
-                                        aria-label={`Delete ${connection.name ?? 'connection'}`}
-                                        disabled={busyId === connection.id}
-                                        onClick={() => setConfirmDeleteId(connection.id)}
-                                        className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
-                                    >
-                                        <Trash2 size={15} />
-                                    </button>
+                                    {adapter.allows('delete', connection) ? (
+                                        <button
+                                            type="button"
+                                            title="Delete"
+                                            aria-label={`Delete ${connection.name ?? 'connection'}`}
+                                            disabled={busyId === connection.id}
+                                            onClick={() => setConfirmDeleteId(connection.id)}
+                                            className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-50"
+                                        >
+                                            <Trash2 size={15} />
+                                        </button>
+                                    ) : null}
                                 </div>
                             </li>
                         );
@@ -1575,9 +1691,36 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
                 <ConnectionEditor
                     initial={editing}
                     customApiTypes={customApiTypes}
+                    adapter={adapter}
+                    onReloadEndpoint={adapter.reload}
                     onClose={() => setEditing(null)}
                     onSaved={onSaved}
                 />
+            ) : null}
+
+            {inUse ? (
+                <AdminModal
+                    title="This connection is still in use"
+                    description="Remove it from the items below, then delete it."
+                    onClose={() => setInUse(null)}
+                    footer={
+                        <GlassButton type="button" variant="ghost" size="sm" onClick={() => setInUse(null)}>
+                            Close
+                        </GlassButton>
+                    }
+                >
+                    <p className="mb-2 text-sm text-text-2">
+                        {inUse.name} is referenced by {inUse.references.length} item{inUse.references.length === 1 ? '' : 's'}.
+                    </p>
+                    <ul className="space-y-1">
+                        {inUse.references.map((reference) => (
+                            <li key={`${reference.kind}-${reference.id}`} className="rounded-lg border border-edge bg-surface-1 p-2 text-xs text-text-2">
+                                <span className="text-text-3">{reference.kind === 'workflow' ? 'Workflow' : reference.kind === 'agent' ? 'Agent' : reference.kind}: </span>
+                                {reference.name || reference.id}
+                            </li>
+                        ))}
+                    </ul>
+                </AdminModal>
             ) : null}
 
             {confirmDeleteId ? (

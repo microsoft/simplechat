@@ -98,6 +98,16 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group model endpoint management hint (M5C). Present as `{schema_version: 1, operations:
+     * [...]}` when the viewer may create model connections, computed from the endpoint manage roles
+     * and status exactly like identity_management. Absence means "read-only", never an empty grant;
+     * per-endpoint edit/enable/delete/test are gated by each row's own endpoint_actions.
+     */
+    endpoint_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

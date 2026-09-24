@@ -1,20 +1,25 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.138
+Version: 0.261.143
 Implemented in: 0.261.127
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
-`/agents[...]` and `/identities[...]` families and injects the `action_management`,
-`agent_management` and `identity_management` context hints, exactly as the M4 and M5A
-backends do, so the production group Actions, Agents and Identities pages render their
-native collections -- and the action editor lists reusable group identities -- rather than
-tripping the fixture on an unexpected request. The serving machinery lives here in the base
-class and is reused unchanged by the dedicated per-section fixtures, so each fixture answers
-these routes with one implementation.
+`/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
+`/api/groups/<group_id>/models/{fetch,test-model,foundry/agents}` discovery and test routes --
+and injects the `action_management`, `agent_management`, `identity_management` and
+`endpoint_management` context hints, exactly as the M4, M5A and M5C backends do, so the
+production group Actions, Agents, Identities and Endpoints pages render their native
+collections -- and the action editor lists reusable group identities while the group agent
+editor discovers Foundry resources through the named-group route -- rather than tripping the
+fixture on an unexpected request. Any `/api/v2/admin/*` request from a group page is recorded
+as a leaked admin surface, exactly as a personal read is. The serving machinery lives here in
+the base class and is reused unchanged by the dedicated per-section fixtures, so each fixture
+answers these routes with one implementation.
 """
 
 import copy
+import hashlib
 from datetime import datetime, timezone
 from urllib.parse import unquote, urlsplit
 
@@ -290,6 +295,95 @@ def _sanitize_identity(record):
     return result
 
 
+# --- Native group model endpoint modelling (M5C) -------------------------------------------------
+# The group Endpoints section reuses the admin ModelConnectionsManager through a scope-aware adapter
+# rather than a fork, so the fixture serves the immutable `/api/groups/<group_id>/model-endpoints[...]`
+# CRUD family plus the group `/api/groups/<group_id>/models/{fetch,test-model,foundry/agents}`
+# discovery and test routes. `endpoint_management` gates create; each row's `endpoint_actions` gates
+# edit, enable, delete and test, with no fallback. Unlike identities, the list is readable by an
+# ordinary member -- they simply get an empty operations hint and rows without `endpoint_actions` --
+# so a member sees the read-only collection, exactly as the server projects it. The response carries
+# no per-item group ID: identity is proven at the envelope, so a returned endpoint never has to name
+# its group and the reader validates the list shape instead.
+ENDPOINT_OPERATIONS = ("create", "edit", "enable", "delete", "test")
+ENDPOINT_ACTIONS = ("edit", "enable", "delete", "test")
+# The server's GROUP_ENDPOINT_WRITE_ROLES: only Owner and Admin may write. A DocumentManager reads
+# the collection but never manages it, so it is deliberately excluded and left read-only.
+ENDPOINT_MANAGE_ROLES = ("Owner", "Admin")
+
+# The strict write body the native endpoint routes accept; `expected_revision` rides the PATCH.
+ENDPOINT_CONFLICT_ERROR = "This model endpoint changed. Reload it before saving."
+GROUP_WRITE_CONFLICT_ERROR = "The group changed while this model endpoint was being saved. Try again."
+# The server's exact in-use and no-change texts (functions_group_endpoint_access.py), shown verbatim
+# by the editor so a test proves the server's own wording renders (§11 F3.5).
+ENDPOINT_IN_USE_ERROR = (
+    "This model endpoint is used by group agents or workflows. "
+    "Change them to another endpoint, or disable this endpoint instead."
+)
+ENDPOINT_NO_CHANGE_ERROR = "No fields provided for update."
+# The reviewed stored-credential 400s the native routes raise verbatim (§10); shown as-is so a test
+# proves the editor renders the server's own text. Mirroring `_check_client_credentials`, a Key Vault
+# reference is refused outright, while a masked placeholder is refused only where nothing is stored.
+ENDPOINT_STORED_CREDENTIAL_SUPPLIED = "Stored credential references cannot be supplied in a request."
+ENDPOINT_STORED_CREDENTIAL_UNAVAILABLE = "A stored credential is unavailable. Re-enter its value."
+ENDPOINT_SECRET_FIELDS = ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token")
+ENDPOINT_KEYVAULT_REFERENCE_MARKER = "--model-endpoint--"
+ENDPOINT_STORED_SECRET_PLACEHOLDERS = ("Stored_In_KeyVault", "***REDACTED***")
+
+
+def endpoint_management(role, status):
+    """The endpoint management hint, computed from policy exactly like `identity_management`."""
+    if role in ENDPOINT_MANAGE_ROLES and status == "active":
+        return {"schema_version": 1, "operations": list(ENDPOINT_OPERATIONS)}
+    return {"schema_version": 1, "operations": []}
+
+
+def group_model_endpoint(identifier, name, *, provider="aoai", enabled=True, models=None,
+                         actions=ENDPOINT_ACTIONS, api_type=None, has_api_key=True,
+                         auth_type="api_key"):
+    """One group model endpoint as the native projector returns it, before `revision` and
+    `endpoint_actions` are attached by the serving routes.
+
+    The shape mirrors the admin `connection(...)` fixture so the shared ModelConnectionsManager
+    renders it identically; it deliberately carries no `group_id`, because the group route proves
+    scope at the envelope and the reader validates the list shape rather than a per-item id.
+    An `api_key` connection carries a stored key so a rename proves masking survives, while a
+    `managed_identity` connection exposes the editor's Azure model discovery, which an API key
+    cannot reach.
+    """
+    if models is None:
+        models = [{
+            "id": f"{identifier}-chat", "deploymentName": "chat", "modelName": "gpt-4o-mini",
+            "selected": True,
+        }]
+    endpoint = "https://api.openai.com/v1" if provider == "custom" else f"https://{identifier}.openai.azure.com"
+    if provider == "aifoundry":
+        endpoint = f"https://{identifier}.services.ai.azure.com/api/projects/proj"
+    if auth_type == "managed_identity":
+        auth = {"type": "managed_identity", "managed_identity_type": "system_assigned"}
+    else:
+        auth = {"type": "api_key"}
+    row = {
+        "id": identifier,
+        "name": name,
+        "provider": provider,
+        "enabled": enabled,
+        "connection": {
+            "endpoint": endpoint,
+            "openai_api_version": "2024-05-01-preview",
+            "operation_settings": {"image_generation": {"api_version": "2025-04-01-preview"}},
+        },
+        "management": {"subscription_id": "sub-1234", "resource_group": "rg-models"},
+        "auth": auth,
+        "has_api_key": has_api_key if auth_type == "api_key" else False,
+        "models": copy.deepcopy(models),
+        "_actions": tuple(actions),
+    }
+    if api_type is not None:
+        row["api_type"] = api_type
+    return row
+
+
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID):
     manager = role in ("Owner", "Admin", "DocumentManager")
     automation = role in ("Owner", "Admin")
@@ -319,6 +413,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "action_management": action_management(role, status),
         "agent_management": agent_management(role, status),
         "identity_management": identity_management(role, status),
+        "endpoint_management": endpoint_management(role, status),
         "native_delegation": {
             "group": "automation", "enabled": readable,
             "reason": None if readable else "This group is inactive.",
@@ -384,6 +479,24 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_identities = {}
         self.native_identity_revisions = {}
         self.identity_references = {}
+        # Native group model endpoint state, kept apart from every other native store. Endpoints carry
+        # an opaque `revision` marker the client round-trips as `expected_revision`, so a per-(group,
+        # id) counter backs a SHA-256-shaped revision and `touch_endpoint` advances it to model a
+        # concurrent edit. `endpoint_references` records what still uses an endpoint, so a delete of a
+        # referenced endpoint returns the in-use 409 with references and nothing is removed. A group in
+        # `endpoint_write_conflicts` has its next endpoint write answered with the unrelated
+        # `group_write_conflict` 409, whose draft-keeping retry needs no reload.
+        self.created_endpoint_counter = 0
+        self.native_endpoints = {}
+        self.native_endpoint_revisions = {}
+        self.endpoint_references = {}
+        self.endpoint_write_conflicts = set()
+        # One test sets this to a reviewed 400 message so the next endpoint create or edit is refused
+        # verbatim, proving the editor renders the server's own text and keeps the draft.
+        self.next_endpoint_write_error = None
+        # One test flips this to force a malformed endpoint list envelope (no endpoints array), which
+        # the section must treat as a hard load error rather than an empty successful load.
+        self.malformed_endpoint_list = False
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -461,11 +574,26 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self.unexpected_requests.append(f"{method} {path} ({leak} from a group page)")
             self._json(route, {"error": "Personal-scope reads are not available on group pages."}, 500)
             return
+        if path.startswith("/api/v2/admin/"):
+            # A group page must never reach a tenant-admin route. The scope-aware ModelConnectionsManager
+            # routes every group read and write to /api/groups/<g>/..., hiding the admin-only network
+            # policy, default-model and migration surfaces, so an /api/v2/admin/* request from a group
+            # endpoints section is a leaked admin affordance. Record it rather than answering, exactly
+            # as the leak trap does for a personal read.
+            self.unexpected_requests.append(f"{method} {path} (admin route from a group page)")
+            self._json(route, {"error": "Admin routes are not available on group pages."}, 500)
+            return
         if path.startswith("/api/groups/") and path.endswith("/agent-options"):
             self._agent_options(route, entry)
             return
         if path.startswith("/api/groups/") and path.endswith("/agent-knowledge"):
             self._agent_knowledge(route, entry)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/models/foundry/agents"):
+            # This must precede the greedy `/agents` branch below: the named-group Foundry discovery
+            # path ends in `/agents`, so an earlier substring match would misroute it to the agent
+            # list handler.
+            self._group_foundry_discovery(route, entry)
             return
         if path.startswith("/api/groups/") and "/agents" in path:
             self._agents(route, entry)
@@ -479,8 +607,22 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if path.startswith("/api/groups/") and "/identities" in path:
             self._identities(route, entry)
             return
+        if path.startswith("/api/groups/") and "/model-endpoints" in path:
+            self._model_endpoints(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/models/" in path:
+            self._group_models(route, entry)
+            return
         if path == "/api/models/foundry/agents" and method == "POST":
             self._foundry_discovery(route, entry)
+            return
+        if path == "/api/models/catalog" and method == "GET":
+            # The shared connection editor's CatalogProfilePicker stays in group scope, so it reads
+            # the account-wide catalogue-profile list here. It is a read-only shared catalogue, not an
+            # admin management surface, so a group page legitimately fetches it; the admin discovery
+            # and test routes (/api/models/{fetch,test-model,foundry/agents}) are the ones a group
+            # page must never touch, and those are served only under the named-group path.
+            self._json(route, {"profiles": []})
             return
         if path == "/api/agent-templates" and method == "POST" and not self._template_submission_allowed:
             # The group template panel hides its submit button when the server gate is off, so a POST
@@ -1025,6 +1167,328 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         ]
         self._json(route, {"success": True})
 
+    # --- Native group model endpoint serving, shared with GroupEndpointsFixture -----------------
+
+    def _seed_endpoints(self, group_id, records):
+        rows = []
+        for record in records:
+            rows.append(record)
+            self.native_endpoint_revisions[(group_id, record["id"])] = 1
+        self.native_endpoints[group_id] = rows
+
+    def record_endpoint(self, group_id, identifier):
+        return next((row for row in self.native_endpoints.get(group_id, []) if row["id"] == identifier), None)
+
+    def _endpoint_operations(self, group_id):
+        """The group's current `endpoint_management` operations, the single source the payload
+        projection and the writer-only discovery/test gates both read."""
+        return set(self.groups[group_id].get("endpoint_management", {}).get("operations", []))
+
+    def _endpoint_revision(self, group_id, identifier):
+        """A SHA-256-shaped revision marker the client round-trips as `expected_revision`, so a stale
+        value proves a conditional write rather than a bare integer the client might reason about."""
+        counter = self.native_endpoint_revisions[(group_id, identifier)]
+        return hashlib.sha256(f"{group_id}:{identifier}:{counter}".encode()).hexdigest()
+
+    def touch_endpoint(self, group_id, identifier):
+        """Simulate a concurrent edit by another manager: the stored endpoint revision moves on."""
+        self.native_endpoint_revisions[(group_id, identifier)] += 1
+        return self._endpoint_revision(group_id, identifier)
+
+    def _endpoint_payload(self, group_id, record):
+        """The stored endpoint projected to its response: drop the private `_actions` marker and add
+        the two fields the native routes attach -- the opaque `revision` and the `endpoint_actions`
+        projection that gates edit, enable, delete and test per row.
+
+        `endpoint_actions` is computed per response like the server's `group_endpoint_actions`: the
+        group's current `endpoint_management` operations intersected with the manageable subset and
+        the seeded per-row override. It never comes from the seed alone, so a member, a DocumentManager
+        or a manager of a non-`active` group -- all of whom carry no operations -- see an empty action
+        list and a read-only row, exactly as the server projects it."""
+        payload = {key: copy.deepcopy(value) for key, value in record.items() if key != "_actions"}
+        payload["revision"] = self._endpoint_revision(group_id, record["id"])
+        operations = self._endpoint_operations(group_id)
+        seeded = set(record.get("_actions", ()))
+        payload["endpoint_actions"] = [
+            action for action in ENDPOINT_ACTIONS if action in operations and action in seeded
+        ]
+        return payload
+
+    def set_endpoint_policy(self, group_id, *, role=None, status="active"):
+        """Recompute a group's context for an endpoint role and status.
+
+        `group_context` computes the `endpoint_management` hint from the same role and status, so
+        recomputing the whole context carries the new hint, exactly like `set_identity_policy`.
+        """
+        current = self.groups.get(group_id)
+        name = current["workspace"]["name"] if current else f"{group_id} workspace"
+        role = role or (current["role"] if current else "Owner")
+        context = group_context(group_id, name, role=role, status=status)
+        self.groups[group_id] = context
+        return context
+
+    def _endpoint_from_write(self, group_id, identifier, body, prior):
+        """Fold a strict write body onto a new or existing endpoint. The client omits `has_api_key`
+        (a response-only flag) and omits `auth.api_key` when the stored key is kept, so a blank key
+        preserves whatever is stored, mirroring the server's credential retention."""
+        merged = copy.deepcopy(prior) if prior is not None else {}
+        for key, value in body.items():
+            if key in ("expected_revision", "id", "revision", "endpoint_actions"):
+                continue
+            merged[key] = copy.deepcopy(value)
+        merged["id"] = identifier
+        # `has_api_key` is never sent by the client: an omitted `auth.api_key` keeps the stored key,
+        # a fresh value sets one. Recompute the response-only flag from what is stored plus any new key.
+        incoming_key = str(((body.get("auth") or {}) if isinstance(body.get("auth"), dict) else {}).get("api_key") or "")
+        stored_key = bool(prior.get("has_api_key")) if prior is not None else False
+        merged["has_api_key"] = bool(incoming_key) or stored_key
+        merged["_actions"] = tuple(prior.get("_actions", ENDPOINT_ACTIONS)) if prior is not None else tuple(ENDPOINT_ACTIONS)
+        return merged
+
+    def _stored_credential_error(self, body, prior):
+        """Mirror the server's `_check_client_credentials`: refuse a Key Vault reference outright, and
+        a masked placeholder only where nothing is stored. The editor omits a blank secret and never
+        sends a reference or a placeholder, so any such value in an auth secret field is a UI
+        regression -- recorded as unexpected -- and returns the server's exact 400 text."""
+        auth = body.get("auth")
+        if not isinstance(auth, dict):
+            return None
+        stored_auth = prior.get("auth") if isinstance(prior, dict) and isinstance(prior.get("auth"), dict) else {}
+        for field in ENDPOINT_SECRET_FIELDS:
+            value = auth.get(field)
+            if not isinstance(value, str) or value == "":
+                continue
+            if ENDPOINT_KEYVAULT_REFERENCE_MARKER in value:
+                self.unexpected_requests.append(f"endpoint write carried a Key Vault reference in auth.{field}")
+                return ENDPOINT_STORED_CREDENTIAL_SUPPLIED
+            if value in ENDPOINT_STORED_SECRET_PLACEHOLDERS and not stored_auth.get(field):
+                self.unexpected_requests.append(
+                    f"endpoint write carried a stored-secret placeholder in auth.{field} with nothing stored"
+                )
+                return ENDPOINT_STORED_CREDENTIAL_UNAVAILABLE
+        return None
+
+    def _model_endpoints(self, route, entry):
+        parts = entry.path.split("/")
+        # /api/groups/<group_id>/model-endpoints[/<endpoint_id>]
+        group_id = parts[3]
+        tail = parts[5] if len(parts) > 5 else None
+        method = entry.method
+        assert group_id in self.groups, f"Unknown group endpoint scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's model endpoints."}, 403)
+            return
+        # Unlike identities, an ordinary member may read the list -- they simply receive an empty
+        # `endpoint_management` hint and rows without `endpoint_actions`, so the section renders
+        # read-only. Every native endpoint route rejects unexpected query parameters with a 400,
+        # mirroring the server's strict request contract; the frontend therefore sends none.
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        operations = set(self.groups[group_id].get("endpoint_management", {}).get("operations", []))
+        if tail is None:
+            if method == "GET":
+                # A test may force a malformed list envelope (no endpoints array) to prove the section
+                # treats it as a hard load error rather than an empty successful load.
+                if getattr(self, "malformed_endpoint_list", False):
+                    self._json(route, {"endpoints": None})
+                    return
+                self._json(route, {
+                    "endpoints": [
+                        self._endpoint_payload(group_id, row) for row in self.native_endpoints.get(group_id, [])
+                    ],
+                    "multi_endpoint_enabled": True,
+                    "custom_api_types": [],
+                })
+                return
+            if method == "POST":
+                self._create_endpoint(route, entry, group_id, operations)
+                return
+        else:
+            record = self.record_endpoint(group_id, tail)
+            if record is None:
+                self._json(route, {"error": "Model endpoint not found in this group."}, 404)
+                return
+            if method == "GET":
+                self._json(route, {"endpoint": self._endpoint_payload(group_id, record)})
+                return
+            if method == "PATCH":
+                self._patch_endpoint(route, entry, group_id, tail, record, operations)
+                return
+            if method == "DELETE":
+                self._delete_endpoint(route, entry, group_id, tail, record, operations)
+                return
+        self.unexpected_requests.append(f"{method} {entry.path}")
+        self._json(route, {"error": "Unexpected group model endpoint request."}, 500)
+
+    def _create_endpoint(self, route, entry, group_id, operations):
+        assert "create" in operations, f"Create reached a workspace without the hint: {entry}"
+        body = entry.body if isinstance(entry.body, dict) else {}
+        if "expected_revision" in body:
+            self._json(route, {"error": "A new model endpoint carries no version marker."}, 400)
+            return
+        credential_error = self._stored_credential_error(body, prior=None)
+        if credential_error:
+            self._json(route, {"error": credential_error}, 400)
+            return
+        if self.next_endpoint_write_error:
+            self._json(route, {"error": self.next_endpoint_write_error}, 400)
+            self.next_endpoint_write_error = None
+            return
+        self.created_endpoint_counter += 1
+        identifier = f"{group_id}-endpoint-created-{self.created_endpoint_counter}"
+        record = self._endpoint_from_write(group_id, identifier, body, prior=None)
+        self.native_endpoints.setdefault(group_id, []).insert(0, record)
+        self.native_endpoint_revisions[(group_id, identifier)] = 1
+        self._json(route, {"endpoint": self._endpoint_payload(group_id, record)}, 201)
+
+    def _patch_endpoint(self, route, entry, group_id, identifier, record, operations):
+        body = entry.body if isinstance(entry.body, dict) else {}
+        enable_only = set(body) - {"expected_revision"} == {"enabled"}
+        op = "enable" if enable_only else "edit"
+        assert op in operations and op in (record.get("_actions") or ()), (
+            f"{op} reached a read-only endpoint: {entry}"
+        )
+        if "expected_revision" not in body:
+            self._json(route, {"error": "This model endpoint is missing its version marker."}, 400)
+            return
+        if set(body) - {"expected_revision"} == set():
+            # A PATCH that carries only its version marker changes nothing; the server refuses it with
+            # this exact text (§11 F3.5), which the editor surfaces verbatim.
+            self._json(route, {"error": ENDPOINT_NO_CHANGE_ERROR}, 400)
+            return
+        credential_error = self._stored_credential_error(body, prior=record)
+        if credential_error:
+            self._json(route, {"error": credential_error}, 400)
+            return
+        if body["expected_revision"] != self._endpoint_revision(group_id, identifier):
+            self._json(route, {"error": ENDPOINT_CONFLICT_ERROR, "error_code": "endpoint_conflict"}, 409)
+            return
+        if group_id in self.endpoint_write_conflicts:
+            # A concurrent, unrelated write to the group document: the endpoint's own revision is still
+            # valid, so the draft is kept and a plain retry (which clears the flag) succeeds.
+            self.endpoint_write_conflicts.discard(group_id)
+            self._json(route, {"error": GROUP_WRITE_CONFLICT_ERROR, "error_code": "group_write_conflict"}, 409)
+            return
+        if self.next_endpoint_write_error:
+            self._json(route, {"error": self.next_endpoint_write_error}, 400)
+            self.next_endpoint_write_error = None
+            return
+        updated = self._endpoint_from_write(group_id, identifier, body, prior=record)
+        index = next(i for i, row in enumerate(self.native_endpoints[group_id]) if row["id"] == identifier)
+        self.native_endpoints[group_id][index] = updated
+        self.native_endpoint_revisions[(group_id, identifier)] += 1
+        self._json(route, {"endpoint": self._endpoint_payload(group_id, updated)})
+
+    def _delete_endpoint(self, route, entry, group_id, identifier, record, operations):
+        assert "delete" in operations and "delete" in (record.get("_actions") or ()), (
+            f"Delete reached a read-only endpoint: {entry}"
+        )
+        body = entry.body if isinstance(entry.body, dict) else {}
+        if set(body) != {"expected_revision"}:
+            self._json(route, {"error": "A model endpoint delete carries only its version marker."}, 400)
+            return
+        if body["expected_revision"] != self._endpoint_revision(group_id, identifier):
+            self._json(route, {"error": ENDPOINT_CONFLICT_ERROR, "error_code": "endpoint_conflict"}, 409)
+            return
+        references = self.endpoint_references.get((group_id, identifier))
+        if references:
+            self._json(route, {
+                "error": ENDPOINT_IN_USE_ERROR,
+                "error_code": "endpoint_in_use",
+                "references": copy.deepcopy(references),
+            }, 409)
+            return
+        self.native_endpoints[group_id] = [
+            row for row in self.native_endpoints[group_id] if row["id"] != identifier
+        ]
+        self._json(route, {"success": True})
+
+    def _group_models(self, route, entry):
+        # /api/groups/<group_id>/models/{fetch,test-model} -- the group-scoped discovery and single
+        # deployment test, the counterpart to the admin /api/models/{fetch,test-model} the shared
+        # editor calls in admin scope. A group page reaching the admin routes is a leak the trap
+        # records; these group routes answer the same shapes so the shared editor renders identically.
+        group_id = entry.path.split("/")[3]
+        action = entry.path.rsplit("/", 1)[-1]
+        assert group_id in self.groups, f"Unknown group models scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's models."}, 403)
+            return
+        assert entry.method == "POST", entry
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        if not isinstance(entry.body, dict):
+            self._json(route, {"error": "A model discovery or test requires a JSON object body."}, 400)
+            return
+        if "test" not in self._endpoint_operations(group_id):
+            # Discovery and model tests are writer-only on the server: it refuses a member, a
+            # DocumentManager or a manager of a non-`active` group with a 403. After F1 and F2 the UI
+            # never offers Discover models or Test chat to those callers, so a request here is a UI
+            # regression -- record it as unexpected rather than answering it.
+            self.unexpected_requests.append(
+                f"{entry.method} {entry.path} (discovery or model test without the test operation)"
+            )
+            self._json(route, {"error": "You cannot test this group's models."}, 403)
+            return
+        if action == "fetch":
+            self._json(route, {"models": [
+                {"deploymentName": "discovered-chat", "modelName": "gpt-4o-mini", "id": "discovered-chat"},
+            ]})
+            return
+        if action == "test-model":
+            self._json(route, {"success": True})
+            return
+        self.unexpected_requests.append(f"{entry.method} {entry.path}")
+        self._json(route, {"error": "Unexpected group models request."}, 500)
+
+    def _group_foundry_discovery(self, route, entry):
+        # POST /api/groups/<group_id>/models/foundry/agents -- the named-group Foundry discovery route
+        # M5C re-enables for a group-scoped connection, replacing the M4C block. The path scopes the
+        # group, so the body carries only `endpoint_id` (and an optional `resource_type`); a `scope`
+        # field is the legacy global shape and never arrives here. The M4C hazard is inverted: group
+        # Foundry discovery is answered through this route, not recorded as unexpected.
+        group_id = entry.path.split("/")[3]
+        assert group_id in self.groups, f"Unknown group Foundry scope: {entry}"
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's models."}, 403)
+            return
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return
+        if not isinstance(entry.body, dict):
+            self._json(route, {"error": "A group Foundry discovery requires a JSON object body."}, 400)
+            return
+        if "test" not in self._endpoint_operations(group_id):
+            # Foundry discovery is writer-only on the server too, so a non-writer or a non-`active`
+            # group is refused with a 403. The group agent editor only offers discovery to a writer,
+            # so a request here is a regression -- recorded as unexpected.
+            self.unexpected_requests.append(
+                f"POST {entry.path} (Foundry discovery without the test operation)"
+            )
+            self._json(route, {"error": "You cannot test this group's models."}, 403)
+            return
+        body = entry.body if isinstance(entry.body, dict) else {}
+        if not body.get("endpoint_id"):
+            self._json(route, {"error": "A group Foundry discovery requires an endpoint id."}, 400)
+            return
+        if "scope" in body:
+            # The named-group route scopes the group by path; a `scope` field is the legacy global
+            # shape leaking onto the group route.
+            self.unexpected_requests.append(
+                f"POST {entry.path} (legacy scope field on the named-group Foundry route)"
+            )
+            self._json(route, {"error": "The group Foundry route takes no scope field."}, 400)
+            return
+        self._json(route, {
+            "agents": [{
+                "id": "group-assistant", "name": "group-assistant",
+                "display_name": "Group assistant", "description": "A discoverable group resource.",
+            }],
+            "responses_api_version": "2025-01-01",
+        })
+
     # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------
 
     def _seed_agents(self, group_id, records):
@@ -1084,11 +1548,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             empty_models=group_id in self.empty_model_groups))
 
     def _foundry_discovery(self, route, entry):
-        # POST /api/models/foundry/agents -- Foundry resource discovery. The server route resolves a
-        # group-scoped connection through the account's ACTIVE group, not the page's, so the group
-        # editor must offer no discovery for one; a request that still arrives with scope 'group'
-        # from a group page is a cross-scope hazard and is recorded as unexpected. A global
-        # connection has no group dependency, so it is answered like the personal path.
+        # POST /api/models/foundry/agents -- the legacy active-group Foundry discovery route. A
+        # group-scoped connection now discovers through the named-group route (`_group_foundry_discovery`),
+        # so scope 'group' must never arrive here from a group page; one that does is a cross-scope
+        # hazard and is recorded as unexpected. A global connection has no group dependency, so it is
+        # answered like the personal path.
         scope = (entry.body or {}).get("scope")
         if scope == "group":
             self.unexpected_requests.append(

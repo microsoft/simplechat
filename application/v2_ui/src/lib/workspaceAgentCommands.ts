@@ -55,14 +55,29 @@ export function withAgentInstructionProposal(current: AgentConfiguration, instru
 }
 
 export async function discoverAgentFoundryResources(
-    endpoint: WorkspaceModelEndpoint, type: WorkspaceAgentType, signal?: AbortSignal,
+    endpoint: WorkspaceModelEndpoint, type: WorkspaceAgentType, signal?: AbortSignal, groupId?: string,
 ) {
     if (type === 'local' || !foundryEndpointMatches(type, endpoint)) throw new Error('Select an available Foundry connection for this agent type.');
+    const resourceType = type === 'foundry_workflow' ? 'workflow' : '';
+    const endpointScope = agentText(endpoint.scope) || 'global';
+    // A group-scoped connection discovers through the named-group route, which resolves the page's
+    // group from the path rather than the caller's active group, and so needs no scope field. A
+    // global connection, even inside a group editor, keeps the legacy account-wide route.
+    if (groupId && endpointScope === 'group') {
+        const grouped = await api.post<{ agents: FoundryDiscoveryRecord[]; responses_api_version?: string }>(
+            `/api/groups/${encodeURIComponent(groupId)}/models/foundry/agents`, {
+                endpoint_id: endpoint.id,
+                resource_type: resourceType,
+            }, signal,
+        );
+        if (!Array.isArray(grouped.agents)) throw new Error('Foundry discovery returned an invalid resource list.');
+        return grouped;
+    }
     const result = await api.post<{ agents: FoundryDiscoveryRecord[]; responses_api_version?: string }>(
         '/api/models/foundry/agents', {
             endpoint_id: endpoint.id,
-            scope: agentText(endpoint.scope) || 'global',
-            resource_type: type === 'foundry_workflow' ? 'workflow' : '',
+            scope: endpointScope,
+            resource_type: resourceType,
         }, signal,
     );
     if (!Array.isArray(result.agents)) throw new Error('Foundry discovery returned an invalid resource list.');
