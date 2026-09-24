@@ -346,17 +346,48 @@ class GroupEndpointEnvironment:
     def seed_group(self, group_id, status="active", endpoints=(), **extra):
         return self.groups.seed(group_document(group_id, status=status, endpoints=endpoints, **extra))
 
-    def legacy_stored_endpoints(self, group_id, endpoints):
-        """Store endpoints exactly as the legacy collection save does: normalized, with
-        credentials under the deterministic ``{id}--model-endpoint--group--...`` names."""
+    def legacy_stored_endpoints(self, group_id, endpoints, scope="group"):
+        """Store endpoints as the legacy collection save stored them before the
+        endpoint-keyed hardening: normalized, with each credential under the
+        deterministic ``{id}--model-endpoint--{scope}--model-endpoint-<field>`` name.
+
+        Built from the Key Vault primitives the old helper used, so the V1-created
+        records these tests edit do not depend on how the current helper names a new
+        secret. With Key Vault storage off the old helper left the endpoint as it was.
+        """
+        keyvault = self.modules.keyvault
         normalized, _ = self.modules.settings.normalize_model_endpoints([copy.deepcopy(item) for item in endpoints])
-        return [
-            self.modules.keyvault.keyvault_model_endpoint_save_helper(endpoint, endpoint["id"], scope="group")
-            for endpoint in normalized
-        ]
+        if not (self.settings.get("enable_key_vault_secret_storage") and self.settings.get("key_vault_name")):
+            return normalized
+        for endpoint in normalized:
+            auth = endpoint.get("auth")
+            if not isinstance(auth, dict):
+                continue
+            auth_type = str(auth.get("type") or "managed_identity").lower()
+            for field, auth_types in keyvault.MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS.items():
+                if auth_type not in auth_types:
+                    auth.pop(field, None)
+                elif auth.get(field):
+                    auth[field] = keyvault.store_secret_in_key_vault(
+                        keyvault._build_model_endpoint_secret_name(field), auth[field], endpoint["id"],
+                        source="model-endpoint", scope=scope,
+                    )
+        return normalized
 
     def seed_group_with_legacy_endpoints(self, group_id, endpoints, status="active", **extra):
         return self.seed_group(group_id, status=status, endpoints=self.legacy_stored_endpoints(group_id, endpoints), **extra)
+
+    def seed_personal_endpoints(self, user_id, endpoints):
+        """Store V1-created personal endpoints (deterministic ``--user--`` names)."""
+        stored = self.legacy_stored_endpoints(None, endpoints, scope="user")
+        self.user_settings[user_id] = {"id": user_id, "settings": {"personal_model_endpoints": stored}}
+        return stored
+
+    def personal_endpoint(self, user_id, endpoint_id):
+        for endpoint in self.user_settings.get(user_id, {}).get("settings", {}).get("personal_model_endpoints", []):
+            if endpoint.get("id") == endpoint_id:
+                return endpoint
+        return None
 
     def stored_group(self, group_id):
         return self.groups.get(group_id, group_id)

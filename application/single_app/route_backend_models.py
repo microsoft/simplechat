@@ -1184,6 +1184,48 @@ def register_route_backend_models(bp):
             return None, build_safe_error_response("Invalid Custom model endpoint configuration.", 400)
         return normalized, None
 
+    def save_scoped_endpoint_secrets(normalized, existing_by_id, scope):
+        """Run the Key Vault save pass for a personal or group endpoint collection.
+
+        Returns ``(saved_endpoints, None)``, or ``(None, response)`` when the helper
+        refuses a credential, for example a reference that is not the endpoint's own
+        stored one. Nothing has been written at that point, so a credential this pass
+        has already staged for an earlier endpoint is deleted again.
+        """
+        saved_endpoints = []
+        try:
+            for endpoint in normalized:
+                saved_endpoints.append(keyvault_model_endpoint_save_helper(
+                    endpoint,
+                    resolve_endpoint_scope_value(endpoint),
+                    scope=scope,
+                    existing_endpoint=existing_by_id.get(endpoint.get("id")),
+                ))
+        except ValueError as exc:
+            for staged in saved_endpoints:
+                try:
+                    keyvault_model_endpoint_cleanup_helper(
+                        staged, existing_by_id.get(staged.get("id")), staged.get("id"), scope=scope,
+                    )
+                except Exception as cleanup_exc:
+                    log_models_exception(
+                        "Unable to remove a credential staged for a refused save",
+                        cleanup_exc,
+                        extra={"scope": scope},
+                        level=logging.WARNING,
+                    )
+            log_models_exception(
+                "Model endpoint credential refused",
+                exc,
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return None, build_safe_error_response(
+                "A model endpoint credential could not be saved. Re-enter the secret value and try again.",
+                400,
+            )
+        return saved_endpoints, None
+
     def _persist_personal_endpoints(user_id, normalized, existing):
         """Save a full endpoint list, moving Key Vault secrets to match.
 
@@ -1191,21 +1233,18 @@ def register_route_backend_models(bp):
         endpoints write theirs, changed endpoints have the superseded version cleaned up,
         and endpoints that are gone have theirs deleted. Skipping the last one would leave
         orphaned secrets behind after a delete.
+
+        Returns ``(saved_endpoints, None)``, or ``(None, response)`` when a credential
+        is refused, in which case nothing is written.
         """
         existing_by_id = {
             endpoint.get("id"): endpoint
             for endpoint in existing
             if isinstance(endpoint, dict) and endpoint.get("id")
         }
-        saved_endpoints = [
-            keyvault_model_endpoint_save_helper(
-                endpoint,
-                resolve_endpoint_scope_value(endpoint),
-                scope="user",
-                existing_endpoint=existing_by_id.get(endpoint.get("id")),
-            )
-            for endpoint in normalized
-        ]
+        saved_endpoints, error = save_scoped_endpoint_secrets(normalized, existing_by_id, "user")
+        if error:
+            return None, error
 
         for endpoint in saved_endpoints:
             if not isinstance(endpoint, dict):
@@ -1233,7 +1272,7 @@ def register_route_backend_models(bp):
                 keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="user")
 
         update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints})
-        return saved_endpoints
+        return saved_endpoints, None
 
     def _single_endpoint_response(saved_endpoints, endpoint_id, status):
         saved = _find_personal_endpoint(saved_endpoints, endpoint_id)
@@ -1257,7 +1296,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(list(existing) + [candidate], existing)
         if error:
             return error
-        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        if error:
+            return error
         return _single_endpoint_response(saved_endpoints, endpoint_id, 201)
 
     @bp.route('/api/user/model-endpoints', methods=['POST'])
@@ -1292,7 +1333,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(incoming, existing)
         if error:
             return error
-        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        if error:
+            return error
         return jsonify({
             "success": True,
             "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
@@ -1357,7 +1400,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(replaced, existing)
         if error:
             return error
-        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        if error:
+            return error
         return _single_endpoint_response(saved_endpoints, current.get("id"), 200)
 
 
@@ -1393,7 +1438,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(remaining)
         if error:
             return error
-        _persist_personal_endpoints(user_id, normalized, existing)
+        _saved, error = _persist_personal_endpoints(user_id, normalized, existing)
+        if error:
+            return error
         log_event(
             "User model endpoint deleted",
             extra={"user_id": user_id, "endpoint_id": endpoint_id},
@@ -1484,15 +1531,9 @@ def register_route_backend_models(bp):
             for endpoint in existing
             if isinstance(endpoint, dict) and endpoint.get("id")
         }
-        saved_endpoints = [
-            keyvault_model_endpoint_save_helper(
-                endpoint,
-                resolve_endpoint_scope_value(endpoint),
-                scope="group",
-                existing_endpoint=existing_by_id.get(endpoint.get("id")),
-            )
-            for endpoint in normalized
-        ]
+        saved_endpoints, error = save_scoped_endpoint_secrets(normalized, existing_by_id, "group")
+        if error:
+            return error
 
         for endpoint in saved_endpoints:
             if not isinstance(endpoint, dict):
