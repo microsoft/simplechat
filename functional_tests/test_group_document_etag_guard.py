@@ -1,7 +1,7 @@
 # test_group_document_etag_guard.py
 """
 Functional test for the conditional group-document writer.
-Version: 0.261.154
+Version: 0.261.160
 Implemented in: 0.261.140
 No-bump commits (``cache_reason=None``): 0.261.146
 Native membership writers' cache reasons: 0.261.151
@@ -153,11 +153,13 @@ def test_a_lost_response_commit_is_recognised_rather_than_retried(env, monkeypat
     assert env.bumps == ["test_reason"]
 
 
-def test_the_legacy_collection_writer_is_still_an_unconditional_upsert(env):
-    """Recorded, not changed: M7B moves the legacy writers onto the guarded helper."""
+def test_the_legacy_collection_writer_uses_the_guard(env):
+    """The legacy bulk endpoint save writes the list on the current copy and bumps as before."""
     env.seed_group(GROUP_A)
-    env.modules.group.update_group_model_endpoints(GROUP_A, [])
-    assert [call[0] for call in env.write_calls()] == ["upsert_item"]
+    env.groups.before_replace.append(land_membership_change(env))
+    committed = env.modules.group.update_group_model_endpoints(GROUP_A, [])
+    assert [call[0] for call in env.write_calls()] == ["replace_item", "replace_item"]
+    assert committed["model_endpoints"] == [] and env.stored_group(GROUP_A)["model_endpoints"] == []
     assert env.bumps == ["group_model_endpoints_updated"]
 
 
@@ -208,9 +210,9 @@ def _guard_calls():
 
 
 def test_every_guarded_writer_names_its_cache_reason():
-    """The group directory, the logo and the retention writes opt out of the bump; the
-    model endpoint writes keep theirs, and the membership and settings modules forward
-    each write's own reason (pinned below)."""
+    """The group directory, the logo, the retention and the tag definition writes opt
+    out of the bump; the model endpoint writes keep theirs, and the membership and
+    settings modules forward each write's own reason (pinned below)."""
     reasons = {}
     for file_name, call in _guard_calls():
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
@@ -220,12 +222,18 @@ def test_every_guarded_writer_names_its_cache_reason():
             "None" if isinstance(value, ast.Constant) and value.value is None else ast.unparse(value)
         )
     assert reasons == {
+        "functions_documents.py": {"None"},
+        "functions_group.py": {"'group_model_endpoints_updated'"},
         "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
         "functions_group_directory.py": {"None"},
         "functions_group_membership.py": {"cache_reason"},
         # The native group settings writes name theirs at each _write call.
         "functions_group_settings.py": {"cache_reason"},
-        "functions_simplechat_operations.py": {"'group_member_added'"},
+        "functions_simplechat_operations.py": {"'group_member_added'", "'group_marked_inactive'"},
+        "route_backend_control_center.py": {
+            "None", "'group_status_updated'", "'group_member_added'", "'group_ownership_transferred'",
+        },
+        "route_backend_group_documents.py": {"None"},
         "route_backend_groups.py": {"cache_reason", "'group_updated'", "None"},
         "route_backend_retention_policy.py": {"None"},
     }
@@ -328,10 +336,34 @@ def _cache_reasons_by_function(file_name, callee):
         "update_group_retention_settings": {"None"},
         "force_push_retention_defaults": {"None"},
     }),
+    ("route_backend_control_center.py", "update_group_document_with_etag_guard", {
+        # The metrics cache is read by no chat bootstrap payload, as before.
+        "enhance_group_with_activity": {"None"},
+        "api_update_group_status": {"'group_status_updated'"},
+        "api_admin_add_group_member": {"'group_member_added'"},
+        "_execute_take_ownership": {"'group_ownership_transferred'"},
+        "_execute_transfer_ownership": {"'group_ownership_transferred'"},
+    }),
+    # Tag definitions are read by no chat bootstrap payload; the classic writes never bumped.
+    ("route_backend_group_documents.py", "update_group_document_with_etag_guard", {
+        "_save_group_tag_definitions": {"None"},
+    }),
+    ("functions_documents.py", "update_group_document_with_etag_guard", {
+        "get_or_create_tag_definition": {"None"},
+    }),
+    # The legacy bulk endpoint save and the SimpleChat group writers keep their reasons.
+    ("functions_group.py", "update_group_document_with_etag_guard", {
+        "update_group_model_endpoints": {"'group_model_endpoints_updated'"},
+    }),
+    ("functions_simplechat_operations.py", "update_group_document_with_etag_guard", {
+        "add_group_member_for_current_user": {"'group_member_added'"},
+        "make_group_inactive_for_current_user": {"'group_marked_inactive'"},
+    }),
 ])
 def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):
-    """The name, description, color and download writes bump group_updated, as the classic
-    writers did; the logo and retention writes bump nothing, as they never did."""
+    """Every converted classic writer bumps what it bumped before: the name, description,
+    color and download writes group_updated, the Control Center writes their own reasons,
+    and the logo, retention, metrics and tag definition writes nothing, as they never did."""
     assert _cache_reasons_by_function(file_name, callee) == expected
 
 

@@ -5,12 +5,24 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_governance import ensure_governance_access
-from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
+from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    GroupDocumentWriteConflict,
+    assert_group_role,
+    get_group_model_endpoints,
+    require_active_group,
+    update_group_model_endpoints,
+)
 from functions_group_endpoint_access import (
+    clean_up_committed_group_endpoint_credentials,
+    discard_staged_group_endpoint_credentials,
     group_endpoint_error_response,
+    keep_staged_group_endpoint_credentials,
     read_strict_json_object,
     reject_query_parameters,
     require_group_endpoint_discovery_context,
+    staged_group_endpoint_credentials,
 )
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import ModelTokenBudgetError
@@ -1557,32 +1569,25 @@ def register_route_backend_models(bp):
         if error:
             return error
 
-        for endpoint in saved_endpoints:
-            if not isinstance(endpoint, dict):
-                continue
-            endpoint_id = endpoint.get("id")
-            if not endpoint_id:
-                continue
-            keyvault_model_endpoint_cleanup_helper(
-                existing_by_id.get(endpoint_id),
-                endpoint,
-                endpoint_id,
-                scope="group",
-            )
-
-        saved_endpoint_ids = {
-            endpoint.get("id")
-            for endpoint in saved_endpoints
-            if isinstance(endpoint, dict) and endpoint.get("id")
-        }
-        for endpoint in existing:
-            if not isinstance(endpoint, dict):
-                continue
-            endpoint_id = endpoint.get("id")
-            if endpoint_id and endpoint_id not in saved_endpoint_ids:
-                keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="group")
-
-        update_group_model_endpoints(group_id, saved_endpoints)
+        # The list is written through the etag guard, which checks the caller's role
+        # again on the group's current copy. Superseded and removed credentials are
+        # deleted only after the write commits, judged against the endpoints it
+        # replaced, and never while the committed endpoints still use them. A write
+        # that fails definitively deletes only what this save staged.
+        staged = staged_group_endpoint_credentials(normalized, existing_by_id, saved_endpoints)
+        outcome = {}
+        try:
+            committed = update_group_model_endpoints(group_id, saved_endpoints, user_id=user_id, outcome=outcome)
+        except GroupDocumentWriteConflict:
+            discard_staged_group_endpoint_credentials(group_id, staged)
+            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": GROUP_WRITE_CONFLICT_CODE}), 409
+        except (LookupError, PermissionError) as exc:
+            discard_staged_group_endpoint_credentials(group_id, staged)
+            return build_group_access_error_response(user_id, exc, "group model endpoint settings")
+        except Exception:
+            keep_staged_group_endpoint_credentials(group_id, staged)
+            raise
+        clean_up_committed_group_endpoint_credentials(group_id, committed, outcome, staged)
         return jsonify({
             "success": True,
             "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),

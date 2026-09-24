@@ -2,6 +2,48 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.160)**
+
+#### Bug Fixes
+
+*   **The Last Group Writers No Longer Overwrite Concurrent Changes**
+    *   Control Center's activity refresh, group status change, add member and ownership approvals, the classic tag routes, the SimpleChat agent's inactive marker, and the legacy bulk model endpoint save each saved a copy of the group read earlier. Any of them could undo a change made in between, and one that saved after a deletion brought the group back. Control Center's refresh, which runs nightly by default, did this to every group.
+    *   Each now applies its change to the group as it currently is, never recreates a deleted group, and refuses a group that keeps changing with one shared message: "The group changed while your request was being saved. Try again."
+    *   Ownership approvals are re-checked when approved: a request whose owner has since changed is refused, and approving the same request twice no longer marks it failed. An approval that can't be applied because the group keeps changing asks for a new request, since a failed approval can't be approved again.
+    *   The bulk endpoint save deletes superseded Key Vault secrets only after the save commits, and never one the saved endpoints still use. A failed Key Vault delete no longer fails the save.
+    *   (Ref: `route_backend_control_center.py`, `route_backend_group_documents.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_group.py`, `route_backend_models.py`, [Group Residual Writers Write Safety Fix](fixes/GROUP_RESIDUAL_WRITERS_WRITE_SAFETY_FIX.md))
+
+*   **SimpleChat Agent Tools No Longer Return The Stored Group**
+    *   The create group, add member and mark inactive tools answered the model with the whole stored group, including member emails, pending requests and, with Key Vault storage off, inline model endpoint credentials.
+    *   They now answer only the group's ID, name and status.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+*   **Classic Group Requests Refuse Malformed Input Cleanly**
+    *   The group download setting treated the string "false" as true, a retention save with a non-JSON body answered 500, and a statistics date at the calendar's edge failed the request.
+    *   Each now answers 400 with a clear message and changes nothing.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, `functions_stats_windows.py`, [Group Classic Request Gaps Fix](fixes/GROUP_CLASSIC_REQUEST_GAPS_FIX.md))
+
+### **(v0.261.159)**
+
+#### Bug Fixes
+
+*   **Held Documents No Longer Offer Ordinary Actions In Their Details**
+    *   The V2 documents Details pane showed Chat, Download, Tag, Edit, Extract, Share and Delete for a document held by content screening. Most were disabled, but Share was live, so a held file in My Workspace could be shared from the pane.
+    *   A held document's details now explain the hold and offer only the cleanup its workspace allows: Delete where a group or public workspace permits it for that document, and the group sharing review where it's available. A personal held document offers no action; the hold is resolved in Content review.
+    *   Documents that are only blocked from chat, such as a shared group document awaiting approval, keep their other permitted actions.
+    *   (Ref: `DocumentDetailsPane.tsx`, [Held Document Details Actions Fix](fixes/V2_HELD_DOCUMENT_DETAILS_ACTIONS_FIX.md))
+
+### **(v0.261.158)**
+
+#### Bug Fixes
+
+*   **V2 Admin Settings No Longer Wait On The Update Check**
+    *   Fixed V2 Admin Settings showing only loading placeholders, with the version banner reading "Checking for updates...", until the server finished checking GitHub for a newer release. When the daily cached check had expired, the settings response waited for the releases page to download and be parsed, and an unreachable GitHub held the page for at least the full timeout.
+    *   The update check is now its own admin-only request, `GET /api/v2/admin/update-status`, sent at the same time as the settings. Settings appear and can be edited and saved as soon as they load, and only the version banner waits for the check. A failed check still shows "Unable to check for application updates." without affecting the settings.
+    *   Classic Admin Settings is unchanged.
+    *   Merged from the React V2 branch, where it shipped as 0.261.133. This branch had already assigned 0.261.133 to native public document management, so here the fix carries the merge's version.
+    *   (Ref: `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminFields.ts`, [Administration](../admin/index.md), [Update Check Non-Blocking Fix](fixes/V2_ADMIN_UPDATE_CHECK_NON_BLOCKING_FIX.md))
+
 ### **(v0.261.157)**
 
 #### Bug Fixes

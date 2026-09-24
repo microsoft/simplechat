@@ -143,6 +143,12 @@ group is active. Backend behavioral and route-policy tests are documented in
 the API feature page. Polling tests install the clock before application timers
 are created and wait for the initial detail response before advancing a poll.
 
+From version **0.261.159**, `ui_tests/test_v2_chat_context_selection.py` also
+pins the router-state side of the chat handoff: personal and public records
+carried in router state are adopted without extra reads, but group records are
+refused unless the link names the group, so they can't skip the group reads
+described under Chat handoff.
+
 No live Azure deployment, live model execution, or large-workspace latency
 benchmark is claimed. Group sharing/approval, previews, group-specific saved-view
 persistence, and public workspace migration remain later milestones.

@@ -66,6 +66,8 @@ from functions_activity_logging import log_group_member_deleted
 from functions_appinsights import log_event
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     find_group_by_id,
     get_user_role_in_group,
@@ -120,7 +122,8 @@ NO_PENDING_REQUEST_MESSAGE = "That person doesn't have a pending request to join
 OWNER_ROLE_MESSAGE = "Transfer ownership to change the owner's role."
 OWNER_REMOVAL_MESSAGE = "Transfer ownership before removing the owner."
 OWNER_LEAVE_MESSAGE = "Transfer ownership before leaving the group."
-WRITE_CONFLICT_MESSAGE = "The group changed while this change was being saved. Try again."
+# The one group write conflict sentence, functions_group's (GROUP_WRITE_CONFLICT_MESSAGE).
+WRITE_CONFLICT_MESSAGE = GROUP_WRITE_CONFLICT_MESSAGE
 USER_NOT_FOUND_MESSAGE = "That user wasn't found in the directory."
 MEMBERSHIP_UNAVAILABLE_MESSAGE = "The membership request could not be completed. Try again."
 MEMBERSHIP_REQUEST_MESSAGE = "The request could not be processed."
@@ -459,7 +462,7 @@ def _write(group_id, apply_changes, *, cache_reason):
     try:
         committed = update_group_document_with_etag_guard(group_id, guarded, cache_reason=cache_reason)
     except GroupDocumentWriteConflict as error:
-        raise _error(WRITE_CONFLICT_MESSAGE, 409, "group_write_conflict") from error
+        raise _error(WRITE_CONFLICT_MESSAGE, 409, GROUP_WRITE_CONFLICT_CODE) from error
     if committed is None:
         raise _group_not_found()
     return committed

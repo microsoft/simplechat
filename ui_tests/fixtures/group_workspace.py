@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.157
+Version: 0.261.160
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -317,7 +317,7 @@ ENDPOINT_MANAGE_ROLES = ("Owner", "Admin")
 
 # The strict write body the native endpoint routes accept; `expected_revision` rides the PATCH.
 ENDPOINT_CONFLICT_ERROR = "This model endpoint changed. Reload it before saving."
-GROUP_WRITE_CONFLICT_ERROR = "The group changed while this model endpoint was being saved. Try again."
+GROUP_WRITE_CONFLICT_ERROR = "The group changed while your request was being saved. Try again."
 # The server's exact in-use and no-change texts (functions_group_endpoint_access.py), shown verbatim
 # by the editor so a test proves the server's own wording renders (§11 F3.5).
 ENDPOINT_IN_USE_ERROR = (

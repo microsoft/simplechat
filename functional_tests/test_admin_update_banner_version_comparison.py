@@ -1,12 +1,16 @@
 # test_admin_update_banner_version_comparison.py
 """
 Functional coverage for shared classic/V2 admin release status.
-Version: 0.261.126
+Version: 0.261.133
 Implemented in: 0.261.126
+Non-blocking V2 release check: 0.261.133
 
 Execute the production checker, parser and comparator with HTTP/storage boundaries
 mocked. AST loading avoids initializing Azure clients; these are behavior tests,
 not startup/import-cycle tests. No live network or application settings are used.
+
+V2 serves the release status from its own admin route so a slow GitHub check can
+never hold up the settings GET; both sides of that boundary are exercised here.
 """
 
 import ast
@@ -175,17 +179,36 @@ class UpdateStatusTests(unittest.TestCase):
         result = self.check(self.settings, CURRENT)
         self.assertEqual(result['latest_version'], '0.261.128')
 
-    def test_v2_get_returns_separate_status_and_preserves_redaction(self):
+    def load_v2_admin_route(self, name):
+        """Return a route defined by the admin Blueprint registrar, with its decorators."""
         tree = ast.parse((APP / 'route_backend_v2.py').read_text(encoding='utf-8'))
-        route = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == 'v2_admin_get_settings')
+        registrar = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == 'register_route_backend_v2_admin'
+        )
+        # Defined inside the registrar means registered on `backend_v2_admin`, whose
+        # Blueprint guard requires the Admin role before the route runs.
+        route = next(
+            node for node in registrar.body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
         decorators = [ast.unparse(node) for node in route.decorator_list]
+        route.decorator_list = []
+        return route, decorators
+
+    def run_route(self, route, namespace):
+        exec(compile(ast.Module(body=[route], type_ignores=[]), 'route_backend_v2.py', 'exec'), namespace)
+        return namespace[route.name]
+
+    def test_v2_settings_get_never_waits_for_release_check(self):
+        route, decorators = self.load_v2_admin_route('v2_admin_get_settings')
         self.assertIn('admin_required', decorators)
         self.assertIn('login_required', decorators)
         self.assertIn('swagger_route(security=get_auth_security())', decorators)
-        route.decorator_list = []
-        namespace = {
+        release_check = Mock(side_effect=AssertionError('The settings GET ran the release check.'))
+        get_admin_settings = self.run_route(route, {
             'get_settings': lambda: self.settings,
-            'get_application_update_status': self.check,
+            'get_application_update_status': release_check,
             'VERSION': CURRENT, 'ADMIN_NAV': [], 'jsonify': lambda value: value,
             '_redact_admin_settings_for_v2': lambda settings: {'secret': 'REDACTED'},
             'get_admin_settings_fields': dict, 'get_admin_section_status': dict,
@@ -193,18 +216,61 @@ class UpdateStatusTests(unittest.TestCase):
             '_build_status_readouts': dict, '_build_endpoint_readouts': lambda settings: {},
             '_build_model_catalog': lambda settings: [], 'is_mcp_ui_enabled': lambda: False,
             'get_suppressed_capability_keys': list, 'logging': logging, 'log_event': self.log,
-        }
-        exec(compile(ast.Module(body=[route], type_ignores=[]), 'route_backend_v2.py', 'exec'), namespace)
-        payload, code = namespace['v2_admin_get_settings']()
+        })
+        # An empty cache would force a GitHub request if the GET still ran the check.
+        payload, code = get_admin_settings()
+        release_check.assert_not_called()
+        self.get.assert_not_called()
+        self.save.assert_not_called()
         self.assertEqual(code, 200)
         self.assertEqual(payload['version'], CURRENT)
         self.assertEqual(payload['settings'], {'secret': 'REDACTED'})
+        self.assertNotIn('update_status', payload)
+
+    def test_v2_update_status_route_is_admin_only_and_fails_safely(self):
+        route, decorators = self.load_v2_admin_route('v2_admin_get_update_status')
+        self.assertEqual(decorators, [
+            "bp.route('/api/v2/admin/update-status', methods=['GET'])",
+            'swagger_route(security=get_auth_security())',
+            'login_required',
+            'admin_required',
+        ])
+        namespace = {
+            'get_settings': lambda: self.settings,
+            'get_application_update_status': self.check,
+            'VERSION': CURRENT, 'jsonify': lambda value: value,
+            'logging': logging, 'log_event': self.log,
+        }
+        get_update_status = self.run_route(route, namespace)
+
+        payload, code = get_update_status()
+        self.assertEqual(code, 200)
+        self.assertEqual(payload['version'], CURRENT)
         self.assertEqual(payload['update_status']['status'], 'checked')
-        self.get.side_effect = requests.Timeout()
+        self.assertEqual(payload['update_status']['latest_version'], '0.261.127')
+        self.assertTrue(payload['update_status']['update_available'])
+        self.get.assert_called_once()
+        self.save.assert_called_once()
+
+        # An unreachable release page is reported as a status, not as a failed request.
         self.settings.clear()
-        payload, code = namespace['v2_admin_get_settings']()
+        self.get.side_effect = requests.Timeout('sensitive provider details')
+        payload, code = get_update_status()
         self.assertEqual(code, 200)
         self.assertEqual(payload['update_status']['status'], 'unavailable')
+        self.assertNotIn('sensitive', payload['update_status']['error'])
+
+        self.log.reset_mock()
+        namespace['get_settings'] = Mock(side_effect=RuntimeError('sensitive storage details'))
+        payload, code = get_update_status()
+        self.assertEqual(code, 500)
+        self.assertEqual(payload, {'error': 'Unable to check for application updates.'})
+        self.log.assert_called_once()
+        message = self.log.call_args.args[0]
+        self.assertTrue(message.startswith('[APP_UPDATES]'))
+        self.assertNotIn('sensitive', message)
+        self.assertEqual(self.log.call_args.kwargs['extra'], {'error_type': 'RuntimeError'})
+        self.assertEqual(self.log.call_args.kwargs['level'], logging.ERROR)
 
     def test_classic_route_uses_shared_status(self):
         source = (APP / 'route_frontend_admin_settings.py').read_text(encoding='utf-8')

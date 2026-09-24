@@ -1,7 +1,7 @@
 # test_group_membership_legacy_guard.py
 """
 Functional test for the classic membership writers on the group-document guard.
-Version: 0.261.151
+Version: 0.261.160
 Implemented in: 0.261.151
 
 The classic join, approve and reject, direct add (the route and the SimpleChat
@@ -38,7 +38,7 @@ from test_support.group_directory_harness import group_directory_environment, pe
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 LATE_USER = {"userId": "late-member", "email": "late.member@example.test", "displayName": "Late Member"}
 CONFLICT = {
-    "error": "The group changed while this change was being saved. Try again.",
+    "error": "The group changed while your request was being saved. Try again.",
     "error_code": "group_write_conflict",
 }
 
