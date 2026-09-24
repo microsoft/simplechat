@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.151
+Version: 0.261.154
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -61,6 +61,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_group_file_sources_scoped": ("login_required", "user_required"),
     "backend_group_directory": ("login_required", "user_required"),
     "backend_group_membership": ("login_required", "user_required"),
+    "backend_group_settings": ("login_required", "user_required"),
     "backend_groups": ("login_required", "user_required"),
     "backend_models": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
@@ -211,6 +212,16 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_membership.py", "api_group_membership_request_approve"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_request_reject"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_owner"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_profile_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_logo_replace"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_logo_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_downloads_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_retention_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_activity"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_stats"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_file_count"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_retention_policy.py", "update_group_retention_settings"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_documents"): ("login_required", "user_required", "enabled_required"),

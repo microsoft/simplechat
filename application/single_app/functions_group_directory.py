@@ -258,11 +258,11 @@ def read_group_directory_query():
     return {"view": view, "search": search, "page": page, "page_size": page_size}
 
 
-def read_group_creation_fields(body):
-    """Validate a create body, which is exactly ``{name, description?}``."""
-    if any(key not in GROUP_CREATE_FIELDS for key in body):
-        raise _invalid_request("Only a name and a description can be set when creating a group.")
-    name = body.get("name")
+def validate_group_name(name):
+    """Return a group name stripped, or raise its reviewed 400.
+
+    Shared by group creation here and by the native group settings rename.
+    """
     if name is None or (isinstance(name, str) and not name.strip()):
         raise _invalid_request("Enter a group name.")
     if not isinstance(name, str):
@@ -272,7 +272,11 @@ def read_group_creation_fields(body):
         raise _invalid_request(f"Group names can be at most {GROUP_NAME_MAX_LENGTH} characters.")
     if GROUP_NAME_CONTROL_CHARACTERS.search(name):
         raise _invalid_request("Group names cannot contain control characters.")
-    description = body.get("description", "")
+    return name
+
+
+def validate_group_description(description):
+    """Return a group description stripped, or raise its reviewed 400."""
     if not isinstance(description, str):
         raise _invalid_request("The group description must be text.")
     description = description.strip()
@@ -280,6 +284,15 @@ def read_group_creation_fields(body):
         raise _invalid_request(
             f"Group descriptions can be at most {GROUP_DESCRIPTION_MAX_LENGTH} characters."
         )
+    return description
+
+
+def read_group_creation_fields(body):
+    """Validate a create body, which is exactly ``{name, description?}``."""
+    if any(key not in GROUP_CREATE_FIELDS for key in body):
+        raise _invalid_request("Only a name and a description can be set when creating a group.")
+    name = validate_group_name(body.get("name"))
+    description = validate_group_description(body.get("description", ""))
     return name, description
 
 
