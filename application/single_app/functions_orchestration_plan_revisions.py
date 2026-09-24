@@ -5,7 +5,7 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.129
+Version: 0.261.135
 """
 
 import hashlib
@@ -57,12 +57,12 @@ _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
     'steps', 'inputs', 'outputs', 'validation', 'edit_version',
-    'final_response', 'model_routing', 'planner',
+    'final_response', 'model_routing', 'planner', 'deliverables',
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
     'optional', 'enabled', 'estimated_cost', 'phase', 'status',
-    'role', 'inputs', 'outputs', 'model_task', 'model_binding',
+    'role', 'inputs', 'outputs', 'model_task', 'model_binding', 'delivers',
 )
 _QUESTION_FIELDS = (
     'elicitation_id', 'contract_version', 'run_id', 'revision', 'message',

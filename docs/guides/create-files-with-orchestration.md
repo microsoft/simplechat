@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.135"
 ---
 
 ## Availability
@@ -42,6 +42,42 @@ You can also request source-free content:
 Such a plan does not need a search task or invented document sources. Likewise,
 selected documents do not require a redundant search when the requested analysis
 can use them directly.
+
+## Check that the plan delivers what you asked for
+
+Since **0.261.135**, a plan lists what you asked to receive before its steps. The
+approval card and the plan panel show it under **You asked for**, with the step that
+produces each item. Use it to confirm the plan will create a real file: a file is
+created only by a Render task, and text or a table in the chat answer is not a file.
+
+If something you asked for cannot be produced here, it stays on the list marked
+**Not available**, with the reason the server reports, for example "This file format
+is not available for this plan." The rest of the plan still runs, and the answer says
+once, in its **Delivery notes**, what was not delivered. A plan is never approved on
+the promise of a file that no task creates.
+
+## Ask for images in a report or deck
+
+Ask for the images in the same request, for example:
+
+> Create a Word file for my report on the first three presidents, with an image of
+> each president.
+
+When image generation is enabled, the plan generates each image you asked for as its
+own task, writes the report with each image where it belongs, and renders the Word
+document with the images embedded. Approving the plan is your consent to generate them;
+in Run automatically mode, your request is. The images also appear inline in the chat
+answer, where you can view and edit them as usual. DOCX, PDF, and PowerPoint files embed
+images; CSV, XLSX, JSON, YAML, XML, Markdown, and text files do not.
+
+Generated images are AI illustrations, captioned as such, not photographs. Web search
+returns text and links only, so a report links authentic sources rather than copying
+their pictures. A plan generates at most four images; when you ask for more, the rest are
+listed as not available. Images the planner only suggests stay approval cards, which
+never appear in a file.
+
+If an image cannot be generated, the report and file are still produced without it, the
+run is reported as incomplete, and the delivery notes say how many images were created.
 
 ## Review the file tasks before running
 
@@ -141,4 +177,4 @@ its retained results and private output access.
 
 Files are private conversation artifacts by default, not automatically indexed
 workspace documents. Workspace publication, external delivery, workflow
-integration and new image/audio generation are not part of this harness tranche.
+integration and audio generation are not part of this harness tranche.

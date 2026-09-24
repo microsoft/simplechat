@@ -1,0 +1,1038 @@
+# test_orchestration_deliverables.py
+"""The deliverables contract and planned image generation in Gather / Reason / Render plans.
+
+Version: 0.261.135
+Implemented in: 0.261.135
+
+Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
+store, chat image persistence, rendering service and Office renderers) with the planning
+and answering models replaced by offline replies and the image service call replaced by
+fixed PNG bytes. Covers:
+
+- deliverables validation: coverage by a capable step, render formats that must match the
+  file deliverable, unavailable reasons that must match the server, the implicit answer,
+  unambiguous linking, derived visuals, and the Image control;
+- the server truth the planner receives and the single repair call;
+- generate_image gating, the per-plan budget, persistence as an image message tied to the
+  orchestrated answer, and the retained image-asset-v1 result;
+- DOCX, PDF and PPTX files embedding exactly the images their source consumed;
+- scenarios: a CSV of states and capitals, a Word report with an image of each of the first
+  three presidents, the same report without a file, and a failing search, image and render.
+"""
+
+import base64
+import hashlib
+import importlib
+import io
+import json
+from copy import deepcopy
+
+import pytest
+
+from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
+from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
+from test_support.versioning import assert_app_version_at_least
+
+
+IMAGE_SETTINGS = {
+    "enable_image_generation": True,
+    "image_gen_model": {"selected": [{"deploymentName": "gpt-image-1", "modelName": "gpt-image-1"}]},
+    "azure_openai_image_gen_endpoint": "https://offline.invalid",
+}
+AVAILABLE = ["compose", "render_file", "generate_image", "web_search", "document_search"]
+PRESIDENTS = (("washington", "George Washington"), ("adams", "John Adams"), ("jefferson", "Thomas Jefferson"))
+REPORT_TEXT = (
+    "# The first three presidents\n\n"
+    "## George Washington\n\n[[image:washington]]\n\nWashington served from 1789 to 1797.\n\n"
+    "## John Adams\n\n[[image:adams]]\n\nAdams served from 1797 to 1801.\n\n"
+    "## Thomas Jefferson\n\n[[image:jefferson]]\n\nJefferson served from 1801 to 1809."
+)
+
+
+def test_version_includes_the_deliverables_contract():
+    assert_app_version_at_least("0.261.135")
+
+
+# ------------------------------------------------------------------------------------------
+# Fixtures and builders
+# ------------------------------------------------------------------------------------------
+
+def _png(color, size=(48, 32)):
+    # The image library is an execution dependency of the renderers under test.
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _enable_images(harness, monkeypatch, failures=None):
+    """Real chat image persistence; only the image service request is doubled."""
+    harness.settings.update(deepcopy(IMAGE_SETTINGS))
+    generation = importlib.import_module("functions_image_generation")
+    calls = []
+    colors = iter(["red", "green", "blue", "orange", "purple", "teal"])
+
+    def source(settings, prompt, size="", quality="", background=""):
+        calls.append({"prompt": prompt, "size": size, "quality": quality, "background": background})
+        failure = (failures or {}).get(len(calls))
+        if failure is not None:
+            raise failure
+        return "data:image/png;base64," + base64.b64encode(_png(next(colors))).decode("ascii")
+
+    monkeypatch.setattr(generation, "request_generated_image_source", source)
+    return calls
+
+
+def _deliverable(identifier, kind, description, *, requested="explicit", status="planned", **extra):
+    return {
+        "id": identifier, "kind": kind, "requested": requested, "description": description,
+        "status": status, **extra,
+    }
+
+
+def _image_step(step_id, title, *, delivers=("portraits",), **arguments):
+    return {
+        "step_id": step_id, "capability_id": "generate_image", "title": f"Illustrate {title}",
+        "arguments": {
+            "prompt": f"An illustrated portrait of {title}, painted in a late 18th-century style.",
+            "title": title, **arguments,
+        },
+        **({"delivers": list(delivers)} if delivers else {}),
+    }
+
+
+def _image_inputs(step_ids):
+    return {step_id: {"binding": input_binding(step_id, "image"), "allow_partial": False} for step_id in step_ids}
+
+
+def _report_step(inputs=None, *, delivers=("report",), outputs=None, basis="general_knowledge"):
+    step = compose_step("report", inputs=inputs or {}, outputs=outputs or [{"name": "report", "kind": "markdown-v1"}])
+    step["arguments"] = {
+        "instruction": "Write a short report on the first three U.S. presidents.", "knowledge_basis": basis,
+    }
+    if delivers:
+        step["delivers"] = list(delivers)
+    return step
+
+
+def _word_step(output_format="docx", *, delivers=("word_file",)):
+    step = render_step("word", output_format, source="report", output="report", profile="prepared_report_v1")
+    if delivers:
+        step["delivers"] = list(delivers)
+    return step
+
+
+def _president_plan(*, with_file=True, with_search=False, output_format="docx"):
+    deliverables = [
+        _deliverable("report", "answer", "A report on the first three presidents"),
+        _deliverable("portraits", "image", "An image of each president", quantity=3),
+    ]
+    steps = [_image_step(step_id, name) for step_id, name in PRESIDENTS]
+    inputs = _image_inputs([step_id for step_id, _ in PRESIDENTS])
+    basis = "general_knowledge"
+    if with_search:
+        steps.insert(0, {"step_id": "search", "capability_id": "web_search", "arguments": {
+            "query": "First three presidents of the United States and their terms of office",
+        }})
+        inputs["findings"] = {"binding": input_binding("search", "prepared"), "allow_partial": False, "optional": True}
+        basis = "sources_and_general_knowledge"
+    steps.append(_report_step(inputs, basis=basis))
+    if with_file:
+        deliverables.append(_deliverable("word_file", "file", "The report as a file", format=output_format))
+        steps.append(_word_step(output_format))
+    return {"deliverables": deliverables, "steps": steps, "final_response": input_binding("report", "report")}
+
+
+def _store(harness, plan, *, replies=()):
+    """Save a validated plan as run-1, exactly as the harness saves its own fixtures."""
+    run_store = importlib.import_module("functions_orchestration_runs")
+    context = importlib.import_module("functions_orchestration_context")
+    memory = importlib.import_module("functions_orchestration_memory")
+    plan = deepcopy(plan)
+    plan.update(run_id="run-1", plan_id="plan-1", turn_id="turn-1")
+    normalized = context.normalize_history_message(harness.turn)
+    turn_context = {
+        "turn_id": "turn-1", "user_message": harness.turn["content"],
+        "user_message_id": harness.turn["id"], "user_message_fingerprint": normalized["fingerprint"],
+        "resolved_message": harness.turn["content"], "seeds": {}, "original_seeds": {},
+        "answered_questions": [], "planning_token_usage": {},
+        "conversation_context": context.build_conversation_snapshot([], harness.settings),
+        "memory_audience": memory.validate_memory_audience(harness.conversation, "owner"),
+        "memory_scope": None,
+    }
+    harness.replies = list(replies)
+    return run_store.create_orchestration_run(
+        plan, "owner", "conversation-1", turn_index=1, turn_context=turn_context,
+    )
+
+
+def _normalize(harness, raw, *, availability=None, image_selected=False, available=AVAILABLE):
+    return harness.schema.normalize_plan(
+        {"run_id": "run-1", "plan_id": "plan-1", "turn_id": "turn-1", **deepcopy(raw)},
+        "conversation-1", "owner", settings=harness.settings, contract_version=2,
+        available_capability_ids=available, deliverable_availability=availability,
+        image_selected=image_selected, composition_profiles=harness.service_bindings.composition_profiles(),
+    )
+
+
+def _create(harness, raw, *, replies=()):
+    return _store(harness, _normalize(harness, raw), replies=replies)
+
+
+def _truth(harness, *, allowed=None, export_catalog=None, bindings=True):
+    """The server truth a real plan request would compute for this caller."""
+    registry = importlib.import_module("functions_orchestration_registry")
+    deliverables = importlib.import_module("functions_orchestration_deliverables")
+    unavailable = {}
+    capabilities = registry.resolve_available_capabilities(
+        harness.settings, allowed_ids=allowed, unavailable=unavailable, contract_version=2,
+        export_catalog=export_catalog,
+        request_context=harness.services().capability_request_bindings() if bindings else None,
+    )
+    return deliverables.build_deliverable_availability(
+        harness.settings, capabilities=capabilities, unavailable=unavailable, export_catalog=export_catalog,
+    )
+
+
+def _plan_request(harness, replies, *, seeds=None, message="Please help with this request."):
+    harness.replies = [json.dumps(reply) if isinstance(reply, dict) else reply for reply in replies]
+    return harness.planner.plan_request(
+        message, {}, "conversation-1", "owner", settings=harness.settings, seeds=seeds or {},
+        contract_version=2, request_context=harness.services().capability_request_bindings(),
+    )
+
+
+def _saved_steps(harness):
+    return {
+        record["step_id"]: record for record in harness.steps.items.values()
+        if record.get("run_id") == "run-1" and record.get("step_id") and "status" in record
+    }
+
+
+def _compose_call(harness):
+    calls = [call for call in harness.model_calls if call["messages"][0]["content"].startswith("Prepare only")]
+    assert len(calls) == 1
+    return calls[0]["messages"]
+
+
+def _file_bytes(harness, extension):
+    found = [
+        record["data"] for (_container, name), record in harness.blobs.records.items()
+        if name.endswith(extension) and "/images/" not in name
+    ]
+    assert len(found) == 1, sorted(name for _container, name in harness.blobs.records)
+    return found[0]
+
+
+def _image_messages(harness):
+    return sorted(
+        (deepcopy(message) for message in harness.messages.items.values() if message.get("role") == "image"),
+        key=lambda message: message["metadata"]["image_proposal"]["visualId"],
+    )
+
+
+def _embedded_images(output_format, data):
+    if output_format == "docx":
+        from docx import Document
+
+        return len(Document(io.BytesIO(data)).inline_shapes)
+    if output_format == "pdf":
+        import fitz
+
+        with fitz.open(stream=data, filetype="pdf") as document:
+            return sum(len(page.get_images()) for page in document)
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(data))
+    return sum(1 for slide in deck.slides for shape in slide.shapes if shape.shape_type == 13)
+
+
+# ------------------------------------------------------------------------------------------
+# Validation
+# ------------------------------------------------------------------------------------------
+
+def test_a_plan_without_deliverables_gets_the_implicit_answer(harness):
+    plan = _normalize(harness, {"steps": [compose_step()], "final_response": input_binding("prepare")})
+    assert plan["deliverables"] == [{
+        "id": "answer", "kind": "answer", "requested": "explicit", "status": "planned",
+        "description": "An answer to your request.", "implicit": True,
+    }]
+    assert "delivers" not in plan["steps"][0]
+    # Revalidating a saved plan derives the same implicit deliverable again.
+    again = harness.schema.validate_plan(plan, settings=harness.settings, available_capability_ids=AVAILABLE)
+    assert again["deliverables"] == plan["deliverables"]
+
+
+def test_a_file_needs_a_render_step_in_its_own_format(harness):
+    schema = harness.schema
+    rows = compose_step("rows", outputs=[{"name": "rows", "kind": "records-v1", "columns": [
+        {"name": "State", "value_type": "string", "nullable": False},
+    ]}])
+    render = render_step("capitals", "csv", source="rows", output="rows")
+    render["arguments"]["options"] = {"columns": ["State"]}
+    wanted = [_deliverable("sheet", "file", "A spreadsheet", format="xlsx")]
+
+    with pytest.raises(schema.PlanValidationError) as mismatch:
+        _normalize(harness, {"deliverables": wanted, "steps": [rows, {**render, "delivers": ["sheet"]}]})
+    assert mismatch.value.code == "deliverables_invalid"
+    assert "output_format must match" in str(mismatch.value)
+
+    with pytest.raises(schema.PlanValidationError) as uncovered:
+        _normalize(harness, {"deliverables": wanted, "steps": [compose_step()]})
+    assert "No step delivers the planned file deliverable" in str(uncovered.value)
+
+    with pytest.raises(schema.PlanValidationError) as undeclared:
+        _normalize(harness, {"deliverables": [_deliverable("answer", "answer", "An answer")], "steps": [
+            {**compose_step(), "delivers": ["answer"]}, rows, render,
+        ], "final_response": input_binding("prepare")})
+    assert "no deliverable declares" in str(undeclared.value)
+
+    with pytest.raises(schema.PlanValidationError) as unknown:
+        _normalize(harness, {"deliverables": wanted, "steps": [rows, {**render, "delivers": ["missing"]}]})
+    assert "not a declared deliverable" in str(unknown.value)
+
+
+def test_unambiguous_steps_are_linked_to_their_deliverables(harness):
+    rows = compose_step("rows", outputs=[{"name": "rows", "kind": "records-v1", "columns": [
+        {"name": "State", "value_type": "string", "nullable": False},
+    ]}])
+    render = render_step("capitals", "csv", source="rows", output="rows")
+    render["arguments"]["options"] = {"columns": ["State"]}
+    answer = compose_step("prepare")
+    plan = _normalize(harness, {
+        "deliverables": [
+            _deliverable("csv_file", "file", "The CSV", format="CSV"),
+            _deliverable("reply", "answer", "A short reply"),
+            _deliverable("pictures", "image", "Two images", quantity=2),
+        ],
+        "steps": [rows, render, answer, _image_step("one", "One", delivers=()), _image_step("two", "Two", delivers=())],
+        "final_response": input_binding("prepare"),
+    })
+    steps = {step["step_id"]: step for step in plan["steps"]}
+    assert plan["deliverables"][0]["format"] == "csv"
+    assert steps["capitals"]["delivers"] == ["csv_file"]
+    assert steps["prepare"]["delivers"] == ["reply"]
+    assert steps["one"]["delivers"] == steps["two"]["delivers"] == ["pictures"]
+
+
+def test_unavailable_reasons_must_match_the_server(harness):
+    schema = harness.schema
+    truth = _truth(harness)
+    assert truth["file"]["status"] == "available"
+    assert truth["image"]["explicit"] == {"status": "unavailable", "reason": "image_generation_disabled"}
+    answer = [{**compose_step(), "delivers": ["answer"]}]
+    raw = {"steps": answer, "final_response": input_binding("prepare")}
+
+    def planned(*extra):
+        return {**raw, "deliverables": [_deliverable("answer", "answer", "An answer"), *extra]}
+
+    with pytest.raises(schema.PlanValidationError) as claimed:
+        _normalize(harness, planned(_deliverable(
+            "doc", "file", "A Word file", format="docx", status="unavailable",
+            unavailable_reason="file_rendering_unavailable",
+        )), availability=truth)
+    assert "The server can produce" in str(claimed.value)
+
+    with pytest.raises(schema.PlanValidationError) as wrong:
+        _normalize(harness, planned(_deliverable(
+            "art", "image", "A picture", status="unavailable", unavailable_reason="image_budget_exceeded",
+        )), availability=truth)
+    assert '"image_generation_disabled", not "image_budget_exceeded"' in str(wrong.value)
+
+    accepted = _normalize(harness, planned(
+        _deliverable("art", "image", "A picture", status="unavailable", unavailable_reason="image_generation_disabled"),
+        _deliverable("clip", "file", "A video", format="mp4", status="unavailable", unavailable_reason="format_not_supported"),
+    ), availability=truth)
+    unavailable = {item["id"]: item for item in accepted["deliverables"] if item["status"] == "unavailable"}
+    assert unavailable["art"]["unavailable_message"] == "Image generation is turned off for this deployment."
+    assert unavailable["clip"]["unavailable_message"] == "SimpleChat cannot create files in this format."
+    # The answer step is told about them, so it neither promises nor apologizes for them.
+    brief = accepted["steps"][0]["deliverable_context"]
+    assert {entry["id"] for entry in brief if entry["relation"] == "unavailable"} == {"art", "clip"}
+
+    with pytest.raises(schema.PlanValidationError) as planned_unsupported:
+        _normalize(harness, planned(_deliverable("clip", "file", "A video", format="mp4")), availability=truth)
+    assert "format_not_supported" in str(planned_unsupported.value)
+
+
+def test_allowlisted_and_unadmitted_formats_carry_their_own_reasons(harness):
+    truth = _truth(harness, allowed=["compose"])
+    assert truth["file"]["reason"] == "capability_not_enabled_for_orchestration"
+    assert truth["file"]["formats"]["docx"]["reason"] == "capability_not_enabled_for_orchestration"
+    assert _truth(harness, bindings=False)["file"]["reason"] == "file_rendering_unavailable"
+    registry = importlib.import_module("functions_orchestration_registry")
+    catalog = [entry for entry in registry.resolve_admitted_export_catalog() if entry["format_id"] == "csv"]
+    narrowed = _truth(harness, export_catalog=catalog)
+    assert narrowed["file"]["formats"]["csv"]["status"] == "available"
+    assert narrowed["file"]["formats"]["pdf"]["status"] == "unavailable"
+    assert narrowed["file"]["formats"]["pdf"]["reason"] == "format_not_admitted"
+
+
+def test_the_image_control_requires_an_explicit_image_deliverable(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    truth = _truth(harness)
+    raw = {
+        "deliverables": [_deliverable("answer", "answer", "An answer")],
+        "steps": [{**compose_step(), "delivers": ["answer"]}], "final_response": input_binding("prepare"),
+    }
+    with pytest.raises(harness.schema.PlanValidationError) as missing:
+        _normalize(harness, raw, availability=truth, image_selected=True)
+    assert "Image control" in str(missing.value)
+    raw["deliverables"].append(_deliverable("art", "image", "A picture"))
+    raw["steps"].insert(0, _image_step("art_image", "A lighthouse", delivers=("art",)))
+    raw["steps"][1]["inputs"] = _image_inputs(["art_image"])
+    assert _normalize(harness, raw, availability=truth, image_selected=True)["status"] == "awaiting_approval"
+
+
+def test_image_inputs_are_optional_and_charts_become_structured_visuals(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    step = _report_step(_image_inputs(["washington"]), basis="sources", delivers=("report", "chart"))
+    plan = _normalize(harness, {
+        "deliverables": [
+            _deliverable("report", "answer", "The report"),
+            _deliverable("chart", "chart", "A chart of term lengths"),
+            _deliverable("portraits", "image", "A portrait"),
+        ],
+        "steps": [_image_step("washington", "George Washington"), step],
+        "final_response": input_binding("report", "report"),
+    }, availability=_truth(harness))
+    steps = {step["step_id"]: step for step in plan["steps"]}
+    assert steps["report"]["inputs"]["washington"]["optional"] is True
+    assert steps["report"]["arguments"]["visuals"] == ["chart"]
+    assert steps["washington"]["optional"] is True
+    relations = {(entry["relation"], entry["id"]) for entry in steps["report"]["deliverable_context"]}
+    assert relations == {("delivers", "report"), ("delivers", "chart"), ("images", "portraits")}
+
+
+def test_planned_images_are_bounded_per_plan(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    truth = _truth(harness)
+    registry = importlib.import_module("functions_orchestration_registry")
+    budget = registry.MAX_GENERATED_IMAGES_PER_PLAN
+    many = [_image_step(f"image_{index}", f"City {index}", delivers=("cities",)) for index in range(budget + 1)]
+    with pytest.raises(harness.schema.PlanValidationError) as exceeded:
+        _normalize(harness, {"deliverables": [_deliverable("cities", "image", "City images")], "steps": many})
+    assert exceeded.value.code == "result_step_limit"
+
+    rest = _deliverable(
+        "more_cities", "image", "The remaining city images", status="unavailable",
+        unavailable_reason="image_budget_exceeded",
+    )
+    partial = {"deliverables": [_deliverable("cities", "image", "City images", quantity=budget), rest],
+               "steps": many[:budget]}
+    plan = _normalize(harness, partial, availability=truth)
+    assert [item["status"] for item in plan["deliverables"]] == ["planned", "unavailable"]
+    # The budget is a reason only once the plan already uses all of it.
+    with pytest.raises(harness.schema.PlanValidationError):
+        _normalize(harness, {**partial, "deliverables": [
+            _deliverable("cities", "image", "City images", quantity=budget - 1), rest,
+        ], "steps": many[:budget - 1]}, availability=truth)
+
+
+def test_image_options_must_be_ones_the_configured_model_supports(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    truth = _truth(harness)
+    assert "1024x1024" in truth["image"]["explicit"]["options"]["sizes"]
+    raw = {"deliverables": [_deliverable("art", "image", "A picture")],
+           "steps": [_image_step("art_image", "A lighthouse", delivers=("art",), size="999x999")]}
+    with pytest.raises(harness.schema.PlanValidationError) as unsupported:
+        _normalize(harness, raw, availability=truth)
+    assert "does not support" in str(unsupported.value)
+    raw["steps"][0]["arguments"]["size"] = "1024x1024"
+    assert _normalize(harness, raw, availability=truth)["steps"][0]["arguments"]["size"] == "1024x1024"
+
+
+# ------------------------------------------------------------------------------------------
+# Planning: server truth and the single repair call
+# ------------------------------------------------------------------------------------------
+
+def _csv_plan(*, render_format="csv"):
+    return {
+        "kind": "plan", "intent": {"summary": "List the U.S. states and capitals as a CSV file.", "complexity": "simple"},
+        "assumptions": [],
+        "deliverables": [_deliverable("capitals_csv", "file", "A CSV of the states and their capitals", format="csv")],
+        "steps": [
+            {
+                "step_id": "rows", "capability_id": "compose", "title": "List states and capitals",
+                "arguments": {"instruction": "List every U.S. state with its capital.",
+                              "knowledge_basis": "general_knowledge"},
+                "inputs": {}, "outputs": [{"name": "rows", "kind": "records-v1", "columns": [
+                    {"name": "State", "value_type": "string", "nullable": False},
+                    {"name": "Capital", "value_type": "string", "nullable": False},
+                ]}],
+            },
+            {
+                "step_id": "capitals", "capability_id": "render_file", "title": "Save the CSV file",
+                "arguments": {
+                    "file_name": f"us_states_capitals.{render_format}", "output_format": render_format,
+                    "profile": "tabular_records_v1" if render_format == "csv" else "tabular_workbook_v1",
+                    "options": {"columns": ["State", "Capital"], **(
+                        {"sheet_name": "Capitals"} if render_format == "xlsx" else {}
+                    )},
+                },
+                "inputs": {"source": {"binding": input_binding("rows", "rows"), "allow_partial": False}},
+                "outputs": [], "delivers": ["capitals_csv"],
+            },
+        ],
+    }
+
+
+def test_the_planner_receives_the_server_truth_and_the_deliverables_contract(harness):
+    kind, plan = _plan_request(harness, [_csv_plan()], message="create a csv of states and capitals")
+    assert kind == "plan"
+    system = harness.model_calls[0]["messages"][0]["content"]
+    assert "List \"deliverables\" before the steps" in system
+    assert "never state a limitation only in \"assumptions\"" in system
+    assert harness.model_calls[0]["max_tokens"] == harness.planner.PLANNER_MAX_TOKENS == 4000
+    context = json.loads(harness.model_calls[0]["messages"][1]["content"])
+    truth = context["capability_availability"]["deliverables"]
+    assert truth["file"]["formats"]["docx"]["embeds_images"] is True
+    assert truth["file"]["formats"]["csv"]["source_kinds"] == ["records-v1"]
+    assert any("return text and links only" in fact for fact in truth["facts"])
+    assert {recipe["for"] for recipe in truth["recipes"]} >= {"CSV or XLSX file", "DOCX or PDF document", "PPTX deck"}
+    assert set(truth["unavailable_reasons"]) >= {"format_not_admitted", "image_generation_disabled"}
+    assert plan["deliverables"][0]["id"] == "capitals_csv"
+    assert next(step for step in plan["steps"] if step["step_id"] == "capitals")["delivers"] == ["capitals_csv"]
+
+
+def test_an_invalid_deliverables_plan_gets_exactly_one_repair_call(harness):
+    kind, plan = _plan_request(
+        harness, [_csv_plan(render_format="xlsx"), _csv_plan()], message="create a csv of states and capitals",
+    )
+    assert kind == "plan" and len(harness.model_calls) == 2
+    repair = harness.model_calls[1]["messages"]
+    assert repair[-2]["role"] == "assistant"
+    assert repair[-1]["role"] == "user" and repair[-1]["content"].startswith("The server rejected that plan:")
+    assert "output_format must match" in repair[-1]["content"]
+    assert plan["token_usage"] == {"prompt_tokens": 14, "completion_tokens": 6, "total_tokens": 20}
+
+    with pytest.raises(harness.planner.PlannerError) as failure:
+        _plan_request(harness, [_csv_plan(render_format="xlsx"), _csv_plan(render_format="xlsx")])
+    assert failure.value.reason == "invalid_plan_or_missing_requirement"
+    assert failure.value.message == harness.planner.DELIVERABLES_FAILURE_MESSAGE
+
+
+def test_the_image_control_asks_the_planner_for_explicit_images(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    reply = {"kind": "plan", "intent": {"summary": "Illustrate a lighthouse."}, "assumptions": [], **{
+        "deliverables": [_deliverable("art", "image", "A lighthouse illustration")],
+        "steps": [_image_step("art_image", "A lighthouse", delivers=("art",))],
+    }}
+    kind, plan = _plan_request(harness, [reply], seeds={"image_generation": True})
+    context = json.loads(harness.model_calls[0]["messages"][1]["content"])
+    assert kind == "plan"
+    assert context["user_selected"]["images"] is True
+    assert "image_proposals" not in context["user_selected"]
+    assert context["capability_availability"]["deliverables"]["image"]["explicit"]["status"] == "available"
+    assert [step["capability_id"] for step in plan["steps"]] == ["generate_image"]
+
+
+# ------------------------------------------------------------------------------------------
+# generate_image
+# ------------------------------------------------------------------------------------------
+
+def test_image_generation_is_gated_by_the_image_settings(harness, monkeypatch):
+    registry = importlib.import_module("functions_orchestration_registry")
+    unavailable = {}
+    registry.resolve_available_capabilities(harness.settings, unavailable=unavailable, contract_version=2)
+    assert unavailable["generate_image"] == "feature_disabled"
+    harness.settings["enable_image_generation"] = True
+    unavailable = {}
+    registry.resolve_available_capabilities(harness.settings, unavailable=unavailable, contract_version=2)
+    assert unavailable["generate_image"] == "image_generation_unavailable"
+    assert _truth(harness)["image"]["explicit"]["reason"] == "image_generation_unavailable"
+    _enable_images(harness, monkeypatch)
+    capability = next(
+        item for item in registry.resolve_available_capabilities(harness.settings, contract_version=2)
+        if item["id"] == "generate_image"
+    )
+    assert capability["inputs"]["properties"]["size"]["enum"] == ["1024x1024", "1536x1024", "1024x1536"]
+    assert capability["max_per_plan"] == registry.MAX_GENERATED_IMAGES_PER_PLAN
+    # Only Render and planned images may publish; every other Gather or Reason step stays unable to.
+    publishers = {
+        item["id"] for item in registry.capabilities_for_contract(2) if item.get("publishes_generated_images")
+    }
+    assert publishers == {"generate_image"}
+
+
+def test_a_generated_image_is_saved_with_the_answer_that_shows_it(harness, monkeypatch):
+    calls = _enable_images(harness, monkeypatch)
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    _create(harness, {
+        "deliverables": [
+            _deliverable("reply", "answer", "A short caption"),
+            _deliverable("art", "image", "A lighthouse illustration"),
+        ],
+        "steps": [
+            _image_step("lighthouse", "A lighthouse at dusk", delivers=("art",), size="1024x1024"),
+            {**_report_step(_image_inputs(["lighthouse"]), delivers=("reply",))},
+        ],
+        "final_response": input_binding("report", "report"),
+    }, replies=["Here is the lighthouse.\n\n[[image:lighthouse]]"])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    answer = harness.assistant_messages()[0]
+    [image] = _image_messages(harness)
+    proposal = image["metadata"]["image_proposal"]
+    stored = harness.blobs.records[("harness-chat", image["blob_path"])]["data"]
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    task = contracts.TaskResult.from_dict(saved["task_results"]["lighthouse"])
+    value = harness.services().results.open_result(task.output("image"), require_current_sources=True).read_value()
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert calls == [{"prompt": calls[0]["prompt"], "size": "1024x1024", "quality": "", "background": ""}]
+    assert proposal["visualId"] == "lighthouse" and proposal["title"] == "A lighthouse at dusk"
+    assert proposal["source_assistant_message_id"] == answer["id"] == checkpoints.orchestration_answer_message_id("run-1")
+    assert proposal["orchestration"] == {"run_id": "run-1", "step_id": "lighthouse"}
+    assert image["file_content_source"] == "blob" and harness.blobs.image_uploads == 1
+    assert task.output("image").kind == "image-asset-v1"
+    assert value["message_id"] == image["id"] and value["ai_generated"] is True
+    assert value["content_sha256"] == hashlib.sha256(stored).hexdigest()
+    assert '"visualId": "lighthouse"' in answer["content"] and "```simpleimage" in answer["content"]
+    assert "*AI-generated illustration: A lighthouse at dusk*" in answer["content"]
+    assert answer["metadata"]["orchestration"]["generated_images"] == [
+        {"visual_id": "lighthouse", "message_id": image["id"]},
+    ]
+    payload = json.loads(_compose_call(harness)[-1]["content"])
+    assert payload["images"] == [{"token": "[[image:lighthouse]]", "title": "A lighthouse at dusk"}]
+    assert "lighthouse" not in payload["inputs"]
+
+
+def test_image_prompts_pass_the_chat_output_check_before_generation(harness, monkeypatch):
+    calls = _enable_images(harness, monkeypatch)
+    checks = importlib.import_module("functions_chat_content_checks")
+    original = checks.check_chat_content
+    blocked = checks.ChatContentDecision("chat_output", "findings", "block", {}, "removed")
+
+    def check(text, checkpoint, **kwargs):
+        # Only the planned image prompt is refused; the published reply is checked as usual.
+        return blocked if "illustrated portrait of A lighthouse" in text else original(text, checkpoint, **kwargs)
+
+    monkeypatch.setattr(checks, "check_chat_content", check)
+    _create(harness, {
+        "deliverables": [_deliverable("art", "image", "A picture")],
+        "steps": [_image_step("art_image", "A lighthouse", delivers=("art",))],
+    })
+    harness.prepare().execute()
+    record = _saved_steps(harness)["art_image"]
+    assert calls == [] and _image_messages(harness) == []
+    assert record["status"] == "failed" and record["failure"]["code"] == "image_content_refused"
+    assert harness.read()["status"] == "failed"
+
+
+# ------------------------------------------------------------------------------------------
+# Images in files
+# ------------------------------------------------------------------------------------------
+
+def test_a_reused_image_follows_the_answer_that_is_published(harness):
+    """A retry that reuses a completed image step shows that image under its own answer."""
+    _create(harness, {"steps": [compose_step()], "final_response": input_binding("prepare")})
+    image = {
+        "id": "conversation-1_image_7", "conversation_id": "conversation-1", "role": "image",
+        "metadata": {"image_proposal": {
+            "visualId": "art", "source_assistant_message_id": "assistant_orchestration_earlier",
+        }},
+    }
+    harness.messages.create_item(deepcopy(image))
+    execution = harness.prepare()
+    try:
+        assets = {"art": {"asset_id": "art", "message_id": image["id"]}}
+        execution._link_generated_images(assets, "assistant_orchestration_now")
+        execution._link_generated_images({"other": {"asset_id": "other", "message_id": "missing"}}, "unused")
+    finally:
+        execution.close()
+    linked = harness.messages.read_item(image["id"], "conversation-1")
+    assert linked["metadata"]["image_proposal"]["source_assistant_message_id"] == "assistant_orchestration_now"
+
+@pytest.mark.parametrize("output_format", ["docx", "pdf", "pptx"])
+def test_files_embed_exactly_the_images_their_source_consumed(harness, monkeypatch, output_format):
+    _enable_images(harness, monkeypatch)
+    deck = output_format == "pptx"
+    report = _report_step(
+        _image_inputs(["washington"]), delivers=() if deck else ("report",),
+        outputs=[{"name": "report", "kind": "structured-v1", "profile": "prepared_slide_deck_v1"}] if deck else None,
+    )
+    render = render_step(
+        "word", output_format, source="report", output="report",
+        profile="prepared_slide_deck_v1" if deck else "prepared_report_v1",
+    )
+    reply = json.dumps({"report": {
+        "schema_version": "prepared_slide_deck_v1", "slide_count": 1, "slides": [{
+            "layout": "title_and_content", "title": "George Washington", "shapes": [{
+                "type": "image", "box": {"left": 1, "top": 1.6, "width": 3, "height": 2},
+                "source": "asset:washington", "alt": "Portrait",
+            }],
+        }],
+    }}) if deck else "# George Washington\n\n[[image:washington]]\n\nThe first president."
+    _create(harness, {
+        "deliverables": [
+            *([] if deck else [_deliverable("report", "answer", "A short report")]),
+            _deliverable("portraits", "image", "A portrait"),
+            _deliverable("word_file", "file", "The file", format=output_format),
+        ],
+        "steps": [_image_step("washington", "George Washington"), report, {**render, "delivers": ["word_file"]}],
+        **({} if deck else {"final_response": input_binding("report", "report")}),
+    }, replies=[reply])
+
+    harness.prepare().execute()
+    saved = harness.read()
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert _embedded_images(output_format, _file_bytes(harness, f".{output_format}")) == 1
+
+
+def test_a_deck_that_did_not_place_its_image_gets_a_slide_for_it(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    report = _report_step(
+        _image_inputs(["washington"]), delivers=(),
+        outputs=[{"name": "report", "kind": "structured-v1", "profile": "prepared_slide_deck_v1"}],
+    )
+    render = render_step("word", "pptx", source="report", output="report", profile="prepared_slide_deck_v1")
+    _create(harness, {
+        "deliverables": [
+            _deliverable("portraits", "image", "A portrait"),
+            _deliverable("word_file", "file", "The deck", format="pptx"),
+        ],
+        "steps": [_image_step("washington", "George Washington"), report, {**render, "delivers": ["word_file"]}],
+    }, replies=[json.dumps({"report": {
+        "schema_version": "prepared_slide_deck_v1", "slide_count": 1, "slides": [{
+            "layout": "title_and_content", "title": "The first president", "shapes": [{
+                "type": "text_box", "box": {"left": 0.5, "top": 1.6, "width": 6, "height": 1},
+                "paragraphs": [{"text": "George Washington served from 1789 to 1797."}],
+            }],
+        }],
+    }})])
+
+    harness.prepare().execute()
+
+    assert harness.read()["status"] == "completed"
+    assert _embedded_images("pptx", _file_bytes(harness, ".pptx")) == 1
+
+
+def test_a_file_cannot_embed_an_image_its_source_did_not_consume(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    _create(harness, {
+        "deliverables": [
+            _deliverable("report", "answer", "A short report"),
+            _deliverable("portraits", "image", "A portrait"),
+            _deliverable("word_file", "file", "The report as a Word file", format="docx"),
+        ],
+        # The image exists in this run, but the report was not prepared from it.
+        "steps": [_image_step("washington", "George Washington"), _report_step(), _word_step()],
+        "final_response": input_binding("report", "report"),
+    }, replies=["# Report\n\n![Portrait](asset:washington)\n\nThe first president."])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    [output] = saved["outputs"]
+
+    assert saved["status"] == "failed"
+    assert output["state"] == "failed" and output["error_code"] == "output_source_unavailable"
+    assert harness.blobs.file_uploads == 0
+
+
+def test_the_image_reader_refuses_a_deleted_or_moved_image(harness, monkeypatch):
+    bootstrap = importlib.import_module("functions_orchestration_bootstrap")
+    output_store = importlib.import_module("functions_orchestration_output_store")
+    data = _png("red")
+    harness.messages.create_item({
+        "id": "conversation-1_image_1", "conversation_id": "conversation-1", "role": "image",
+        "file_content_source": "blob", "blob_container": "harness-chat",
+        "blob_path": "owner/conversation-1/images/conversation-1_image_1/art.png",
+        "metadata": {"image_proposal": {"visualId": "art"}},
+    })
+    harness.blobs.records[("harness-chat", "owner/conversation-1/images/conversation-1_image_1/art.png")] = {
+        "data": data, "metadata": {}, "content_type": "image/png", "etag": "etag-image",
+    }
+    asset = {"message_id": "conversation-1_image_1", "asset_id": "art", "size_bytes": len(data)}
+    reader = bootstrap.build_image_asset_reader("owner", "conversation-1")
+    assert reader(asset) == data
+    message = harness.messages.read_item("conversation-1_image_1", "conversation-1")
+    message["metadata"]["is_deleted"] = True
+    harness.messages.upsert_item(message)
+    with pytest.raises(output_store.OutputUnavailableError):
+        reader(asset)
+    message["metadata"].pop("is_deleted")
+    message["blob_path"] = "someone-else/conversation-1/images/conversation-1_image_1/art.png"
+    harness.messages.upsert_item(message)
+    with pytest.raises(output_store.OutputUnavailableError):
+        reader(asset)
+
+
+# ------------------------------------------------------------------------------------------
+# Scenarios
+# ------------------------------------------------------------------------------------------
+
+def test_scenario_a_csv_of_states_and_capitals_is_a_real_file(harness):
+    kind, plan = _plan_request(harness, [_csv_plan()], message="create a csv of states and capitals")
+    assert kind == "plan"
+    _store(harness, plan, replies=[json.dumps({"rows": [
+        {"State": "Alabama", "Capital": "Montgomery"}, {"State": "Alaska", "Capital": "Juneau"},
+    ]})])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    guidance = "\n".join(message["content"] for message in _compose_call(harness) if message["role"] == "system")
+    csv_text = _file_bytes(harness, ".csv").decode("utf-8")
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert 'A later step saves output "rows" as us_states_capitals.csv, a CSV file.' in guidance
+    assert "Never say files cannot be created." in guidance
+    assert csv_text.splitlines() == ["State,Capital", "Alabama,Montgomery", "Alaska,Juneau"]
+    assert r"us\_states\_capitals\.csv: ready" in harness.assistant_messages()[0]["content"]
+    assert "Delivery notes" not in harness.assistant_messages()[0]["content"]
+
+
+def _succeeding_search(harness, monkeypatch, notes):
+    """A completed search whose findings are retained without external-source admission."""
+    executor = importlib.import_module("functions_orchestration_executor")
+    schema = importlib.import_module("functions_orchestration_schema")
+    results = importlib.import_module("functions_orchestration_results")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    original = executor._dependency_adapter
+
+    def search(step, context, **kwargs):
+        return schema.build_step_result(status=schema.STEP_STATUS_COMPLETED, summary="Found sources.", notes=[notes])
+
+    def retain(step, context, result, *, source_manifest):
+        complete = contracts.Completeness(
+            "complete", 1, 1, contracts.Coverage(1, 1, "work_units"), "valid", ("test_search",), (),
+        )
+        return context.result_service.persist_task_result(
+            producer=context.result_producer(step), role="gather", status="complete",
+            outputs=[results.NamedOutput("prepared", "structured-v1", {"notes": result["notes"]}, complete)],
+            sources=[], origin="generated", guard_token=context.result_guard_token_for_step(step["step_id"]),
+            input_fingerprint=context.result_input_fingerprint_for_step(step["step_id"]),
+        )
+
+    monkeypatch.setattr(
+        executor, "_dependency_adapter",
+        lambda capability_id: search if capability_id == "web_search" else original(capability_id),
+    )
+    monkeypatch.setattr(executor, "retain_gather_result", retain)
+    harness.settings["enable_web_search"] = True
+
+
+def _failing_search(harness, monkeypatch):
+    executor = importlib.import_module("functions_orchestration_executor")
+    schema = importlib.import_module("functions_orchestration_schema")
+    original = executor._dependency_adapter
+
+    def failing(step, context, **kwargs):
+        failure = schema.build_failure("provider_not_configured")
+        return schema.build_step_result(status=schema.STEP_STATUS_FAILED, failure=failure, summary=failure["message"])
+
+    monkeypatch.setattr(
+        executor, "_dependency_adapter",
+        lambda capability_id: failing if capability_id == "web_search" else original(capability_id),
+    )
+    harness.settings["enable_web_search"] = True
+
+
+def test_scenario_a_word_report_with_an_image_of_each_president(harness, monkeypatch):
+    calls = _enable_images(harness, monkeypatch)
+    _succeeding_search(harness, monkeypatch, "Washington 1789-1797; Adams 1797-1801; Jefferson 1801-1809.")
+    _create(harness, _president_plan(with_search=True), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    answer = harness.assistant_messages()[0]["content"]
+    images = _image_messages(harness)
+    payload = json.loads(_compose_call(harness)[-1]["content"])
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert len(calls) == 3 and [image["metadata"]["image_proposal"]["visualId"] for image in images] == [
+        "adams", "jefferson", "washington",
+    ]
+    assert payload["inputs"]["findings"]["value"]["notes"][0].startswith("Washington 1789")
+    assert [image["token"] for image in payload["images"]] == [
+        "[[image:washington]]", "[[image:adams]]", "[[image:jefferson]]",
+    ]
+    assert _embedded_images("docx", _file_bytes(harness, ".docx")) == 3
+    assert answer.count("```simpleimage") == 3 and "[[image:" not in answer and "asset:" not in answer
+    assert answer.startswith("# The first three presidents")
+    assert r"word\.docx: ready" in answer and "Delivery notes" not in answer
+
+
+def test_scenario_a_report_with_images_and_no_file(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    _create(harness, _president_plan(with_file=False), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    answer = harness.assistant_messages()[0]["content"]
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert harness.blobs.file_uploads == 0 and saved["outputs"] == []
+    assert answer.count("```simpleimage") == 3 and "Files:" not in answer
+
+
+def test_scenario_a_failed_search_still_writes_the_report_from_general_knowledge(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    _failing_search(harness, monkeypatch)
+    _create(harness, _president_plan(with_search=True), replies=[REPORT_TEXT + "\n\nWeb sources were unavailable."])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    payload = json.loads(_compose_call(harness)[-1]["content"])
+
+    assert saved["status"] == "completed", saved.get("failure")
+    assert payload["unavailable_inputs"][0]["name"] == "findings"
+    assert _saved_steps(harness)["search"]["status"] == "failed"
+    assert _embedded_images("docx", _file_bytes(harness, ".docx")) == 3
+
+
+def test_scenario_a_failed_image_is_reported_and_never_delivered(harness, monkeypatch):
+    route = importlib.import_module("functions_image_api_route")
+    refused = route.ImageGenerationError("refused", "image_content_refused", 400)
+    _enable_images(harness, monkeypatch, failures={2: refused})
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    answer = harness.assistant_messages()[0]["content"]
+    payload = json.loads(_compose_call(harness)[-1]["content"])
+    steps = _saved_steps(harness)
+
+    assert steps["adams"]["status"] == "failed" and steps["adams"]["failure"]["code"] == "image_content_refused"
+    assert steps["report"]["status"] == "completed" and steps["word"]["status"] == "completed"
+    assert payload["unavailable_images"][0]["name"] == "adams"
+    assert saved["status"] == "failed" and saved["outcome"] == "partial"
+    assert "- Not delivered: An image of each president. 2 of 3 images were generated." in answer
+    assert answer.count("```simpleimage") == 2
+    assert _embedded_images("docx", _file_bytes(harness, ".docx")) == 2
+
+
+def test_scenario_a_failed_render_is_never_reported_as_delivered(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    adapters = importlib.import_module("functions_generated_office_adapters")
+    contracts = importlib.import_module("functions_generated_export_contracts")
+
+    def failing(*args, **kwargs):
+        raise contracts.GeneratedFileExportError("invalid_data", "Offline render failure.")
+
+    monkeypatch.setattr(adapters, "_render_generated_office_source", failing)
+    _create(harness, _president_plan(), replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    answer = harness.assistant_messages()[0]["content"]
+
+    assert saved["status"] == "failed" and saved["outcome"] == "partial"
+    assert answer.count("```simpleimage") == 3
+    assert r"word\.docx: could not be created" in answer
+    assert harness.blobs.file_uploads == 0
+
+
+def test_a_turned_off_file_step_is_named_in_the_delivery_notes(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    plan = _normalize(harness, _president_plan())
+    for step in plan["steps"]:
+        if step["step_id"] == "word":
+            step["enabled"] = False
+    _store(harness, plan, replies=[REPORT_TEXT])
+
+    harness.prepare().execute()
+    answer = harness.assistant_messages()[0]["content"]
+
+    assert harness.read()["status"] == "completed"
+    assert "- Not delivered: The report as a file. Its step was turned off." in answer
+
+def test_turning_off_a_file_at_approval_keeps_the_run_retryable(harness, monkeypatch):
+    """The saved plan's deliverable briefs match what runs, so checkpoints still match on retry."""
+    from copy import copy
+
+    route = importlib.import_module("functions_image_api_route")
+    _enable_images(harness, monkeypatch, failures={2: route.ImageGenerationError("refused", "image_content_refused", 400)})
+    record = _create(harness, _president_plan(), replies=[REPORT_TEXT])
+    services = harness.services()
+    claimed = harness.revisions.claim_plan_run(
+        record["id"], "owner", "conversation-1", expected_version=record.get("edit_version"),
+        settings=harness.settings, edits={"disabled_step_ids": ["word"], "removed_document_ids": {}},
+        result_alias_resolver=lambda current: harness.service_bindings.admitted_result_aliases(
+            current, services.results,
+        ),
+    )
+    brief = next(step for step in claimed["plan"]["steps"] if step["step_id"] == "report")["deliverable_context"]
+    assert [entry["enabled"] for entry in brief if entry["relation"] == "rendered_as"] == [False]
+
+    def authorize():
+        return harness.bootstrap.read_owned_conversation("owner", "conversation-1")
+
+    lease = harness.recovery.ExecutionLease(claimed, authorize, message_container=harness.messages)
+    execution = harness.execution.prepare_harness_execution(claimed, settings=harness.settings, lease=lease)
+    execution.execute()
+    parent = harness.read()
+    assert parent["status"] == "failed" and parent["outcome"] == "partial"
+    probe = copy(execution.context)
+    probe.result_service = harness.services().results
+
+    child = harness.recovery.prepare_retry(
+        "run-1", "owner", {
+            "conversation_id": "conversation-1", "submission_id": "retry-after-turning-off-a-file",
+            "expected_version": parent["recovery_version"],
+        },
+        authorize=authorize, message_container=harness.messages,
+        validate=lambda current: harness.recovery.validate_resume(
+            current, probe, harness.settings, authorize, source_run_id=current["id"],
+        ),
+    )
+    assert child["retry_of_run_id"] == "run-1"
+
+
+def test_when_every_image_fails_the_file_holds_no_tokens_or_broken_images(harness, monkeypatch):
+    route = importlib.import_module("functions_image_api_route")
+    refused = route.ImageGenerationError("refused", "image_content_refused", 400)
+    _enable_images(harness, monkeypatch, failures={1: refused, 2: refused, 3: refused})
+    _create(harness, _president_plan(), replies=[REPORT_TEXT + "\n\n![Portrait](asset:washington)"])
+
+    harness.prepare().execute()
+    saved = harness.read()
+    data = _file_bytes(harness, ".docx")
+    from docx import Document
+
+    text = "\n".join(paragraph.text for paragraph in Document(io.BytesIO(data)).paragraphs)
+    assert [output["state"] for output in saved["outputs"]] == ["completed"]
+    assert _embedded_images("docx", data) == 0
+    assert "[[image:" not in text and "asset:" not in text and "Jefferson served" in text
+    assert "0 of 3 images were generated" in harness.assistant_messages()[0]["content"]
+
+
+def test_a_revision_may_drop_images_chosen_with_the_image_control(harness, monkeypatch):
+    _enable_images(harness, monkeypatch)
+    reply = {
+        "kind": "plan", "intent": {"summary": "Write the report without images."}, "assumptions": [],
+        "revised_request": "Write the report on the first three presidents, without images.",
+        "deliverables": [_deliverable("report", "answer", "The report")],
+        "steps": [_report_step()], "final_response": input_binding("report", "report"),
+    }
+    harness.replies = [json.dumps(reply)]
+    kind, plan = harness.planner.plan_request(
+        "Remove the images.", {}, "conversation-1", "owner", settings=harness.settings,
+        seeds={"image_generation": True}, contract_version=2,
+        request_context=harness.services().capability_request_bindings(),
+        edit_context={"current_plan": {}, "current_request": "A report with images.",
+                      "instruction": "Remove the images.", "chat": []},
+    )
+    assert kind == "plan" and len(harness.model_calls) == 1
+    assert plan["validation"]["repairs"] == [
+        "The plan no longer includes the images selected with the Image control. Review this change before running.",
+    ]
+
+
+def test_an_echoed_implicit_answer_is_kept_beside_real_deliverables(harness):
+    rows = compose_step("rows", outputs=[{"name": "rows", "kind": "records-v1", "columns": [
+        {"name": "State", "value_type": "string", "nullable": False},
+    ]}])
+    render = render_step("capitals", "csv", source="rows", output="rows")
+    render["arguments"]["options"] = {"columns": ["State"]}
+    implicit = _normalize(harness, {"steps": [compose_step()], "final_response": input_binding("prepare")})
+    plan = _normalize(harness, {
+        "deliverables": [*implicit["deliverables"], _deliverable("csv_file", "file", "The CSV", format="csv")],
+        "steps": [{**compose_step(), "delivers": ["answer"]}, rows, {**render, "delivers": ["csv_file"]}],
+        "final_response": input_binding("prepare"),
+    })
+    assert [deliverable["id"] for deliverable in plan["deliverables"]] == ["answer", "csv_file"]
+    assert "implicit" not in plan["deliverables"][0]

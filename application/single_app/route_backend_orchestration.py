@@ -20,7 +20,7 @@ Auto model routing stays on the standard step executor, which enforces per-step
 bindings. Harness streams share chat's content-check event filtering, and removed or
 pending replies hide their run files from history projections.
 
-Version: 0.261.131
+Version: 0.261.135
 """
 
 import hashlib
@@ -122,7 +122,7 @@ from functions_orchestration_services import (
     admitted_result_aliases, composition_profiles, discover_result_aliases,
 )
 from functions_orchestration_adapters import resolve_context_source_manifest
-from functions_orchestration_checkpoints import CheckpointError, fingerprint
+from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
 from functions_orchestration_recovery import (
     ExecutionCheckpoints, ExecutionLease, RecoveryError, prepare_retry,
     public_execution_fields, recovery_projection, request_cancellation, validate_resume,
@@ -1553,7 +1553,7 @@ def _finalize_execution(record, result, error, context, lease, answer_model, res
     current = lease.update(updates)
     # The future released state is what both the saved message and done frame
     # describe. The live lease remains held until message persistence finishes.
-    message_id = f"assistant_orchestration_{fingerprint(record['id'])[:40]}"
+    message_id = orchestration_answer_message_id(record["id"])
     saved_analyses = [
         {**deepcopy(descriptor), 'conversation_id': record['conversation_id'], 'message_id': message_id}
         for descriptor in result.get('saved_analyses') or []

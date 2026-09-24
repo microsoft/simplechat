@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.131
+Version: 0.261.135
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -24,7 +24,7 @@ from functions_appinsights import log_event
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
     CheckpointError, CheckpointStore, context_binding, context_state,
-    effective_plan, fingerprint, restore_context, step_input_fingerprint,
+    effective_plan, fingerprint, orchestration_answer_message_id, restore_context, step_input_fingerprint,
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_output_store import build_output_cleanup_intent
@@ -505,7 +505,7 @@ class ExecutionLease:
         if self.message_container is None:
             raise CheckpointError('message_not_saved')
         if (
-            document.get('id') != f'assistant_orchestration_{fingerprint(self.run_id)[:40]}'
+            document.get('id') != orchestration_answer_message_id(self.run_id)
             or document.get('conversation_id') != self.conversation_id
             or not (document.get('role') == 'assistant' or document.get('role') == 'safety' and reply_is_retracted(document))
             or (document.get('metadata') or {}).get('orchestration', {}).get('run_id') != self.run_id

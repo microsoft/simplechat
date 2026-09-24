@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.135)**
+
+#### New Features
+
+*   **Orchestration Plans Deliver What You Asked For**
+    *   A Gather / Reason / Render plan now lists what you asked to receive before its steps: the answer, each file with its format, images with their count, charts, and diagrams. The server checks the list against what it can actually produce. A file must come from a Render task in the same format, so "create a csv of states and capitals" produces the CSV file itself instead of rows in the chat.
+    *   Something that cannot be produced here stays on the list as unavailable, with the server's own reason, such as "This file format is not available for this plan." The planner cannot promise it in a step title, mention it only in an assumption, or call something unavailable that the server can produce. A plan that breaks these rules gets one correction attempt, then fails with a clear message.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images In Orchestrated Answers And Files**
+    *   Images you ask for, such as "an image of each president", are generated as planned tasks when the plan runs. Approving the plan is the consent, and in Run automatically mode your request is. Each image appears inline in the answer with the usual viewer and editor, is captioned as an AI-generated illustration, and is embedded in DOCX, PDF, and PowerPoint files. A plan generates at most four images.
+    *   A file can embed only images its own content was prepared from, with bytes checked against what was generated. Images the planner only suggests remain approval cards.
+    *   (Ref: `functions_orchestration_images.py`, `functions_orchestration_rendering.py`, `functions_orchestration_bootstrap.py`, `functions_image_generation.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md))
+
+#### Bug Fixes
+
+*   **Missing Files And Images Are Never Reported As Delivered**
+    *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
+    *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+#### User Interface Enhancements
+
+*   **You Asked For**
+    *   The plan panel and approval card list what you asked for, each item's state, and the task that produces it. Unavailable items appear in a warning color with their reason. Generate image tasks show their prompt, and the chat loads generated images as soon as the run finishes.
+    *   The Image control's notice now reads "Orchestrate will plan the images you ask for and generate them when the plan runs."
+    *   (Ref: `OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, `Composer.tsx`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
+
 ### **(v0.261.134)**
 
 #### Bug Fixes

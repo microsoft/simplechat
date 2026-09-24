@@ -242,6 +242,104 @@ def test_plans_without_a_recorded_planner_show_no_planner_line(editor_ui):
     expect(view.get_by_test_id("orchestration-plan-planner")).to_have_count(0)
 
 
+def _deliverables_plan():
+    plan = dependency_plan()
+    plan["deliverables"] = [
+        {"id": "answer", "kind": "answer", "requested": "explicit", "status": "planned",
+         "description": "An answer about the quarter"},
+        {"id": "sheet", "kind": "file", "format": "xlsx", "requested": "explicit", "status": "unavailable",
+         "unavailable_reason": "format_not_admitted",
+         "unavailable_message": "This file format is not available for this plan.",
+         "description": "The findings as a spreadsheet"},
+        {"id": "portrait", "kind": "image", "requested": "explicit", "status": "planned",
+         "description": "<img src=x onerror=window.deliverableExecuted=true>"},
+        {"id": "findings_chart", "kind": "chart", "requested": "suggested", "status": "planned",
+         "description": "A chart of the findings"},
+    ]
+    plan["steps"].append({
+        "step_id": "portrait_image", "capability_id": "generate_image", "role": "reason",
+        "title": "Illustrate the quarter", "rationale": "", "depends_on": [],
+        "arguments": {"prompt": "An illustrated skyline at dusk for a quarterly report.", "title": "Quarter"},
+        "inputs": {}, "outputs": [{"name": "image", "kind": "image-asset-v1"}], "delivers": ["portrait"],
+        "enabled": True, "optional": True, "estimated_cost": "high", "status": "pending",
+    })
+    plan["steps"][3]["delivers"] = ["answer", "findings_chart"]
+    plan["steps"][3]["inputs"]["portrait"] = {
+        "binding": binding("portrait_image", "image"), "allow_partial": False, "optional": True,
+    }
+    return plan
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_plan_panel_lists_what_the_user_asked_for_and_why_something_is_unavailable(editor_ui, width):
+    """Version 0.261.135: each deliverable, its producing step, and a server-owned unavailable reason."""
+    page, api = editor_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    view = mount_run_view(page, api, _deliverables_plan())
+
+    section = view.get_by_test_id("orchestration-deliverables")
+    expect(section.get_by_role("heading", name="You asked for", exact=True)).to_be_visible()
+    answer = section.locator("[data-deliverable-id='answer']")
+    expect(answer).to_have_attribute("data-deliverable-state", "planned")
+    expect(answer).to_contain_text("Answer — An answer about the quarter")
+    expect(answer).to_contain_text("Planned · Step: Prepare answer")
+    sheet = section.locator("[data-deliverable-id='sheet']")
+    expect(sheet).to_have_attribute("data-deliverable-state", "unavailable")
+    expect(sheet).to_contain_text("Excel workbook — The findings as a spreadsheet")
+    expect(sheet).to_contain_text("Not available: This file format is not available for this plan.")
+    expect(section.get_by_role("heading", name="Also included", exact=True)).to_be_visible()
+    expect(section.locator("[data-deliverable-id='findings_chart']")).to_contain_text("Chart — A chart of the findings")
+    # Model-authored descriptions are text, never markup.
+    expect(section.locator("[data-deliverable-id='portrait']")).to_contain_text("<img src=x")
+    expect(view.locator("img, script")).to_have_count(0)
+    assert not page.evaluate("() => Boolean(window.deliverableExecuted)")
+
+    image_step = view.locator("[data-step-id='portrait_image']")
+    expect(image_step).to_contain_text("image prompt")
+    expect(image_step).to_contain_text("An illustrated skyline at dusk for a quarterly report.")
+    expect(view.get_by_role("region", name="Result bindings for Prepare answer")).to_contain_text(
+        "Optional: if this image cannot be generated, the content is written without it and a delivery note says so."
+    )
+    overflow = page.evaluate("() => document.documentElement.scrollWidth > window.innerWidth")
+    assert not overflow
+
+
+def test_deliverable_states_follow_their_steps(editor_ui):
+    page, api = editor_ui
+    plan = _deliverables_plan()
+    plan["steps"][3]["status"] = "completed"
+    plan["steps"][-1]["status"] = "failed"
+    view = mount_run_view(page, api, plan)
+    section = view.get_by_test_id("orchestration-deliverables")
+    expect(section.locator("[data-deliverable-id='answer']")).to_have_attribute("data-deliverable-state", "delivered")
+    expect(section.locator("[data-deliverable-id='portrait']")).to_have_attribute(
+        "data-deliverable-state", "not_delivered",
+    )
+
+
+def test_approval_card_shows_only_what_the_user_asked_for(editor_ui):
+    page, api = editor_ui
+    mount_editor(page, api, _deliverables_plan())
+    card = page.get_by_test_id("orchestration-deliverables").first
+    expect(card.get_by_role("heading", name="You asked for", exact=True)).to_be_visible()
+    expect(card.locator("[data-deliverable-id='sheet']")).to_contain_text(
+        "Not available: This file format is not available for this plan."
+    )
+    expect(card.locator("[data-deliverable-id='findings_chart']")).to_have_count(0)
+    expect(card).not_to_contain_text("Step:")
+
+
+def test_legacy_and_undeclared_plans_show_no_deliverables_section(editor_ui):
+    page, api = editor_ui
+    plan = dependency_plan()
+    plan["deliverables"] = [{
+        "id": "answer", "kind": "answer", "requested": "explicit", "status": "planned",
+        "description": "An answer to your request.", "implicit": True,
+    }]
+    view = mount_run_view(page, api, plan)
+    expect(view.get_by_test_id("orchestration-deliverables")).to_have_count(0)
+
+
 def test_untrusted_producer_titles_and_column_names_remain_text(editor_ui):
     page, api = editor_ui
     plan = dependency_plan()

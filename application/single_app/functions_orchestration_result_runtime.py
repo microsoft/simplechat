@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.130
+Version: 0.261.135
 """
 
 from copy import deepcopy
@@ -16,8 +16,8 @@ from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
 )
 from functions_orchestration_result_contracts import (
-    MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef, InputBinding,
-    ResultContractError, ResultRef, TaskResult, canonical_bytes, canonical_digest, output_name,
+    IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
+    InputBinding, ResultContractError, ResultRef, TaskResult, canonical_bytes, canonical_digest, output_name,
 )
 from functions_orchestration_results import MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults
 from functions_orchestration_schema import step_input_specs
@@ -83,7 +83,7 @@ def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
     kind = reader.result_kind
     if kind in ('text-v1', 'markdown-v1'):
         return reader.read_text(max_bytes=max_bytes)
-    if kind in ('structured-v1', 'comparison-v1'):
+    if kind in ('structured-v1', 'comparison-v1', IMAGE_ASSET_KIND):
         return reader.read_value(max_bytes=max_bytes)
     values = []
     size = 2

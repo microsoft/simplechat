@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.134"
+version: "0.261.135"
 ---
 
 
@@ -205,6 +205,15 @@ content** (`compose`) controls reusable drafting and structured content, while
 granted by a non-empty legacy capability selection. Both admin surfaces preserve
 these selections; an explicitly legacy-only selection does not become permission
 for every newly added capability when saved.
+
+Since **0.261.135**, **Generate images** (`generate_image`) lets a harness plan generate
+the images a user asks for, one planned task per image and at most four per plan. The
+images appear in the answer and are embedded in DOCX, PDF, and PowerPoint files. It also
+requires **Enable Image Generation** and a configured image model; users gain no image
+access they did not already have. Clearing it keeps requested images out of plans, and
+the plan then lists them as not available with the reason "The capability that produces
+this is not enabled for orchestration." Images a plan only suggests remain approval cards,
+controlled by image generation alone.
 
 Selecting either harness capability does not enable the preview, bypass server
 readiness, or grant source/model access. The harness still publishes truthful

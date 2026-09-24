@@ -2,6 +2,7 @@
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { OrchestrationDeliverables } from './OrchestrationDeliverables';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -306,6 +307,12 @@ export function OrchestrationPlanCard({
                         ) : null}
                     </p>
                 </div>
+            </div>
+
+            {/* What the user asked for, and anything that cannot be delivered here, is part of
+                the decision to approve, so it is shown before the approval buttons. */}
+            <div className="mt-2">
+                <OrchestrationDeliverables plan={plan} edits={edits} compact />
             </div>
 
             {repairs.length > 0 ? (

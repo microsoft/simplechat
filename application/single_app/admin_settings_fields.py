@@ -3771,9 +3771,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Which kinds of work a plan may contain. An empty selection allows every "
                 "otherwise-enabled capability; a non-empty selection narrows plans to "
-                "those capabilities. Legacy answering is always available. Prepare content "
-                "and Create a file apply to admitted harness plans and remain subject to "
-                "rollout readiness. Use an action also requires Enable Action Access."
+                "those capabilities. Legacy answering is always available. Prepare content, "
+                "Create a file and Generate images apply to admitted harness plans and remain "
+                "subject to rollout readiness. Generate images also requires Image Generation. "
+                "Use an action also requires Enable Action Access."
             ),
             "default": [],
             "options": [
@@ -3788,6 +3789,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "action_invoke", "label": "Use an action"},
                 {"value": "compose", "label": "Prepare content"},
                 {"value": "render_file", "label": "Create a file"},
+                {"value": "generate_image", "label": "Generate images"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

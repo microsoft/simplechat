@@ -22,7 +22,7 @@ and occasionally return two objects. That is normal rather than exceptional, so 
 tries several strategies before giving up. A failed model call or invalid plan is an
 error, not evidence that the task can be answered without gathering information.
 
-Version: 0.261.132
+Version: 0.261.135
 """
 
 import json
@@ -36,6 +36,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from config import cognitive_services_scope
 from functions_appinsights import log_event
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
+from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
 from functions_model_catalog import TASKS, ModelCatalogError
 from functions_orchestration_model_routing import (
@@ -67,8 +68,15 @@ from functions_orchestration_visuals import (
     planner_visual_outputs,
 )
 
-PLANNER_MAX_TOKENS = 2000
+PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
+# A dependency plan the server rejects for what it would deliver gets one correction round.
+PLAN_REPAIR_ATTEMPTS = 1
+REPAIRABLE_PLAN_CODES = frozenset({'deliverables_invalid'})
+DELIVERABLES_FAILURE_MESSAGE = (
+    'The plan could not account for everything you asked to receive. Please retry, or '
+    'rephrase what you would like delivered.'
+)
 RESOLUTION_MAX_TOKENS = 1200
 RESOLUTION_MAX_ATTEMPTS = 2
 RESOLVED_REQUEST_MAX_LENGTH = 6000
@@ -423,10 +431,11 @@ the supplied budgets. Never drop requested work to fit a limit or invent an unav
 renderer. Ask a focused clarification or explain an unsupported request instead.
 
 Return {"kind":"plan","intent":{"summary":"...","complexity":"simple","confidence":0.9},
-"assumptions":[],"steps":[{"step_id":"draft","capability_id":"compose",
+"assumptions":[],"deliverables":[{"id":"answer","kind":"answer","requested":"explicit",
+"description":"The answer","status":"planned"}],"steps":[{"step_id":"draft","capability_id":"compose",
 "title":"Prepare answer","rationale":"...","arguments":{"instruction":"A self-contained task",
 "knowledge_basis":"general_knowledge"},
-"inputs":{},"outputs":[{"name":"answer","kind":"markdown-v1"}],"depends_on":[]}],
+"inputs":{},"outputs":[{"name":"answer","kind":"markdown-v1"}],"depends_on":[],"delivers":["answer"]}],
 "final_response":{"version":"orchestration-input-binding-v1","step_id":"draft",
 "output_name":"answer","existing_result":null}}.
 
@@ -474,27 +483,56 @@ facts such as prices, schedules or opening hours. Use sources_and_general_knowle
 gathered inputs lead but stable general knowledge may fill gaps. Mark a named input
 "optional": true only on a compose step whose basis includes general knowledge and only when
 the answer can still be written if that producer fails; compose then discloses the missing
-input instead of the plan failing. compose also receives saved memory and the resolved
+input instead of the plan failing. A generated image input is always optional, whatever the
+basis. compose also receives saved memory and the resolved
 conversation references, so it can transform an earlier answer, but earlier answers are
 never evidence.
 
 Visuals. Markdown answers can include inline charts, Mermaid diagrams and, when
 capability_availability.visual_outputs.image_proposals is true, image proposal cards the user
 approves before an AI image is generated. Decide from the request whether a visual materially
-helps, even unasked, and list it in compose "visuals" (chart, diagram, image_proposal). When a
-chart needs rows an action retrieves, set that action_invoke step's visuals to ["chart"]; it
-charts the exact rows. When user_selected.image_proposals is true, include image_proposal.
+helps, even unasked, and list it in compose "visuals" (chart, diagram, image_proposal); a chart or
+diagram the user asked for is also a chart or diagram deliverable. When a chart needs rows an
+action retrieves, set that action_invoke step's visuals to ["chart"]; it charts the exact rows.
 Web search returns text and links only: it cannot retrieve images or place existing pictures
 into an answer or file. Saved instructions in memory about visuals decide which visuals you
 plan and how, unless the current message explicitly asks otherwise.
 
-Files. A file the user asks for (CSV, Excel, Word, PDF, PowerPoint, JSON, Markdown...) is
-delivered only by render_file: prepare its content with compose (records-v1 with explicit
-columns for CSV/XLSX; markdown-v1 for DOCX/PDF), then render it. Writing the content into the
-chat answer does not create a file. Never title or describe a step as creating or saving a
-file unless a render_file step delivers it; if render_file is not offered or cannot produce the
-requested format, say so plainly in "assumptions" instead of promising a file. Titles describe
-the work each step actually does.
+Deliverables. List "deliverables" before the steps: everything the user asked to receive
+(requested "explicit") and anything you add yourself (requested "suggested"). Each one is
+{"id","kind","format","requested","quantity","description","status","unavailable_reason"}.
+kind is answer, file, image, chart, or diagram. A file is a downloadable file that a render_file
+step creates, and format is its file format id from capability_availability.deliverables (csv,
+xlsx, docx, pdf, pptx, json, md, ...). CSV, Markdown, or document text written into the chat
+answer is not a file. quantity counts files or images when the request implies a number, such as
+3 for "an image of each of the first three presidents". Every step that produces a deliverable
+lists its id in "delivers": render_file delivers a file and its output_format must equal the
+deliverable's format; generate_image delivers an explicit image, one step per image; compose
+delivers the answer (the step final_response selects), charts, diagrams, and suggested images;
+action_invoke can deliver a chart of the rows it retrieves.
+Plan from capability_availability.deliverables, the server's truth about what can be produced.
+When something the user asked for is unavailable there, keep it as a deliverable with status
+"unavailable" and the exact unavailable_reason given, then deliver the rest of the request.
+Never mark unavailable what the server can produce, never promise a deliverable no step
+produces, and never state a limitation only in "assumptions": every limitation on what the user
+asked for is an unavailable deliverable. Step titles describe the work each step actually does;
+only a render_file step creates or saves a file.
+
+Files. A requested file is delivered only by render_file: prepare its complete content with
+compose, then render it, following capability_availability.deliverables.recipes (records-v1 with
+explicit columns for CSV/XLSX; markdown-v1 for DOCX/PDF; the prepared slide deck for PPTX). The
+compose step is told that its output becomes the file, so it writes the finished content.
+
+Images. Generate each image the user explicitly asked for with its own generate_image step, a
+self-contained prompt, and a short title. Generated images are AI illustrations: for real people
+or historical figures ask for an illustrated portrait, and never call one a photograph. Bind each
+image output to the compose step that writes the answer or file content as an optional named
+input; that step places the images with [[image:<step_id>]] tokens, and DOCX, PDF, and PPTX files
+embed them. When more images are requested than generate_image's max_per_plan, plan that many and
+declare the rest as a separate unavailable deliverable with image_budget_exceeded. When
+user_selected.images is true the user chose the Image control: declare at least one explicit
+image deliverable. Images you only suggest stay image proposal cards: a suggested image
+deliverable delivered by compose.
 
 If essential information is missing, return the existing flat elicitation contract:
 {"kind":"elicitation","message":"...","requested_schema":{"type":"object",
@@ -881,6 +919,17 @@ def describe_planner_model(planner_model, deployment):
         **({'reasoning_effort': effort} if isinstance(effort, str) and effort else {}),
     }
 
+def plan_repair_message(error):
+    """The planner-facing correction request after the server rejected a plan's deliverables."""
+    return (
+        f'The server rejected that plan: {error}\n'
+        'Return the complete corrected plan as one JSON object for the same request. Keep every '
+        'deliverable the user asked for. When one cannot be produced, mark it unavailable with the '
+        'exact unavailable_reason capability_availability.deliverables gives, instead of dropping '
+        'it or promising it.'
+    )
+
+
 def plan_request(
     user_message,
     planner_context,
@@ -955,14 +1004,24 @@ def plan_request(
         'web_discovery_enabled': bool(settings.get('enable_web_search')),
         'visual_outputs': planner_visual_outputs(settings),
     }
-    if image_requested_by_user(seeds) and image_proposals_available(settings):
+    image_selected = image_requested_by_user(seeds)
+    deliverable_truth = None
+    if contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
+        # What this caller's plan can deliver, from the same resolution the planner is shown.
+        deliverable_truth = build_deliverable_availability(
+            settings, capabilities=capabilities, unavailable=unavailable, export_catalog=export_catalog,
+        )
+        context['capability_availability']['deliverables'] = deliverable_truth
+        if image_selected:
+            context['user_selected'] = {**(context.get('user_selected') or {}), 'images': True}
+    elif image_selected and image_proposals_available(settings):
         context['user_selected'] = {**(context.get('user_selected') or {}), 'image_proposals': True}
     agent_names = [
         agent.get('name') for agent in context.get('agents') or () if isinstance(agent, dict)
     ]
     actions = context.get('actions') or []
 
-    def _failure(reason, error=None, *, stage=None):
+    def _failure(reason, error=None, *, stage=None, message=None):
         log_event(
             '[ORCHESTRATION_PLANNER] The request could not be planned.',
             level=logging.WARNING, extra={
@@ -970,11 +1029,12 @@ def plan_request(
                 'conversation_id': conversation_id, 'turn_id': turn_id, 'revision': revision,
                 'error_type': type(error).__name__ if error is not None else None,
                 'response_failure': error.reason if isinstance(error, PlannerResponseError) else None,
+                'validation_code': getattr(error, 'code', None) if isinstance(error, PlanValidationError) else None,
             },
         )
         raise PlannerError(
             'The requested change could not be planned. Your previous plan is unchanged.'
-            if edit_context is not None else 'The request could not be planned. Please retry.',
+            if edit_context is not None else message or 'The request could not be planned. Please retry.',
             reason=reason,
         )
 
@@ -1007,140 +1067,174 @@ def plan_request(
     except (PlannerError, APIError, AzureError, ValueError) as exc:
         return _failure('model_configuration_failed', exc, stage='model_binding')
 
-    try:
-        reply, usage = _call_planner(
-            client, deployment, build_planner_messages(
-                context, replan_hint=replan_hint, edit_context=edit_context,
-                contract_version=contract_version,
-            ),
-            require_complete_response=True,
-        )
-    except (PlannerError, APIError, AzureError) as exc:
-        return _failure('model_request_failed', exc, stage='model_request')
-
-    parsed = extract_planner_json(reply)
-    if not parsed:
-        return _failure('unparseable_plan')
-
-    kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
+    messages = build_planner_messages(
+        context, replan_hint=replan_hint, edit_context=edit_context,
+        contract_version=contract_version,
+    )
     reasoning_metadata = build_model_reasoning_metadata(planner_model, 'planner')
-    if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
-        return _failure('invalid_planner_response_kind')
-
-    if edit_context is not None:
-        if kind == 'message':
-            message = parsed.get('message')
-            if not isinstance(message, str) or not message.strip() or len(message) > 2000:
-                return _failure('invalid_editor_explanation')
-            return 'message', {
-                'message': message.strip(),
-                'reasoning_adjustments': reasoning_metadata.get('reasoning_adjustments', []),
-                'token_usage': {
-                    field: getattr(usage, field)
-                    for field in ('prompt_tokens', 'completion_tokens', 'total_tokens')
-                    if isinstance(getattr(usage, field, None), int)
-                },
-            }
-        if kind not in ('plan', 'elicitation'):
-            return _failure('invalid_editor_response_kind')
-        if kind == 'plan':
-            revised_request = parsed.get('revised_request')
-            if (
-                not isinstance(revised_request, str) or not revised_request.strip()
-                or len(revised_request) > RESOLVED_REQUEST_MAX_LENGTH
-            ):
-                return _failure('invalid_revised_request')
-
-    if kind == 'elicitation' and allow_elicitation:
+    token_usage, usage_seen = {}, False
+    for attempt in range(1, PLAN_REPAIR_ATTEMPTS + 2):
         try:
-            fields = (parsed.get('ui_hints') or {}).get('fields') or {}
-            candidates = []
-            if isinstance(fields, dict) and any(
-                isinstance(hint, dict) and hint.get('input') == 'files'
-                for hint in fields.values()
-            ):
-                candidates = resolve_elicitation_candidates(
-                    context.get('candidate_documents'), user_id, conversation_id,
-                    seeds=seeds, settings=settings,
-                )
-            elicitation = normalize_elicitation(
-                parsed, run_id=None, revision=revision, candidate_references=candidates,
-            )
-            elicitation['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
-            if usage is not None:
-                elicitation['token_usage'] = {
-                    field: getattr(usage, field)
-                    for field in ('prompt_tokens', 'completion_tokens', 'total_tokens')
-                    if isinstance(getattr(usage, field, None), int)
+            reply, usage = _call_planner(client, deployment, messages, require_complete_response=True)
+        except (PlannerError, APIError, AzureError) as exc:
+            return _failure('model_request_failed', exc, stage='model_request')
+        if usage is not None:
+            usage_seen = True
+            for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                value = getattr(usage, field, None)
+                if isinstance(value, int):
+                    token_usage[field] = token_usage.get(field, 0) + value
+
+        parsed = extract_planner_json(reply)
+        if not parsed:
+            return _failure('unparseable_plan')
+
+        kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
+        if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
+            return _failure('invalid_planner_response_kind')
+
+        if edit_context is not None:
+            if kind == 'message':
+                message = parsed.get('message')
+                if not isinstance(message, str) or not message.strip() or len(message) > 2000:
+                    return _failure('invalid_editor_explanation')
+                return 'message', {
+                    'message': message.strip(),
+                    'reasoning_adjustments': reasoning_metadata.get('reasoning_adjustments', []),
+                    'token_usage': dict(token_usage),
                 }
-            return 'elicitation', elicitation
-        except PlanValidationError as exc:
-            # A question we cannot render is worse than no question: the run would stall
-            # on a card that never appears. Planning again without the option is the only
-            # honest recovery.
-            log_event(
-                f"[ORCHESTRATION_PLANNER] Discarding an unrenderable question set: {exc}",
-                level=logging.WARNING,
-            )
-            return plan_request(
-                user_message,
-                planner_context,
+            if kind not in ('plan', 'elicitation'):
+                return _failure('invalid_editor_response_kind')
+            if kind == 'plan':
+                revised_request = parsed.get('revised_request')
+                if (
+                    not isinstance(revised_request, str) or not revised_request.strip()
+                    or len(revised_request) > RESOLVED_REQUEST_MAX_LENGTH
+                ):
+                    return _failure('invalid_revised_request')
+
+        if kind == 'elicitation' and allow_elicitation:
+            try:
+                fields = (parsed.get('ui_hints') or {}).get('fields') or {}
+                candidates = []
+                if isinstance(fields, dict) and any(
+                    isinstance(hint, dict) and hint.get('input') == 'files'
+                    for hint in fields.values()
+                ):
+                    candidates = resolve_elicitation_candidates(
+                        context.get('candidate_documents'), user_id, conversation_id,
+                        seeds=seeds, settings=settings,
+                    )
+                elicitation = normalize_elicitation(
+                    parsed, run_id=None, revision=revision, candidate_references=candidates,
+                )
+                elicitation['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
+                if usage_seen:
+                    elicitation['token_usage'] = dict(token_usage)
+                return 'elicitation', elicitation
+            except PlanValidationError as exc:
+                # A question we cannot render is worse than no question: the run would stall
+                # on a card that never appears. Planning again without the option is the only
+                # honest recovery.
+                log_event(
+                    f"[ORCHESTRATION_PLANNER] Discarding an unrenderable question set: {exc}",
+                    level=logging.WARNING,
+                )
+                return plan_request(
+                    user_message,
+                    planner_context,
+                    conversation_id,
+                    user_id,
+                    settings=settings,
+                    approval_mode=approval_mode,
+                    authorized_document_ids=authorized_document_ids,
+                    replan_hint=replan_hint,
+                    revision=revision,
+                    allow_elicitation=False,
+                    turn_id=turn_id,
+                    seeds=seeds,
+                    document_labels=document_labels,
+                    request_context=request_context,
+                    planner_model=planner_model,
+                    edit_context=edit_context,
+                    contract_version=contract_version,
+                    existing_results=existing_results,
+                    composition_profiles=composition_profiles,
+                    export_catalog=export_catalog,
+                )
+
+        if kind == 'elicitation':
+            return _failure('repeated_elicitation')
+
+        raw_steps = parsed.get('steps')
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return _failure('invalid_plan_work')
+
+        if edit_context is not None and authorized_document_ids is not None:
+            if set(plan_document_ids(parsed, include_disabled=True)) - set(authorized_document_ids):
+                return _failure('unavailable_revision_sources')
+
+        try:
+            plan = normalize_plan(
+                parsed,
                 conversation_id,
                 user_id,
                 settings=settings,
                 approval_mode=approval_mode,
                 authorized_document_ids=authorized_document_ids,
-                replan_hint=replan_hint,
-                revision=revision,
-                allow_elicitation=False,
+                available_capability_ids=available_ids,
                 turn_id=turn_id,
                 seeds=seeds,
                 document_labels=document_labels,
-                request_context=request_context,
-                planner_model=planner_model,
-                edit_context=edit_context,
+                agent_names=agent_names,
+                actions=actions,
                 contract_version=contract_version,
                 existing_results=existing_results,
                 composition_profiles=composition_profiles,
                 export_catalog=export_catalog,
+                deliverable_availability=deliverable_truth,
+                # A revision may drop images the user no longer wants; it is flagged below.
+                image_selected=image_selected and edit_context is None,
             )
-
-    if kind == 'elicitation':
-        return _failure('repeated_elicitation')
-
-    raw_steps = parsed.get('steps')
-    if not isinstance(raw_steps, list) or not raw_steps:
-        return _failure('invalid_plan_work')
-
-    if edit_context is not None and authorized_document_ids is not None:
-        if set(plan_document_ids(parsed, include_disabled=True)) - set(authorized_document_ids):
-            return _failure('unavailable_revision_sources')
-
-    try:
-        plan = normalize_plan(
-            parsed,
-            conversation_id,
-            user_id,
-            settings=settings,
-            approval_mode=approval_mode,
-            authorized_document_ids=authorized_document_ids,
-            available_capability_ids=available_ids,
-            turn_id=turn_id,
-            seeds=seeds,
-            document_labels=document_labels,
-            agent_names=agent_names,
-            actions=actions,
-            contract_version=contract_version,
-            existing_results=existing_results,
-            composition_profiles=composition_profiles,
-            export_catalog=export_catalog,
-        )
-    except PlanValidationError as exc:
-        return _failure('invalid_plan_or_missing_requirement', exc, stage='plan_normalization')
+        except PlanValidationError as exc:
+            repairable = contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION and exc.code in REPAIRABLE_PLAN_CODES
+            if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
+                # One correction round: the planner sees exactly why the server refused the
+                # plan, such as a promised file no step renders, and answers the same request.
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
+                    level=logging.INFO, extra={
+                        'reason': exc.code, 'attempt': attempt,
+                        'conversation_id': conversation_id, 'turn_id': turn_id, 'revision': revision,
+                    },
+                )
+                messages = [
+                    *messages,
+                    {'role': 'assistant', 'content': reply},
+                    {'role': 'user', 'content': plan_repair_message(exc)},
+                ]
+                continue
+            return _failure(
+                'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
+                message=DELIVERABLES_FAILURE_MESSAGE if repairable else None,
+            )
+        break
     try:
         validate_plan_requirements(plan, seeds, allow_changes=edit_context is not None)
     except PlanValidationError as exc:
         return _failure('invalid_plan_or_missing_requirement', exc, stage='selected_requirements')
+    if (
+        edit_context is not None and image_selected and deliverable_truth is not None
+        and not any(
+            deliverable.get('kind') == 'image' and deliverable.get('requested') == 'explicit'
+            for deliverable in plan.get('deliverables') or ()
+        )
+    ):
+        # Like any other dropped selection in an edit, this is shown for review, not refused.
+        repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
+        warning = 'The plan no longer includes the images selected with the Image control. Review this change before running.'
+        if warning not in repairs:
+            repairs.append(warning)
 
     if plan.get('validation', {}).get('errors'):
         return _failure('invalid_plan_work')
@@ -1156,11 +1250,10 @@ def plan_request(
     plan['planner_model'] = deployment
     plan['planner'] = describe_planner_model(planner_model, deployment)
     plan['reasoning_adjustments'] = reasoning_metadata.get('reasoning_adjustments', [])
-    if usage is not None:
+    if usage_seen:
         plan['token_usage'] = {
-            'prompt_tokens': getattr(usage, 'prompt_tokens', None),
-            'completion_tokens': getattr(usage, 'completion_tokens', None),
-            'total_tokens': getattr(usage, 'total_tokens', None),
+            field: token_usage.get(field)
+            for field in ('prompt_tokens', 'completion_tokens', 'total_tokens')
         }
 
     return 'plan', plan

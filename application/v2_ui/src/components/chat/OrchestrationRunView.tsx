@@ -5,6 +5,7 @@ import { OrchestrationResultBindings } from './OrchestrationResultBindings';
 import { OrchestrationExportCatalog } from './OrchestrationExportCatalog';
 import { OrchestrationPlannedFile } from './OrchestrationPlannedFile';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { OrchestrationDeliverables } from './OrchestrationDeliverables';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -115,6 +116,10 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
         }
         if (key === 'visuals' && Array.isArray(value)) {
             entries.push(['visuals', value.map((kind) => VISUAL_KIND_LABELS[String(kind)] ?? String(kind)).join(', ')]);
+            continue;
+        }
+        if (step.capability_id === 'generate_image' && (key === 'prompt' || key === 'title')) {
+            entries.push([key === 'prompt' ? 'image prompt' : 'caption', String(value)]);
             continue;
         }
         const text =
@@ -523,6 +528,11 @@ export function OrchestrationRunView({
                     </ul>
                 ) : null}
             </div>
+
+            <OrchestrationDeliverables
+                plan={plan} edits={edits}
+                statusOf={(stepId) => stepRuntime[stepId]?.status}
+            />
 
             {dependencyPlan && plan.final_response !== undefined ? (
                 <p className="break-words text-xs text-text-2" aria-label="Final chat response binding">

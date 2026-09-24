@@ -182,7 +182,7 @@ def test_preselected_image_asks_orchestration_for_image_proposals_by_click_or_en
     message_box(page).fill("Draw an illustration.")
     page.get_by_title("Orchestrate", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="cannot generate images")).to_have_count(0)
-    status = page.get_by_role("status").filter(has_text="Orchestrate will include image proposals for you to approve.")
+    status = page.get_by_role("status").filter(has_text="Orchestrate will plan the images you ask for and generate them when the plan runs.")
     expect(status).to_be_visible()
     expect(send_button(page)).to_be_enabled()
     with page.expect_response(lambda response: urlsplit(response.url).path == PLAN_PATH):

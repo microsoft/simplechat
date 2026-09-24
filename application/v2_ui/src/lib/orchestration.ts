@@ -289,6 +289,32 @@ export interface OrchestrationStep {
     /** Named result bindings are distinct from capability arguments and plan-level sources. */
     inputs?: Record<string, OrchestrationNamedInput>;
     outputs?: OrchestrationNamedOutput[];
+    /** Ids of the plan deliverables this step produces. */
+    delivers?: string[];
+}
+
+/** What a deliverable is: the chat answer, a downloadable file, an image, a chart or a diagram. */
+export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram';
+
+/**
+ * One thing the plan will deliver, from the plan's `deliverables`.
+ *
+ * `requested` separates what the user asked for from what the planner added. An
+ * `unavailable` deliverable carries a server-verified reason code and its application-owned
+ * message; `implicit` marks the answer the server assumes for plans that declared nothing.
+ */
+export interface OrchestrationDeliverable {
+    id: string;
+    kind: OrchestrationDeliverableKind;
+    /** File format id, for file deliverables. */
+    format?: string;
+    requested: 'explicit' | 'suggested';
+    quantity?: number;
+    description: string;
+    status: 'planned' | 'unavailable';
+    unavailable_reason?: string;
+    unavailable_message?: string;
+    implicit?: boolean;
 }
 
 /** The approval block, from `normalize_plan`'s `approval`. */
@@ -399,6 +425,8 @@ export interface OrchestrationPlan {
     outputs?: Json[];
     /** V2's prepared answer selection, not the executor's private result reference. */
     final_response?: OrchestrationInputBinding | null;
+    /** What the plan will deliver, listed before its steps; older plans do not carry it. */
+    deliverables?: OrchestrationDeliverable[];
     /** Who planned this run; older plans do not carry it. */
     planner?: OrchestrationPlanner;
     /** Present when each model-backed step was bound to its own model by Auto routing. */

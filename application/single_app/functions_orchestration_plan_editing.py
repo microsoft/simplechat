@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.127
+Version: 0.261.135
 """
 
 import json
@@ -437,12 +437,22 @@ def build_plan_edit_outcome(
     edit_context = {
         'current_plan': {
             key: deepcopy(current_plan[key])
-            for key in ('planner_contract_version', 'intent', 'assumptions', 'steps', 'final_response')
+            for key in ('planner_contract_version', 'intent', 'assumptions', 'deliverables', 'steps', 'final_response')
             if key in current_plan
         },
         'current_request': current_request, 'instruction': instruction,
         'chat': [{key: turn[key] for key in ('role', 'content')} for turn in chat[-20:]],
     }
+    # A step's deliverable brief is derived again by validation; the planner edits the plan.
+    for step in edit_context['current_plan'].get('steps') or []:
+        if isinstance(step, dict):
+            step.pop('deliverable_context', None)
+    # So is the answer the server assumes for a plan that declared no deliverables.
+    if isinstance(edit_context['current_plan'].get('deliverables'), list):
+        edit_context['current_plan']['deliverables'] = [
+            deliverable for deliverable in edit_context['current_plan']['deliverables']
+            if not (isinstance(deliverable, dict) and deliverable.get('implicit') is True)
+        ]
     try:
         planner_model = resolve_orchestration_model(
             settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,

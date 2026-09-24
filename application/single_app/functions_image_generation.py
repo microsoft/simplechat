@@ -2,6 +2,7 @@
 """Shared helpers for opt-in chat image generation proposals."""
 
 import base64
+import hashlib
 import mimetypes
 import random
 import re
@@ -653,14 +654,24 @@ def generate_chat_image_message(
     proposal=None,
     source_assistant_message_id=None,
     store_in_blob=False,
+    size='',
+    quality='',
+    background='',
 ):
-    """Generate an image, persist it as a chat image message, and return response data."""
+    """Generate an image, persist it as a chat image message, and return response data.
+
+    ``size``, ``quality`` and ``background`` are optional values the selected image model
+    declares; an unsupported value is rejected rather than changed. A blob-backed result
+    also reports the stored image's MIME type, byte size and SHA-256 digest.
+    """
     normalized_prompt = _trim_text(prompt, IMAGE_PROPOSAL_PROMPT_MAX_LENGTH)
     if not normalized_prompt:
         raise ValueError('Image generation prompt is required')
 
     image_gen_model = resolve_selected_image_deployment_name(settings)
-    generated_image_url = request_generated_image_source(settings, normalized_prompt)
+    generated_image_url = request_generated_image_source(
+        settings, normalized_prompt, size=size, quality=quality, background=background,
+    )
     if not generated_image_url or generated_image_url == 'null':
         raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
@@ -699,11 +710,17 @@ def generate_chat_image_message(
     }
 
     response_image_url = generated_image_url
+    stored_image = {}
     if store_in_blob:
         # Lazy import keeps proposal-only helpers free of optional document processing dependencies.
         from functions_simplechat_operations import upload_chat_image_bytes_for_user
 
         image_mime_type, image_bytes = resolve_generated_image_bytes(generated_image_url)
+        stored_image = {
+            'mime_type': image_mime_type,
+            'image_size': len(image_bytes),
+            'image_sha256': hashlib.sha256(image_bytes).hexdigest(),
+        }
         visual_id = _normalize_visual_id((proposal or {}).get('visualId')) if proposal else ''
         image_file_stem = visual_id or image_message_id
         blob_image_info = upload_chat_image_bytes_for_user(
@@ -751,4 +768,5 @@ def generate_chat_image_message(
         'model_deployment_name': image_gen_model,
         'message_id': image_message_id,
         'image_message': image_doc,
+        **stored_image,
     }

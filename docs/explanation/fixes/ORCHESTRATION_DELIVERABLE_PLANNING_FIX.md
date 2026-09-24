@@ -1,7 +1,8 @@
 # Orchestration answers that miss what the user asked for
 
-Fixed in version: **0.261.134** (Gather / Reason / Render answer parity). The deliverables
-contract and generated images in files follow in later layers of the same change.
+Fixed in version: **0.261.134** (Gather / Reason / Render answer parity) and **0.261.135**
+(the deliverables contract and generated images in files). A later layer of the same
+change makes Gather / Reason / Render the only orchestration contract.
 
 Version reference: `application/single_app/config.py`.
 
@@ -156,3 +157,100 @@ Render enabled, the same requests now plan that contract's work even under Auto 
 compose writes from general knowledge when appropriate, a failed search is disclosed
 rather than turned into placeholders, and web sources arrive as links. A later layer of
 this change makes Gather / Reason / Render the only contract and removes its admin toggle.
+
+## Technical details (0.261.135): deliverables and generated images
+
+Root causes 2 and 5 are fixed structurally. The full contract is described in
+[Orchestration deliverables](../features/ORCHESTRATION_DELIVERABLES.md).
+
+### What the user asked to receive is part of the plan
+
+- The planner lists `deliverables` before its steps. Each is an answer, file, image,
+  chart, or diagram, `explicit` or `suggested`, and `planned` or `unavailable`. Steps name
+  what they produce in `delivers`.
+- `plan_request` gives the planner `capability_availability.deliverables`: the kinds and
+  file formats this plan can produce, closed reason codes for what it cannot, recipes, and
+  facts such as "web search returns text and links only". `PLANNER_MAX_TOKENS` is 4000.
+- `compile_deliverables` checks every Gather / Reason / Render plan:
+  - A file comes only from a `render_file` step in the same format.
+  - An explicit image comes only from `generate_image`.
+  - The answer comes from the `final_response` step.
+  - Every planned deliverable has a producing step.
+  - Every render and image step delivers a declared deliverable.
+- While planning, an unavailable deliverable's reason must equal the server's reason, and
+  the planner cannot call something unavailable that the server can produce. A limitation
+  therefore has to be an unavailable deliverable; the prompt forbids stating it only in
+  the assumptions, and no assumption text is parsed.
+- A rejected plan gets one repair call with the validation message, then fails with "The
+  plan could not account for everything you asked to receive."
+
+### Images the user asks for are generated and embedded
+
+- The new `generate_image` capability generates each requested image as a planned step,
+  reusing `generate_chat_image_message`. The image is saved as a conversation image
+  message tied to the orchestrated answer's deterministic message id and retained as an
+  `image-asset-v1` result.
+- The answer places images with `[[image:<step_id>]]` tokens. The chat shows them inline
+  through the existing image card, viewer, and editor, and each is captioned as an
+  AI-generated illustration.
+- DOCX, PDF, and PPTX rendering resolve only images in the rendered source's own lineage
+  and verify their bytes. Planned images therefore appear in files, which proposal images
+  could never do.
+- The composer's Image control now asks for explicit image deliverables instead of
+  forcing proposal cards. Suggested images stay proposal cards.
+
+### Nothing undelivered is reported as delivered
+
+- A run in which an explicit image step did not complete is incomplete, as a missing
+  required file already was.
+- A deterministic, model-free **Delivery notes** list follows the answer for each explicit
+  deliverable that was not delivered or is unavailable.
+- The answer step is told that a later step saves its output as a file, so it writes the
+  finished content and never says files cannot be created. For an unavailable deliverable
+  it is told not to promise or apologize for it, because the delivery note states it once.
+
+### Files modified (0.261.135)
+
+| File | Change |
+| --- | --- |
+| `functions_orchestration_deliverables.py` (new) | Server truth, validation, answer guidance, image placement, chat projection, delivery notes |
+| `functions_orchestration_images.py` (new) | Image readiness and the `generate_image` adapter |
+| `functions_orchestration_registry.py` | `generate_image` descriptor, budget, readiness gate, compose and render guidance |
+| `functions_orchestration_result_contracts.py`, `functions_orchestration_results.py`, `functions_orchestration_result_runtime.py` | `image-asset-v1` kind, validation, and reads |
+| `functions_orchestration_schema.py` | `delivers`, deliverables compilation, optional image inputs, image failure codes |
+| `functions_orchestration_planner.py` | Deliverables prompt, server truth, Image control, one repair call, token budget |
+| `functions_orchestration_composition.py` | Deliverable guidance, image tokens, missing images |
+| `functions_orchestration_executor.py` | Image publication policy, explicit-image reconciliation |
+| `functions_orchestration_execution.py` | Chat image projection, delivery notes, image re-linking |
+| `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py` | Per-render image resolver and verified byte reader |
+| `functions_orchestration_checkpoints.py` | Answer message id helper, deliverables in checkpoint identity |
+| `functions_orchestration_plan_revisions.py`, `functions_orchestration_plan_editing.py` | Deliverables in the editor projection and edit context |
+| `functions_image_generation.py` | Image options and the stored image's digest |
+| `v2_ui/src/...` | You asked for section, image step prompts, image input wording, reload after generated images |
+
+### Validation (0.261.135)
+
+- `functional_tests/test_orchestration_deliverables.py`: 34 test cases in the real headless
+  harness, covering validation and repair, `generate_image` gating, budget, prompt checks
+  and persistence, DOCX/PDF/PPTX embedding, and the reported requests as scenarios. It
+  also covers the edge cases found in review:
+  - Turning off a file step at approval rebuilds the answer step's deliverable briefs, so
+    a retry of that run still matches its checkpoints.
+  - When every planned image fails, the answer and the file hold no leftover image tokens
+    or broken image references.
+  - A plan revision may drop images that were chosen with the Image control; the revised
+    plan carries a review warning instead of failing.
+  - A plan that repeats the implicit answer beside its real deliverables keeps the answer.
+- `functional_tests/test_v2_orchestration_deliverables.mjs`: browser normalization and
+  deliverable states.
+- `ui_tests/test_v2_orchestration_dependency_plans.py`: the You asked for section in the
+  plan panel and approval card.
+- `ui_tests/test_v2_orchestration_composer.py` and `ui_tests/test_v2_reasoning_controls.py`:
+  the new Image control notice.
+- The full `test_orchestration*.py` suite passes apart from the same baseline failures.
+
+With this layer, "create a csv of states and capitals" produces the CSV file itself, and
+"create a word file ... images for each president" produces a Word document with a
+captioned AI illustration of each president, shown inline in the chat as well. If an image
+or the file cannot be produced, the answer says so once, and the run is not reported as
+delivered.

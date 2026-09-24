@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.127
+Version: 0.261.135
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -268,6 +268,41 @@ def _authorize_render_output(record, *, operation, rendering_service):
     return True
 
 
+def build_image_asset_reader(user_id, conversation_id):
+    """Read a retained generated image's bytes from its own conversation image message.
+
+    The rendering service decides which images a file may contain and verifies the digest.
+    This reader only refuses anything that is not that owner's live image message: another
+    conversation, a deleted or masked message, or a blob outside the message's own folder.
+    """
+    def read(asset):
+        read_owned_conversation(user_id, conversation_id)
+        message = config.cosmos_messages_container.read_item(
+            item=asset["message_id"], partition_key=conversation_id,
+        )
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        proposal = metadata.get("image_proposal") if isinstance(metadata.get("image_proposal"), dict) else {}
+        blob_path = str(message.get("blob_path") or "")
+        if (
+            message.get("id") != asset["message_id"] or message.get("conversation_id") != conversation_id
+            or message.get("role") != "image" or message.get("file_content_source") != "blob"
+            or metadata.get("is_deleted") or metadata.get("masked")
+            or proposal.get("visualId") != asset["asset_id"]
+            or message.get("blob_container") != config.storage_account_personal_chat_container_name
+            or not blob_path.startswith(f"{user_id}/{conversation_id}/images/{asset['message_id']}/")
+        ):
+            raise OutputUnavailableError("output_source_unavailable")
+        client = config.CLIENTS.get("storage_account_office_docs_client")
+        if client is None:
+            raise OutputUnavailableError("output_source_unavailable")
+        blob = client.get_blob_client(container=message["blob_container"], blob=blob_path)
+        if blob.get_blob_properties().size != asset["size_bytes"]:
+            raise OutputUnavailableError("output_source_changed")
+        return blob.download_blob().readall()
+
+    return read
+
+
 def build_orchestration_services(user_id, conversation_id, *, settings=None):
     """Supply the initialized private result, run and chat-artifact resources."""
     read_owned_conversation(user_id, conversation_id)
@@ -355,6 +390,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         transport=transport, authorize_execution=authorize_output,
         max_output_bytes=min(maximum_mb, 500) * 1024 * 1024,
         native_bridge_for_step=native_bridge_for_step,
+        image_asset_reader=build_image_asset_reader(user_id, conversation_id),
     )
     return services
 

@@ -31,7 +31,7 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.127
+Version: 0.261.135
 """
 
 import hashlib
@@ -66,9 +66,10 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
-    InputBinding, InputSpec, OutputSpec, RecordColumn, ResultContractError,
+    IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn, ResultContractError,
     StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
+from functions_orchestration_deliverables import DeliverableError, compile_deliverables
 
 ORCHESTRATION_PLAN_CONTRACT_VERSION = 1
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
@@ -700,12 +701,54 @@ def _validate_render_requests(steps, existing_results, export_catalog=None):
             ) from exc
 
 
+def _optional_input_kind(spec, produced, existing_results):
+    if spec.binding.existing_result is not None:
+        reference = (existing_results or {}).get(spec.binding.existing_result)
+        return getattr(reference, 'kind', None)
+    return produced.get((spec.binding.step_id, spec.binding.output_name))
+
+
+def _apply_image_input_policy(steps, existing_results):
+    """A generated image is illustrative: its consumer can always be written without it.
+
+    Image inputs are therefore optional, so one failed image never blocks the answer or a
+    file; the delivery notes report it. Only the answer basis rules the other inputs.
+    """
+    produced = {
+        (step['step_id'], output['name']): output['kind'] for step in steps for output in step['outputs']
+    }
+    for step in steps:
+        for value in step['inputs'].values():
+            if type(value) is not dict or type(value.get('binding')) is not dict:
+                continue
+            binding = InputBinding.from_dict(value['binding'])
+            if (
+                step['capability_id'] == CAPABILITY_COMPOSE and binding.step_id is not None
+                and produced.get((binding.step_id, binding.output_name)) == IMAGE_ASSET_KIND
+            ):
+                value['optional'] = True
+    for step in steps:
+        specs = step_input_specs(step)
+        knowledge_optional = [
+            spec for spec in specs
+            if spec.optional and _optional_input_kind(spec, produced, existing_results) != IMAGE_ASSET_KIND
+        ]
+        if knowledge_optional and step['arguments'].get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES:
+            raise PlanValidationError(
+                'An optional input requires an answer basis that allows general knowledge.',
+            )
+
+
 def validate_dependency_plan(
     plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
     agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
-    export_catalog=None,
+    export_catalog=None, deliverable_availability=None, image_selected=False,
 ):
-    """Compile v2 without dropping required work, arguments, outputs, or dependencies."""
+    """Compile v2 without dropping required work, arguments, outputs, or dependencies.
+
+    ``deliverable_availability`` is the server truth a new plan is checked against; see
+    ``functions_orchestration_deliverables.compile_deliverables``.
+    """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
     try:
@@ -729,6 +772,8 @@ def validate_dependency_plan(
         'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
         # Auto routing: the planner may name a task category; only the server assigns a binding.
         'model_task', 'model_binding',
+        # Deliverables: the planner names what a step delivers; the server derives its brief.
+        'delivers', 'deliverable_context',
     }
     try:
         for raw in raw_steps:
@@ -811,14 +856,9 @@ def validate_dependency_plan(
                 'status': STEP_STATUS_PENDING,
                 **({'model_task': raw['model_task'].strip()} if 'model_task' in raw else {}),
                 **({'model_binding': deepcopy(raw['model_binding'])} if 'model_binding' in raw else {}),
+                **({'delivers': deepcopy(raw['delivers'])} if 'delivers' in raw else {}),
             }
-            specs = step_input_specs(step)
-            if any(spec.optional for spec in specs) and (
-                arguments.get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES
-            ):
-                raise PlanValidationError(
-                    'An optional input requires an answer basis that allows general knowledge.',
-                )
+            step_input_specs(step)
             if capability_id == 'document_analyze' and not arguments.get('document_ids') and 'sources' not in step['inputs']:
                 raise PlanValidationError('Analyze requires named sources or a source-set binding.')
             if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
@@ -826,6 +866,7 @@ def validate_dependency_plan(
             accepted.append(step)
         if not any(step['enabled'] for step in accepted):
             raise PlanValidationError('The plan contains no enabled work.')
+        _apply_image_input_policy(accepted, existing_results)
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
@@ -854,11 +895,18 @@ def validate_dependency_plan(
             uses = consumers.get(step['step_id'])
             if uses and all(uses) and step['step_id'] != final_producer:
                 step['optional'] = True
+        deliverables = compile_deliverables(
+            plan.get('deliverables'), accepted, final_response=plan.get('final_response'),
+            availability=deliverable_availability, image_selected=image_selected,
+        )
     except ResultContractError as exc:
         raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
+    except DeliverableError as exc:
+        raise PlanValidationError(exc.message, code=exc.code) from exc
     compiled = deepcopy(plan)
     compiled.update({
         'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'deliverables': deliverables,
         'steps': order_dependency_steps(accepted),
         'validation': {'ok': True, 'errors': [], 'repairs': []},
     })
@@ -877,6 +925,8 @@ def validate_plan(
     composition_profiles=None,
     export_catalog=None,
     contract_version=None,
+    deliverable_availability=None,
+    image_selected=False,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -904,6 +954,7 @@ def validate_plan(
             action_refs=action_refs, existing_results=existing_results,
             composition_profiles=composition_profiles,
             export_catalog=export_catalog,
+            deliverable_availability=deliverable_availability, image_selected=image_selected,
         )
     settings = settings if isinstance(settings, dict) else {}
     plan = plan if isinstance(plan, dict) else {}
@@ -1324,8 +1375,14 @@ def normalize_plan(
     existing_results=None,
     composition_profiles=None,
     export_catalog=None,
+    deliverable_availability=None,
+    image_selected=False,
 ):
-    """Turn raw planner output into a complete, validated plan document."""
+    """Turn raw planner output into a complete, validated plan document.
+
+    ``deliverable_availability`` and ``image_selected`` apply only to a new dependency plan:
+    its deliverables are checked against what the server can produce right now.
+    """
     settings = settings if isinstance(settings, dict) else {}
     plan = dict(plan) if isinstance(plan, dict) else {}
     requested_version = plan.get('planner_contract_version', contract_version)
@@ -1395,6 +1452,8 @@ def normalize_plan(
         composition_profiles=composition_profiles,
         export_catalog=export_catalog,
         contract_version=contract_version,
+        deliverable_availability=deliverable_availability,
+        image_selected=image_selected,
     )
 
     plan['inputs'] = build_plan_inputs(
@@ -1487,8 +1546,16 @@ def apply_plan_edits(
                     step['enabled'] for step in plan['steps'] if step['step_id'] == binding.step_id
                 ):
                     raise PlanValidationError('The selected answer producer cannot be disabled.')
+            # A step the user switched off changes what an answer step writes for, such as a
+            # file it no longer feeds. The saved plan must describe exactly what will run, so
+            # checkpoints and retries compare the same deliverable briefs the executor derives.
+            plan['deliverables'] = compile_deliverables(
+                plan.get('deliverables'), plan['steps'], final_response=plan.get('final_response'),
+            )
         except ResultContractError as exc:
             raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
+        except DeliverableError as exc:
+            raise PlanValidationError(exc.message, code=exc.code) from exc
         original.update(plan)
         return original
 
@@ -1548,6 +1615,9 @@ FAILURE_MESSAGES = {
     'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
     'model_failed': 'The answering model could not complete the reply.',
     'model_routing_changed': 'The approved model or its capabilities changed. Review a new plan before running.',
+    'image_content_refused': 'The image service declined this image prompt under its content policy.',
+    'image_generation_unavailable': 'Image generation is not available for this deployment right now.',
+    'image_request_invalid': 'The image model did not accept the planned image request.',
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
 }

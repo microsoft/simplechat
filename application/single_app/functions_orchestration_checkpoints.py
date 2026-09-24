@@ -1,7 +1,7 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.127
+Version: 0.261.135
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 """
@@ -88,6 +88,15 @@ def fingerprint(value):
     return hashlib.sha256(json_bytes(value)).hexdigest()
 
 
+def orchestration_answer_message_id(run_id):
+    """The id of the assistant message an orchestration run publishes as its answer.
+
+    Deterministic, so a planned image generated before the answer exists can already be
+    tied to the message that will show it.
+    """
+    return f"assistant_orchestration_{fingerprint(run_id)[:40]}"
+
+
 def _execution_settings_fingerprint(settings):
     """The new-plan admission switch is not an input to already approved v2 work."""
     if isinstance(settings, dict):
@@ -119,6 +128,8 @@ def effective_plan(plan):
             value.update({
                 'plan_contract_version': 2,
                 **{key: deepcopy(step.get(key)) for key in ('role', 'inputs', 'outputs')},
+                # What a step delivers shapes its work, such as an answer written as a file.
+                **{key: deepcopy(step[key]) for key in ('delivers', 'deliverable_context') if key in step},
             })
     return values
 

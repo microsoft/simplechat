@@ -28,14 +28,16 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.132
+Version: 0.261.135
 """
 
 import logging
 from copy import deepcopy
 
 from functions_appinsights import log_event
-from functions_orchestration_result_contracts import RESULT_KINDS, ResultContractError, canonical_bytes
+from functions_orchestration_result_contracts import (
+    IMAGE_ASSET_KIND, RESULT_KINDS, ResultContractError, canonical_bytes,
+)
 
 # Bumped when the descriptor shape changes in a way a stored plan could not survive.
 CAPABILITY_REGISTRY_CONTRACT_VERSION = 1
@@ -112,6 +114,15 @@ CAPABILITY_AGENT_INVOKE = 'agent_invoke'
 CAPABILITY_ACTION_INVOKE = 'action_invoke'
 CAPABILITY_RESPOND = 'respond'
 CAPABILITY_COMPOSE = 'compose'
+CAPABILITY_GENERATE_IMAGE = 'generate_image'
+CAPABILITY_RENDER_FILE = 'render_file'
+
+# Explicitly requested images are generated as planned steps. The executor is serial, so a
+# plan may generate at most this many images; a larger ask is reported, never silently cut.
+MAX_GENERATED_IMAGES_PER_PLAN = 4
+# Characters the planner may spend on an image prompt; named text inputs may add visual
+# details up to the image service's own prompt limit.
+GENERATE_IMAGE_PROMPT_MAX_LENGTH = 3000
 
 # What an answer-writing step may rely on. The planner declares one per compose step; the
 # step's policy follows it. Stable, widely established facts can come from the model's own
@@ -717,6 +728,7 @@ _DEPENDENCY_RESULT_CONTRACTS = {
     CAPABILITY_AGENT_INVOKE: 'orchestration-gathered-content-v1',
     CAPABILITY_ACTION_INVOKE: 'orchestration-gathered-content-v1',
     CAPABILITY_COMPOSE: 'compose-v1',
+    CAPABILITY_GENERATE_IMAGE: 'generate-image-v1',
 }
 _REASON_CAPABILITIES = {
     CAPABILITY_DOCUMENT_ANALYZE, CAPABILITY_DOCUMENT_COMPARE, CAPABILITY_TABULAR_ANALYZE,
@@ -810,6 +822,32 @@ def render_file_arguments_schema(catalog):
             }
             for entry in catalog for profile in entry['profiles']
         ],
+    }
+
+
+def generate_image_arguments_schema(options=None):
+    """Image step arguments; options, when known, are the configured model's exact values."""
+    properties = {
+        'prompt': {
+            'type': 'string', 'minLength': 1, 'maxLength': GENERATE_IMAGE_PROMPT_MAX_LENGTH,
+            'description': (
+                'A self-contained image prompt: subject, setting, composition, style, and any text '
+                'the image shows. Ask for an illustration, not a photograph.'
+            ),
+        },
+        'title': {
+            'type': 'string', 'minLength': 1, 'maxLength': 120,
+            'description': 'A short caption naming what the illustration shows.',
+        },
+    }
+    for name, plural in (('size', 'sizes'), ('quality', 'qualities'), ('background', 'backgrounds')):
+        if options is None:
+            properties[name] = {'type': 'string', 'minLength': 1}
+        elif options.get(plural):
+            properties[name] = {'type': 'string', 'enum': list(options[plural])}
+    return {
+        'type': 'object', 'properties': properties,
+        'required': ['prompt', 'title'], 'additionalProperties': False,
     }
 
 
@@ -919,7 +957,9 @@ def _dependency_capabilities():
             'lead but stable general knowledge may fill gaps. Mark an input optional only when '
             'the answer can still be written from general knowledge if that input fails. Name '
             'the visuals the Markdown answer should author: chart, diagram (Mermaid), or '
-            'image_proposal (cards the user approves before generation).'
+            'image_proposal (cards the user approves before generation). Place bound '
+            'generate_image outputs with [[image:<step_id>]] tokens in Markdown, or as '
+            '"asset:<step_id>" image sources in a prepared slide deck.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -950,6 +990,41 @@ def _dependency_capabilities():
         'adapter': CAPABILITY_COMPOSE,
         'terminal': False,
     })
+    capabilities.append({
+        'id': CAPABILITY_GENERATE_IMAGE,
+        'label': 'Generate image',
+        'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'result_contract_version': _DEPENDENCY_RESULT_CONTRACTS[CAPABILITY_GENERATE_IMAGE],
+        'role': ROLE_REASON,
+        'summary': 'Generate one new AI illustration and keep it for the answer and for DOCX, PDF, or PPTX files.',
+        'when_to_use': (
+            'Use one step for each image the user explicitly asked for, including through the Image '
+            'control. The result is a new AI-generated illustration, never a photograph or a picture '
+            'found on the web: for a real person or historical figure, ask for an illustrated portrait '
+            'and caption it as an AI illustration. Bind the "image" output to the compose step that '
+            'writes the answer or file content, as an optional named input, so the answer and any '
+            'DOCX, PDF, or PPTX file include it. Named text inputs may add visual details to the '
+            'prompt. Images the user did not ask for stay image proposal cards on compose.'
+        ),
+        'settings_gates': ('enable_image_generation',),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'runtime_readiness': 'image_generation',
+        'inputs': generate_image_arguments_schema(),
+        'result_input_kinds': {'*': ('text-v1', 'markdown-v1')},
+        'partial_inputs_supported': False,
+        'result_outputs': {'image': IMAGE_ASSET_KIND},
+        'produces': ('retained_results',),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': MAX_GENERATED_IMAGES_PER_PLAN,
+        'adapter': CAPABILITY_GENERATE_IMAGE,
+        'terminal': False,
+        # Persisting the image is this step's approved output, so it may publish one chat
+        # image like Render publishes a file. It runs no tools; any other file fails closed.
+        'publishes_generated_images': True,
+    })
     catalog = get_generated_file_export_catalog()
     source_kinds = {
         'records-v1': 'records', 'text-v1': 'text', 'markdown-v1': 'markdown',
@@ -966,7 +1041,8 @@ def _dependency_capabilities():
             'Bind exactly one complete retained source. Select an explicit file name, format, '
             'profile, and supported options. Draft content with Reason first when necessary; '
             'Render does not compose, retrieve, select a model, or infer a representation. '
-            'Its outputs are durable file deliveries, not named data results.'
+            'Its outputs are durable file deliveries, not named data results. DOCX, PDF, and '
+            'PPTX files embed the generated images their prepared source places.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -1209,6 +1285,17 @@ def resolve_available_capabilities(
             if unavailable is not None:
                 unavailable[capability['id']] = 'feature_disabled'
             continue
+        if capability.get('runtime_readiness') == 'image_generation':
+            # Image service metadata is read only when image steps are actually considered.
+            from functions_orchestration_images import image_generation_readiness
+
+            readiness = image_generation_readiness(settings)
+            if readiness['status'] != 'available':
+                if unavailable is not None:
+                    unavailable[capability['id']] = readiness['reason']
+                continue
+            capability = deepcopy(capability)
+            capability['inputs'] = generate_image_arguments_schema(readiness)
         if not _request_gate_passes(capability, settings, request_context):
             if unavailable is not None:
                 reason = 'caller_access_required'

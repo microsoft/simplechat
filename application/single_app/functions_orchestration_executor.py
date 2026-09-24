@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.130
+Version: 0.261.135
 """
 
 import logging
@@ -62,6 +62,7 @@ from functions_orchestration_context import (
     build_elicitation_user_request,
     resolve_elicitation_references,
 )
+from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
     CAPABILITY_RESPOND, CAPABILITY_TABULAR_ANALYZE, DEPENDENCY_PLAN_CONTRACT_VERSION,
     admitted_export_pairs, get_capability,
@@ -1384,7 +1385,11 @@ def _run_dependency_step(
             binding_scope(step, scoped)
             if callable(binding_scope) and step['role'] != 'render' else nullcontext()
         )
-        with orchestration_file_policy(allow_generated_files=step['role'] == 'render'), model_scope:
+        # Render publishes files; generate_image publishes the one chat image it was approved
+        # to create. Every other Gather or Reason step stays unable to publish anything.
+        capability = get_capability(step['capability_id'], contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+        publishes = step['role'] == 'render' or (capability or {}).get('publishes_generated_images') is True
+        with orchestration_file_policy(allow_generated_files=publishes), model_scope:
             if step['capability_id'] == 'render_file':
                 result = _render_dependency_step(
                     runtime_step, scoped, settings=settings, user_id=user_id, cancel_requested=cancel_probe,
@@ -2058,6 +2063,10 @@ def _execute_dependency_plan(
             for output in file_outputs
         ) != 1:
             complete = False
+    # An image the user explicitly asked for is required even though its step is optional
+    # work for the answer: a missing image must not be reported as a delivered request.
+    if explicit_image_shortfalls(plan, statuses):
+        complete = False
     partial = any(status in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL) for status in statuses.values())
     status = PLAN_STATUS_CANCELLED if cancelled else (
         PLAN_STATUS_WAITING if waiting else PLAN_STATUS_COMPLETED if complete else PLAN_STATUS_FAILED

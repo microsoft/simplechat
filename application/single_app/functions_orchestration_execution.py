@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved V2 harness attempts.
 
-Version: 0.261.131
+Version: 0.261.135
 Implemented in: 0.261.127
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
@@ -97,7 +97,7 @@ from content_screening.access import (
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_appinsights import log_event
 from functions_orchestration_adapters import resolve_context_source_manifest
-from functions_orchestration_checkpoints import CheckpointError, fingerprint
+from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
 from functions_orchestration_context import (
     HISTORY_MAX_MESSAGES,
     CatalogResolutionError,
@@ -112,6 +112,9 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
     validate_conversation_snapshot,
+)
+from functions_orchestration_deliverables import (
+    delivery_notes, generated_image_assets, project_generated_images,
 )
 from functions_orchestration_events import (
     build_content_event,
@@ -800,7 +803,7 @@ class HarnessExecution:
     def _read_delivery_metadata(self):
         self.lease.read()
         conversation_id = self.record["conversation_id"]
-        message_id = f"assistant_orchestration_{fingerprint(self.record['id'])[:40]}"
+        message_id = orchestration_answer_message_id(self.record["id"])
         try:
             previous = self.lease.message_container.read_item(
                 item=message_id, partition_key=conversation_id,
@@ -1075,6 +1078,36 @@ class HarnessExecution:
             # A failed observation is not the facade's verified unavailable-file projection.
             raise HarnessExecutionError("message_not_saved", retryable=True) from exc
 
+    def _read_image_asset(self, reference):
+        """A generated image's retained descriptor, reauthorized for the current owner."""
+        reader = self.services.results.open_result(reference, require_current_sources=True)
+        value = read_complete_input(reader)
+        reader.recheck()
+        return value
+
+    def _link_generated_images(self, assets, message_id):
+        """Show each generated image under the answer being published.
+
+        An image is saved with the id of its own run's answer. A retry that reuses a completed
+        image step publishes a different answer, so the reused image message follows it.
+        """
+        container = self.lease.message_container
+        for asset in assets.values():
+            try:
+                image = container.read_item(item=asset["message_id"], partition_key=self.record["conversation_id"])
+            except CosmosResourceNotFoundError:
+                continue
+            metadata = image.get("metadata") if isinstance(image.get("metadata"), dict) else {}
+            proposal = metadata.get("image_proposal")
+            if (
+                image.get("role") != "image" or image.get("conversation_id") != self.record["conversation_id"]
+                or not isinstance(proposal, dict) or proposal.get("visualId") != asset["asset_id"]
+                or proposal.get("source_assistant_message_id") == message_id
+            ):
+                continue
+            proposal["source_assistant_message_id"] = message_id
+            container.upsert_item({key: value for key, value in image.items() if not key.startswith("_")})
+
     def _validate_citations(self, citations):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1131,6 +1164,7 @@ class HarnessExecution:
         if status not in {"completed", "waiting", "failed", "cancelled"}:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
+        assets = {}
         if error is None:
             try:
                 self._revalidate_context()
@@ -1148,18 +1182,22 @@ class HarnessExecution:
                 if not self._delivery_only:
                     citations = result.get("citations") or []
                 self._validate_citations(citations)
+                if self.context is not None and not current.get("cancellation_requested_at"):
+                    assets = generated_image_assets(self.context.task_results, self._read_image_asset)
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
-                error, prepared, citations = exc, "", []
+                error, prepared, citations, assets = exc, "", [], {}
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
             failures.append(failure)
         if status == "cancelled" or current.get("cancellation_requested_at") or current.get("status") == "cancelled":
-            status, prepared, citations = "cancelled", "", []
+            status, prepared, citations, assets = "cancelled", "", [], {}
             if not any(value["code"] == "user_cancelled" for value in failures):
                 failures.append(build_failure("user_cancelled"))
+        # Generated images appear in the answer where its content placed them.
+        prepared = project_generated_images(prepared, assets)
 
         outputs, artifacts = self._file_state()
         delivered = {artifact["output_id"] for artifact in artifacts}
@@ -1191,6 +1229,15 @@ class HarnessExecution:
         files = _delivery_summary(outputs, artifacts)
         if files:
             content.append(files)
+        if status not in {"waiting", "cancelled"}:
+            # Deterministic, model-free: what the user asked for and did not receive.
+            notes = delivery_notes(
+                self.record["plan"],
+                {step.get("step_id"): step.get("status") for step in current.get("execution_steps") or []},
+                file_steps_with_outputs={output["step_id"] for output in outputs},
+            )
+            if notes:
+                content.append(notes)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"}:
@@ -1226,7 +1273,7 @@ class HarnessExecution:
             self.answer_model.metadata() if self.answer_model is not None
             else deepcopy(self._saved_model_metadata)
         )
-        message_id = f"assistant_orchestration_{fingerprint(self.record['id'])[:40]}"
+        message_id = orchestration_answer_message_id(self.record["id"])
         timestamp = current.get("assistant_message_created_at") or _now_iso()
         # Validation may fail before checkpoint restoration populates this context.
         has_execution_state = self.context is not None and "task_results" in result
@@ -1268,6 +1315,11 @@ class HarnessExecution:
             "orchestration": {
                 "run_id": self.record["id"], "turn_id": self.record.get("turn_id"),
                 "plan_summary": summary, **public, "status": status, "outputs": outputs,
+                # Lets the chat load the image messages its answer shows.
+                **({"generated_images": [
+                    {"visual_id": asset_id, "message_id": asset["message_id"]}
+                    for asset_id, asset in assets.items()
+                ]} if assets else {}),
             },
             "token_usage": combined_usage, **reasoning,
         }
@@ -1305,6 +1357,8 @@ class HarnessExecution:
             return self._finalize(result, exc, refreshes=refreshes + 1)
         if latest_outputs != outputs or latest_artifacts != artifacts:
             return self._finalize(result, error, refreshes=refreshes + 1)
+        if assets and document.get("role") == "assistant":
+            self._link_generated_images(assets, message_id)
         self.lease.publish_message(document)
         saved = self.lease.message_container.read_item(
             item=message_id, partition_key=self.record["conversation_id"],

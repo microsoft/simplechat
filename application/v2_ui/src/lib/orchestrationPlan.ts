@@ -19,6 +19,8 @@ import type {
     CostClass,
     Json,
     OrchestrationApproval,
+    OrchestrationDeliverable,
+    OrchestrationDeliverableKind,
     OrchestrationIntent,
     OrchestrationInputBinding,
     OrchestrationNamedInput,
@@ -182,8 +184,150 @@ export function normalizeStep(raw: unknown, index = 0, contractVersion = 1): Orc
             role: asString(source.role) || undefined,
             inputs: normalizeNamedInputs(source.inputs),
             outputs: normalizeNamedOutputs(source.outputs),
+            ...(Array.isArray(source.delivers) ? { delivers: asStringList(source.delivers) } : {}),
         } : {}),
     };
+}
+
+const DELIVERABLE_KINDS: readonly OrchestrationDeliverableKind[] = ['answer', 'file', 'image', 'chart', 'diagram'];
+
+/**
+ * The plan's deliverables with safe defaults, or undefined for plans that declared none.
+ *
+ * An entry without an id, a known kind, or a description cannot be shown or matched to a step,
+ * so it is dropped rather than rendered as a blank row.
+ */
+export function normalizeDeliverables(raw: unknown): OrchestrationDeliverable[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const deliverables: OrchestrationDeliverable[] = [];
+    for (const value of raw) {
+        const entry = asRecord(value);
+        const id = asString(entry.id).trim();
+        const description = asString(entry.description).trim();
+        const kind = entry.kind as OrchestrationDeliverableKind;
+        if (!id || !description || !DELIVERABLE_KINDS.includes(kind)) continue;
+        const quantity = entry.quantity;
+        deliverables.push({
+            id,
+            kind,
+            description,
+            requested: entry.requested === 'suggested' ? 'suggested' : 'explicit',
+            status: entry.status === 'unavailable' ? 'unavailable' : 'planned',
+            ...(typeof entry.format === 'string' && entry.format.trim() ? { format: entry.format.trim() } : {}),
+            ...(typeof quantity === 'number' && Number.isInteger(quantity) && quantity > 0 ? { quantity } : {}),
+            ...(typeof entry.unavailable_reason === 'string' ? { unavailable_reason: entry.unavailable_reason } : {}),
+            ...(typeof entry.unavailable_message === 'string' ? { unavailable_message: entry.unavailable_message } : {}),
+            ...(entry.implicit === true ? { implicit: true } : {}),
+        });
+    }
+    return deliverables;
+}
+
+const FILE_FORMAT_LABELS: Record<string, string> = {
+    docx: 'Word document', pdf: 'PDF', pptx: 'PowerPoint deck', xlsx: 'Excel workbook',
+    csv: 'CSV file', md: 'Markdown file', txt: 'Text file', json: 'JSON file',
+    yaml: 'YAML file', xml: 'XML file',
+};
+
+/** "Word document", "3 images", "Chart": what a deliverable is, in the plan panel's words. */
+export function deliverableKindLabel(deliverable: OrchestrationDeliverable): string {
+    switch (deliverable.kind) {
+        case 'file': {
+            const format = deliverable.format ?? '';
+            const label = FILE_FORMAT_LABELS[format] ?? (format ? `${format.toUpperCase()} file` : 'File');
+            return deliverable.quantity && deliverable.quantity > 1 ? `${deliverable.quantity} × ${label}` : label;
+        }
+        case 'image':
+            return deliverable.quantity && deliverable.quantity > 1 ? `${deliverable.quantity} images` : 'Image';
+        case 'chart':
+            return 'Chart';
+        case 'diagram':
+            return 'Diagram';
+        default:
+            return 'Answer';
+    }
+}
+
+export type DeliverableState = 'planned' | 'unavailable' | 'running' | 'delivered' | 'not_delivered' | 'turned_off';
+
+export interface DeliverableRow {
+    deliverable: OrchestrationDeliverable;
+    label: string;
+    state: DeliverableState;
+    stateLabel: string;
+    /** The steps that produce it, by title, in plan order. */
+    steps: string[];
+    /** The server's explanation for an unavailable deliverable. */
+    reason?: string;
+}
+
+const DELIVERABLE_STATE_LABELS: Record<DeliverableState, string> = {
+    planned: 'Planned',
+    unavailable: 'Not available',
+    running: 'In progress',
+    delivered: 'Delivered',
+    not_delivered: 'Not delivered',
+    turned_off: 'Turned off',
+};
+
+/**
+ * Each declared deliverable with the state its producing steps imply.
+ *
+ * `statusOf` reports a step's live or saved status. A deliverable is delivered only when
+ * every step that produces it completed; a step switched off in `edits` or in the plan turns
+ * it off. The server's delivery notes remain the authority after a run; this is the preview.
+ * The implicit answer of plans that declared nothing is left out.
+ */
+export function deliverableRows(
+    plan: OrchestrationPlan,
+    statusOf: (stepId: string) => StepStatus | undefined,
+    edits?: PlanEdits,
+): DeliverableRow[] {
+    const disabled = new Set(edits?.disabled_step_ids ?? []);
+    return (plan.deliverables ?? []).filter((deliverable) => !deliverable.implicit).map((deliverable) => {
+        const producers = plan.steps.filter((step) => step.delivers?.includes(deliverable.id));
+        const enabled = producers.filter((step) => step.enabled && !disabled.has(step.step_id));
+        let state: DeliverableState = 'planned';
+        if (deliverable.status === 'unavailable') {
+            state = 'unavailable';
+        } else if (producers.length > 0 && enabled.length === 0) {
+            state = 'turned_off';
+        } else {
+            const statuses = enabled.map((step) => statusOf(step.step_id) ?? step.status);
+            if (statuses.length > 0 && statuses.every((status) => status === 'completed')) {
+                state = 'delivered';
+            } else if (statuses.some((status) => status === 'failed' || status === 'skipped' || status === 'cancelled')) {
+                state = 'not_delivered';
+            } else if (statuses.some((status) => status === 'running' || status === 'waiting' || status === 'partial')) {
+                state = 'running';
+            }
+        }
+        return {
+            deliverable,
+            label: deliverableKindLabel(deliverable),
+            state,
+            stateLabel: DELIVERABLE_STATE_LABELS[state],
+            steps: producers.map((step) => step.title || step.step_id),
+            ...(deliverable.status === 'unavailable'
+                ? { reason: deliverable.unavailable_message || 'This is not available here.' }
+                : {}),
+        };
+    });
+}
+
+/** Whether an orchestrated answer's metadata lists images that were generated for it. */
+export function hasGeneratedImages(orchestrationMetadata: unknown): boolean {
+    const images = asRecord(orchestrationMetadata).generated_images;
+    return Array.isArray(images) && images.some((image) => typeof asRecord(image).message_id === 'string');
+}
+
+/** Whether a named input binds a generated image rather than gathered information. */
+export function bindsGeneratedImage(plan: OrchestrationPlan, binding: OrchestrationInputBinding | null): boolean {
+    if (!binding?.step_id) return false;
+    const producer = plan.steps.find((step) => step.step_id === binding.step_id);
+    return Boolean(producer?.outputs?.some(
+        (output) => output.name === binding.output_name && output.kind === 'image-asset-v1',
+    ));
 }
 
 function normalizeInputBinding(raw: unknown): OrchestrationInputBinding | null {
@@ -350,6 +494,8 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         outputs: Array.isArray(source.outputs) ? (source.outputs as Json[]) : undefined,
         ...(contractVersion === 2 && source.final_response !== undefined
             ? { final_response: normalizeInputBinding(source.final_response) } : {}),
+        ...(contractVersion === 2 && normalizeDeliverables(source.deliverables)
+            ? { deliverables: normalizeDeliverables(source.deliverables) } : {}),
         ...(normalizePlanner(source.planner) ? { planner: normalizePlanner(source.planner) } : {}),
         ...(source.model_routing === 'auto' ? { model_routing: 'auto' as const } : {}),
         approval: normalizeApproval(source.approval),

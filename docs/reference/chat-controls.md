@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.127"
+version: "0.261.135"
 ---
 
 ## How to use this reference
@@ -300,9 +300,11 @@ tools. Unchecked controls are neutral. The planner may choose other enabled,
 authorized capabilities, while selected documents, agents, workspaces, and filters
 retain their intended constraints. Deep Research can be selected without also
 selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
-it asks the answer to include image proposal cards rather than sending your prompt to
-the image model, so it combines with every other control. Each card generates an image
-only when you approve it.
+rather than sending your prompt to the image model, it combines with every other
+control and shapes the plan. Since **0.261.135**, a Gather / Reason / Render plan
+treats it as a request for images, which the plan generates as its own tasks when it
+runs; an older phase-based plan asks the answer for image proposal cards that each
+generate an image only when you approve them.
 
 Every Orchestrate request now invokes the planner, even a short question or
 acknowledgment. The planner may choose a direct answer; no topic rule forces
@@ -331,7 +333,7 @@ the request.
 
 | Control or output | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Image (in Orchestrate) | Asks the answer to include at least one image proposal card, and shows "Orchestrate will include image proposals for you to approve." while it is on. Nothing is generated until you approve a card. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
+| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. A Gather / Reason / Render plan must include at least one image you asked for; each is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files. An older phase-based plan includes at least one image proposal card instead, generated only when you approve it. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
 | Inline charts | Charts numeric results. When data comes from an action, the chart is drawn from the exact retrieved rows; long series show up to 200 points and keep each segment's highest and lowest value. | Plot telemetry, metrics, or other series without copying values into a prompt. | `enable_chat_orchestration` |
 | Mermaid diagrams | Draws flows, architectures, sequences, and relationships the gathered information describes. | Get an editable, accessible diagram instead of a picture of one. | `enable_chat_orchestration` |
 

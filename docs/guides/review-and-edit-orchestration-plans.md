@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.134"
+version: "0.261.135"
 ---
 
 ## Decide what should run
@@ -30,10 +30,12 @@ requirement.
 Deep Research does not require selecting the Web button first. Its automatic
 source discovery still depends on the administrator enabling Web Search.
 Selected workspaces and document filters continue to bound document access.
-Since **0.261.132**, Image works in Orchestrate as a request for image proposal
-cards: the answer includes at least one card, and each image is generated only
-when you approve it. Without Image, the answer can still propose images when the
-request would benefit from them, and it can include charts and Mermaid diagrams.
+Since **0.261.135**, in a Gather / Reason / Render plan, **Image** means you want
+images: the plan includes at least one image you asked for, generated as its own task
+when the plan runs. Without Image, such a plan still generates the images your request
+asks for, and it can suggest others as proposal cards that you approve one at a time.
+In an older phase-based plan, Image asks the answer for at least one proposal card.
+Plans can also include charts and Mermaid diagrams.
 Your saved Instruction memories, such as "I don't like charts", decide which
 visuals you get unless your current message explicitly asks for one.
 
@@ -131,6 +133,27 @@ a temporary service error.
 
 **Visuals** lists the charts, Mermaid diagrams, or image proposal cards the planner
 asked the answer to include.
+
+### Check what you asked for
+
+Since **0.261.135**, **You asked for** appears at the top of the plan panel and on the
+approval card. It lists what you asked to receive: the answer, each file with its
+format, images with their count, and any chart or diagram. Each item shows its state:
+
+- **Planned**, then **In progress**, **Delivered**, or **Not delivered** as its steps run.
+- **Turned off** when you switched off the only step that produces it.
+- **Not available**, in a warning color with the server's reason, when this plan cannot
+  produce it. The rest of the plan still runs, and the answer's **Delivery notes** name it
+  once instead of promising it.
+
+The plan panel also names the step that produces each item. **Also included** lists what
+the planner added without being asked, such as a suggested chart. Ask the planner for a
+revision if something you need is missing from the list.
+
+A **Generate image** step shows the image prompt and caption it will use. Each image is
+an AI-generated illustration, created when the plan runs and shown in the answer. When a
+report or deck binds an image, its input is optional: if the image cannot be generated,
+the content is still written and the delivery notes say what is missing.
 
 File-format reference information is optional and uses only the shared catalog
 supplied by the server. It is not a separate browser format list or permission

@@ -58,7 +58,9 @@ from functions_orchestration_output_store import (
     parse_time,
     public_output,
 )
-from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef
+from functions_orchestration_result_contracts import (
+    IMAGE_ASSET_KIND, ProducerIdentity, ResultContractError, ResultRef, validate_image_asset_value,
+)
 from functions_orchestration_results import (
     OrchestrationResultReader,
     OrchestrationResults,
@@ -251,7 +253,7 @@ class OrchestrationRenderingService:
     def __init__(
         self, store, results, transport, *, authorize_execution,
         max_output_bytes, limits=None, office_limits=None, image_resolver=None,
-        renderer=build_generated_file_export, jitter=random.random,
+        image_asset_reader=None, renderer=build_generated_file_export, jitter=random.random,
     ):
         if (
             not isinstance(store, OrchestrationOutputStore)
@@ -260,6 +262,7 @@ class OrchestrationRenderingService:
             or not callable(authorize_execution) or not callable(renderer) or not callable(jitter)
             or results.access.user_id != store.user_id
             or results.access.conversation_id != store.conversation_id
+            or (image_asset_reader is not None and not callable(image_asset_reader))
         ):
             raise OutputError("output_service_required")
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES:
@@ -274,8 +277,57 @@ class OrchestrationRenderingService:
         self.limits = limits or GeneratedFileExportLimits()
         self.office_limits = office_limits
         self.image_resolver = image_resolver
+        # ``image_asset_reader(asset)`` returns the stored bytes of one retained generated
+        # image descriptor; the owner supplies it. The service decides which images a file
+        # may contain and verifies every byte it is given.
+        self.image_asset_reader = image_asset_reader
         self.renderer = renderer
         self.jitter = jitter
+
+    def _image_resolver_for(self, record, entry):
+        """Resolve only the generated images the rendered source was prepared from.
+
+        The source's own retained lineage names them: a file can embed an image only when
+        its prepared content consumed that image as an input, under the same owner and
+        conversation, and only with the exact bytes the image step retained.
+        """
+        if not entry.rich_media:
+            return None
+        if self.image_asset_reader is None:
+            return self.image_resolver
+        source = ResultRef.from_dict(record["source_ref"])
+        cache = {}
+
+        def images():
+            if "lineage" not in cache:
+                reader = self.results.open_result(
+                    source, require_current_sources=record["render_spec"]["require_current_sources"],
+                )
+                cache["lineage"] = {
+                    parent.producer.step_id: parent for parent in reader.upstream_references()
+                    if parent.kind == IMAGE_ASSET_KIND and parent.producer.capability_id == "generate_image"
+                }
+            return cache["lineage"]
+
+        def resolve(reference):
+            asset_id = reference[len("asset:"):] if type(reference) is str and reference.startswith("asset:") else None
+            parent = images().get(asset_id) if asset_id else None
+            if parent is None:
+                raise OutputUnavailableError("output_source_unavailable")
+            reader = self.results.open_result(parent, require_current_sources=True)
+            asset = validate_image_asset_value(reader.read_value())
+            if asset["asset_id"] != asset_id:
+                raise OutputUnavailableError("output_source_changed")
+            content = self.image_asset_reader(deepcopy(asset))
+            reader.recheck()
+            if (
+                type(content) is not bytes or len(content) != asset["size_bytes"]
+                or hashlib.sha256(content).hexdigest() != asset["content_sha256"]
+            ):
+                raise OutputUnavailableError("output_source_changed")
+            return content
+
+        return resolve
 
     @staticmethod
     def _read_metadata(read, *args, **kwargs):
@@ -663,7 +715,7 @@ class OrchestrationRenderingService:
                 source=source, export_request=request,
                 max_output_bytes=min(self.max_output_bytes, record["render_spec"]["max_output_bytes"]),
                 check=check, limits=bounded_limits, office_limits=self.office_limits,
-                image_resolver=self.image_resolver,
+                image_resolver=self._image_resolver_for(record, entry),
             )
             with ClosingExportResource(rendered):
                 self._verify_rendered(rendered, source, record, check)

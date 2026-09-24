@@ -48,7 +48,7 @@ Charts, Mermaid diagrams and image proposals follow ``functions_orchestration_vi
 gathering steps keep what a requested visual needs, an action step can chart its exact
 results, and ``respond`` places those charts and writes the diagrams and image proposals.
 
-Version: 0.261.132
+Version: 0.261.135
 """
 
 import inspect
@@ -2920,4 +2920,9 @@ def get_adapter(name, *, contract_version=1):
             from functions_orchestration_composition import adapter_compose
 
             return adapter_compose
+        if name == 'generate_image':
+            # Planned image generation exists only in dependency plans; load it on demand.
+            from functions_orchestration_images import adapter_generate_image
+
+            return adapter_generate_image
     return ADAPTER_REGISTRY.get(name)
