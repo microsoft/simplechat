@@ -112,5 +112,9 @@
     </div>
 </div>
 
+{% include "_m365_approvals_modal.html" %}
+<script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
+<script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workflow/workflow-activity.js') }}"></script>
 {% endblock %}

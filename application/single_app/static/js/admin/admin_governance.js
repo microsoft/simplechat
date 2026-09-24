@@ -104,6 +104,13 @@ const GOVERNANCE_ACTION_TYPE_ALIASES = {
     mcp: 'mcp',
     microsoft_graph: 'msgraph',
     msgraph: 'msgraph',
+    msgraphplugin: 'msgraph',
+    microsoftgraph: 'msgraph',
+    microsoft_graph_plugin: 'msgraph',
+    m365_calendar: 'm365_calendar',
+    m365_email: 'm365_email',
+    m365_onedrive: 'm365_onedrive',
+    m365_sharepoint: 'm365_sharepoint',
     databricks_table: 'databricks',
     databricks: 'databricks',
     snowflake: 'snowflake',
@@ -120,7 +127,11 @@ const GOVERNANCE_ACTION_TYPE_LABELS = {
     simplechat: 'SimpleChat',
     openapi: 'OpenAPI',
     mcp: 'MCP',
-    msgraph: 'Microsoft Graph',
+    msgraph: 'Microsoft Graph (legacy)',
+    m365_calendar: 'Microsoft 365 Calendar',
+    m365_email: 'Microsoft 365 Email',
+    m365_onedrive: 'Microsoft 365 OneDrive',
+    m365_sharepoint: 'Microsoft 365 SharePoint Online',
     databricks: 'Databricks',
     snowflake: 'Snowflake',
     tableau: 'Tableau',
@@ -546,6 +557,11 @@ async function fetchAdminActionTypeLookupOptions() {
 
     const payload = await response.json();
     const optionsByType = new Map();
+    optionsByType.set('msgraph', normalizeGovernanceLookupOption({
+        value: 'msgraph',
+        label: GOVERNANCE_ACTION_TYPE_LABELS.msgraph,
+        subtitle: 'Controls existing combined Graph actions; new actions use individual Microsoft 365 sources.',
+    }, 'Action Type'));
     (Array.isArray(payload) ? payload : []).forEach((actionType) => {
         const rawType = actionType?.type;
         const normalizedType = normalizeGovernanceActionType(rawType);

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.003.01)**
+### **(v0.261.045)**
 
 #### Bug Fixes
 
@@ -10,6 +10,103 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
     *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
     *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
+### **(v0.261.044)**
+
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
+
+#### Bug Fixes
+
+*   **New Chat Defaults No Longer Leak Across Conversations**
+    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
+    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
+    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
+    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
+### **(v0.261.040)**
+
+#### Bug Fixes
+
+*   **Collaborative Prompts Now Receive Model Responses**
+    *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
+    *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
+### **(v0.261.030)**
+
+#### Bug Fixes
+
+*   **Cross-Cloud Account Selection for Access-Denied Users**
+    *   Added a **Sign in with another account** action for authenticated users whose selected Microsoft Entra identity does not have the required SimpleChat app role.
+    *   The alternate flow requests the Entra account picker only through the controlled `/login?select_account=1` path; ordinary sign-in remains prompt-free, and arbitrary OAuth prompt values are ignored.
+    *   The access-denied state now identifies the current account using safe session claims while suppressing resource-tenant `#EXT#` UPNs, helping users distinguish native Azure Government and synchronized commercial identities.
+    *   Improved the action's light- and dark-theme contrast without changing tenant authority, app-role authorization, Easy Auth configuration, or login-hint behavior.
+    *   (Ref: `route_frontend_authentication.py`, `functions_authentication.py`, access-denied landing page, cross-cloud Microsoft Entra B2B sign-in)
+
+*   **ANSI-Encoded CSV Files Are Now Read Correctly**
+    *   CSV metadata extraction, indexing, citations, row searches, and durable tabular replay now support UTF-8, UTF-8 with BOM, Windows-1252, and Latin-1 files, preserving characters that previously made uploaded content appear unreadable.
+    *   Tabular analysis retains the broader automatic-invocation budget for complex questions while detecting repeated equivalent failures and routing the next model pass to a different call shape instead of repeating the same error.
+    *   Repeated tabular tool failures now emit an explicit retry lifecycle thought and server-side diagnostic event, making the failure visible while recovery continues.
+    *   (Ref: `functions_tabular_csv_query.py`, `functions_documents.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`, [Tabular CSV ANSI Encoding and Retry Fix](fixes/TABULAR_CSV_ANSI_ENCODING_AND_RETRY_FIX.md))
+
+*   **Group Chat Uploads Now Recognize Workspace Owners**
+    *   Fixed group-scoped chat uploads incorrectly reporting that no group workspace was available when the signed-in user was the group owner.
+    *   Chat bootstrap data now includes each group's resolved user role, allowing owners, admins, and document managers to use the existing group upload permissions while preserving server-side authorization checks.
+    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+
+### **(v0.261.028)**
+
+Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
+
+#### Bug Fixes
+
+*   **Credential-Aware Cosmos Deployment Checks**
+    *   Managed-identity deployments now use the deployment runner's tenant-scoped Entra credential instead of requiring Cosmos keys. Key-mode deployments report when local authentication is disabled.
+    *   Authentication and network failures no longer trigger automatic firewall changes or misleading propagation waits. Windows environment lookups and POSIX role operations target the selected deployment explicitly.
+    *   **Deployment requirement:** The runner must already have the required data-plane permissions and network access. Post-configuration does not open firewalls, enable key authentication, or create policy exemptions.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployers/azure.yaml`, `deployment_cosmos.py`, `cosmosDb-postDeployPerms.sh`)
+
+*   **Safe Post-Deployment Settings Publication**
+    *   Post-configuration uses conflict-checked Cosmos writes and the application's shared Redis publication protocol, preserving concurrent unrelated settings changes and reporting publication failures instead of claiming success.
+    *   Consolidated duplicate Redis configuration blocks and preserved external Redis settings when no cache is provisioned. Equivalent connection settings can be normalized; changing an active cache endpoint or authentication mode requires a planned migration.
+    *   **Deployment requirement:** When Redis is enabled, the runner needs Redis data-plane access as well as network connectivity. The service restarts only after post-configuration succeeds.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `postconfig.py`, `deployment_configuration.py`, `app_settings_store.py`)
+
+#### New Features
+
+*   **Automatic Missing Search Index Creation**
+    *   Post-configuration creates missing personal, group, and public Search indexes from the same JSON schemas used by the admin setup controls.
+    *   Existing indexes and documents are left unchanged. Authorization and service failures stop initialization rather than being treated as missing indexes; concurrent creation is verified before continuing.
+    *   Included in deployer version **1.0.31**. Existing-index schema upgrades remain administrator-managed operations.
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployment_configuration.py`, `application/single_app/static/json/ai_search-index-*.json`, [deployment prerequisites](../reference/deploy/azd-cli_deploy.md#post-provision-access))
+
+### **(v0.261.027)**
+
+#### Bug Fixes
+
+*   **Settings Cache Bootstrap Import Boundaries**
+    *   Removed reverse imports from cache helpers into application configuration, preventing the import cycle identified during review.
+    *   Web and scheduler startup now configure the cache from the supplied settings object, with storage handles, the Redis factory, and logging callbacks passed separately.
+    *   Preserves shared settings reads and fail-closed Redis writes without restoring worker-local settings snapshots.
+    *   Added real-module cold-start probes for normal and optimized Python, moved state-changing test operations outside assertions, and strengthened repository instructions for dependency and startup validation.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), [PR #1478](https://github.com/microsoft/simplechat/pull/1478), `app_settings_cache.py`, `functions_settings.py`, `test_app_settings_import_boundaries.py`)
+
+### **(v0.261.026)**
+
+#### Bug Fixes
+
+*   **Redis Explorer Shared Settings Compatibility**
+    *   Fixed key browsing and previews failing after removal of the worker-local settings cache.
+    *   Explorer now recognizes the current shared settings record and labels leftover settings payload/version keys as legacy, without restoring worker caching.
+    *   Preserves credential and Cosmos session-token redaction in previews.
+    *   Added offline coverage for Azure Managed Redis and Azure Cache for Redis, including service-specific ports, key/managed-identity authentication, and app-cache/session clients.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), `functions_redis_monitoring.py`, `test_cosmos_wave5a3_redis_monitoring.py`)
 
 ### **(v0.261.025)**
 
@@ -20,6 +117,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Action-type governance now treats explicit item policies as authoritative once they exist, so a targeted policy such as `personal_action_type = azure_maps` can block that action type even when the broader action feature remains enabled.
     *   This resolves cases where action types such as Azure Maps continued to appear in action creation flows after admins saved a delegated item policy intended to block them.
     *   (Ref: delegated item governance, action-type enforcement, `functions_governance.py`)
+*   **Admin Settings Consistency Across Workers**
+    *   Removed worker-local admin settings snapshots so reloads read shared Redis settings, or Cosmos directly when Redis is disabled.
+    *   Added conflict-checked writes and coordinated cache publication to prevent stale metadata updates, worker startup, and interrupted saves from restoring older settings.
+    *   Stale admin forms now require a reload. Saves are rejected when configured Redis is unavailable; unconfirmed saves prompt verification rather than reporting success.
+    *   Reads retain Cosmos fallback without serving an old worker snapshot. Deploy all web workers and the scheduler together; Cosmos fallback remains subject to Session consistency.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), `app_settings_store.py`, `app_settings_cache.py`, `functions_settings.py`, admin settings form, auxiliary settings writers, `docs/admin/scale.md`)
 
 ### **(v0.261.023)**
 

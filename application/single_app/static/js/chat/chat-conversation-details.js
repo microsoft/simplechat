@@ -4,6 +4,7 @@
  */
 
 import { isColorLight } from "./chat-utils.js";
+import { appendMicrosoft365Audit } from "./chat-m365-audit.js";
 
 function getConversationDetailsModalElements() {
   return {
@@ -225,6 +226,7 @@ export async function showConversationDetails(conversationId) {
     content.innerHTML = renderConversationMetadata(metadata, conversationId);
     renderConversationDetailsActions(metadata, conversationId);
     attachConversationDetailActions(metadata, conversationId);
+    appendMicrosoft365Audit(content, conversationId);
     
   } catch (error) {
     console.error('Error fetching conversation details:', error);

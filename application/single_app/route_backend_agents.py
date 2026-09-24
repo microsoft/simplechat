@@ -4,6 +4,7 @@ import re
 import uuid
 import logging
 import builtins
+from copy import deepcopy
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from flask import Blueprint, jsonify, request, current_app, session
 from config import (
@@ -854,13 +855,15 @@ def _maybe_disable_multi_endpoint_migration_notice(settings, preview):
     if preview['summary']['ready_to_migrate'] or preview['summary']['needs_default_model']:
         return False
 
-    notice = settings.get('multi_endpoint_migration_notice', {}) or {}
+    notice = dict(settings.get('multi_endpoint_migration_notice', {}) or {})
     if not notice.get('enabled', False):
         return False
 
     notice['enabled'] = False
-    update_settings({'multi_endpoint_migration_notice': notice})
-    return True
+    return update_settings(
+        {'multi_endpoint_migration_notice': notice},
+        expected_etag=settings.get('_etag'),
+    )
 
 # === AGENT GUID GENERATION ENDPOINT ===
 @bpa.route('/api/agents/generate_id', methods=['GET'])
@@ -1516,9 +1519,10 @@ def set_selected_agent():
             return jsonify({'error': 'Agent not found.'}), 404
 
         # Set global_selected_agent field only
-        settings = get_settings()
-        settings['global_selected_agent'] = { 'name': agent_name, 'is_global': True, 'is_group': False }
-        update_settings(settings)
+        if not update_settings({
+            'global_selected_agent': {'name': agent_name, 'is_global': True, 'is_group': False},
+        }):
+            return jsonify({'error': 'Failed to set default agent.'}), 500
         log_event("Global selected agent set", extra={"action": "set-global-selected", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -1643,14 +1647,21 @@ def set_agent_enabled(agent_name):
             enabled_agents = get_global_agents()
             if enabled_agents:
                 fallback_agent_name = enabled_agents[0].get('name')
-                settings['global_selected_agent'] = {
+                selected_agent_update = {
                     'name': fallback_agent_name,
                     'is_global': True,
                     'is_group': False,
                 }
             else:
-                settings['global_selected_agent'] = {}
-            update_settings(settings)
+                selected_agent_update = {}
+            if not update_settings(
+                {'global_selected_agent': selected_agent_update},
+                expected_etag=settings.get('_etag'),
+            ):
+                setattr(builtins, "kernel_reload_needed", True)
+                return jsonify({
+                    'error': 'Agent state changed, but the default selection could not be saved. Reload and retry.'
+                }), 500
 
         log_agent_update(
             user_id=str(get_current_user_id()),
@@ -1929,7 +1940,7 @@ def update_agent_setting(setting_name):
         if 'value' not in data:
             return jsonify({'error': 'Missing value in request.'}), 400
         value = data['value']
-        settings = get_settings()
+        settings = deepcopy(get_settings())
         keys = setting_name.split('.')
         target = settings
         for k in keys[:-1]:
@@ -1942,7 +1953,11 @@ def update_agent_setting(setting_name):
             target[key] = value
         else:
             return jsonify({'error': 'Only simple values (str, int, float, bool, None) are allowed.'}), 400
-        update_settings(settings)
+        if not update_settings(
+            {keys[0]: settings[keys[0]]},
+            expected_etag=settings.get('_etag') if len(keys) > 1 else None,
+        ):
+            return jsonify({'error': 'Failed to update agent setting.'}), 500
         log_event("Agent setting updated", 
             extra={
                 "setting": setting_name,
@@ -2117,14 +2132,16 @@ def orchestration_settings():
                     return jsonify({"error": "max_rounds_per_agent must be an integer > 0 for group_chat."}), 400
             
             # Save settings
-            settings = get_settings()
-            settings["orchestration_type"] = orchestration_type
-            settings["enable_multi_agent_orchestration"] = enable_multi
+            settings_updates = {
+                "orchestration_type": orchestration_type,
+                "enable_multi_agent_orchestration": enable_multi,
+            }
             if orchestration_type == "group_chat":
-                settings["max_rounds_per_agent"] = max_rounds
+                settings_updates["max_rounds_per_agent"] = max_rounds
             else:
-                settings["max_rounds_per_agent"] = 1
-            update_settings(settings)
+                settings_updates["max_rounds_per_agent"] = 1
+            if not update_settings(settings_updates):
+                return jsonify({'error': 'Failed to update orchestration settings.'}), 500
             # --- HOT RELOAD TRIGGER ---
             setattr(builtins, "kernel_reload_needed", True)
             return jsonify({'success': True})

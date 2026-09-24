@@ -157,8 +157,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
       const userSettings = await userSettingsPromise;
       
-                const preferredModelId = userSettings?.preferredModelId;
-                const preferredModelDeployment = userSettings?.preferredModelDeployment;
+                let preferredModelId = userSettings?.preferredModelId;
+                let preferredModelDeployment = userSettings?.preferredModelDeployment;
+
+                if (window.appSettings?.enable_default_model_for_new_conversations && window.initialChatModelSelection?.selection_key) {
+                    preferredModelId = window.initialChatModelSelection.selection_key;
+                    preferredModelDeployment = null;
+                }
 
             initializeModelSelector();
             await populateModelDropdown({
@@ -419,6 +424,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
   } finally {
+      // Wait for deep-link selection and chat modules before resuming the saved request.
+      await window.SimpleChatM365Connect?.handleCallback();
       initChatTutorial();
   }
 });

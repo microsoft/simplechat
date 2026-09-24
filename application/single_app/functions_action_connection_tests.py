@@ -526,16 +526,26 @@ def test_log_analytics_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def test_mcp_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
+def test_mcp_connection(manifest: Dict[str, Any], *, origin=None) -> Dict[str, Any]:
     """Validate an MCP action by initializing a session and listing the server's tools."""
+    # MCP runtime dependencies are needed only when this connection tester is selected.
+    from functions_mcp_operations import (
+        McpRuntimeError,
+        classify_mcp_exception,
+        get_mcp_error_http_status,
+    )
     from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 
     try:
-        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(manifest))
+        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(manifest, origin=origin))
     except Exception as exc:
+        error_info = classify_mcp_exception(exc, "capability_probe")
+        category = exc.category if isinstance(exc, McpRuntimeError) else error_info["category"]
         result = build_failure_result(
-            f"The MCP server connection failed: {sanitize_connection_error(exc, manifest)}",
-            status=502,
+            error_info["message"],
+            status=get_mcp_error_http_status(category),
+            error_type=category,
+            retryable=False,
         )
         _log_connection_test("mcp", result)
         return result

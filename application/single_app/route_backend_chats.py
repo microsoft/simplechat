@@ -32,6 +32,7 @@ from model_endpoint_clients import (
     normalize_chat_completion_text,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_capabilities import ModelTokenBudgetError
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
@@ -89,6 +90,7 @@ import builtins
 import asyncio, types
 import ast
 import csv
+from functools import wraps
 import io
 import inspect
 import json
@@ -128,6 +130,7 @@ from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
 from functions_chat_stream_events import build_user_message_persisted_stream_event
+from functions_async_stream import SyncAsyncStream
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -208,6 +211,23 @@ from functions_citation_tracking import (
     resolve_citation_location,
 )
 from functions_collaboration import build_conversation_participation_context
+from functions_m365_action_cards import (
+    get_request_pending_action_references,
+    m365_action_card_events,
+)
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_execution import get_m365_execution_context
+from functions_m365_runtime import (
+    attach_m365_message_provenance,
+    complete_m365_request,
+    initialize_m365_chat_context,
+    record_m365_pending,
+    preflight_m365_manifests,
+    workflow_m365_manifests,
+    record_m365_auth_wait,
+)
+import functions_msgraph_pending_actions
+from m365_interaction import M365SignInRequired
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -456,6 +476,42 @@ def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=N
             f"[MODEL_ENDPOINT] Skipping reasoning_effort for {model_name}; live Foundry probes show this parameter is model-family specific."
         )
     return resolved_reasoning_effort
+
+
+def _normalize_default_reasoning_effort(reasoning_effort):
+    normalized_reasoning_effort = str(reasoning_effort or '').strip().lower()
+    if normalized_reasoning_effort in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+        return normalized_reasoning_effort
+    return ''
+
+
+def _apply_admin_new_conversation_model_defaults(settings, data, conversation_id, request_agent_info, *, is_retry=False):
+    """Apply admin model defaults when a normal chat request starts a new conversation."""
+    if (
+        conversation_id
+        or is_retry
+        or _has_chat_agent_selection(request_agent_info)
+        or not settings.get('enable_multi_model_endpoints', False)
+        or not settings.get('enable_default_model_for_new_conversations', False)
+    ):
+        return False
+
+    default_selection = settings.get('default_model_selection', {}) or {}
+    default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+    default_model_id = str(default_selection.get('model_id') or '').strip()
+    default_provider = str(default_selection.get('provider') or '').strip().lower()
+    if not (default_endpoint_id and default_model_id):
+        return False
+
+    data['model_endpoint_id'] = default_endpoint_id
+    data['model_id'] = default_model_id
+    data['model_provider'] = default_provider
+    data['model_deployment'] = ''
+    default_reasoning_effort = _normalize_default_reasoning_effort(settings.get('default_reasoning_effort'))
+    if default_reasoning_effort:
+        data['reasoning_effort'] = None if default_reasoning_effort == 'none' else default_reasoning_effort
+    data['_admin_default_model_applied'] = True
+    return True
 
 
 def _apply_response_length_for_model(api_params, response_length, model_name, provider=None, response_length_parameter=None):
@@ -3665,6 +3721,30 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
 
     g.conversation_id = conversation_id
     g.authorized_chat_context = authorized_context
+    if get_m365_execution_context() is None:
+        initialize_m365_chat_context(
+            user_id, conversation_id,
+            allow_new=bool(getattr(g, 'm365_new_conversation', False)),
+        )
+    agent_selection = (request.get_json(silent=True) or {}).get('agent_info')
+    if agent_selection and not getattr(g, 'm365_chat_preflight_complete', False):
+        agent = _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection)
+        if agent:
+            g.m365_selected_agent_ref = {
+                key: agent[key] for key in ('id', 'name', 'is_global', 'is_group', 'group_id')
+                if key in agent
+            }
+            manifests, _fingerprint = workflow_m365_manifests({
+                'user_id': user_id,
+                'group_id': agent.get('group_id') if agent.get('is_group') else None,
+                'selected_agent': agent,
+                'tasks': [],
+            })
+            if manifests and getattr(g, 'm365_new_conversation', False):
+                g.m365_initial_conversation = _create_personal_conversation(user_id, conversation_id)
+                g.m365_new_conversation = False
+            preflight_m365_manifests(manifests)
+        g.m365_chat_preflight_complete = True
     return authorized_context
 
 
@@ -8344,6 +8424,75 @@ class BackgroundStreamBridge:
                 break
 
 
+def _attach_request_m365_pending_action_cards(payload, viewer_user_id):
+    """Resolve creation references through the viewer-authorized record service."""
+    references = get_request_pending_action_references()
+    if not references:
+        return payload
+    conversation_id = references[0]["conversation_id"]
+    request_id = references[0]["request_id"]
+    cards = []
+    for offset in range(0, len(references), 100):
+        cards.extend(functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id,
+            conversation_id,
+            request_id=request_id,
+            action_ids=[reference["id"] for reference in references[offset:offset + 100]],
+        ))
+    return {
+        **payload,
+        "conversation_id": payload.get("conversation_id") or conversation_id,
+        "request_id": request_id,
+        "m365_pending_actions": cards,
+    }
+
+
+def _m365_pending_action_cards_error(error):
+    """A projection failure must not look like an empty pending-action inbox."""
+    log_event(
+        "[STREAMING] Saved Microsoft 365 action cards could not be loaded.",
+        extra={"exception_type": type(error).__name__},
+        level=logging.ERROR,
+    )
+    return {
+        "error": "m365_pending_actions_unavailable",
+        "message": (
+            "Microsoft 365 actions were saved, but their cards could not be loaded. "
+            "Reload the conversation to recover them. Do not repeat the request."
+        ),
+    }
+
+
+def _with_m365_pending_action_cards(view):
+    """Keep JSON successes, errors, and consent waits on the same card contract."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        result = view(*args, **kwargs)
+        references = get_request_pending_action_references()
+        if not references:
+            return result
+        response = current_app.make_response(result)
+        payload = response.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return result
+        try:
+            payload = _attach_request_m365_pending_action_cards(payload, get_current_user_id())
+        except Exception as error:
+            failure = _m365_pending_action_cards_error(error)
+            payload.pop("m365_pending_actions", None)
+            payload["m365_pending_actions_error"] = failure
+            if not payload.get("error"):
+                payload["error"] = failure["message"]
+            payload["conversation_id"] = payload.get("conversation_id") or references[0]["conversation_id"]
+            payload["request_id"] = payload.get("request_id") or references[0]["request_id"]
+            if response.status_code < 400:
+                response.status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+        response.set_data(current_app.json.dumps(payload))
+        return response
+
+    return wrapped
+
+
 def _extract_sse_event_payload(event_text):
     """Parse JSON data lines from a raw SSE event string."""
     if not isinstance(event_text, str):
@@ -8361,6 +8510,40 @@ def _extract_sse_event_payload(event_text):
         return json.loads('\n'.join(data_lines))
     except (TypeError, ValueError):
         return None
+
+
+def _refresh_m365_pending_action_event(event_text, viewer_user_id, conversation_id):
+    """Replay IDs through current authorization/state, not cached card snapshots."""
+    payload = _extract_sse_event_payload(event_text)
+    if not isinstance(payload, dict):
+        return event_text
+    is_creation = payload.get("type") == "m365_pending_action"
+    if is_creation:
+        snapshots = [payload.get("pending_action")]
+    elif "m365_pending_actions" in payload:
+        snapshots = payload.get("m365_pending_actions")
+    else:
+        return event_text
+    if not isinstance(snapshots, list):
+        raise ValueError("Invalid cached Microsoft 365 action-card event.")
+    action_ids = [card.get("id") if isinstance(card, dict) else None for card in snapshots]
+    cards = {}
+    for offset in range(0, len(action_ids), 100):
+        resolved = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id, conversation_id,
+            request_id=payload.get("request_id") or None,
+            action_ids=action_ids[offset:offset + 100],
+        )
+        cards.update((card["id"], card) for card in resolved)
+    if is_creation:
+        if not cards:
+            return None
+        payload["pending_action"] = next(iter(cards.values()))
+        payload.pop("m365_pending_actions", None)
+    else:
+        payload["m365_pending_actions"] = list(cards.values())
+    payload["conversation_id"] = conversation_id
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 class ActiveConversationStreamSession:
@@ -9532,6 +9715,50 @@ def summarize_tabular_invocation_errors(invocations):
         unique_errors.append(normalized_error_message)
 
     return unique_errors
+
+
+def build_tabular_invocation_failure_signature(invocation):
+    """Build a stable signature for detecting repeated equivalent tool failures."""
+    error_message = get_tabular_invocation_error_message(invocation)
+    if not error_message:
+        return None
+
+    parameters = getattr(invocation, 'parameters', {}) or {}
+    comparable_parameters = {
+        str(parameter_name): parameter_value
+        for parameter_name, parameter_value in parameters.items()
+        if parameter_name not in {'user_id', 'conversation_id'}
+    }
+    normalized_error = re.sub(r'\s+', ' ', str(error_message).strip()).casefold()
+    return (
+        str(getattr(invocation, 'function_name', '') or '').strip(),
+        json.dumps(comparable_parameters, sort_keys=True, default=str),
+        normalized_error,
+    )
+
+
+def get_repeated_tabular_invocation_failures(invocations, minimum_repeats=2):
+    """Return repeated equivalent failures with their function and safe error text."""
+    failures_by_signature = {}
+    for invocation in invocations or []:
+        signature = build_tabular_invocation_failure_signature(invocation)
+        if signature is None:
+            continue
+        failures_by_signature.setdefault(signature, []).append(invocation)
+
+    repeated_failures = []
+    for (function_name, _parameters, normalized_error), matching_invocations in failures_by_signature.items():
+        if len(matching_invocations) < minimum_repeats:
+            continue
+        error_message = get_tabular_invocation_error_message(matching_invocations[0])
+        repeated_failures.append({
+            'function_name': function_name,
+            'count': len(matching_invocations),
+            'error_message': error_message,
+            'normalized_error': normalized_error,
+        })
+
+    return repeated_failures
 
 
 def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
@@ -12730,6 +12957,42 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 else:
                     successful_schema_summary_invocations.append(invocation)
 
+            repeated_failures = get_repeated_tabular_invocation_failures(
+                failed_analytical_invocations + failed_schema_summary_invocations,
+            )
+            repeated_failure_feedback_messages = []
+            if repeated_failures:
+                repeated_failure = repeated_failures[0]
+                safe_repeated_failure_error = sanitize_plugin_invocation_value(
+                    repeated_failure['error_message']
+                )
+                repeated_failure_feedback_messages.append(
+                    f"The tool call {repeated_failure['function_name']} produced the same error repeatedly. Do not repeat that exact call. Change the filename, sheet, column, arguments, or use a different analytical function that addresses the user's question."
+                )
+                log_event(
+                    '[TABULAR_SK_ANALYSIS] Repeated equivalent tool failure detected; routing away from the failed call',
+                    extra={
+                        'function_name': repeated_failure['function_name'],
+                        'repeat_count': repeated_failure['count'],
+                        'error_message': repeated_failure['error_message'],
+                        'attempt_number': attempt_number,
+                    },
+                    level=logging.ERROR,
+                )
+                await emit_tabular_analysis_lifecycle_thought(
+                    thought_callback,
+                    f"Tabular tool {repeated_failure['function_name']} failed repeatedly",
+                    detail=(
+                        f"Failed {repeated_failure['count']} times with the same error: "
+                        f"{safe_repeated_failure_error}"
+                    ),
+                    title='Tabular analysis needs a different query path',
+                    state='running',
+                    phase='retry',
+                    attempt_number=attempt_number,
+                    attempt_count=3,
+                )
+
             if synthesis_exception is not None:
                 raw_tool_fallback = None
                 if not schema_summary_mode:
@@ -12785,6 +13048,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_schema_summary_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         log_event(
                             f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
                             extra={
@@ -12890,7 +13154,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_analytical_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
-                        previous_execution_gap_messages = []
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         retry_sheet_overrides = get_tabular_retry_sheet_overrides(failed_analytical_invocations)
                         for workbook_name, override_payload in retry_sheet_overrides.items():
                             blob_location = workbook_blob_locations.get(workbook_name)
@@ -14225,7 +14489,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     if requested_endpoint_id:
         if not (requested_model_id or requested_deployment):
             raise ValueError('Selected model information is incomplete for the streaming request.')
-        selection_source = 'request'
+        selection_source = 'default' if data.get('_admin_default_model_applied') else 'request'
     elif allow_default_selection:
         default_selection = settings.get('default_model_selection', {}) or {}
         default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
@@ -14524,50 +14788,108 @@ def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
+        viewer_user_id = get_current_user_id()
+        stream_user_message_id = None
 
         def publish_background_event(event_text):
+            nonlocal stream_user_message_id
             if event_text is None:
                 return False
+
+            payload = _extract_sse_event_payload(event_text)
+            if isinstance(payload, dict):
+                if payload.get('user_message_id'):
+                    stream_user_message_id = payload['user_message_id']
+                if payload.get('done') or payload.get('error') or payload.get('cancelled') or payload.get('canceled'):
+                    try:
+                        enriched = _attach_request_m365_pending_action_cards(payload, viewer_user_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        enriched = {**payload, 'm365_pending_actions_error': failure}
+                        enriched.pop('m365_pending_actions', None)
+                        if not enriched.get('error'):
+                            enriched['error'] = failure['message']
+                        references = get_request_pending_action_references()
+                        if references:
+                            enriched['conversation_id'] = enriched.get('conversation_id') or references[0]['conversation_id']
+                            enriched['request_id'] = enriched.get('request_id') or references[0]['request_id']
+                    if enriched is not payload:
+                        event_text = f"data: {json.dumps(enriched)}\n\n"
 
             if stream_session:
                 stream_session.publish(event_text)
 
             return stream_bridge.push(event_text)
 
+        def publish_pending_action(reference):
+            cards = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+                viewer_user_id,
+                reference['conversation_id'],
+                request_id=reference['request_id'],
+                action_ids=[reference['id']],
+            )
+            for card in cards:
+                payload = {
+                    'type': 'm365_pending_action',
+                    'pending_action': card,
+                    'conversation_id': reference['conversation_id'],
+                    'request_id': reference['request_id'],
+                }
+                if stream_user_message_id:
+                    payload['user_message_id'] = stream_user_message_id
+                publish_background_event(f"data: {json.dumps(payload)}\n\n")
+
         @copy_current_request_context
         def stream_worker():
-            try:
-                generator_signature = inspect.signature(event_generator_factory)
-                if 'publish_background_event' in generator_signature.parameters:
-                    event_iterator = event_generator_factory(
-                        publish_background_event=publish_background_event
-                    )
-                else:
-                    event_iterator = event_generator_factory()
+            with m365_action_card_events(publish_pending_action):
+                event_iterator = None
+                try:
+                    generator_signature = inspect.signature(event_generator_factory)
+                    if 'publish_background_event' in generator_signature.parameters:
+                        event_iterator = event_generator_factory(
+                            publish_background_event=publish_background_event
+                        )
+                    else:
+                        event_iterator = event_generator_factory()
 
-                for event in event_iterator:
-                    publish_background_event(event)
-            except Exception as e:
-                debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
-                stream_status = stream_session.get_status_snapshot() if stream_session else {}
-                log_event(
-                    f"[STREAMING] Background worker error: {e}",
-                    extra={
-                        'conversation_id': stream_status.get('conversation_id'),
-                        'user_id': stream_status.get('user_id'),
-                        'status': stream_status.get('status'),
-                        'event_count': stream_status.get('event_count'),
-                        'content_event_count': stream_status.get('content_event_count'),
-                    },
-                    level=logging.ERROR,
-                    exceptionTraceback=True,
-                )
-                error_event = build_stream_error_event()
-                publish_background_event(error_event)
-            finally:
-                if stream_session:
-                    stream_session.close()
-                stream_bridge.finish()
+                    terminal_success = False
+                    for event in event_iterator:
+                        publish_background_event(event)
+                        payload = _extract_sse_event_payload(event)
+                        if isinstance(payload, dict) and payload.get("done"):
+                            terminal_success = not (
+                                payload.get("error") or payload.get("cancelled") or payload.get("canceled")
+                            )
+                    complete_m365_request(success=terminal_success)
+                except M365ApprovalRequired as error:
+                    publish_background_event(
+                        f"data: {json.dumps(record_m365_pending(error))}\n\n"
+                    )
+                except Exception as e:
+                    debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
+                    stream_status = stream_session.get_status_snapshot() if stream_session else {}
+                    log_event(
+                        f"[STREAMING] Background worker error: {e}",
+                        extra={
+                            'conversation_id': stream_status.get('conversation_id'),
+                            'user_id': stream_status.get('user_id'),
+                            'status': stream_status.get('status'),
+                            'event_count': stream_status.get('event_count'),
+                            'content_event_count': stream_status.get('content_event_count'),
+                        },
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    error_event = build_stream_error_event()
+                    publish_background_event(error_event)
+                finally:
+                    try:
+                        if event_iterator is not None and callable(getattr(event_iterator, 'close', None)):
+                            event_iterator.close()
+                    finally:
+                        if stream_session:
+                            stream_session.close()
+                        stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
         if executor:
@@ -15278,6 +15600,8 @@ def register_route_backend_chats(bp):
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
+        if conversation_id:
+            initialize_m365_chat_context(user_id, conversation_id)
 
         selected_document_id = data.get('selected_document_id')
         selected_document_ids = data.get('selected_document_ids', [])
@@ -15527,7 +15851,7 @@ def register_route_backend_chats(bp):
         title_updated = _set_initial_conversation_title(conversation_item, user_message)
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
             if callable(publish_background_event):
                 publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
@@ -16016,7 +16340,7 @@ def register_route_backend_chats(bp):
                 'document_action': normalized_action,
             },
         })
-        cosmos_messages_container.upsert_item(assistant_doc)
+        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
         try:
             raise_if_mixed_source_cancelled(
                 cancel_requested,
@@ -16122,7 +16446,7 @@ def register_route_backend_chats(bp):
             conversation_item,
             document_action_citation_tracking['cited_hybrid_citations'],
         )
-        cosmos_conversations_container.upsert_item(conversation_item)
+        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
             '[CHAT_DOCUMENT_ACTION] Execution completed | '
@@ -16183,6 +16507,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_document_action_api():
         payload, status_code = execute_document_action_chat_request()
         return jsonify(payload), status_code
@@ -16271,6 +16596,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_analyze_api():
         payload, status_code = execute_analyze_chat_request()
         return jsonify(payload), status_code
@@ -16413,7 +16739,7 @@ def register_route_backend_chats(bp):
             )
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
@@ -16485,6 +16811,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_api():
         publish_background_event = getattr(
             g,
@@ -16509,6 +16836,14 @@ def register_route_backend_chats(bp):
             conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
             if conversation_id is not None:
                 conversation_id = str(conversation_id).strip() or None
+            request_is_retry = bool(data.get('retry_user_message_id') or data.get('edited_user_message_id'))
+            _apply_admin_new_conversation_model_defaults(
+                settings,
+                data,
+                conversation_id,
+                request_agent_info,
+                is_retry=request_is_retry,
+            )
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             url_access_enabled = data.get('url_access_enabled')
@@ -16608,7 +16943,7 @@ def register_route_backend_chats(bp):
             retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
             retry_thread_id = data.get('retry_thread_id')
             retry_thread_attempt = data.get('retry_thread_attempt')
-            is_retry = bool(retry_user_message_id)
+            is_retry = request_is_retry
             is_edit = bool(data.get('edited_user_message_id'))
 
             if is_retry:
@@ -17578,6 +17913,7 @@ def register_route_backend_chats(bp):
                     'model_icon': gpt_model_icon,
                     'response_length': gpt_response_length,
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                     'streaming': 'Disabled'
                 }
 
@@ -17671,7 +18007,7 @@ def register_route_backend_chats(bp):
                 _set_initial_conversation_title(conversation_item, user_message)
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                 invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
@@ -17771,7 +18107,7 @@ def register_route_backend_chats(bp):
 
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                         # Return a normal 200 with a special field: blocked=True
@@ -18773,7 +19109,7 @@ def register_route_backend_chats(bp):
                         response_image_url = generated_image_url
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_generated")
 
                     return jsonify({
@@ -19600,6 +19936,8 @@ def register_route_backend_chats(bp):
                     try:
                         result = step['func']()
                         return step['on_success'](result)
+                    except (M365ApprovalRequired, M365SignInRequired):
+                        raise
                     except Exception as e:
                         log_event(
                             f"[FALLBACK_FAILURE] Fallback step {step['name']} failed: {e}",
@@ -20656,7 +20994,7 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
-            cosmos_messages_container.upsert_item(assistant_doc)
+            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
             if selected_agent and agent_name:
                 log_agent_run(
@@ -20773,7 +21111,7 @@ def register_route_backend_chats(bp):
                 citation_tracking['cited_hybrid_citations'],
             )
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
 
             # ---------------------------------------------------------------------
@@ -20810,6 +21148,18 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except M365ApprovalRequired as error:
+            return jsonify(record_m365_pending(
+                error,
+                user_message_id=locals().get('user_message_id'),
+            )), 409
+        except M365SignInRequired as error:
+            return jsonify(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id'))), 409
+        except ModelTokenBudgetError as error:
+            log_event("[CHAT_API_ERROR] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+            return jsonify(error.payload), 400
+        except M365PolicyError as error:
+            return jsonify(error.payload), 403
         except Exception as e:
             error_traceback = traceback.format_exc()
             debug_print(f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}")
@@ -20891,6 +21241,13 @@ def register_route_backend_chats(bp):
         data['active_group_id'] = initial_scope_context['active_group_id']
         data['active_public_workspace_ids'] = list(initial_scope_context['active_public_workspace_ids'])
         data['active_public_workspace_id'] = initial_scope_context['active_public_workspace_id']
+        _apply_admin_new_conversation_model_defaults(
+            settings,
+            data,
+            None if is_new_stream_conversation else finalized_conversation_id,
+            data.get('agent_info'),
+            is_retry=is_retry,
+        )
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
@@ -20940,6 +21297,9 @@ def register_route_backend_chats(bp):
                 'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
                 'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
+                'm365_pending_actions': payload.get('m365_pending_actions', []),
+                'request_id': payload.get('request_id'),
+                'metadata': payload.get('metadata', {}),
                 'agent_display_name': payload.get('agent_display_name'),
                 'agent_name': payload.get('agent_name'),
                 'full_content': payload.get('reply', ''),
@@ -21034,6 +21394,11 @@ def register_route_backend_chats(bp):
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
                 conversation_id = finalized_conversation_id
+                g.m365_new_conversation = is_new_stream_conversation
+                initialize_m365_chat_context(
+                    user_id, conversation_id,
+                    allow_new=is_new_stream_conversation,
+                )
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 url_access_enabled = data.get('url_access_enabled')
@@ -21110,7 +21475,9 @@ def register_route_backend_chats(bp):
                         g.request_agent_info = {'name': request_agent_info}
                         g.request_agent_name = request_agent_info
 
-                # Initialize Semantic Kernel if needed
+                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+
+                # Initialize Semantic Kernel only after binding the selected agent's actions.
                 redis_client = None
                 if enable_semantic_kernel and per_user_semantic_kernel:
                     redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
@@ -21153,8 +21520,6 @@ def register_route_backend_chats(bp):
                 if image_gen_enabled:
                     yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
                     return
-
-                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
                 # Clear plugin invocations
                 plugin_logger = get_plugin_logger()
@@ -21674,7 +22039,9 @@ def register_route_backend_chats(bp):
 
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
-                    conversation_item = _create_personal_conversation(user_id, conversation_id=conversation_id)
+                    conversation_item = getattr(g, 'm365_initial_conversation', None) or _create_personal_conversation(
+                        user_id, conversation_id=conversation_id,
+                    )
                     debug_print(f"[STREAMING] Created new conversation {conversation_id}")
                 else:
                     try:
@@ -22138,6 +22505,7 @@ def register_route_backend_chats(bp):
                         'model_icon': gpt_model_icon,
                         'response_length': gpt_response_length,
                         'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                        'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                         'streaming': 'Enabled'
                     }
 
@@ -22217,7 +22585,7 @@ def register_route_backend_chats(bp):
                     title_updated = _set_initial_conversation_title(conversation_item, user_message)
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
                     if title_updated:
                         yield _build_conversation_metadata_stream_event(conversation_item)
@@ -22378,7 +22746,7 @@ def register_route_backend_chats(bp):
                             cosmos_messages_container.upsert_item(safety_doc)
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                            cosmos_conversations_container.upsert_item(conversation_item)
+                            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                             invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                             final_data = make_json_serializable({
@@ -24031,7 +24399,7 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
-                        cosmos_messages_container.upsert_item(assistant_doc)
+                        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         initialize_conversation_used_document_tracking(conversation_item)
                         try:
@@ -24051,7 +24419,7 @@ def register_route_backend_chats(bp):
                             conversation_item,
                             partial_citation_tracking['cited_hybrid_citations'],
                         )
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
 
@@ -24208,38 +24576,39 @@ def register_route_backend_chats(bp):
                                         )
                                     else:
                                         agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
-                                    while True:
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
-                                        try:
-                                            response = loop.run_until_complete(agent_stream.__anext__())
-                                        except StopAsyncIteration:
-                                            break
+                                    with SyncAsyncStream(agent_stream, loop) as stream_reader:
+                                        while True:
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
+                                            try:
+                                                response = next(stream_reader)
+                                            except StopIteration:
+                                                break
 
-                                        response_metadata = getattr(response, 'metadata', None)
-                                        if isinstance(response_metadata, dict):
-                                            usage = response_metadata.get('usage')
-                                            if usage:
-                                                stream_usage = usage
-                                            response_model = response_metadata.get('model')
-                                            if isinstance(response_model, str) and response_model.strip():
-                                                actual_model_used = response_model.strip()
+                                            response_metadata = getattr(response, 'metadata', None)
+                                            if isinstance(response_metadata, dict):
+                                                usage = response_metadata.get('usage')
+                                                if usage:
+                                                    stream_usage = usage
+                                                response_model = response_metadata.get('model')
+                                                if isinstance(response_model, str) and response_model.strip():
+                                                    actual_model_used = response_model.strip()
 
-                                        chunk_content = None
-                                        if hasattr(response, 'content') and response.content:
-                                            chunk_content = str(response.content)
-                                        elif isinstance(response, str) and response:
-                                            chunk_content = response
+                                            chunk_content = None
+                                            if hasattr(response, 'content') and response.content:
+                                                chunk_content = str(response.content)
+                                            elif isinstance(response, str) and response:
+                                                chunk_content = response
 
-                                        if chunk_content:
-                                            accumulated_content += chunk_content
-                                            if not suppress_streamed_file_payload:
-                                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            if chunk_content:
+                                                accumulated_content += chunk_content
+                                                if not suppress_streamed_file_payload:
+                                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -24267,6 +24636,9 @@ def register_route_backend_chats(bp):
                                             )
                                             continue
                                     raise
+                        except (M365ApprovalRequired, M365SignInRequired):
+                            plugin_logger_cb.deregister_callbacks(callback_key)
+                            raise
                         except Exception as stream_error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
@@ -24277,9 +24649,22 @@ def register_route_backend_chats(bp):
                                 f"retried={agent_retry_plan is not None} | error={stream_error}"
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
-                            traceback.print_exc()
+                            log_event(
+                                "[STREAMING] Agent streaming failed.",
+                                extra={
+                                    "user_id": user_id,
+                                    "conversation_id": conversation_id,
+                                    "agent_name": agent_name_used,
+                                    "exception_type": type(stream_error).__name__,
+                                    "retried": agent_retry_plan is not None,
+                                },
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
-                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                            if isinstance(stream_error, ModelTokenBudgetError):
+                                error_payload = stream_error.payload
+                            elif isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
                                 error_payload = {
                                     'error': str(stream_error),
@@ -24799,7 +25184,7 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
-                    cosmos_messages_container.upsert_item(assistant_doc)
+                    cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
                         'finalization',
@@ -24915,7 +25300,7 @@ def register_route_backend_chats(bp):
                             f"Skipping personal chat completion notification for conversation {conversation_id} because chat_type={conversation_item.get('chat_type')}"
                         )
 
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_completed")
 
                     # Send final message with metadata
@@ -25092,7 +25477,7 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
-                            cosmos_messages_container.upsert_item(assistant_doc)
+                            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
                             initialize_conversation_used_document_tracking(
@@ -25119,8 +25504,8 @@ def register_route_backend_chats(bp):
                                     'cited_hybrid_citations'
                                 ],
                             )
-                            cosmos_conversations_container.upsert_item(
-                                conversation_item
+                            cosmos_conversations_container.replace_item(
+                                item=conversation_item['id'], body=conversation_item,
                             )
                             invalidate_conversation_cache_for_item(
                                 conversation_item,
@@ -25159,6 +25544,15 @@ def register_route_backend_chats(bp):
                         **interrupted_citation_tracking,
                     )
 
+            except M365ApprovalRequired as error:
+                yield f"data: {json.dumps(record_m365_pending(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except M365SignInRequired as error:
+                yield f"data: {json.dumps(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except ModelTokenBudgetError as error:
+                log_event("[STREAMING] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
+            except M365PolicyError as error:
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 debug_print(f"[STREAM_API_ERROR] Unhandled exception: {str(e)}")
@@ -25306,7 +25700,18 @@ def register_route_backend_chats(bp):
             detach_recorded = False
             try:
                 for event in stream_session.iter_events():
-                    yield event
+                    try:
+                        event = _refresh_m365_pending_action_event(event, user_id, conversation_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        yield build_stream_error_event(
+                            failure["message"],
+                            conversation_id=conversation_id,
+                            m365_pending_actions_error=failure,
+                        )
+                        return
+                    if event is not None:
+                        yield event
                 stream_consumed = True
             except GeneratorExit:
                 detach_status = stream_session.mark_consumer_detached(reason='reattach_disconnect') or {}

@@ -1052,12 +1052,17 @@ def register_route_backend_settings(bp):
             scale_result['direction'] = direction
             scale_result['reason'] = f'manual_{direction}'
 
-            update_settings(build_runtime_update(
+            settings_updates = build_runtime_update(
                 status=status,
                 decision={'direction': direction, 'reason': f'manual_{direction}'},
                 scale_result=scale_result,
                 settings=settings,
-            ))
+            )
+            expected_etag = settings.get('_etag') if 'cosmos_throughput_container_policies' in settings_updates else None
+            if not update_settings(settings_updates, expected_etag=expected_etag):
+                return jsonify({
+                    'error': 'Throughput changed, but its runtime settings could not be saved. Reload and verify before retrying.'
+                }), 500
             log_general_admin_action(
                 admin_user_id=admin_user_id,
                 admin_email=admin_email,
@@ -1131,12 +1136,17 @@ def register_route_backend_settings(bp):
             scale_result['direction'] = 'convert_to_autoscale'
             scale_result['reason'] = 'manual_to_autoscale_conversion'
 
-            update_settings(build_runtime_update(
+            settings_updates = build_runtime_update(
                 status=status,
                 decision=decision,
                 scale_result=scale_result,
                 settings=settings,
-            ))
+            )
+            expected_etag = settings.get('_etag') if 'cosmos_throughput_container_policies' in settings_updates else None
+            if not update_settings(settings_updates, expected_etag=expected_etag):
+                return jsonify({
+                    'error': 'Throughput mode changed, but its runtime settings could not be saved. Reload and verify before retrying.'
+                }), 500
             log_general_admin_action(
                 admin_user_id=admin_user_id,
                 admin_email=admin_email,

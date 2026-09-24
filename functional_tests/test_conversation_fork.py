@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 # test_conversation_fork.py
 """
 Functional test for personal conversation forking.
-Version: 0.250.107
+Version: 0.261.029
 Implemented in: 0.250.074
 
 This test ensures persisted personal conversation history is copied through an
@@ -74,11 +73,14 @@ def load_operations_module_for_test():
             'config',
             {
                 'CLIENTS': {},
+                'TENANT_ID': 'test-tenant',
+                'build_enhanced_citations_blob_service_client': no_op,
                 'TABULAR_EXTENSIONS': set(),
                 'cosmos_activity_logs_container': None,
                 'cosmos_conversations_container': None,
                 'cosmos_groups_container': None,
                 'cosmos_messages_container': None,
+                'cosmos_tabular_export_runs_container': None,
                 'storage_account_personal_chat_container_name': '',
             },
         ),
@@ -96,6 +98,10 @@ def load_operations_module_for_test():
             'functions_appinsights',
             {'log_event': no_op},
         ),
+        'functions_citation_tracking': _stub_module(
+            'functions_citation_tracking',
+            {'rebuild_conversation_used_documents': no_op},
+        ),
         'functions_authentication': _stub_module(
             'functions_authentication',
             {
@@ -108,6 +114,7 @@ def load_operations_module_for_test():
             'functions_collaboration',
             {
                 'assert_user_can_participate_in_collaboration_conversation': no_op,
+                'build_conversation_participation_context': no_op,
                 'create_collaboration_message_notifications': no_op,
                 'create_group_collaboration_conversation_record': no_op,
                 'create_personal_collaboration_conversation_record': no_op,
@@ -122,6 +129,7 @@ def load_operations_module_for_test():
             {
                 'allowed_file': no_op,
                 'create_document': no_op,
+                'persist_xsd_source_for_existing_document': no_op,
                 'process_document_upload_background': no_op,
                 'update_document': no_op,
             },
@@ -138,12 +146,13 @@ def load_operations_module_for_test():
                 'create_group': no_op,
                 'find_group_by_id': no_op,
                 'get_user_role_in_group': no_op,
+                'get_user_groups': lambda user_id: [],
                 'require_active_group': no_op,
             },
         ),
         'functions_notifications': _stub_module(
             'functions_notifications',
-            {'create_notification': no_op},
+            {'create_notification': no_op, 'delete_notifications_by_metadata': no_op},
         ),
         'functions_personal_workflows': _stub_module(
             'functions_personal_workflows',
@@ -866,7 +875,7 @@ def test_fork_route_preserves_conflict_response_when_logging_metadata():
     assert response.get_json() == {'error': 'Conversation fork conflict'}
     assert logged_events == [{
         'message': (
-            '[ConversationFork] Conflict while creating conversation fork: '
+            '[CONVERSATION_FORK] Conflict while creating conversation fork: '
             'Only personal conversations can be forked'
         ),
         'extra': {

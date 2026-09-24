@@ -6,6 +6,15 @@ from typing import Any, Dict, List, Optional
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 
+from functions_action_manifest import (
+    McpActionOrigin,
+    McpConfigurationError,
+    McpStdioRemovedError,
+    copy_action_manifest,
+    get_action_origin,
+    is_retired_mcp_stdio,
+    resolve_action_type,
+)
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_PLUGIN_TYPE,
@@ -23,15 +32,29 @@ from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_log
 class McpPlugin(BasePlugin):
     """Model Context Protocol action descriptor."""
 
-    def __init__(self, manifest: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, manifest: Optional[Dict[str, Any]] = None, *, origin: Optional[McpActionOrigin] = None
+    ):
         super().__init__(manifest)
-        self.manifest = manifest or {}
+        self.manifest = copy_action_manifest(manifest) if manifest is not None else {"type": MCP_PLUGIN_TYPE}
+        self._origin = origin if origin is not None else get_action_origin(self.manifest)
+        self._additional_fields = self._validate_manifest()
         self._metadata = self.manifest.get("metadata", {}) if isinstance(self.manifest.get("metadata"), dict) else {}
-        self._additional_fields = normalize_mcp_additional_fields(self.manifest.get("additionalFields", {}))
+        self.manifest["type"] = MCP_PLUGIN_TYPE
+        self.manifest["additionalFields"] = self._additional_fields
         self._allowed_tool_names = set(self._additional_fields.get("allowed_tool_names") or [])
         self._tools = self._filter_tools(
             normalize_mcp_tool_metadata(self._additional_fields.get("mcp_tools", []))
         )
+
+    def _validate_manifest(self):
+        if not isinstance(self.manifest, dict) or resolve_action_type(self.manifest) != MCP_PLUGIN_TYPE:
+            raise McpConfigurationError("Only an MCP action can use an MCP connector.")
+        if is_retired_mcp_stdio(self.manifest):
+            raise McpStdioRemovedError()
+        if self._origin is not None and not isinstance(self._origin, McpActionOrigin):
+            raise PermissionError("MCP execution requires a trusted action origin.")
+        return normalize_mcp_additional_fields(self.manifest.get("additionalFields", {}))
 
     def _filter_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not self._allowed_tool_names:
@@ -135,6 +158,16 @@ class McpPlugin(BasePlugin):
     @kernel_function(description="Call an MCP tool by its original MCP tool name with a JSON object of arguments.")
     async def call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         """Call a configured MCP tool by original name."""
+        try:
+            self._validate_manifest()
+        except (ValueError, PermissionError) as exc:
+            error_info = classify_mcp_exception(exc, "tool_call")
+            return {
+                "success": False,
+                "error": error_info["message"],
+                "error_type": error_info["category"],
+                "retryable": False,
+            }
         normalized_tool_name = str(tool_name or "").strip()
         if not normalized_tool_name:
             return {
@@ -187,46 +220,32 @@ class McpPlugin(BasePlugin):
                 f"endpoint_present={bool(str(self.manifest.get('endpoint') or '').strip())} "
                 f"argument_keys={sorted(arguments.keys()) if isinstance(arguments, dict) else []}"
             )
+            # The factory constructs this descriptor; defer the reverse runtime dependency.
             from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 
             result = await McpPluginFactory.call_tool_from_config(
                 self.manifest,
                 tool_name,
                 arguments or {},
+                origin=self._origin,
             )
             debug_print(
                 f"[MCP_PLUGIN] MCP tool completed tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}"
             )
             return result
-        except ValueError as exc:
-            debug_print(f"[MCP_PLUGIN] MCP tool validation failed tool_name={tool_name} message={exc}")
-            return {
-                "success": False,
-                "error": str(exc),
-                "error_type": "validation",
-            }
-        except McpRuntimeError as exc:
-            debug_print(
-                f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
-                f"category={exc.category} operation={exc.operation}"
-            )
-            return {
-                "success": False,
-                "error": str(exc),
-                "error_type": exc.category,
-                "operation": exc.operation,
-                "details": exc.detail,
-            }
         except Exception as exc:
             error_info = classify_mcp_exception(exc, "tool_call")
+            category = exc.category if isinstance(exc, McpRuntimeError) else error_info["category"]
             debug_print(
                 f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
                 f"exception_type={type(exc).__name__} category={error_info['category']}"
             )
             return {
                 "success": False,
-                "error": f"Failed to call MCP tool '{tool_name}'. {error_info['message']}",
-                "error_type": error_info["category"],
-                "details": error_info["detail"],
+                "error": error_info["message"],
+                "error_type": category,
+                "operation": "tool_call",
+                "details": error_info["message"],
+                "retryable": False,
             }

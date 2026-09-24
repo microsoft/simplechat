@@ -2,9 +2,18 @@
 
 from functools import wraps
 import logging
+import threading
 
 from flask import g, has_request_context, jsonify, request, session
+from azure.core import MatchConditions
 
+from app_settings_store import (
+    AppSettingsStore,
+    COSMOS_METADATA_FIELDS,
+    SETTINGS_REVISION_FIELD,
+    SettingsConflictError,
+    SettingsUnavailableError,
+)
 from config import *
 from functions_appinsights import log_event
 from functions_content_safety import (
@@ -14,6 +23,7 @@ from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_model_capabilities import normalize_model_budget_overrides
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -36,8 +46,8 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+from json_schema_validation import validate_legacy_plugin_settings_update
 import app_settings_cache
-import inspect
 import copy
 import os
 import json
@@ -51,6 +61,7 @@ from support_menu_config import (
 
 
 USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+_settings_store_init_lock = threading.Lock()
 FONT_SIZE_PREFERENCES = ("xs", "s", "m", "l", "xl")
 DEFAULT_FONT_SIZE_PREFERENCE = "m"
 CHAT_COMPLETION_AUDIO_SOUND_IDS = (
@@ -1204,43 +1215,43 @@ def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user
     return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
 
 
-def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
-    """Update shared/local settings cache around a version bump."""
-    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
+def _get_app_cache_dependencies(redis_client_factory):
+    return app_settings_cache.AppCacheDependencies(
+        settings_container=cosmos_settings_container,
+        governance_container=cosmos_governance_policies_container,
+        create_redis_client=redis_client_factory,
+        log_event=log_event,
+    )
 
-    def _update_cache(stage):
-        if not callable(cache_updater):
-            return
-        try:
-            cache_updater(copy.deepcopy(settings_payload))
-        except Exception as cache_error:
-            log_event(
-                "App settings cache update failed after settings write.",
-                extra={
-                    "context": context,
-                    "stage": stage,
-                    "error": str(cache_error)
-                },
-                level=logging.WARNING
+
+def _get_app_settings_store():
+    """Read bootstrap settings here; the cache must never import its owner or config."""
+    with _settings_store_init_lock:
+        if app_settings_cache.APP_SETTINGS_STORE is None:
+            try:
+                settings = cosmos_settings_container.read_item(
+                    item="app_settings",
+                    partition_key="app_settings",
+                )
+            except CosmosResourceNotFoundError:
+                settings = {}
+            # Before web/scheduler configuration, Redis-required writes must fail
+            # closed. This temporary reader is not installed as a worker cache.
+            return AppSettingsStore(
+                cosmos_settings_container,
+                redis_required=bool(settings.get('enable_redis_cache', False)),
             )
+        return app_settings_cache.get_settings_store()
 
-    _update_cache("before_version_bump")
 
-    if callable(version_bumper):
-        try:
-            version_bumper()
-        except Exception as version_error:
-            log_event(
-                "App settings cache version bump failed after settings write.",
-                extra={
-                    "context": context,
-                    "error": str(version_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("after_version_bump")
+def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_client_factory):
+    """Supply runtime dependencies separately from the persisted settings object."""
+    with _settings_store_init_lock:
+        app_settings_cache.configure_app_cache(
+            settings,
+            redis_cache_endpoint,
+            dependencies=_get_app_cache_dependencies(redis_client_factory),
+        )
 
 
 def _env_flag_enabled(name):
@@ -1318,6 +1329,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'debug_logging_turnoff_time': None,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
+        'm365_retrieval_provider': 'auto',
+        'm365_trusted_download_hosts': [],
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
         'enable_math_plugin': True,
@@ -1490,11 +1503,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
         'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
+        'enable_default_model_for_new_conversations': False,
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
             'provider': ''
         },
+        'default_reasoning_effort': '',
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
@@ -1946,76 +1961,7 @@ def get_settings(use_cosmos=False, include_source=False):
             return settings_payload, source
         return settings_payload
 
-    try:
-        # Attempt to read the existing doc
-        if use_cosmos:
-            settings_item = cosmos_settings_container.read_item(
-                item="app_settings",
-                partition_key="app_settings"
-            )
-            settings_source = "cosmos_forced"
-            log_event(
-                "App settings loaded from Cosmos DB (forced).",
-                extra={
-                    "settings_source": settings_source,
-                    "use_cosmos": True
-                },
-                level=logging.INFO
-            )
-        else:
-            settings_item = None
-            settings_source = "cache"
-
-            cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
-            if callable(cache_accessor):
-                try:
-                    settings_item = cache_accessor()
-                except Exception as cache_error:
-                    settings_item = None
-                    log_event(
-                        "Error reading app settings from cache accessor.",
-                        extra={
-                            "error": str(cache_error)
-                        },
-                        level=logging.WARNING
-                    )
-
-            if not settings_item:
-                settings_source = "cosmos_fallback"
-                settings_item = cosmos_settings_container.read_item(
-                    item="app_settings",
-                    partition_key="app_settings"
-                )
-
-                frame = inspect.currentframe()
-                caller = frame.f_back  # the function that called *this* code
-
-                if caller is not None:
-                    code = caller.f_code
-                    caller_file = code.co_filename
-                    caller_line = caller.f_lineno
-                    caller_func = code.co_name
-
-                    log_event(
-                        "App settings cache miss. Falling back to Cosmos DB.",
-                        extra={
-                            "settings_source": settings_source,
-                            "caller_file": caller_file,
-                            "caller_line": caller_line,
-                            "caller_func": caller_func
-                        },
-                        level=logging.WARNING
-                    )
-                else:
-
-                    log_event(
-                        "App settings cache miss. Falling back to Cosmos DB (no caller frame).",
-                        extra={
-                            "settings_source": settings_source
-                        },
-                        level=logging.WARNING
-                    )
-
+    def normalize_loaded_settings(settings_item):
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
         )
@@ -2037,9 +1983,8 @@ def get_settings(use_cosmos=False, include_source=False):
             legacy_control_center_time = f"{legacy_hour:02d}:{legacy_minute:02d}"
 
         # Merge default_settings in, to fill in any missing or nested keys
-        merge_changed = deep_merge_dicts(default_settings, settings_item)
+        deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
-        control_center_schedule_migration_updated = False
         if legacy_control_center_schedule:
             if legacy_control_center_time == '06:00':
                 merged['control_center_auto_refresh_time'] = '02:00'
@@ -2049,65 +1994,52 @@ def get_settings(use_cosmos=False, include_source=False):
             else:
                 merged['control_center_auto_refresh_timezone'] = 'UTC'
             merged['control_center_auto_refresh_next_run'] = None
-            control_center_schedule_migration_updated = True
-        enhanced_extraction_migration_updated = False
         if legacy_enhanced_extraction and legacy_enhanced_extraction_mode in ('layout', 'auto'):
             merged['enable_enhanced_extraction'] = True
-            enhanced_extraction_migration_updated = True
-        migration_updated = apply_custom_endpoint_setting_migration(merged)
-        assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
-        promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
-        document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
-        inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
-        public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
-        key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
-        model_endpoint_identity_header_settings_updated = normalize_model_endpoint_identity_header_settings(merged)
-        tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)
+        apply_custom_endpoint_setting_migration(merged)
+        normalize_group_workflow_assignment_settings(merged)
+        normalize_agents_page_promoted_popular_settings(merged)
+        normalize_document_access_index_required_settings(merged)
+        normalize_inbound_mcp_settings(merged)
+        normalize_public_workspace_display_settings(merged)
+        normalize_key_vault_reminder_settings(merged)
+        normalize_model_endpoint_identity_header_settings(merged)
+        normalize_tabular_parity_durable_preflight_defaults(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
-        # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if (
-            merge_changed
-            or control_center_schedule_migration_updated
-            or enhanced_extraction_migration_updated
-            or migration_updated
-            or assignment_settings_updated
-            or promoted_popular_settings_updated
-            or document_access_index_settings_updated
-            or inbound_mcp_settings_updated
-            or public_workspace_display_settings_updated
-            or key_vault_reminder_settings_updated
-            or model_endpoint_identity_header_settings_updated
-            or tabular_parity_durable_preflight_settings_updated
-        ):
-            cosmos_settings_container.upsert_item(merged)
-            _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
+        return merged
 
-            log_event(
-                "App settings defaults or migrations were persisted to Cosmos DB.",
-                extra={
-                    "settings_source": settings_source
-                },
-                level=logging.INFO
-            )
-            return _format_result(attach_public_workspace_label_context(merged), settings_source)
-        else:
-            # If merged is unchanged, no new keys needed
-            return _format_result(attach_public_workspace_label_context(merged), settings_source)
-
-    except CosmosResourceNotFoundError:
-        cosmos_settings_container.create_item(body=default_settings)
-        _refresh_app_settings_cache_after_write(default_settings, context="default_create")
-
-        log_event(
-            "App settings document not found. Default settings created in Cosmos DB.",
-            extra={
-                "settings_source": "cosmos_default_created"
-            },
-            level=logging.WARNING
-        )
-        return _format_result(attach_public_workspace_label_context(default_settings), "cosmos_default_created")
+    try:
+        store = _get_app_settings_store()
+        settings_source = "cosmos_forced" if use_cosmos else "shared"
+        try:
+            settings_item = store.read(use_cosmos=use_cosmos)
+        except CosmosResourceNotFoundError:
+            settings_item = store.write(normalize_loaded_settings, defaults=default_settings)
+            settings_source = "cosmos_default_created"
+        merged = normalize_loaded_settings(copy.deepcopy(settings_item))
+        if merged != settings_item:
+            try:
+                # Re-run migrations against the authoritative document, not the
+                # read snapshot. OCC retries preserve concurrent admin changes.
+                merged = store.write(normalize_loaded_settings)
+            except (SettingsUnavailableError, SettingsConflictError) as error:
+                # Reads remain available during an outage; migrations are deferred,
+                # not reported as persisted or written via a second version source.
+                merged = normalize_loaded_settings(store.read(use_cosmos=True))
+                log_event(
+                    "[ASC] Settings migration deferred; shared writes are unavailable.",
+                    extra={"error_type": type(error).__name__},
+                    level=logging.WARNING,
+                )
+            else:
+                log_event(
+                    "[ASC] App settings defaults or migrations were persisted.",
+                    extra={"settings_source": settings_source},
+                    level=logging.INFO,
+                )
+        return _format_result(attach_public_workspace_label_context(merged), settings_source)
 
     except Exception as e:
         log_event(
@@ -2132,12 +2064,18 @@ def get_rate_limit_message(settings=None):
     return build_rate_limit_message(resolved_settings)
 
 
-def update_settings(new_settings):
-    try:
-        # always fetch the latest settings doc, which includes your merges
-        settings_item = get_settings()
+def update_settings(new_settings, *, expected_etag=None):
+    """Merge intended changes into Cosmos with OCC and shared-cache publication."""
+    expected_etag = expected_etag or new_settings.get("_etag")
+    updates = {
+        key: copy.deepcopy(value)
+        for key, value in new_settings.items()
+        if key not in COSMOS_METADATA_FIELDS | {SETTINGS_REVISION_FIELD, "id"}
+    }
+
+    def apply_updates(settings_item):
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
-        settings_item.update(new_settings)
+        settings_item.update(updates)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)
@@ -2150,18 +2088,20 @@ def update_settings(new_settings):
             settings_item.get('enable_multi_model_endpoints', False),
         )
         settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
-        cosmos_settings_container.upsert_item(settings_item)
-        _refresh_app_settings_cache_after_write(settings_item, context="update_settings")
+        return settings_item
+
+    try:
+        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
         log_event(
-            "App settings updated successfully.",
+            "[ASC] App settings updated and published successfully.",
             level=logging.INFO
         )
         return True
     except Exception as e:
         log_event(
-            "Error updating app settings.",
+            "[ASC] Unable to confirm settings save; reload and verify before retrying.",
             extra={
-                "error": str(e)
+                "error_type": type(e).__name__
             },
             level=logging.ERROR,
             exceptionTraceback=True
@@ -2689,7 +2629,7 @@ def normalize_model_response_length_from_model(model):
 
 
 def normalize_model_endpoints(endpoints):
-    """Normalize model endpoints with stable IDs and enabled flags."""
+    """Normalize endpoint records without conflating capacity and response length."""
     if not isinstance(endpoints, list):
         return [], False
 
@@ -2702,6 +2642,10 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
+            if endpoint_copy[field_name] != value:
+                endpoint_copy[field_name] = value
+                changed = True
         connection = endpoint_copy.get("connection") or {}
         provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
         if endpoint_copy.get("provider") != provider:
@@ -2770,6 +2714,10 @@ def normalize_model_endpoints(endpoints):
             if not isinstance(model, dict):
                 continue
             model_copy = json.loads(json.dumps(model))
+            for field_name, value in normalize_model_budget_overrides(model_copy).items():
+                if model_copy[field_name] != value:
+                    model_copy[field_name] = value
+                    changed = True
             if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
                 if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                     deployment_name = str(
@@ -2836,7 +2784,7 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy["models"] = normalized_models
         normalized.append(endpoint_copy)
 
-    return normalized, changed
+    return normalized, changed or normalized != endpoints
 
 
 def is_frontend_visible_model_endpoint_provider(provider):
@@ -2880,6 +2828,9 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
         if value in (None, ""):
             continue
         merged[key] = value
+    # Null capacity/identity overrides deliberately restore inheritance, unlike
+    # blank authentication fields which must retain their stored secrets.
+    merged.update(normalize_model_budget_overrides(incoming_endpoint))
     return merged
 
 
@@ -2922,7 +2873,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
 
 
 def sanitize_model_endpoints_for_frontend(endpoints):
-    """Return model endpoint configs with secrets stripped for frontend use."""
+    """Keep editable model metadata while stripping stored auth credentials."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
         return []
@@ -2937,8 +2888,8 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
-        auth.pop("api_key", None)
-        auth.pop("client_secret", None)
+        for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
+            auth.pop(secret_field, None)
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
@@ -3172,6 +3123,16 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             }
 
 
+        try:
+            validate_legacy_plugin_settings_update(doc['settings'], settings_to_update)
+        except ValueError:
+            log_event(
+                "[USER_SETTINGS] Rejected invalid or retired action settings.",
+                extra={"user_id": user_id},
+                level=logging.WARNING,
+            )
+            return False
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
 
@@ -3275,8 +3236,19 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-        # Upsert the modified document
-        cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
+        if (
+            {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
+            or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
+        ):
+            if doc.get('_etag'):
+                cosmos_user_settings_container.replace_item(
+                    user_id, body=doc,
+                    etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
+                )
+            else:
+                cosmos_user_settings_container.create_item(body=doc)
+        else:
+            cosmos_user_settings_container.upsert_item(body=doc)
         _set_request_cached_user_settings(user_id, doc)
         _delete_user_ui_settings_cache(user_id)
 
@@ -3356,7 +3328,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k == 'support_feedback_recipient_email':
+        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue

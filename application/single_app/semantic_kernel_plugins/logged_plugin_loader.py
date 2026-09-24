@@ -16,6 +16,13 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, plugin_function_logger, auto_wrap_plugin_functions
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
+from functions_action_manifest import (
+    McpConfigurationError,
+    copy_action_manifest,
+    get_action_execution_status,
+    get_action_origin,
+    resolve_action_type,
+)
 from functions_debug import debug_print
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_mcp_operations import MCP_PLUGIN_TYPE
@@ -53,7 +60,15 @@ class LoggedPluginLoader:
             bool: True if plugin loaded successfully, False otherwise
         """
         plugin_name = manifest.get('name')
-        plugin_type = manifest.get('type')
+        plugin_type = resolve_action_type(manifest)
+        execution_status = get_action_execution_status(manifest)
+        if execution_status:
+            log_event(
+                "[LOGGED_PLUGIN_LOADER] Skipping unavailable MCP action",
+                extra={"plugin_name": plugin_name, **execution_status},
+                level=logging.WARNING,
+            )
+            return False
         
         # Debug logging
         log_event(f"[LOGGED_PLUGIN_LOADER] Starting to load plugin: {plugin_name} (type: {plugin_type})")
@@ -115,6 +130,8 @@ class LoggedPluginLoader:
     
     def _create_plugin_instance(self, manifest: Dict[str, Any]):
         """Create a plugin instance from manifest."""
+        manifest = copy_action_manifest(manifest)
+        manifest["type"] = resolve_action_type(manifest)
         plugin_name = manifest.get('name')
         plugin_type = manifest.get('type')
         
@@ -150,8 +167,10 @@ class LoggedPluginLoader:
                 debug_print(f"[LOGGED_PLUGIN_LOADER] Normalized plugin type: {normalized_type}")
                 matched_class = None
                 for class_name, cls in discovered_plugins.items():
+                    if resolve_action_type({"type": cls.__name__}) == MCP_PLUGIN_TYPE:
+                        continue
                     normalized_class = normalize(class_name)
-                    print("[LOGGED_PLUGIN_LOADER] Checking plugin class:", class_name, "normalized:", normalized_class)
+                    debug_print(f"[LOGGED_PLUGIN_LOADER] Checking plugin class {class_name}")
                     if normalized_type == normalized_class or normalized_type in normalized_class:
                         matched_class = cls
                         debug_print(f"[LOGGED_PLUGIN_LOADER] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
@@ -292,7 +311,10 @@ class LoggedPluginLoader:
         """Create an MCP plugin instance."""
         plugin_name = manifest.get('name')
         try:
-            plugin_instance = McpPluginFactory.create_from_config(manifest)
+            origin = get_action_origin(manifest)
+            if origin is None:
+                raise PermissionError("MCP execution requires a trusted action origin.")
+            plugin_instance = McpPluginFactory.create_from_config(manifest, origin=origin)
             log_event(
                 "[LOGGED_PLUGIN_LOADER] Successfully created MCP plugin instance using factory",
                 extra={"plugin_name": plugin_name},
@@ -301,12 +323,13 @@ class LoggedPluginLoader:
             return plugin_instance
         except Exception as e:
             log_event(
-                "[LOGGED_PLUGIN_LOADER] General error creating MCP plugin",
-                extra={"plugin_name": plugin_name, "error": str(e)},
+                "[LOGGED_PLUGIN_LOADER] MCP action could not be loaded",
+                extra={
+                    "plugin_name": plugin_name,
+                    "error_type": getattr(e, "code", "authorization" if isinstance(e, PermissionError) else "validation"),
+                },
                 level=logging.ERROR,
-                exceptionTraceback=True,
             )
-            self.logger.error(f"Failed to create MCP plugin: {e}")
             return None
     
     def _create_python_plugin(self, manifest: Dict[str, Any]):
@@ -321,6 +344,8 @@ class LoggedPluginLoader:
         try:
             module = importlib.import_module(f"semantic_kernel_plugins.{module_name}")
             plugin_class = getattr(module, class_name)
+            if resolve_action_type({"type": plugin_class.__name__}) == MCP_PLUGIN_TYPE:
+                raise McpConfigurationError("MCP actions must use the MCP action type.")
             return plugin_class(manifest)
         except (ImportError, AttributeError) as e:
             self.logger.error(f"Failed to create Python plugin {class_name} from {module_name}: {e}")

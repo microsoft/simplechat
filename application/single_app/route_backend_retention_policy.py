@@ -63,35 +63,39 @@ def register_route_backend_retention_policy(bp):
         """
         try:
             data = request.get_json()
-            settings = get_settings()
+            settings_updates = {}
             
             # Update settings if provided
             if 'enable_retention_policy_personal' in data:
-                settings['enable_retention_policy_personal'] = bool(data['enable_retention_policy_personal'])
+                settings_updates['enable_retention_policy_personal'] = bool(data['enable_retention_policy_personal'])
             
             if 'enable_retention_policy_group' in data:
-                settings['enable_retention_policy_group'] = bool(data['enable_retention_policy_group'])
+                settings_updates['enable_retention_policy_group'] = bool(data['enable_retention_policy_group'])
             
             if 'enable_retention_policy_public' in data:
-                settings['enable_retention_policy_public'] = bool(data['enable_retention_policy_public'])
+                settings_updates['enable_retention_policy_public'] = bool(data['enable_retention_policy_public'])
             
             if 'retention_policy_execution_hour' in data:
                 hour = int(data['retention_policy_execution_hour'])
                 if 0 <= hour <= 23:
-                    settings['retention_policy_execution_hour'] = hour
+                    settings_updates['retention_policy_execution_hour'] = hour
                     
                     # Recalculate next run time
                     next_run = datetime.now(timezone.utc).replace(hour=hour, minute=0, second=0, microsecond=0)
                     if next_run <= datetime.now(timezone.utc):
                         next_run += timedelta(days=1)
-                    settings['retention_policy_next_run'] = next_run.isoformat()
+                    settings_updates['retention_policy_next_run'] = next_run.isoformat()
                 else:
                     return jsonify({
                         'success': False,
                         'error': 'Execution hour must be between 0 and 23'
                     }), 400
             
-            update_settings(settings)
+            if not update_settings(settings_updates):
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to update retention policy settings'
+                }), 500
             
             return jsonify({
                 'success': True,

@@ -35,7 +35,7 @@ import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
-from functions_azure_endpoint_validation import validate_azure_blob_endpoint
+from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -98,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.003.01"
+VERSION = "0.261.045"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -537,7 +537,11 @@ def build_enhanced_citations_blob_service_client(settings):
         blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
         if not blob_endpoint:
             raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
-        safe_blob_endpoint = validate_azure_blob_endpoint(blob_endpoint)
+        # Endpoint ownership is deployment configuration, not a file/action argument.
+        safe_blob_endpoint = validate_configured_chat_blob_endpoint(
+            blob_endpoint,
+            CUSTOM_BLOB_STORAGE_URL_VALUE if AZURE_ENVIRONMENT == "custom" else "",
+        )
         # codeql[py/full-ssrf]
         return BlobServiceClient(account_url=safe_blob_endpoint, credential=DefaultAzureCredential())
 
@@ -1022,6 +1026,20 @@ cosmos_msgraph_pending_actions_container = cosmos_database.create_container_if_n
     id=cosmos_msgraph_pending_actions_container_name,
     partition_key=PartitionKey(path="/user_id"),
     default_ttl=-1
+)
+
+cosmos_m365_connections_container_name = "m365_connections"
+cosmos_m365_connections_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_m365_connections_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
+)
+
+cosmos_m365_execution_runs_container_name = "m365_execution_runs"
+cosmos_m365_execution_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_m365_execution_runs_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
 )
 
 cosmos_thoughts_container_name = "thoughts"

@@ -46,7 +46,8 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
+from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -559,6 +560,10 @@ def register_route_frontend_admin_settings(bp):
                 'model_id': '',
                 'provider': ''
             }
+        if 'enable_default_model_for_new_conversations' not in settings:
+            settings['enable_default_model_for_new_conversations'] = False
+        if 'default_reasoning_effort' not in settings:
+            settings['default_reasoning_effort'] = ''
         if 'metadata_extraction_model_selection' not in settings or not isinstance(settings.get('metadata_extraction_model_selection'), dict):
             settings['metadata_extraction_model_selection'] = {
                 'endpoint_id': '',
@@ -576,7 +581,8 @@ def register_route_frontend_admin_settings(bp):
 
         normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
         if endpoints_changed:
-            update_settings({'model_endpoints': normalized_endpoints})
+            if update_settings({'model_endpoints': normalized_endpoints}, expected_etag=settings.get('_etag')):
+                settings = get_settings()
         settings['model_endpoints'] = normalized_endpoints
         frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 
@@ -973,8 +979,8 @@ def register_route_frontend_admin_settings(bp):
                             new_settings['update_available'] = False
                         
                         # Update settings to persist these values
-                        update_settings(new_settings)
-                        settings.update(new_settings)
+                        if update_settings(new_settings):
+                            settings = get_settings()
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
                     log_event(f"Error checking for updates: {e}", level=logging.ERROR)
@@ -984,8 +990,8 @@ def register_route_frontend_admin_settings(bp):
             update_available = _is_update_version_newer(latest_version, current_version)
             if settings.get('update_available') != update_available:
                 try:
-                    update_settings({'update_available': update_available})
-                    settings['update_available'] = update_available
+                    if update_settings({'update_available': update_available}):
+                        settings = get_settings()
                 except Exception as e:
                     log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
             
@@ -1049,6 +1055,10 @@ def register_route_frontend_admin_settings(bp):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+            settings_etag = form_data.get('admin_settings_etag', '')
+            if not settings_etag or settings_etag != settings.get('_etag'):
+                flash("Settings changed since this page was loaded. Review the latest settings and try again.", "warning")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             def admin_secret(field_name, form_field_name=None):
                 submitted_value = form_data.get(form_field_name or field_name, '').strip()
@@ -1727,8 +1737,17 @@ def register_route_frontend_admin_settings(bp):
                 migrated_at = datetime.now(timezone.utc).isoformat()
                 migration_notice['created_at'] = migrated_at
 
-            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
-            parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            try:
+                parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+                parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            except ModelTokenBudgetError as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Model token-budget validation failed",
+                    extra={"exception_type": type(exc).__name__, "code": exc.code},
+                    level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             custom_endpoint_validation_settings = dict(settings)
             custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
                 form_data.get('allow_private_custom_model_endpoints') == 'on'
@@ -1852,6 +1871,19 @@ def register_route_frontend_admin_settings(bp):
                     'model_id': '',
                     'provider': ''
                 }
+
+            enable_default_model_for_new_conversations = (
+                enable_multi_model_endpoints
+                and form_data.get('enable_default_model_for_new_conversations') == 'on'
+            )
+            default_reasoning_effort = (
+                form_data.get('default_reasoning_effort', '').strip().lower()
+            )
+            if default_reasoning_effort not in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+                flash('Default reasoning effort is not valid. Please select a supported value.', 'warning')
+                default_reasoning_effort = ''
+            if not enable_default_model_for_new_conversations:
+                default_reasoning_effort = ''
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}
@@ -2412,7 +2444,16 @@ def register_route_frontend_admin_settings(bp):
             )
 
             # --- Construct new_settings Dictionary ---
+            try:
+                m365_settings = normalize_m365_transport_settings(
+                    form_data.get('m365_retrieval_provider', settings.get('m365_retrieval_provider', 'auto')),
+                    form_data.get('m365_trusted_download_hosts', settings.get('m365_trusted_download_hosts', [])),
+                )
+            except M365ProviderError as error:
+                flash(error.message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **m365_settings,
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 'enable_debug_logging': enable_debug_logging,
@@ -2496,7 +2537,9 @@ def register_route_frontend_admin_settings(bp):
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
                 'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
+                'enable_default_model_for_new_conversations': enable_default_model_for_new_conversations,
                 'default_model_selection': normalized_default_model_selection,
+                'default_reasoning_effort': default_reasoning_effort,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
@@ -3215,7 +3258,7 @@ def register_route_frontend_admin_settings(bp):
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
-            if update_settings(new_settings):
+            if update_settings(new_settings, expected_etag=settings_etag):
                 flash("Admin settings updated successfully.", "success")
                 if enable_custom_pages and not custom_pages_was_enabled and custom_pages_restart_acknowledged:
                     log_general_admin_action(
@@ -3300,7 +3343,11 @@ def register_route_frontend_admin_settings(bp):
                         print(f"Warning sending chunk size notification: {e}")
 
             else:
-                flash("Failed to update admin settings.", "danger")
+                flash(
+                    "Unable to confirm the settings save. Reload and verify the values before retrying. "
+                    "Another save may be in progress, or Redis may be unavailable.",
+                    "danger",
+                )
 
 
             # Redirect back to settings page
