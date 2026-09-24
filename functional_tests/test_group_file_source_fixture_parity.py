@@ -1,8 +1,9 @@
 # test_group_file_source_fixture_parity.py
 """
 Per-route shape parity between the M5B group file source UI fixture and the real routes.
-Version: 0.261.147
+Version: 0.261.156
 Implemented in: 0.261.147
+Credentials block compared: 0.261.156
 
 M5B contract Section 11, F6. The V2 group file sources browser suite mocks the network with the
 closed HTTP fixture `ui_tests/fixtures/group_file_sources.py`, so a fixture whose response shape
@@ -15,7 +16,7 @@ route, Key Vault and settings modules against an etag-enforcing fake Cosmos and 
 
 For every route the V2 section calls -- list, read, create, update, delete, sync, runs, test
 connection, browse, ignore, and options -- it asserts that the fixture never invents a top-level,
-source-item, run or browse-entry key the server does not return (`fixture keys <= server keys`),
+source-item, credentials, run or browse-entry key the server does not return (`fixture keys <= server keys`),
 that the keys the UI actually reads are present in both, and that the status code and the
 machine-readable `error_code` match, including its absence. It covers success, each 409 code
 (`config_conflict`, `write_conflict`, `source_busy`, `delete_incomplete`) and a partial refusal
@@ -69,6 +70,12 @@ ENTRY_UI_KEYS = {"name", "path", "type"}
 IGNORE_ITEM_UI_KEYS = {"id", "remote_path", "status", "ignored"}
 CONNECTION_UI_KEYS = {"success", "entries_checked", "files_seen", "folders_seen"}
 OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed"}
+# The credential fields the editor's draftFromSource reads. A key the server omits would open blank
+# and be sent back blank, which clears the stored value (the 0.261.156 tenant fix).
+CREDENTIALS_UI_KEYS = {
+    "auth_type", "username", "domain", "identity", "tenant_id", "managed_identity_client_id",
+    "password_stored", "secret_stored",
+}
 
 
 # --------------------------------------------------------------------------
@@ -223,6 +230,10 @@ def test_list_shape_parity(environment):
     assert_no_invented_keys("list", payload, real_payload)
     assert_shared_keys("list", payload, real_payload, {"file_sources", "file_source_management"})
     assert_nested_parity("list item", payload["file_sources"][0], real_payload["file_sources"][0], SOURCE_ITEM_UI_KEYS)
+    assert_nested_parity(
+        "list item credentials", payload["file_sources"][0]["credentials"],
+        real_payload["file_sources"][0]["credentials"], CREDENTIALS_UI_KEYS,
+    )
 
 
 def test_read_shape_parity(environment):
@@ -237,6 +248,10 @@ def test_read_shape_parity(environment):
     assert_no_invented_keys("read", payload, real_payload)
     assert_shared_keys("read", payload, real_payload, {"file_source"})
     assert_nested_parity("read item", payload["file_source"], real_payload["file_source"], SOURCE_ITEM_UI_KEYS)
+    assert_nested_parity(
+        "read item credentials", payload["file_source"]["credentials"],
+        real_payload["file_source"]["credentials"], CREDENTIALS_UI_KEYS,
+    )
 
 
 def test_create_shape_parity(environment):

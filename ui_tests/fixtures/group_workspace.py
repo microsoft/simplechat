@@ -1,9 +1,10 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.155
+Version: 0.261.156
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
+File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -440,7 +441,8 @@ def file_source_management(role, status):
 def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=True,
                       recursive=True, connection=None, filters=None, identity_id="",
                       identity_name="", auth_type="username_password", secret_stored=True,
-                      username="", domain="", client_identity="", schedule_enabled=False,
+                      username="", domain="", client_identity="", tenant_id="",
+                      managed_identity_client_id="", schedule_enabled=False,
                       interval_minutes=60, actions=FILE_SOURCE_ITEM_ACTIONS,
                       last_run_status="completed", last_run_at="2024-01-02T00:00:00+00:00"):
     """One group file source as the native projector returns it, before config_revision and masking.
@@ -448,6 +450,8 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
     The stored credential is a boolean plus a placeholder, never a plaintext secret, so a blank
     secret on save keeps it and a fresh value replaces it. An identity binding stores the id and a
     display name the list row shows; inline auth stores the fields the sanitized credentials expose.
+    A service principal keeps its client ID in `identity` and its tenant in `tenant_id`; a managed
+    identity keeps its client ID in `managed_identity_client_id`, as `_prepare_auth_payload` stores them.
     """
     conn = dict(connection or {})
     for key in FILE_SOURCE_CONNECTION_KEYS.get(source_type, ()):  # ensure every key is present
@@ -487,6 +491,8 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
         "_username": username,
         "_domain": domain,
         "_client_identity": client_identity,
+        "_tenant_id": tenant_id,
+        "_mi_client_id": managed_identity_client_id,
         "_secret": bool(secret_stored),
         "_identity_name": identity_name,
         "_supported_source_types": [source_type],
@@ -504,7 +510,8 @@ def _file_source_credentials(record):
         "username": record.get("_username", ""),
         "domain": record.get("_domain", ""),
         "identity": record.get("_client_identity", ""),
-        "tenant_id": "",
+        "tenant_id": record.get("_tenant_id", ""),
+        "managed_identity_client_id": record.get("_mi_client_id", ""),
         "password_stored": stored and uses_password,
         "secret_stored": stored and not uses_password,
         "password": placeholder if uses_password else "",
@@ -1901,6 +1908,20 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if identity_id:
             match = self.record_identity(group_id, identity_id)
             identity_name = match["name"] if match else identity_id
+        # The identifiers `_prepare_auth_payload` stores for each inline auth method. A key the body
+        # carries wins even when empty, which is how a value is cleared; a missing key keeps the
+        # stored one.
+        client_identity = tenant_id = managed_identity_client_id = ""
+        if not identity_id and auth_type == "client_secret":
+            client_identity = str(credentials.get(
+                "client_id", credentials.get("identity", prior["_client_identity"] if prior else ""),
+            ) or "")
+            tenant_id = str(credentials.get("tenant_id", prior.get("_tenant_id", "") if prior else "") or "")
+        elif not identity_id and auth_type == "managed_identity":
+            managed_identity_client_id = str(credentials.get(
+                "managed_identity_client_id",
+                credentials.get("client_id", prior.get("_mi_client_id", "") if prior else ""),
+            ) or "")
         now = datetime.now(timezone.utc).isoformat()
         record = group_file_source(
             group_id, identifier,
@@ -1916,11 +1937,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             secret_stored=secret_stored,
             username=str(credentials.get("username", prior["_username"] if prior else "")),
             domain=str(credentials.get("domain", prior["_domain"] if prior else "")),
-            client_identity=str(
-                credentials.get("managed_identity_client_id")
-                or credentials.get("identity")
-                or (prior["_client_identity"] if prior else "")
-            ),
+            client_identity=client_identity,
+            tenant_id=tenant_id,
+            managed_identity_client_id=managed_identity_client_id,
             schedule_enabled=bool(schedule.get("enabled")) if schedule else (prior["schedule"]["enabled"] if prior else False),
             interval_minutes=int(schedule.get("interval_minutes") or (prior["schedule"]["interval_minutes"] if prior else 60)),
             actions=list(prior["source_actions"]) if prior else list(FILE_SOURCE_ITEM_ACTIONS),

@@ -727,6 +727,10 @@ def sanitize_file_sync_source(source: Dict[str, Any]) -> Dict[str, Any]:
         "username": auth.get("username", ""),
         "domain": auth.get("domain", ""),
         "identity": auth.get("identity", ""),
+        # Non-secret identifiers the editors send back. A present-but-empty value clears the
+        # stored one, so omitting them here made every edit erase them.
+        "tenant_id": auth.get("tenant_id", ""),
+        "managed_identity_client_id": auth.get("managed_identity_client_id", ""),
         "password_stored": password_stored,
         "secret_stored": secret_stored,
         "password": ui_trigger_word if password_stored else "",

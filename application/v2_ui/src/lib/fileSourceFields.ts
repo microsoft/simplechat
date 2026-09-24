@@ -256,7 +256,9 @@ export function draftFromSource(source: WorkspaceSyncSource, minInterval: number
             authType: String(credentials.auth_type ?? connectionDescriptor(sourceType).authTypes[0] ?? 'username_password'),
             username: String(credentials.username ?? ''),
             domain: String(credentials.domain ?? ''),
-            clientId: String(credentials.identity ?? ''),
+            // A managed identity keeps its client ID in managed_identity_client_id, a service
+            // principal in identity; the classic editor reads them the same way.
+            clientId: String(credentials.identity || credentials.managed_identity_client_id || ''),
             tenantId: String(credentials.tenant_id ?? ''),
             secret: '',
         },
