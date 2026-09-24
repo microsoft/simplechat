@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.130**
+**Version: 0.261.134**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
@@ -12,6 +12,9 @@ runtime APIs used by the opt-in harness. Initial-claim recovery,
 output-acknowledgement handling, and default cleanup enrollment were hardened
 in **0.261.129**; see
 [runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
+Whole-run retries of plans with files and optional inputs were fixed in
+**0.261.134**; see the
+[deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
 
 ## Overview
 
@@ -113,6 +116,21 @@ checkpoints is no longer valid, recovery stops with an explanation instead of
 turning Retry into a full-plan restart.
 This also applies when a retry worker stops before copying inherited results:
 completed work remains bound to its saved checkpoint in an earlier attempt.
+
+Two kinds of completed step do run again in a Gather / Reason / Render retry, and the
+retry review lists them as work that will execute:
+
+- **Files.** A file belongs to the attempt that rendered it, and preparing a retry
+  supersedes that attempt's files, so a retry never reuses a render step. The new attempt
+  renders its files again from saved or newly prepared content, which calls no model, and
+  the earlier attempt's files are then shown as superseded. A restart of the same attempt
+  still reuses its completed files. React V2 offers **Retry from failed step** only for an
+  attempt without files. An attempt with files is recovered one file at a time with
+  **Retry file**, which never repeats plan steps or withdraws an available file. A
+  whole-run retry prepared through the retry API follows the rule above.
+- **Steps that completed without an optional input.** When the retry runs that input's
+  failed producer again, the steps that completed without it, and every step computed
+  from them, run again so they can use what the first attempt missed.
 
 ## Durable state and validation
 
@@ -644,8 +662,9 @@ boundaries, and ordinary-model/known-denial controls.
 
 V2 run `result_outputs` is an internal retained-data availability projection;
 `outputs` is reserved for actual public file outcomes. A prepared retry clears
-both projections so an unstarted child cannot inherit a parent's delivery
-claims. File cards and current file states are read from the initialized
+both projections, and the admitted file index `render_output_ids`, so an unstarted
+child cannot inherit a parent's delivery claims or list the parent's superseded
+files as its own. File cards and current file states are read from the initialized
 rendering service, not reconstructed from a typed result reference.
 
 An initial Render invocation can admit or commit its output before an

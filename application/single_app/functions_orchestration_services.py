@@ -6,6 +6,8 @@ Version: 0.261.135
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or
 Flask request state, and never initializes a client as an import side effect.
+Each run attempt is its own approved work, so a retry's files never reuse the
+superseded attempt's output identity.
 """
 
 from copy import deepcopy
@@ -231,7 +233,9 @@ class OrchestrationServices:
         context.composition_profile_validator = validate_composition_profile
         context.execution_deadline_at = record.get("execution_deadline_at")
         context.rendering_service = self.rendering
-        context.approved_work_id = record.get("attempt_root_run_id") or record["id"]
+        # Each attempt is approved separately and owns its files, so a retry renders a new
+        # output rather than presenting the superseded attempt's work identity.
+        context.approved_work_id = record["id"]
         return context
 
     def rendering_for_context(self, context, *, settings, user_id):
