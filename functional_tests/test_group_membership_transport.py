@@ -1,8 +1,8 @@
 # test_group_membership_transport.py
 """
 Functional test for how the native group membership routes resolve.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 A mixed deployment must refuse an unsupported native membership URL rather than
 run another handler. Every ``/api/groups/<group_id>/membership/...`` URL and method

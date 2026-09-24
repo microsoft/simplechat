@@ -1,8 +1,8 @@
 # test_group_membership_apis.py
 """
 Functional test for the native group membership APIs.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 The ``/api/groups/<group_id>/membership/...`` routes run for real
 (``functions_group``, the membership modules and the classic

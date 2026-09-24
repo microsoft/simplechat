@@ -1,8 +1,8 @@
 # test_user_search_hardening.py
 """
 Functional test for the /api/userSearch hardening.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 ``/api/userSearch`` backs the classic and V2 people pickers, including the group
 member add. This test runs the real route function against a fake Graph and pins:

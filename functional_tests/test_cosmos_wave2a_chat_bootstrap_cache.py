@@ -2,10 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.261.150
+Version: 0.261.151
 Implemented in: 0.250.006
 Settings write invalidation scoped in: 0.250.037
-Guarded group membership writers: 0.261.150
+Guarded group membership writers: 0.261.151
 
 This test ensures chat bootstrap cache keys are versioned and invalidated by
 global and per-user cache version bumps without relying on generic settings

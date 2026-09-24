@@ -1,8 +1,8 @@
 # test_group_membership_legacy_responses.py
 """
 Functional test for the classic group membership routes' responses and audit.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 The classic ``route_backend_groups`` membership routes run for real through the
 shared harness. Each case pins the exact status, body, stored change and audit

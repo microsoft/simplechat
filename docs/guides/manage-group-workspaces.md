@@ -202,7 +202,11 @@ workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guid
 **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
 Owners and administrators also have **Manage group (classic)** for members,
-join requests, and group settings.
+join requests, and group settings. From version **0.261.151**, membership
+changes made there no longer overwrite each other. For example, two admins
+approving and removing members at the same time both take effect. Approving
+someone who is already a member no longer adds them twice, and a bulk removal
+reports its results correctly.
 
 Save or cancel open changes before switching groups. Navigating away from an
 unfinished editor asks whether to discard it. Returning to the browser refreshes

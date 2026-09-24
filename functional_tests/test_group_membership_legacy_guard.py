@@ -1,8 +1,8 @@
 # test_group_membership_legacy_guard.py
 """
 Functional test for the classic membership writers on the group-document guard.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 The classic join, approve and reject, direct add (the route and the SimpleChat
 agent tool share ``add_group_member_for_current_user``), remove and leave, role

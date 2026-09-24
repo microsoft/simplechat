@@ -256,10 +256,12 @@ status with "The request could not be processed."
 
 ## Known limitations
 
-- **The classic membership writers are unconditional.** Approve, reject, add,
-  remove, role change and ownership transfer still upsert the whole group
-  document. One of them landing just after a native join or cancel can undo it.
-  Converting them is the next milestone, M7B.
+- **Classic membership writers.** Until 0.261.151, approve, reject, add, remove,
+  role change and ownership transfer upserted the whole group document, so one
+  of them landing just after a native join or cancel could undo it. From
+  **0.261.151** they are conditional too; see the
+  [write safety fix](../fixes/GROUP_MEMBERSHIP_WRITE_SAFETY_FIX.md). A few other
+  whole-document writers remain, and are listed there.
 - **The listing reads every group on each request.** The projection is narrow,
   but the query still visits every group in the container, and paging happens
   after filtering. The classic discover route had the same cost, with full

@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.151)**
+
+#### New Features
+
+*   **Group Membership APIs**
+    *   New server routes under `/api/groups/<group_id>/membership/` list a group's members, paged and searchable, and add, re-role, remove and let members leave. They also list, approve and reject join requests, and transfer ownership, all for a named group rather than the account's active one.
+    *   The member list says what the caller may do: `membership_management` for the group, and `member_actions` on each member. Both come from one policy module that matches the classic rules.
+    *   The owner's role changes only by transfer, and the owner can't be removed or leave. Members can't be added to locked or inactive groups. A new member is looked up in the directory by ID.
+    *   The V2 Members view that uses these routes arrives in a later release.
+    *   (Ref: `functions_group_membership.py`, `functions_group_membership_policy.py`, `route_backend_group_membership.py`, [Group Membership APIs](features/GROUP_MEMBERSHIP_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Membership Changes No Longer Overwrite Each Other**
+    *   Classic join requests, approvals, adds, removals, role changes and ownership transfers saved the whole group without a condition. So two changes at once could lose one, and a late change could recreate a deleted group. Each now applies to the group as it currently is, and a deleted group stays deleted.
+    *   Joining a group with no pending-request list no longer fails.
+    *   (Ref: `update_group_document_with_etag_guard`, `route_backend_groups.py`, [Group Membership Write Safety Fix](fixes/GROUP_MEMBERSHIP_WRITE_SAFETY_FIX.md))
+
+*   **Classic Membership Edge Cases**
+    *   Approving someone who was already a member no longer adds them twice, and every pending request from a user is settled in one decision.
+    *   The owner's role can no longer be changed except by transfer, and a transfer keeps the old owner's name and email.
+    *   The classic bulk remove now reports its successes, and the members list no longer fails on malformed entries.
+    *   (Ref: `route_backend_groups.py`, `add_group_member_for_current_user`, [Group Membership Edge Cases Fix](fixes/GROUP_MEMBERSHIP_EDGE_CASES_FIX.md))
+
+*   **User Search Errors No Longer Expose Graph Details**
+    *   `/api/userSearch` returned Microsoft Graph's error body to the browser and had no timeout. Failures now return a fixed message, time out after 20 seconds, and log only the status code.
+    *   (Ref: `route_backend_users.py`, [User Search Error Hardening Fix](fixes/USER_SEARCH_ERROR_HARDENING_FIX.md))
+
 ### **(v0.261.150)**
 
 #### New Features

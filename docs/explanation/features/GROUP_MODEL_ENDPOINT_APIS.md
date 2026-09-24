@@ -141,7 +141,9 @@ Each committed write bumps the chat bootstrap cache once
 (`group_model_endpoints_updated`).
 
 `update_group_model_endpoints` stays the unconditional upsert for the legacy
-callers. The other group-document writers become conditional in M7B.
+callers. From 0.261.151 the group membership writers are conditional too; the
+remaining whole-document writers are listed in the
+[membership write safety fix](../fixes/GROUP_MEMBERSHIP_WRITE_SAFETY_FIX.md).
 
 ### Create and update
 

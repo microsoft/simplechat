@@ -1,8 +1,8 @@
 # test_group_membership_policy.py
 """
 Functional test for the group membership policy and its hints.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 ``group_membership_operations`` and ``group_member_actions`` are the one membership
 decision. This test pins:

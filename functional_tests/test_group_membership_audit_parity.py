@@ -1,8 +1,8 @@
 # test_group_membership_audit_parity.py
 """
 Functional test for audit parity between the native and classic membership writes.
-Version: 0.261.150
-Implemented in: 0.261.150
+Version: 0.261.151
+Implemented in: 0.261.151
 
 Each native membership write and its classic counterpart run for real, through the
 shared harness, from the same stored group. They must leave the same group
