@@ -47,6 +47,12 @@ PROFILE_LOOKUP_MEMBERSHIP_STATUSES = {
     MEMBERSHIP_STATUS_PENDING,
 }
 
+# /api/userSearch waits at most this long for Graph, the bound the SimpleChat
+# operations' Graph calls use.
+USER_SEARCH_GRAPH_TIMEOUT_SECONDS = 20
+USER_SEARCH_FAILED_MESSAGE = "Graph API request failed"
+USER_SEARCH_TIMEOUT_MESSAGE = "Graph API request timed out"
+
 
 def _escape_graph_odata_literal(value):
     return str(value or "").replace("'", "''")
@@ -305,34 +311,45 @@ def register_route_backend_users(bp):
             "$select": "id,displayName,mail,userPrincipalName"
         }
 
+        # A failure answers only a fixed message: Graph's error body can name the
+        # tenant, the app and its permissions, so it is neither returned nor logged.
         try:
-            response = requests.get(user_endpoint, headers=headers, params=params)
+            response = requests.get(
+                user_endpoint,
+                headers=headers,
+                params=params,
+                timeout=USER_SEARCH_GRAPH_TIMEOUT_SECONDS,
+            )
             response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-
             user_results = response.json().get("value", [])
-            results = []
-            for user in user_results:
-                email = user.get("mail") or user.get("userPrincipalName") or ""
-                results.append({
-                    "id": user.get("id"),
-                    "displayName": user.get("displayName", "(no name)"),
-                    "email": email
-                })
-            return jsonify(results), 200
+        except requests.exceptions.Timeout:
+            log_event(
+                "[USERS] Graph user search timed out",
+                extra={"status_code": None},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": USER_SEARCH_TIMEOUT_MESSAGE}), 504
+        except (requests.exceptions.RequestException, ValueError) as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            log_event(
+                "[USERS] Graph user search failed",
+                extra={"status_code": status_code},
+                level=logging.WARNING,
+            )
+            # Graph's own error status when it answered with one, otherwise a bad gateway.
+            if not (isinstance(status_code, int) and status_code >= 400):
+                status_code = 502
+            return jsonify({"error": USER_SEARCH_FAILED_MESSAGE}), status_code
 
-        except requests.exceptions.RequestException as e:
-            print(f"Graph API request failed: {e}")
-            # Try to get more details from response if available
-            error_details = "Unknown error"
-            if e.response is not None:
-                try:
-                    error_details = e.response.json()
-                except ValueError: # Handle cases where response is not JSON
-                    error_details = e.response.text
-            return jsonify({
-                "error": "Graph API request failed",
-                "details": error_details
-            }), getattr(e.response, 'status_code', 500) # Use response status code if available
+        results = []
+        for user in user_results:
+            email = user.get("mail") or user.get("userPrincipalName") or ""
+            results.append({
+                "id": user.get("id"),
+                "displayName": user.get("displayName", "(no name)"),
+                "email": email
+            })
+        return jsonify(results), 200
 
     @bp.route("/api/user/info/<user_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
