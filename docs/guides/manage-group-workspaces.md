@@ -153,13 +153,33 @@ offered when your organization allows group endpoints.
   refused and your changes stay in the editor. Choose **Reload latest**, review
   your changes, and save again.
 
+### File sources
+
+From version **0.261.147**, **File sources** is native. It lists the
+connections the group syncs documents from: SMB shares, Azure Files shares and
+Azure Blob Storage containers. Owners, Admins, and DocumentManagers manage them
+when File Sync is enabled for the group. Ordinary members do not see file
+sources.
+
+- In an active group, managers can add, edit, and delete sources, and choose
+  **Sync now**. In a locked or uploads-disabled group they get a read-only list.
+- The editor can **Test connection** and **Browse** the remote location before
+  you save. A source can use one of the group's reusable identities, or
+  credentials entered directly. Stored passwords and secrets are never shown;
+  leave the field blank to keep one.
+- While browsing a saved source, **Ignore** skips a path on the next run, and
+  **Restore** brings it back.
+- Deleting asks whether to keep the documents the source brought in, or delete
+  them too. If only part of a delete succeeds, the section says what was
+  removed.
+- Each source can show its recent runs.
+
 ### Use group tools and manage the workspace
 
 Use **Workflows** for the native workflow editor and run history. From version
 **0.261.141**, workflow managers can also set a group workflow to run when File
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
-**Sync** is marked **Classic** while its native V2 experience is being built.
 **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
 Owners and administrators also have **Manage group (classic)** for members,
@@ -176,8 +196,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-File Sync sources, group membership administration, group settings, and public
-workspace pages still use the classic interface.
+Group membership administration, group settings, and public workspace pages
+still use the classic interface.
 
 ## Use the classic workspace
 

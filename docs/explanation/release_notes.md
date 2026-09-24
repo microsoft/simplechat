@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.147)**
+
+#### New Features
+
+*   **Native Group File Sources In V2**
+    *   The group workspace's **File sources** section is native in V2. Owners, Admins and DocumentManagers list the group's SMB, Azure Files and Azure Blob Storage sources, and in an active group create, edit, delete and sync them.
+    *   The editor tests the connection and browses the remote location before saving. It can bind one of the group's reusable identities, and while browsing a saved source it can ignore or restore a path.
+    *   Deleting asks whether to keep the documents the source brought in. The section reports the counts, and says plainly when documents were deleted even though the source couldn't be removed.
+    *   A save made after someone else changed the source keeps your draft. Refusals such as a sync that's already running show the server's reviewed message.
+    *   (Ref: `GroupFileSourcesSection.tsx`, `FileSourceEditorDialog.tsx`, `fileSourceWorkbench.ts`, [V2 Group File Sources](features/V2_GROUP_FILE_SOURCES.md))
+
 ### **(v0.261.146)**
 
 #### New Features

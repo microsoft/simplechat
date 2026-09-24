@@ -1,8 +1,8 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.146
-Implemented in: 0.261.145
+Version: 0.261.147
+Implemented in: 0.261.147
 
 Exercises the real file sources section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/file-sources` family and

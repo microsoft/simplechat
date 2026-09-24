@@ -18,9 +18,9 @@ Implemented in version: **0.261.142**, tracked in
 `application/single_app/config.py`.
 
 The routes use the existing File Sync containers and sync engine. No new
-setting, container or index is required. The V2 editor for these routes is a
-later release; until then, group sources are managed in the classic group
-workspace.
+setting, container or index is required. From version **0.261.147**, the native
+V2 group workspace manages group sources through these routes; see
+[V2 Group File Sources](V2_GROUP_FILE_SOURCES.md).
 
 ## Why new routes
 
@@ -306,6 +306,7 @@ the broken-access-control scanner passes on every changed backend module.
 
 ## Related
 
+- [V2 Group File Sources](V2_GROUP_FILE_SOURCES.md)
 - [File Sync Concurrent Write Fix](../fixes/FILE_SYNC_CONCURRENT_WRITE_FIX.md)
 - [Group Identity APIs](GROUP_IDENTITY_APIS.md)
 - [File Sync Source Workflow](FILE_SYNC_SOURCE_WORKFLOW.md)

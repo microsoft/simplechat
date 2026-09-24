@@ -1,8 +1,8 @@
 // test_v2_group_file_sources.ts
 //
 // Runtime pin for the scope seam in fileSourceWorkbench.ts.
-// Version: 0.261.146
-// Implemented in: 0.261.145
+// Version: 0.261.147
+// Implemented in: 0.261.147
 //
 // The browser suite proves the group editor, gating, conflict and delete behaviour against a
 // mocked backend. It cannot prove the one property the contract calls the floor: that the personal
