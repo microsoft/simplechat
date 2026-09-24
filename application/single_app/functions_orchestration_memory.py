@@ -1,7 +1,7 @@
 # functions_orchestration_memory.py
 """Read-only, audience-bound saved memory for orchestration.
 
-Version: 0.261.104
+Version: 0.261.132
 """
 
 from azure.core.exceptions import AzureError
@@ -88,7 +88,7 @@ def load_orchestration_memory(
     audience = validate_memory_audience(conversation, user_id, expected_audience)
     result = {
         'audience': audience, 'status': 'disabled', 'scope_type': None, 'scope': None,
-        'context_messages': [], 'citations': [], 'notices': [],
+        'context_messages': [], 'instruction_messages': [], 'citations': [], 'notices': [],
     }
     if not settings.get('enable_fact_memory_plugin', False):
         return result
@@ -132,6 +132,9 @@ def load_orchestration_memory(
         status='available' if messages else 'empty', scope_type=scope_type,
         scope={'type': scope_type, 'id': scope_id},
         context_messages=messages, citations=payload['citations'],
+        # Saved instructions, apart from recalled facts, so a chart sub-step can honor
+        # visual preferences without receiving background facts.
+        instruction_messages=list((payload.get('instruction_payload') or {}).get('context_messages') or []),
     )
     if payload['recall_payload']['search_mode'] == 'embedding_unavailable':
         result.update(

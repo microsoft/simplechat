@@ -107,6 +107,14 @@ def stubbed_orchestration_imports():
         yield
 
 
+def _visual_output_seed():
+    """The planner's pure visual-output helpers, loaded like every other definition here."""
+    proposals = _definitions("functions_image_proposals.py", names={"image_generation_is_enabled"})
+    return _definitions("functions_orchestration_visuals.py", seed=proposals, names={
+        "image_proposals_available", "image_requested_by_user", "planner_visual_outputs",
+    })
+
+
 @contextmanager
 def planner_runtime():
     """Expose actual planner, context, registry and schema functions without Azure imports."""
@@ -132,6 +140,7 @@ def planner_runtime():
     })
     planner = _definitions(PLANNER_FILE, seed={
         **registry, **schema,
+        **_visual_output_seed(),
         "build_model_reasoning_metadata": events["build_model_reasoning_metadata"],
         "conversation_reference_messages": context["conversation_reference_messages"],
         "APIError": getattr(sys.modules.get("openai"), "APIError", OfflineAPIError),

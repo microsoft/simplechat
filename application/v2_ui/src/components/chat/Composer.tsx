@@ -2,7 +2,7 @@
 // The message input surface: textarea, send/stop control, model / agent / prompt pickers
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -318,13 +318,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const orchestrating = orchestrationOn && orchestrationAvailable && !savedAnalysis;
     const [autoModelRouting, setAutoModelRouting] = useState(false);
     const [orchestrationModel, setOrchestrationModel] = useState<string>();
-    const [excludeImageForThisMessage, setExcludeImageForThisMessage] = useState(false);
-    const imageSelectionNoticeId = useId();
-    const imageSelectionNoticeRef = useRef<HTMLDivElement>(null);
-    const imageSelectionBlocked = orchestrating && options.imageGeneration && !excludeImageForThisMessage;
-    useEffect(() => {
-        setExcludeImageForThisMessage(false);
-    }, [orchestrating, activeConversationId]);
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
     // administrator leaves them reachable; otherwise the planner owns every decision and there is
@@ -400,6 +393,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             orchestrating,
         ],
     );
+    // In Orchestrate, Image asks the answer to include image proposals for approval rather
+    // than sending the prompt to the image endpoint, so it combines with every other control.
+    const imageProposalsRequested = orchestrating && options.imageGeneration && gating.showImage;
 
     // No URLs means the draft no longer has a Read URLs selection. A capability losing
     // authorization is different: keep that requirement visible for server validation.
@@ -770,10 +766,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (streaming || !canPost || uploadsBlocked) {
             return;
         }
-        if (imageSelectionBlocked) {
-            imageSelectionNoticeRef.current?.focus();
-            return;
-        }
         if (orchestrating && approvalBlocked) {
             toast.error(
                 settingsFailed
@@ -837,7 +829,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         uploadConversationRef.current = null;
         setShowPromptWarning(false);
         setPromptReview({ instance: 0, request: 0 });
-        setExcludeImageForThisMessage(false);
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
@@ -884,6 +875,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
+            ...(imageProposalsRequested ? { image_generation_enabled: true } : {}),
             required_capabilities: [
                 // Pinned sources constrain inputs, not the operation (search, Analyze, or Compare).
                 ...(options.documentSearch ? ['document_search'] : []),
@@ -1188,43 +1180,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         {reasoningNotice.message}
                     </p>
                 )}
-                {imageSelectionBlocked && (
-                    <div
-                        id={imageSelectionNoticeId}
-                        ref={imageSelectionNoticeRef}
-                        role="alert"
-                        tabIndex={-1}
-                        className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn"
-                    >
-                        Image is selected, but Orchestrate cannot generate images.
-                        Choose how to send before continuing. Your regular Chat image preference is unchanged.
-                        <div className="mt-2 flex flex-wrap gap-3">
-                            <button
-                                type="button"
-                                className="font-medium underline"
-                                onClick={() => {
-                                    toggleOrchestration();
-                                    textareaRef.current?.focus();
-                                }}
-                            >
-                                Use regular Chat with Image
-                            </button>
-                            <button
-                                type="button"
-                                className="font-medium underline"
-                                onClick={() => {
-                                    setExcludeImageForThisMessage(true);
-                                    textareaRef.current?.focus();
-                                }}
-                            >
-                                Use Orchestrate without Image for this message
-                            </button>
-                        </div>
-                    </div>
-                )}
-                {orchestrating && options.imageGeneration && excludeImageForThisMessage && (
-                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
-                        This orchestration message will not generate images. Image remains selected for regular Chat.
+                {imageProposalsRequested && (
+                    <p role="status" className="mb-2 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-text-2">
+                        Orchestrate will include image proposals for you to approve.
                     </p>
                 )}
                 {orchestrating && (
@@ -1345,7 +1303,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
                         showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
-                        submitDisabled={streaming || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
+                        submitDisabled={streaming || uploadsBlocked || (orchestrating && approvalBlocked)}
                         promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
                         onSendWithUnfilled={() => submit(true)}
                         knowledgeAgent={buildSelectionFields({
@@ -1565,10 +1523,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     />
                                 )}
 
+                                {/* In Orchestrate this asks the answer for image proposals to approve. */}
                                 {gating.showImage && (
                                     <ToolToggle
-                                        active={options.imageGeneration && !orchestrating}
-                                        disabled={orchestrating}
+                                        active={options.imageGeneration}
                                         onClick={() => {
                                             clearAnalysisResultContext();
                                             setOptions((current) => ({
@@ -1577,7 +1535,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                             }));
                                         }}
                                         icon={<ImageIcon size={15} />}
-                                        label={orchestrating ? 'Image unavailable in Orchestrate' : 'Image'}
+                                        label="Image"
                                     />
                                 )}
 
@@ -1682,8 +1640,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
-                                    aria-describedby={imageSelectionBlocked ? imageSelectionNoticeId : undefined}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && approvalBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

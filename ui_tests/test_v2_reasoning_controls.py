@@ -1,8 +1,8 @@
 # test_v2_reasoning_controls.py
 """
 Real-Composer reasoning, capability selections, and saved-plan notice regressions.
-Version: 0.261.122
-Implemented in: 0.261.104
+Version: 0.261.132
+Implemented in: 0.261.104; Image requests orchestration image proposals since 0.261.132
 
 Reuse the local/Azure Playwright fixtures without live model, Azure or retrieval calls.
 """
@@ -156,7 +156,8 @@ def test_selected_supported_controls_are_positive_requirements_without_web_opt_i
     expect(page.get_by_title("Deep research", exact=True)).to_be_enabled()
     page.get_by_title("Deep research", exact=True).click()
     expect(page.get_by_title("Web", exact=True)).to_have_attribute("aria-pressed", "false")
-    expect(page.get_by_title("Image unavailable in Orchestrate", exact=True)).to_be_disabled()
+    expect(page.get_by_title("Image", exact=True)).to_be_enabled()
+    expect(page.get_by_title("Image", exact=True)).to_have_attribute("aria-pressed", "false")
     message_box(page).fill("Read https://example.test/report")
     page.get_by_title("Read URLs", exact=True).click()
     with page.expect_response(lambda response: urlsplit(response.url).path == PLAN_PATH):
@@ -167,10 +168,10 @@ def test_selected_supported_controls_are_positive_requirements_without_web_opt_i
 
 
 @pytest.mark.parametrize("width,manual_controls", [(1440, True), (390, False)])
-@pytest.mark.parametrize("choice", ["regular_chat", "orchestrate_without_image"])
-def test_preselected_image_requires_an_explicit_compatible_choice_before_click_or_enter(
-    approval_ui, width, manual_controls, choice,
+def test_preselected_image_asks_orchestration_for_image_proposals_by_click_or_enter(
+    approval_ui, width, manual_controls,
 ):
+    """Since 0.261.132, Image in Orchestrate requests proposal cards instead of blocking the send."""
     open_page, api = approval_ui
     configure(api)
     api.bootstrap["orchestration"]["show_manual_controls"] = manual_controls
@@ -180,41 +181,24 @@ def test_preselected_image_requires_an_explicit_compatible_choice_before_click_o
     page.get_by_title("Image", exact=True).click()
     message_box(page).fill("Draw an illustration.")
     page.get_by_title("Orchestrate", exact=True).click()
-    notice = page.get_by_role("alert").filter(has_text="Orchestrate cannot generate images")
-    expect(notice).to_be_visible()
-    expect(send_button(page)).to_be_disabled()
-    send_button(page).dispatch_event("click")
-    message_box(page).press("Enter")
-    expect(notice).to_be_focused()
-    expect(message_box(page)).to_have_value("Draw an illustration.")
-    assert api.plans == [] and api.chats == []
-
-    if choice == "regular_chat":
-        page.get_by_role("button", name="Use regular Chat with Image", exact=True).click()
-        expect(page.get_by_title("Image", exact=True)).to_have_attribute("aria-pressed", "true")
-        with page.expect_response(lambda response: urlsplit(response.url).path == CHAT_PATH):
-            message_box(page).press("Enter")
-        assert api.chats[-1]["image_generation"] is True
-        assert api.plans == []
-        return
-
-    page.get_by_role("button", name="Use Orchestrate without Image for this message", exact=True).click()
-    expect(message_box(page)).to_be_focused()
-    expect(page.get_by_role("status").filter(has_text="This orchestration message will not generate images")).to_be_visible()
+    expect(page.get_by_role("alert").filter(has_text="cannot generate images")).to_have_count(0)
+    status = page.get_by_role("status").filter(has_text="Orchestrate will include image proposals for you to approve.")
+    expect(status).to_be_visible()
     expect(send_button(page)).to_be_enabled()
-    assert api.plans == [] and api.chats == []
     with page.expect_response(lambda response: urlsplit(response.url).path == PLAN_PATH):
         message_box(page).press("Enter")
+    assert api.plans[-1]["image_generation_enabled"] is True
     assert api.plans[-1]["required_capabilities"] == []
-    assert not any("image" in key for key in api.plans[-1])
+    assert api.chats == []
     page.wait_for_function("() => !window.OrchHarness.stores.chat.useChatStore.getState().streaming")
     message_box(page).fill("A second illustration.")
-    expect(send_button(page)).to_be_disabled()
-    message_box(page).press("Enter")
-    expect(notice).to_be_focused()
-    assert len(api.plans) == 1
-    page.get_by_role("button", name="Use regular Chat with Image", exact=True).click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == PLAN_PATH):
+        send_button(page).click()
+    assert api.plans[-1]["image_generation_enabled"] is True
+    assert len(api.plans) == 2
+    page.get_by_title("Orchestrate", exact=True).click()
     expect(page.get_by_title("Image", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(status).to_have_count(0)
 
 
 @pytest.mark.parametrize("previous_selection", ["edited_out", "previous_message", "capability_disabled"])

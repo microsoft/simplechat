@@ -2,14 +2,26 @@
 """Shared configuration helpers for the built-in chart action."""
 
 import json
+import math
 import re
+from datetime import datetime, timezone
 
 
 CHART_PLUGIN_TYPE = 'chart'
 CORE_CHART_PLUGIN_NAME = 'conversation_charts'
 CHART_DEFAULT_ENDPOINT = 'chart://internal'
 INLINE_CHART_BLOCK_LANGUAGE = 'simplechart'
+INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
 PROACTIVE_CHART_GUIDANCE_MARKER = '[PROACTIVE_ANALYTICAL_CHART_GUIDANCE]'
+
+# Both chat clients draw at most this many points per series (`inlineChartSpec.ts` and
+# `chat-inline-charts.js`), so a longer series has to be reduced before it is charted
+# rather than silently cut off after its first 200 values.
+INLINE_CHART_MAX_POINTS = 200
+SERIES_CHART_MAX_SOURCE_ROWS = 20000
+SERIES_CHART_MAX_SERIES = 6
+RESULT_ROW_KEYS = ('rows', 'data', 'values', 'items', 'results', 'records')
+_ISO_TIMESTAMP_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}')
 
 PROACTIVE_CHART_REQUEST_MARKERS = (
     'analyze',
@@ -195,6 +207,378 @@ def build_inline_chart_markdown(chart_payload):
         f"{json.dumps(chart_payload, separators=(',', ':'))}\n"
         f"```"
     )
+
+
+def user_requested_chart_visualization(user_message):
+    """Return True when the user is explicitly asking for a plotted visualization."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
+    if not normalized_message:
+        return False
+
+    non_visual_patterns = (
+        'chart of accounts',
+        'org chart',
+        'organization chart',
+        'organizational chart',
+        'chart out ',
+    )
+    if any(pattern in normalized_message for pattern in non_visual_patterns):
+        return False
+
+    if re.search(
+        r'\b(?:bar|line|pie|doughnut|scatter|bubble|radar|histogram|heatmap|area|stacked(?:\s+bar|\s+line)?)\s+chart\b',
+        normalized_message,
+    ):
+        return True
+
+    if 'table and chart' in normalized_message or 'chart and table' in normalized_message:
+        return True
+
+    if re.search(r'\b(?:graph|plot|visuali[sz]e?|visuali[sz]ation)\b', normalized_message):
+        return True
+
+    return bool(
+        re.search(
+            r'\b(?:include|with|show|create|generate|render|make|build|draw|produce)\b[^.!?\n]{0,80}\bchart\b',
+            normalized_message,
+        )
+    )
+
+
+def normalize_inline_chart_markdown(chart_markdown):
+    """Return a SimpleChat inline chart fence, or None when the value is not one."""
+    block = str(chart_markdown or '').strip()
+    if not block.startswith(f'```{INLINE_CHART_BLOCK_LANGUAGE}'):
+        return None
+    return block
+
+
+def collect_inline_chart_blocks(candidate, chart_blocks):
+    """Append every chart fence found in a tool result or citation tree to ``chart_blocks``."""
+    if isinstance(candidate, dict):
+        normalized_chart_markdown = normalize_inline_chart_markdown(candidate.get('chart_markdown'))
+        if normalized_chart_markdown:
+            chart_blocks.append({
+                'chart_id': candidate.get('chart_payload', {}).get('chartId') if isinstance(candidate.get('chart_payload'), dict) else None,
+                'chart_markdown': normalized_chart_markdown,
+            })
+
+        for value in candidate.values():
+            collect_inline_chart_blocks(value, chart_blocks)
+        return chart_blocks
+
+    if isinstance(candidate, list):
+        for item in candidate:
+            collect_inline_chart_blocks(item, chart_blocks)
+    return chart_blocks
+
+
+def append_inline_chart_blocks_to_message(message_content, agent_citations):
+    """Append chart fences produced by tools that the message does not already contain."""
+    chart_blocks = []
+    collect_inline_chart_blocks(agent_citations, chart_blocks)
+
+    if not chart_blocks:
+        return message_content
+
+    existing_content = str(message_content or '').strip()
+    appended_blocks = []
+    seen_chart_ids = set()
+
+    for chart_block in chart_blocks:
+        chart_id = str(chart_block.get('chart_id') or '').strip()
+        chart_markdown = chart_block.get('chart_markdown')
+        if not chart_markdown:
+            continue
+
+        if chart_id:
+            if chart_id in seen_chart_ids:
+                continue
+            if INLINE_CHART_ID_PATTERN_TEMPLATE.format(chart_id) in existing_content:
+                seen_chart_ids.add(chart_id)
+                continue
+            seen_chart_ids.add(chart_id)
+
+        if chart_markdown in existing_content:
+            continue
+
+        appended_blocks.append(chart_markdown)
+
+    if not appended_blocks:
+        return message_content
+
+    separator = '\n\n' if existing_content else ''
+    return f"{existing_content}{separator}{'\n\n'.join(appended_blocks)}"
+
+
+def _json_value(value):
+    if isinstance(value, (str, bytes)):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return value
+
+
+def _row_list(candidate):
+    if not isinstance(candidate, list):
+        return []
+    return [row for row in candidate if isinstance(row, dict)]
+
+
+def extract_result_rows(value):
+    """Return the row objects a tool result carries, or an empty list.
+
+    Tools return rows in a handful of shapes: a bare list of objects, or an object that
+    holds the list under ``rows``, ``data``, ``values`` and similar keys, sometimes one
+    level down. JSON text is parsed first because Semantic Kernel hands string results
+    through unchanged.
+    """
+    value = _json_value(value)
+    rows = _row_list(value)
+    if rows:
+        return rows
+    if not isinstance(value, dict):
+        return []
+    for key in RESULT_ROW_KEYS:
+        rows = _row_list(value.get(key))
+        if rows:
+            return rows
+    for nested in value.values():
+        if isinstance(nested, dict):
+            for key in RESULT_ROW_KEYS:
+                rows = _row_list(nested.get(key))
+                if rows:
+                    return rows
+    return []
+
+
+def _row_value(row, field):
+    if field in row:
+        return row[field]
+    current = row
+    for part in field.split('.'):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _series_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip().replace(',', '')
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
+def _series_timestamp(value):
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or '').strip()
+        if not _ISO_TIMESTAMP_PATTERN.match(text):
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace(' ', 'T', 1))
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None), True
+    return parsed, False
+
+
+def _field_label(field):
+    text = re.sub(r'[_.]+', ' ', str(field or '')).strip()
+    return text[:1].upper() + text[1:] if text else 'Value'
+
+
+def _number_label(number):
+    if float(number).is_integer():
+        return str(int(number))
+    return f'{number:.6g}'
+
+
+def _time_labels(stamps, aware):
+    same_day = len({stamp.date() for stamp in stamps}) == 1
+    if same_day:
+        labels = [stamp.strftime('%H:%M:%S') for stamp in stamps]
+        if len(set(labels)) < len(labels):
+            labels = [f"{stamp.strftime('%H:%M:%S')}.{stamp.microsecond // 1000:03d}" for stamp in stamps]
+    else:
+        labels = [stamp.strftime('%Y-%m-%d %H:%M') for stamp in stamps]
+        if len(set(labels)) < len(labels):
+            labels = [stamp.strftime('%Y-%m-%d %H:%M:%S') for stamp in stamps]
+    details = []
+    if aware:
+        details.append('UTC')
+    if same_day:
+        details.append(stamps[0].date().isoformat())
+    axis_label = f"Time ({', '.join(details)})" if details else 'Time'
+    return labels, axis_label
+
+
+def _duration_label(seconds):
+    if seconds < 1:
+        return f'{seconds * 1000:.0f} ms'
+    if seconds < 90:
+        return f'{seconds:.3g} s'
+    if seconds < 5400:
+        return f'{seconds / 60:.3g} min'
+    return f'{seconds / 3600:.3g} h'
+
+
+def _extreme_indices(values, max_points):
+    """Keep the first and last points and each segment's lowest and highest value.
+
+    Plain every-nth sampling can step straight over a spike. Keeping both extremes of each
+    segment means the reduced line still reaches every peak and trough the full series has.
+    """
+    count = len(values)
+    if count <= max_points:
+        return list(range(count)), 0
+    keep = {0, count - 1}
+    interior = count - 2
+    segments = max(1, (max_points - 2) // 2)
+    for segment in range(segments):
+        start = 1 + (segment * interior) // segments
+        end = 1 + ((segment + 1) * interior) // segments
+        if start >= end:
+            continue
+        candidates = [index for index in range(start, end) if values[index] is not None]
+        if not candidates:
+            keep.add(start)
+            continue
+        keep.add(min(candidates, key=lambda index: values[index]))
+        keep.add(max(candidates, key=lambda index: values[index]))
+    return sorted(keep)[:max_points], segments
+
+
+def build_series_chart_data(rows, x_field, y_fields, *, max_points=INLINE_CHART_MAX_POINTS, series_labels=None):
+    """Turn exact tool rows into chart labels and datasets that fit the display limit.
+
+    Time and numeric x values are sorted ascending, because tools commonly return newest
+    first. When a series has more points than a chart can show, it is reduced by keeping
+    every segment's highest and lowest value of the first series, and the same rows are
+    used for any other series so the lines stay aligned. Raises ``ValueError`` with a
+    message safe to return to the model when the rows cannot be charted as asked.
+    """
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('The selected result has no rows to chart.')
+    if len(rows) > SERIES_CHART_MAX_SOURCE_ROWS:
+        raise ValueError(
+            f'The selected result has more than {SERIES_CHART_MAX_SOURCE_ROWS} rows; narrow the request before charting it.'
+        )
+    x_field = str(x_field or '').strip()
+    fields = [str(field or '').strip() for field in (y_fields or ()) if str(field or '').strip()]
+    available = ', '.join(sorted(str(key) for key in rows[0].keys())[:20]) if isinstance(rows[0], dict) else ''
+    if not x_field:
+        raise ValueError(f'Choose the field for the x axis. Available fields: {available}')
+    if not fields:
+        raise ValueError(f'Choose at least one numeric field to plot. Available fields: {available}')
+    if len(fields) > SERIES_CHART_MAX_SERIES:
+        raise ValueError(f'Chart at most {SERIES_CHART_MAX_SERIES} series at once.')
+    max_points = max(2, min(int(max_points or INLINE_CHART_MAX_POINTS), INLINE_CHART_MAX_POINTS))
+
+    raw_x = [_row_value(row, x_field) for row in rows]
+    present_x = [value for value in raw_x if value not in (None, '')]
+    if not present_x:
+        raise ValueError(f"No row has a value for '{x_field}'. Available fields: {available}")
+    parsed_times = [_series_timestamp(value) for value in present_x]
+    if sum(parsed is not None for parsed in parsed_times) >= max(1, int(len(present_x) * 0.9)):
+        x_kind = 'time'
+    elif sum(_series_number(value) is not None for value in present_x) >= max(1, int(len(present_x) * 0.9)):
+        x_kind = 'number'
+    else:
+        x_kind = 'category'
+
+    points = []
+    aware = False
+    for index, row in enumerate(rows):
+        values = [_series_number(_row_value(row, field)) for field in fields]
+        if all(value is None for value in values):
+            continue
+        if x_kind == 'time':
+            parsed = _series_timestamp(raw_x[index])
+            if parsed is None:
+                continue
+            key, is_aware = parsed
+            aware = aware or is_aware
+        elif x_kind == 'number':
+            key = _series_number(raw_x[index])
+            if key is None:
+                continue
+        else:
+            if raw_x[index] in (None, ''):
+                continue
+            key = index
+        points.append((key, raw_x[index], values))
+
+    for position, field in enumerate(fields):
+        if not any(point[2][position] is not None for point in points):
+            raise ValueError(f"'{field}' has no numeric values to plot. Available fields: {available}")
+    if x_kind in ('time', 'number'):
+        points.sort(key=lambda point: point[0])
+
+    total = len(points)
+    kept, segments = _extreme_indices([point[2][0] for point in points], max_points)
+    plotted = [points[index] for index in kept]
+
+    if x_kind == 'time':
+        labels, axis_label = _time_labels([point[0] for point in plotted], aware)
+    elif x_kind == 'number':
+        labels, axis_label = [_number_label(point[0]) for point in plotted], _field_label(x_field)
+    else:
+        labels, axis_label = [str(point[1])[:80] for point in plotted], _field_label(x_field)
+
+    names = [str(label or '').strip() for label in (series_labels or ())]
+    datasets = [
+        {
+            'label': (names[position] if position < len(names) and names[position] else _field_label(field))[:80],
+            'data': [point[2][position] for point in plotted],
+        }
+        for position, field in enumerate(fields)
+    ]
+
+    plotted_values = [value for point in plotted for value in point[2] if value is not None]
+    low, high = min(plotted_values), max(plotted_values)
+    begin_at_zero = not (
+        (low > 0 and high - low <= 0.5 * high) or (high < 0 and high - low <= 0.5 * abs(low))
+    )
+
+    if segments:
+        detail = ''
+        if x_kind == 'time' and total > 1:
+            span = (points[-1][0] - points[0][0]).total_seconds() / segments
+            detail = f' in {_duration_label(span)} segments' if span > 0 else ''
+        sampling_note = (
+            f'{len(plotted)} of {total} points shown; the highest and lowest '
+            f'{datasets[0]["label"]} value{detail} are kept.'
+        )
+    else:
+        sampling_note = f'All {total} points shown.'
+
+    return {
+        'labels': labels,
+        'datasets': datasets,
+        'x_axis_label': axis_label,
+        'x_kind': x_kind,
+        'source_points': total,
+        'plotted_points': len(plotted),
+        'downsampled': bool(segments),
+        'sampling_note': sampling_note,
+        'begin_at_zero': begin_at_zero,
+    }
 
 
 def user_request_supports_proactive_charts(user_message):

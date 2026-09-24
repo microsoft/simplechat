@@ -299,9 +299,10 @@ URL Access controls are positive requirements, not the complete list of permitte
 tools. Unchecked controls are neutral. The planner may choose other enabled,
 authorized capabilities, while selected documents, agents, workspaces, and filters
 retain their intended constraints. Deep Research can be selected without also
-selecting Web Search. Image generation is unsupported in this mode and must be
-handled in ordinary chat or explicitly excluded for that message rather than
-silently discarded.
+selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
+it asks the answer to include image proposal cards rather than sending your prompt to
+the image model, so it combines with every other control. Each card generates an image
+only when you approve it.
 
 Every Orchestrate request now invokes the planner, even a short question or
 acknowledgment. The planner may choose a direct answer; no topic rule forces
@@ -322,16 +323,22 @@ The composer reports an unsuccessful save rather than claiming the new mode was
 remembered. Choose the mode again to retry. If no choice has been saved, the current
 deployment default applies. See [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
 
-## Orchestration input recovery (V2 interface)
+## Visuals in orchestrated answers (V2 interface)
 
-Since **0.261.104**, entering Orchestrate with Image already selected pauses
-submission behind an accessible alert. This applies to Send, Enter, and requests
-with an attached prompt; an unsupported selection is not silently ignored.
+Since **0.261.132**, an orchestrated answer can include the same visuals as ordinary
+chat. You do not need a control for most of them; the planner and answer decide from
+the request.
 
-| Control | What it does | Why you would use it | Enabled by |
+| Control or output | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Use regular Chat with Image | Leaves Orchestrate and retains the Image selection. | Keep image generation as part of the request. | Orchestrate with Image already selected |
-| Use Orchestrate without Image for this message | Explicitly excludes Image from this orchestration message without changing the ordinary-chat Image preference. | Continue with supported orchestration work when an image is unnecessary for this turn. | Same input-recovery alert |
+| Image (in Orchestrate) | Asks the answer to include at least one image proposal card, and shows "Orchestrate will include image proposals for you to approve." while it is on. Nothing is generated until you approve a card. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
+| Inline charts | Charts numeric results. When data comes from an action, the chart is drawn from the exact retrieved rows; long series show up to 200 points and keep each segment's highest and lowest value. | Plot telemetry, metrics, or other series without copying values into a prompt. | `enable_chat_orchestration` |
+| Mermaid diagrams | Draws flows, architectures, sequences, and relationships the gathered information describes. | Get an editable, accessible diagram instead of a picture of one. | `enable_chat_orchestration` |
+
+Saved Instruction memories shape these visuals. For example, "I don't like charts"
+stops charts you did not ask for, and "make my diagrams red" styles the diagrams you
+get. An explicit request in your current message still wins. Preferences saved as
+facts are background context and may not be applied.
 
 The exclusion must be chosen again for a later message. URL Access eligibility
 uses the full resolved message, including attached prompts. Removing its URL

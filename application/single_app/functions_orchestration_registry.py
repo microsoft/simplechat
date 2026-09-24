@@ -28,7 +28,7 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.127
+Version: 0.261.132
 """
 
 import logging
@@ -640,7 +640,9 @@ CAPABILITY_REGISTRY = (
         'summary': "Write the answer from whatever the earlier steps gathered.",
         'when_to_use': (
             "Always the last step. Every plan ends with exactly one of these, including a "
-            "plan that gathers nothing and simply answers from the model's own knowledge."
+            "plan that gathers nothing and simply answers from the model's own knowledge. "
+            "Its instruction can ask for inline charts, Mermaid diagrams, or image proposals "
+            "when they would help the answer."
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -651,7 +653,10 @@ CAPABILITY_REGISTRY = (
             'properties': {
                 'instruction': {
                     'type': 'string',
-                    'description': 'How to shape the answer. Omit to answer the question directly.',
+                    'description': (
+                        'How to shape the answer, including any chart, Mermaid diagram, or image '
+                        'proposals it should contain. Omit to answer the question directly.'
+                    ),
                 },
             },
             'required': [],
