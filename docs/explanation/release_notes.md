@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.161)**
+
+#### Bug Fixes
+
+*   **SimpleChat Agent Tools Explain A Group That Keeps Changing**
+    *   When adding a group member or marking a group inactive couldn't be saved because the group kept changing, the agent got a generic "unexpected" error and the application logged an error with a traceback.
+    *   The tools now answer with the same message every group route uses, "The group changed while your request was being saved. Try again.", and the code `group_write_conflict`. Nothing was saved, so the request can be repeated. The log entry is a warning with no group data.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
 ### **(v0.261.160)**
 
 #### Bug Fixes
