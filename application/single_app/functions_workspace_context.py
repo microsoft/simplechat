@@ -40,6 +40,10 @@ from functions_group_endpoint_policy import (
     group_endpoint_management_operations,
     group_endpoints_available,
 )
+from functions_group_file_source_policy import (
+    group_file_source_management_operations,
+    group_file_sources_available,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -120,6 +124,12 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     # the Identities section and the routes agree on one gate (Semantic Kernel or
     # File Sync). ``manager`` still gates the section, so this stays manager-only.
     identities_available, _identities_reason = group_identities_available(
+        settings, group_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
+    )
+    # The single availability predicate the immutable file source routes also call,
+    # so the Sync section and the routes agree on one gate (File Sync for this
+    # group). ``manager`` still gates the section, so this stays manager-only.
+    file_sources_available, _file_sources_reason = group_file_sources_available(
         settings, group_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
     )
 
@@ -262,6 +272,12 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "schema_version": 1,
             "operations": group_endpoint_management_operations(
                 user_id, group, role, settings, available=endpoints_available,
+            ),
+        },
+        "file_source_management": {
+            "schema_version": 1,
+            "operations": group_file_source_management_operations(
+                role, group, settings, available=file_sources_available,
             ),
         },
     }

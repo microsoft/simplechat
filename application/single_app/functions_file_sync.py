@@ -59,6 +59,9 @@ from functions_documents import (
 )
 from functions_group import assert_group_role
 from functions_keyvault import (
+    keyvault_file_sync_cleanup_helper,
+    keyvault_file_sync_delete_helper,
+    keyvault_file_sync_discard_staged_helper,
     retrieve_secret_from_key_vault_by_full_name,
     store_secret_in_key_vault,
     ui_trigger_word,
@@ -154,6 +157,38 @@ class FileSyncWriteConflict(RuntimeError):
     """A File Sync record kept changing while a write was being applied to it."""
 
 
+class FileSyncConfigConflict(RuntimeError):
+    """A native conditional write was refused: the editable configuration changed.
+
+    Raised by the immutable-target group routes when the caller's
+    ``expected_config_revision`` no longer matches the freshly read source. The
+    check runs inside the conditional write's ``apply_changes`` so it and the write
+    see the same copy. A sync run finishing never raises this, because the engine
+    writes no editable field (see :func:`compute_file_sync_config_revision`).
+    """
+
+
+class FileSyncSourceBusy(RuntimeError):
+    """A native delete was refused because the source has a queued or running sync."""
+
+
+class FileSyncDeleteIncomplete(ValueError):
+    """A native delete's associated-document deletion could not remove every document.
+
+    Carries the ``delete_result`` counts so the route can report ``delete_incomplete``
+    with the numbers. It subclasses ``ValueError`` so the legacy delete path, which
+    catches ``ValueError``, is unchanged.
+    """
+
+    def __init__(self, delete_result: Dict[str, Any], public_message: Optional[str] = None):
+        self.delete_result = dict(delete_result or {})
+        self.public_message = str(
+            public_message
+            or "Some of this source's documents could not be deleted, so the source was kept. Try again."
+        )
+        super().__init__(self.public_message)
+
+
 FILE_SYNC_DEFAULTS = {
     "enable_file_sync": False,
     "enable_file_sync_personal": True,
@@ -192,6 +227,16 @@ FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE = {
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {"client_secret"},
 }
 FILE_SYNC_IDENTITY_AUTH_TYPES = set().union(*FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE.values())
+# A stable order for the source-type option list, so the group file-source options
+# endpoint returns a deterministic sequence rather than an arbitrary set order.
+FILE_SYNC_SOURCE_TYPE_OPTION_ORDER = (
+    FILE_SYNC_SOURCE_TYPE_SMB,
+    FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB,
+    FILE_SYNC_SOURCE_TYPE_ONEDRIVE,
+    FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM,
+    FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE,
+)
 
 
 def _now() -> datetime:
@@ -697,6 +742,128 @@ def sanitize_file_sync_run(run: Dict[str, Any]) -> Dict[str, Any]:
     if sanitized_run.get("error_message"):
         sanitized_run["error_message"] = FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE
     return sanitized_run
+
+
+# The non-secret ``auth`` keys any preparer (SMB, Azure Files, Azure Blob) can
+# write. The conflict hash covers all of them, including the secret reference
+# names, but never the inline ``password`` or ``secret`` values.
+_FILE_SYNC_EDITABLE_AUTH_FIELDS = (
+    "auth_type",
+    "username",
+    "domain",
+    "identity",
+    "tenant_id",
+    "managed_identity_client_id",
+    "password_secret_name",
+    "secret_secret_name",
+)
+
+
+def _file_sync_editable_projection(source: Dict[str, Any]) -> Dict[str, Any]:
+    """The user-editable fields of a source, for the conflict hash.
+
+    Only what a manager configures appears here. The engine writes ``last_run_*``,
+    ``updated_at`` and ``schedule.next_run_at`` (dropped below), so a sync run
+    finishing never changes :func:`compute_file_sync_config_revision` and so never
+    causes a native ``expected_config_revision`` 409. Secrets never appear: the
+    inline ``password`` and ``secret`` values (stored when Key Vault is off) are
+    excluded, so a client-visible hash can never be tested offline against a guess.
+    Every other non-secret ``auth`` field a preparer writes is included, though,
+    including the secret **reference names** ``password_secret_name`` and
+    ``secret_secret_name``: a concurrent rotation stages a fresh reference and its
+    post-commit cleanup deletes the old one, so a PATCH that excluded the reference
+    names could still commit a stale reference that no longer resolves. Covering
+    them makes such a rotation-in-flight a clean ``config_conflict``.
+    """
+    source = source or {}
+    schedule = dict(source.get("schedule") or {})
+    schedule.pop("next_run_at", None)
+    auth = source.get("auth") or {}
+    return {
+        "name": source.get("name"),
+        "source_type": source.get("source_type"),
+        "enabled": bool(source.get("enabled", True)),
+        "recursive": bool(source.get("recursive", True)),
+        "connection": source.get("connection") or {},
+        "filters": source.get("filters") or {},
+        "schedule": schedule,
+        "remote_delete_policy": source.get("remote_delete_policy"),
+        "identity_id": source.get("identity_id") or "",
+        "auth": {key: auth.get(key) for key in _FILE_SYNC_EDITABLE_AUTH_FIELDS},
+    }
+
+
+def compute_file_sync_config_revision(source: Dict[str, Any]) -> str:
+    """A SHA-256 over the canonical JSON of a source's editable projection.
+
+    The immutable-target group routes send this back as ``config_revision`` and
+    accept it as ``expected_config_revision`` on PATCH and DELETE, so a stale editor
+    is refused with a 409 while an engine run finishing (which touches no editable
+    field) is not.
+    """
+    canonical = json.dumps(
+        _file_sync_editable_projection(source),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _source_type_allowed_for_scope(scope_type: str, source_type: str) -> bool:
+    """Whether a source type may be created in a scope, mirroring
+    :func:`_normalize_source_payload`'s OneDrive-is-personal-only rule so the group
+    file-source options never offer a type that save-time validation would reject.
+    """
+    if source_type == FILE_SYNC_SOURCE_TYPE_ONEDRIVE and _validate_scope(scope_type) != FILE_SYNC_SCOPE_PERSONAL:
+        return False
+    return True
+
+
+def build_file_sync_source_options(scope_type: str, scope_id: str, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Server-decided source-type and identity-eligibility options for an editor.
+
+    Identity eligibility uses the same gate ``_get_file_sync_identity`` applies at
+    save time (:func:`identity_supports_usage` with the source type and its allowed
+    auth types), so a client filtering its identity picker with
+    ``eligible_identity_ids`` shows exactly the identities the server would accept.
+    Only scope-valid, implemented source types are offered, each carrying its admin
+    visibility flag.
+    """
+    scope_type = _validate_scope(scope_type)
+    settings = settings or get_settings()
+    config = get_file_sync_config(settings)
+    identities = list_workspace_identities(scope_type, scope_id)
+    source_types = []
+    eligible_identity_ids: Dict[str, List[str]] = {}
+    for source_type in FILE_SYNC_SOURCE_TYPE_OPTION_ORDER:
+        if source_type not in FILE_SYNC_IMPLEMENTED_SOURCE_TYPES:
+            continue
+        if not _source_type_allowed_for_scope(scope_type, source_type):
+            continue
+        source_types.append({
+            "value": source_type,
+            "label": _source_type_label(source_type),
+            "visible": is_file_sync_source_type_visible(settings, source_type),
+        })
+        allowed_auth_types = _file_sync_auth_types_for_source_type(source_type)
+        eligible_identity_ids[source_type] = [
+            str(identity.get("id") or identity.get("identity_id") or "")
+            for identity in identities
+            if identity_supports_usage(
+                identity, "file_sync", source_type=source_type, auth_types=allowed_auth_types
+            )
+        ]
+    return {
+        "source_types": source_types,
+        "eligible_identity_ids": eligible_identity_ids,
+        "schedule": {
+            "min_interval_minutes": config["file_sync_min_schedule_interval_minutes"],
+            "max_interval_minutes": 10080,
+        },
+        "limits": {"max_sources": config["file_sync_max_sources_per_scope"]},
+        "recursive_allowed": bool(config["file_sync_allow_recursive_sources"]),
+    }
 
 
 def _normalize_text(value: Any, max_length: int = 255) -> str:
@@ -1466,6 +1633,9 @@ def _prepare_auth_payload(
     source_type: str,
     raw_credentials: Dict[str, Any],
     existing_auth: Optional[Dict[str, Any]] = None,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     raw_credentials = raw_credentials or {}
     existing_auth = existing_auth or {}
@@ -1480,7 +1650,10 @@ def _prepare_auth_payload(
         raise ValueError(f"{_source_type_label(normalized_source_type)} File Sync supports {', '.join(sorted(allowed_auth_types))} authentication")
 
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
-        return _prepare_azure_files_auth_payload(scope_type, scope_id, source_id, raw_credentials, existing_auth, auth_type)
+        return _prepare_azure_files_auth_payload(
+            scope_type, scope_id, source_id, raw_credentials, existing_auth, auth_type,
+            fresh_names=fresh_names, staged_names=staged_names,
+        )
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
         prepared_auth = _prepare_azure_files_auth_payload(
             scope_type,
@@ -1490,6 +1663,8 @@ def _prepare_auth_payload(
             existing_auth,
             auth_type,
             source_label="Azure Blob Storage",
+            fresh_names=fresh_names,
+            staged_names=staged_names,
         )
         return prepared_auth
 
@@ -1514,7 +1689,10 @@ def _prepare_auth_payload(
             raise ValueError("SMB username/password sources require a password")
         return prepared_auth
 
-    stored_password = _store_file_sync_secret(scope_type, scope_id, source_id, "password", str(password))
+    stored_password = _store_file_sync_secret(
+        scope_type, scope_id, source_id, "password", str(password),
+        fresh_names=fresh_names, staged_names=staged_names,
+    )
     if stored_password == str(password):
         prepared_auth["password"] = stored_password
     else:
@@ -1522,19 +1700,30 @@ def _prepare_auth_payload(
     return prepared_auth
 
 
-def _store_file_sync_secret(scope_type: str, scope_id: str, source_id: str, field_name: str, secret_value: str) -> str:
+def _store_file_sync_secret(scope_type: str, scope_id: str, source_id: str, field_name: str, secret_value: str, *, fresh_names: bool = False, staged_names: Optional[List[str]] = None) -> str:
     settings = get_settings()
     if not _as_bool(settings.get("enable_key_vault_secret_storage")) or not str(settings.get("key_vault_name") or "").strip():
         return secret_value
 
-    secret_name = f"file-sync-{source_id}-{field_name}"
-    return store_secret_in_key_vault(
+    # A fresh name isolates a failed conditional write: the stored reference keeps
+    # pointing at the previous secret until the write commits, so a refused CAS never
+    # rotates the live credential. The runtime resolves secrets by the stored full
+    # name (``password_secret_name`` / ``secret_secret_name``), so a fresh name need
+    # not follow the conventional pattern.
+    if fresh_names:
+        secret_name = f"file-sync-{uuid.uuid4().hex}"
+    else:
+        secret_name = f"file-sync-{source_id}-{field_name}"
+    stored = store_secret_in_key_vault(
         secret_name=secret_name,
         secret_value=secret_value,
         scope_value=scope_id,
         source="file-sync",
         scope=_keyvault_scope(scope_type),
     )
+    if staged_names is not None and stored != secret_value:
+        staged_names.append(stored)
+    return stored
 
 
 def _get_file_sync_secret_value(raw_credentials: Dict[str, Any], *field_names: str) -> Any:
@@ -1553,6 +1742,9 @@ def _prepare_azure_files_auth_payload(
     existing_auth: Dict[str, Any],
     auth_type: str,
     source_label: str = "Azure Files",
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     prepared_auth = {"auth_type": auth_type}
     if auth_type == "managed_identity":
@@ -1581,7 +1773,10 @@ def _prepare_azure_files_auth_payload(
             else:
                 raise ValueError(f"{source_label} service principal identities require a client secret")
             return prepared_auth
-        return _store_prepared_secret(scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value))
+        return _store_prepared_secret(
+            scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value),
+            fresh_names=fresh_names, staged_names=staged_names,
+        )
 
     secret_value = _get_file_sync_secret_value(raw_credentials, "connection_string", "secret", "key")
     if secret_value in [None, "", ui_trigger_word]:
@@ -1597,7 +1792,10 @@ def _prepare_azure_files_auth_payload(
             )
             raise ValueError(f"{source_label} credential authentication requires {credential_description}")
         return prepared_auth
-    return _store_prepared_secret(scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value))
+    return _store_prepared_secret(
+        scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value),
+        fresh_names=fresh_names, staged_names=staged_names,
+    )
 
 
 def _store_prepared_secret(
@@ -1607,8 +1805,14 @@ def _store_prepared_secret(
     prepared_auth: Dict[str, Any],
     field_name: str,
     secret_value: str,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    stored_secret = _store_file_sync_secret(scope_type, scope_id, source_id, field_name, secret_value)
+    stored_secret = _store_file_sync_secret(
+        scope_type, scope_id, source_id, field_name, secret_value,
+        fresh_names=fresh_names, staged_names=staged_names,
+    )
     if stored_secret == secret_value:
         prepared_auth[field_name] = stored_secret
     else:
@@ -1622,6 +1826,9 @@ def _normalize_source_payload(
     payload: Dict[str, Any],
     source_id: str,
     existing_source: Optional[Dict[str, Any]] = None,
+    *,
+    fresh_names: bool = False,
+    staged_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     existing_source = existing_source or {}
     config = get_file_sync_config()
@@ -1695,6 +1902,8 @@ def _normalize_source_payload(
             source_type=source_type,
             raw_credentials=raw_credentials,
             existing_auth=existing_source.get("auth") or {},
+            fresh_names=fresh_names,
+            staged_names=staged_names,
         )
         resolved_auth = normalized_source["auth"]
     if source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
@@ -1705,7 +1914,7 @@ def _normalize_source_payload(
     return normalized_source
 
 
-def create_file_sync_source(scope_type: str, scope_id: str, payload: Dict[str, Any], created_by: str) -> Dict[str, Any]:
+def create_file_sync_source(scope_type: str, scope_id: str, payload: Dict[str, Any], created_by: str, *, stage_secrets: bool = False) -> Dict[str, Any]:
     scope_type = _validate_scope(scope_type)
     existing_sources = list_file_sync_sources(scope_type, scope_id)
     config = get_file_sync_config()
@@ -1713,7 +1922,13 @@ def create_file_sync_source(scope_type: str, scope_id: str, payload: Dict[str, A
         raise ValueError("This workspace has reached the configured file sync source limit")
 
     source_id = str(uuid.uuid4())
-    normalized_payload = _normalize_source_payload(scope_type, scope_id, payload or {}, source_id)
+    # A native create tracks the secrets it mints (under the source's own fresh id,
+    # so they never collide) and discards them if create_item fails, leaving no
+    # orphan in Key Vault. Legacy callers pass nothing and behave as before.
+    staged_names: Optional[List[str]] = [] if stage_secrets else None
+    normalized_payload = _normalize_source_payload(
+        scope_type, scope_id, payload or {}, source_id, staged_names=staged_names
+    )
     scope_field = _scope_field(scope_type)
     now_iso = _now_iso()
     source = {
@@ -1730,17 +1945,36 @@ def create_file_sync_source(scope_type: str, scope_id: str, payload: Dict[str, A
         "last_run_at": None,
         **normalized_payload,
     }
-    _get_sources_container(scope_type).create_item(body=source)
+    try:
+        _get_sources_container(scope_type).create_item(body=source)
+    except Exception:
+        if staged_names:
+            keyvault_file_sync_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise
     _log_file_sync_activity(source, created_by, "source_created", {"source_name": source["name"]})
     return source
 
 
-def update_file_sync_source(scope_type: str, scope_id: str, source_id: str, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+def update_file_sync_source(scope_type: str, scope_id: str, source_id: str, payload: Dict[str, Any], updated_by: str, *, expected_config_revision: Optional[str] = None, stage_secrets: bool = False) -> Dict[str, Any]:
     source = get_authorized_sync_source(scope_type, source_id, updated_by, scope_id=scope_id)
-    normalized_payload = _normalize_source_payload(scope_type, scope_id, payload or {}, source_id, existing_source=source)
+    previous_auth = dict(source.get("auth") or {})
+    # A native write stages new secrets under fresh names so a refused conditional
+    # write (a config or etag conflict, or a deleted source) never rotates the
+    # credential the stored reference still points at. Legacy callers pass neither
+    # keyword: they mint under the deterministic name and are unchanged.
+    staged_names: Optional[List[str]] = [] if stage_secrets else None
+    normalized_payload = _normalize_source_payload(
+        scope_type, scope_id, payload or {}, source_id, existing_source=source,
+        fresh_names=stage_secrets, staged_names=staged_names,
+    )
     updated_at = _now_iso()
 
     def apply_edit(current: Dict[str, Any]) -> Dict[str, Any]:
+        # The conflict check runs against the freshly read copy, so it and the
+        # conditional write cover the same etag. An engine run finishing writes no
+        # editable field, so its config_revision is unchanged and never a false 409.
+        if expected_config_revision is not None and compute_file_sync_config_revision(current) != expected_config_revision:
+            raise FileSyncConfigConflict("File sync source configuration changed before the update")
         current_schedule = current.get("schedule") or {}
         edited_schedule = dict(normalized_payload.get("schedule") or {})
         if edited_schedule.get("enabled") and current_schedule.get("enabled") and current_schedule.get("next_run_at"):
@@ -1753,14 +1987,29 @@ def update_file_sync_source(scope_type: str, scope_id: str, source_id: str, payl
         current["updated_at"] = updated_at
         return current
 
-    written = _write_with_etag_guard(
-        _get_sources_container(scope_type),
-        source_id,
-        _source_scope_id(source),
-        apply_edit,
-    )
+    try:
+        written = _write_with_etag_guard(
+            _get_sources_container(scope_type),
+            source_id,
+            _source_scope_id(source),
+            apply_edit,
+        )
+    except Exception:
+        # A config conflict, an exhausted etag guard, or any other failure leaves the
+        # staged secrets as orphans; drop them so a refused write never keeps them.
+        if staged_names:
+            keyvault_file_sync_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+        raise
     if written is None:
+        if staged_names:
+            keyvault_file_sync_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
         raise LookupError("File sync source not found")
+    if stage_secrets:
+        # The write committed: remove the superseded secret only now, so a reference
+        # the write did not change (an untouched field) is kept.
+        keyvault_file_sync_cleanup_helper(
+            previous_auth, normalized_payload.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
+        )
     _log_file_sync_activity(written, updated_by, "source_updated", {"source_name": written.get("name")})
     return written
 
@@ -2131,8 +2380,19 @@ def _normalize_azure_storage_error_code(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", raw_value.lower())[:100]
 
 
-def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False) -> Dict[str, Any]:
+def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False, *, expected_config_revision: Optional[str] = None, refuse_active_run: bool = False) -> Dict[str, Any]:
     source = get_authorized_sync_source(scope_type, source_id, deleted_by, scope_id=scope_id)
+    # A native delete (the immutable-target group routes) refuses while a run is
+    # queued or running, is conditional on the caller's config revision, and deletes
+    # the record only after re-checking under the current etag. Legacy callers pass
+    # neither keyword and delete unconditionally, exactly as before.
+    native = expected_config_revision is not None
+    # Pre-checks run before any associated document is deleted, so a refusal here is
+    # never "partial" and keeps the standard (non-partial) messages.
+    if refuse_active_run and _source_has_active_run(source):
+        raise FileSyncSourceBusy("Wait for the running sync to finish, then delete the source.")
+    if expected_config_revision is not None and compute_file_sync_config_revision(source) != expected_config_revision:
+        raise FileSyncConfigConflict("File sync source configuration changed before the delete")
     delete_result = {
         "associated_files_requested": bool(delete_associated_files),
         "documents_deleted": 0,
@@ -2141,7 +2401,65 @@ def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, dele
     }
     if delete_associated_files:
         delete_result = _delete_associated_synced_documents(source)
-    _get_sources_container(scope_type).delete_item(item=source_id, partition_key=scope_id)
+
+    if not native:
+        # Legacy unconditional delete, unchanged.
+        _get_sources_container(scope_type).delete_item(item=source_id, partition_key=scope_id)
+        _log_file_sync_activity(
+            source,
+            deleted_by,
+            "source_deleted",
+            {
+                "source_name": source.get("name"),
+                "delete_associated_files": bool(delete_associated_files),
+                **delete_result,
+            },
+        )
+        return delete_result
+
+    # Native conditional delete. The associated documents (if any) are already gone,
+    # so a refusal from here on carries ``partial`` and the counts when at least one
+    # was deleted. The final delete is conditional on the *current* etag, re-read on
+    # a 412, so a sync run that merely finished (which bumps the etag but not the
+    # config revision) retries to success instead of a false 409.
+    documents_deleted = delete_result.get("documents_deleted", 0) > 0
+
+    def _partial(exc):
+        if documents_deleted:
+            exc.delete_result = dict(delete_result)
+            exc.partial = True
+        return exc
+
+    current = source
+    committed = False
+    container = _get_sources_container(scope_type)
+    for _attempt in range(FILE_SYNC_WRITE_ATTEMPTS):
+        if refuse_active_run and _source_has_active_run(current):
+            raise _partial(FileSyncSourceBusy("Wait for the running sync to finish, then delete the source."))
+        try:
+            container.delete_item(
+                item=source_id,
+                partition_key=scope_id,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+            committed = True
+            break
+        except CosmosResourceNotFoundError:
+            raise _partial(LookupError("File sync source not found"))
+        except CosmosAccessConditionFailedError:
+            try:
+                current = container.read_item(item=source_id, partition_key=scope_id)
+            except CosmosResourceNotFoundError:
+                raise _partial(LookupError("File sync source not found"))
+            if compute_file_sync_config_revision(current) != expected_config_revision:
+                raise _partial(FileSyncConfigConflict("File sync source configuration changed before the delete"))
+            # An etag-only change (for example a run finishing) with the config
+            # revision intact: retry against the fresh etag.
+            continue
+    if not committed:
+        raise _partial(FileSyncWriteConflict("File sync source kept changing during the delete"))
+
     _log_file_sync_activity(
         source,
         deleted_by,
@@ -2152,6 +2470,19 @@ def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, dele
             **delete_result,
         },
     )
+    # The record is gone, so remove its Key Vault secrets, best effort. A Key Vault
+    # failure must never turn a committed delete into an error, and this runs only
+    # after the commit so a refused delete never drops a live credential.
+    try:
+        keyvault_file_sync_delete_helper(
+            source.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
+        )
+    except Exception as error:  # pragma: no cover - defensive; helper already swallows
+        log_event(
+            "[FILE_SYNC] Unable to remove a deleted source's Key Vault secrets.",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
     return delete_result
 
 
@@ -2190,11 +2521,7 @@ def _delete_associated_synced_documents(source: Dict[str, Any]) -> Dict[str, Any
             )
 
     if failed_document_ids:
-        raise ValueError(
-            "Could not delete all associated synced files. "
-            f"Deleted {delete_result['documents_deleted']}, failed {delete_result['documents_failed']}. "
-            "The File Sync source was not deleted."
-        )
+        raise FileSyncDeleteIncomplete(delete_result)
     return delete_result
 
 
@@ -2295,9 +2622,13 @@ def _update_run(run: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
 def queue_file_sync_source_run(source: Dict[str, Any], triggered_by: Optional[str], trigger: str = "manual", run_inline: bool = False) -> Dict[str, Any]:
     config = get_file_sync_config()
     if _count_active_runs() >= config["file_sync_max_concurrent_runs"]:
-        raise ValueError("The configured File Sync concurrent run limit has been reached")
+        raise FileSyncPublicValidationError(
+            "The File Sync concurrent run limit has been reached. Try again later."
+        )
     if _source_has_active_run(source):
-        raise ValueError("This File Sync source already has a queued or running sync")
+        raise FileSyncPublicValidationError(
+            "This source already has a queued or running sync."
+        )
 
     run = _create_run(source, triggered_by, trigger)
     if run_inline:

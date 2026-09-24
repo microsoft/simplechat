@@ -353,6 +353,55 @@ def test_identity_management_unavailable_when_semantic_kernel_and_file_sync_off(
     assert body["identity_management"]["operations"] == []
 
 
+@pytest.mark.parametrize("actor,status,expected", [
+    ("owner", "active", ["create", "edit", "delete", "sync", "test"]),
+    ("admin", "active", ["create", "edit", "delete", "sync", "test"]),
+    ("manager", "active", ["create", "edit", "delete", "sync", "test"]),
+    ("reader", "active", []),
+    ("admin", "locked", []),
+    ("owner", "inactive", []),
+    ("owner", "unknown", []),
+])
+def test_file_source_management_matches_role_and_status(environment, actor, status, expected):
+    # B2 seam: file_source_management rides the selected-group context alongside
+    # identity/action/agent management, so the frontend reads one handshake that
+    # agrees with the immutable file-source list envelope for every role/status.
+    environment.records["group-a"]["status"] = status
+    response = read_as(environment, actor)
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["file_source_management"] == {"schema_version": 1, "operations": expected}
+
+
+def test_file_source_management_is_built_by_the_shared_policy_with_context_availability(environment):
+    # The context must advertise exactly what the routes enforce: one File Sync
+    # availability predicate resolved once and fed to the shared operations helper.
+    helper = environment.helper
+    for actor, role in (("owner", "Owner"), ("admin", "Admin"),
+                        ("manager", "DocumentManager"), ("reader", "User")):
+        available, _reason = helper.group_file_sources_available(
+            environment.settings, "group-a",
+            user_info={"userId": actor, "roles": ["User"]},
+            file_sync_enabled=True,
+        )
+        expected = helper.group_file_source_management_operations(
+            role, deepcopy(environment.records["group-a"]),
+            environment.settings, available=available,
+        )
+        body = read_as(environment, actor).get_json()
+        assert body["file_source_management"]["operations"] == expected
+
+
+def test_file_source_management_unavailable_when_file_sync_off(environment):
+    # File sources require File Sync specifically; Semantic Kernel does not enable
+    # them, so turning File Sync off empties the surface even with SK on.
+    environment.sync.return_value = False
+    response = read_as(environment)
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["file_source_management"]["operations"] == []
+
+
 @pytest.mark.parametrize("key,sections", [
     ("per_user_semantic_kernel", ("agents", "actions", "endpoints")),
     ("enable_semantic_kernel", ("agents", "actions", "endpoints")),
