@@ -1,8 +1,10 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.129
+Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
+them by functional_tests/test_group_document_fixture_parity.py.
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -20,7 +22,10 @@ from urllib.parse import quote, unquote, urlsplit
 
 import pytest
 
-from ui_tests.fixtures.group_documents import GroupDocumentsFixture, document, restricted
+from ui_tests.fixtures.group_documents import (
+    GROUP_DOCUMENTS_DENIED_ERROR, GROUP_DOCUMENTS_STATUS_ERROR, GroupDocumentsFixture, document, restricted,
+    restricted_status,
+)
 from ui_tests.fixtures.group_workspace import connect_options, group_context  # noqa: F401
 from ui_tests.fixtures.workspace_authoring import ORIGIN, WorkspaceAuthoringFixture
 
@@ -54,30 +59,146 @@ def operation_path(resource, group_id="group-a"):
     return f"/api/groups/{quote(group_id, safe='')}/documents/{resource}"
 
 
+# The receipts the real management routes send (functions_group_document_management.py and the
+# File Sync delete guard), verbatim, so a browser test that renders a receipt's text renders the
+# server's; functional_tests/test_group_document_fixture_parity.py holds every builder below to the
+# real route. A coded failure carries its machine code in `error` and its sentence in `message`;
+# any other refusal carries only its sentence, in `error`.
+METADATA_UPDATED_MESSAGE = "Group document metadata updated."
+METADATA_QUEUED_MESSAGE = "Metadata saved and queued for content screening."
+DOCUMENT_DELETED_MESSAGE = "Group document deleted."
+TAG_CREATED_MESSAGE = "Group tag created."
+TAG_MESSAGES = {
+    "update": "Group tag updated.",
+    "rename": "Group tag renamed.",
+    "delete": "Group tag deleted.",
+}
+TAG_PARTIAL_MESSAGE = (
+    "Some tag changes are incomplete. The original vocabulary has been retained; refresh before retrying."
+)
+VOCABULARY_CONFLICT_MESSAGE = "The group's tags or permissions changed. Refresh and retry."
+PROPAGATION_INCOMPLETE_MESSAGE = (
+    "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
+)
+# Why one document of a batch was refused: a job or write that failed outright, a write that lost a
+# race with another change, and a tag change that found the document at a newer revision.
+DOCUMENT_OPERATION_FAILED_ERROR = "Unable to complete this group document operation."
+DOCUMENT_CHANGED_ERROR = "The resource changed. Refresh and retry the operation."
+TAG_REVISION_CHANGED_ERROR = "The current document revision changed. Refresh and retry."
+CONVERSATION_DELETE_MESSAGE = "This document is part of a conversation. Confirm its deletion."
+SYNCED_DELETE_MESSAGE = (
+    "This document was created by File Sync. Choose whether to ignore the remote file so it is not re-synced after deletion."
+)
+SYNCED_DELETE_OPTIONS = (
+    {"action": "delete_only", "label": "Delete this copy only"},
+    {"action": "ignore_remote", "label": "Delete and ignore the remote file"},
+)
+
+
 def metadata_result(document_id, changes, *, group_id="group-a", queued=False):
+    """The server names the fields in the order the request sent them."""
     return {
-        "message": "Metadata saved and queued for screening." if queued else "Metadata updated.",
+        "message": METADATA_QUEUED_MESSAGE if queued else METADATA_UPDATED_MESSAGE,
         "document_id": document_id, "group_id": group_id,
         "updated_fields": list(changes), "status": "queued" if queued else "updated",
     }
 
 
-def delete_result(*document_ids, errors=(), **revision_details):
+def propagation_incomplete(document_id, *, group_id="group-a"):
+    """The 500 a metadata write returns when the document saved but its projections did not."""
     return {
-        "message": "Requested document deletion results.",
-        "deleted": [{"document_id": identifier} for identifier in document_ids],
-        "errors": copy.deepcopy(list(errors)),
-        "deleted_count": len(document_ids), "error_count": len(errors),
-        **revision_details,
+        "error": "document_propagation_incomplete", "message": PROPAGATION_INCOMPLETE_MESSAGE,
+        "repair_required": True, "document_id": document_id, "group_id": group_id,
     }
 
 
-def tag_result(*, tag=None, success=(), errors=(), retained=False):
+def delete_result(*document_ids, errors=(), **revision_details):
+    """A delete receipt. A single-document DELETE also names its revisions and says what it did;
+    a bulk delete reports only what was deleted and what was refused."""
     result = {
-        "message": "Tag vocabulary update results.",
+        "deleted": [{"document_id": identifier} for identifier in document_ids],
+        "errors": copy.deepcopy(list(errors)),
+        "deleted_count": len(document_ids), "error_count": len(errors),
+    }
+    if revision_details:
+        result["message"] = DOCUMENT_DELETED_MESSAGE
+        result.update(revision_details)
+    return result
+
+
+def conversation_delete_guard(document_id, conversation_id, *, title, file_name, group_id="group-a"):
+    """The confirmation a document uploaded in a conversation asks for, as a 409 or a bulk error
+    entry. `title` is the conversation's title when the file was uploaded."""
+    return {
+        "error": "conversation_linked_document_delete_requires_confirmation",
+        "message": CONVERSATION_DELETE_MESSAGE, "needs_confirmation": True,
+        "conversation": {
+            "id": conversation_id, "title": title,
+            "url": f"/chats?conversation_id={quote(conversation_id, safe='')}",
+        },
+        "document": {"id": document_id, "file_name": file_name},
+        "document_id": document_id, "group_id": group_id,
+    }
+
+
+def synced_delete_guard(document_id, file_sync, *, group_id="group-a"):
+    """The confirmation a File Sync document's delete asks for, as a 409 or a bulk error entry."""
+    return {
+        "error": "synced_document_delete_requires_action", "message": SYNCED_DELETE_MESSAGE,
+        "file_sync": copy.deepcopy(file_sync), "options": copy.deepcopy(list(SYNCED_DELETE_OPTIONS)),
+        "needs_confirmation": True, "document_id": document_id, "group_id": group_id,
+    }
+
+
+def batch_error(document_id, error=DOCUMENT_OPERATION_FAILED_ERROR, *, group_id="group-a"):
+    """One document a batch could not change, with the server's sentence for why."""
+    return {"document_id": document_id, "error": error, "group_id": group_id}
+
+
+def bulk_tag_result(success, errors=()):
+    return {"success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors))}
+
+
+def queue_result(*document_ids, errors=(), extraction_mode=None):
+    """The receipt for queued metadata extraction or, given its `extraction_mode`, reprocessing."""
+    return {
+        "queued": [
+            {"document_id": identifier, **({"extraction_mode": extraction_mode} if extraction_mode else {})}
+            for identifier in document_ids
+        ],
+        "errors": copy.deepcopy(list(errors)),
+    }
+
+
+def upload_refusal(file_name, error=DOCUMENT_OPERATION_FAILED_ERROR):
+    """An upload names each refused file with the reason, as one sentence."""
+    return f"{file_name}: {error}"
+
+
+def upload_result(document_ids, processed_filenames, errors=()):
+    return {
+        "message": f"Queued {len(processed_filenames)} file(s) for processing.",
+        "document_ids": list(document_ids), "processed_filenames": list(processed_filenames),
+        "errors": list(errors),
+    }
+
+
+def tag_created(name, color):
+    return {"message": TAG_CREATED_MESSAGE, "tag": {"name": name, "color": color}}
+
+
+def tag_result(operation, *, tag=None, success=(), errors=()):
+    """A tag vocabulary receipt for what the request did: `update` a colour, `rename` (or merge)
+    the tag, or `delete` it. Only a delete names no tag, and only a rename or delete re-tags the
+    documents; the old vocabulary is retained exactly when a change is incomplete."""
+    assert operation in TAG_MESSAGES, operation
+    assert (tag is None) == (operation == "delete"), "Only a tag delete omits the resulting tag."
+    assert operation != "update" or not (success or errors), "A colour change re-tags no documents."
+    result = {
+        "message": TAG_PARTIAL_MESSAGE if errors else TAG_MESSAGES[operation],
         "documents_updated": len(success),
         "success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors)),
-        "vocabulary_retained": retained,
+        "vocabulary_retained": bool(errors),
     }
     if tag is not None:
         result["tag"] = copy.deepcopy(tag)
@@ -86,9 +207,22 @@ def tag_result(*, tag=None, success=(), errors=(), retained=False):
 
 def tag_vocabulary_conflict(group_id="group-a"):
     return {
-        "stage": "vocabulary", "group_id": group_id, "error": "tag_vocabulary_conflict",
-        "message": "The group tag vocabulary changed during propagation. Review the refreshed tags and retry.",
+        "stage": "vocabulary", "group_id": group_id, "error": "vocabulary_conflict",
+        "message": VOCABULARY_CONFLICT_MESSAGE,
     }
+
+
+# A download route sends each file with these protective headers (the Cache-Control as the
+# browser receives it), names it as an attachment, and names a multi-document archive this.
+DOWNLOAD_HEADERS = {
+    "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
+GROUP_ARCHIVE_NAME = "group-documents.zip"
+
+
+def attachment(file_name):
+    return {"Content-Disposition": f'attachment; filename="{file_name}"'}
 
 
 @dataclass
@@ -164,12 +298,25 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
             pending["document_actions"] = []
             held["document_actions"] = ["delete"]
             held_share["document_actions"] = []
+            for record in (pending, held, held_share):
+                restricted_status(record)
+            # The review actions the server computes for a manager: an owned current document can
+            # be shared, a received share removed (and, while it awaits approval, approved), and
+            # any other row only inspected.
+            for record, actions in (
+                (owned, ["inspect", "share"]), (notes, ["inspect", "share"]),
+                (shared, ["inspect", "remove_share"]), (denied_source, ["inspect", "remove_share"]),
+                (pending, ["inspect", "approve_share", "remove_share"]), (held, ["inspect"]),
+                (held_share, ["inspect", "remove_share"]),
+            ):
+                record["document_collaboration_actions"] = actions
             self.documents[group_id] = [owned, notes, shared, denied_source, pending, held, held_share]
+            # A historical revision can still be downloaded or deleted, and only inspected.
             previous = document(
                 group_id, "previous-version", "Earlier research brief",
                 timestamp=self.now - 86400, version=2, is_current_version=False,
                 revision_family_id=owned["revision_family_id"], tags=["finance", "team"],
-                document_actions=[],
+                document_actions=["delete", "download"], document_collaboration_actions=["inspect"],
             )
             self.versions[(group_id, "same-document")] = [copy.deepcopy(owned), previous]
             self.vocabulary[group_id] = {
@@ -362,7 +509,7 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
                 route.fulfill(
                     status=reply.status, body=reply.response,
                     content_type=reply.content_type or "application/octet-stream",
-                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", **reply.headers},
+                    headers={**DOWNLOAD_HEADERS, **reply.headers},
                 )
             else:
                 self._json(route, reply.response, reply.status)
@@ -371,8 +518,10 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
             assert set(entry.query) == {"group_id"} and len(entry.query["group_id"]) == 1, entry
             group_id = entry.query["group_id"][0]
             assert group_id in self.groups, entry
-            if group_id in self.denied_groups or not self.groups[group_id]["document_permissions"]["can_view"]:
-                self._json(route, {"error": "Group tags are unavailable."}, 403)
+            if group_id in self.denied_groups:
+                self._json(route, {"error": GROUP_DOCUMENTS_DENIED_ERROR}, 403)
+            elif not self.groups[group_id]["document_permissions"]["can_view"]:
+                self._json(route, {"error": GROUP_DOCUMENTS_STATUS_ERROR}, 403)
             else:
                 counts = self.facets(group_id)["by_tag"]
                 self._json(route, {"tags": [

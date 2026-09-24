@@ -173,4 +173,22 @@ Browser download-error coverage uses actual JSON/HTML responses; exact
 not a fictitious-host HTTP redirect. Multi-service mutations are not distributed
 transactions, so repair-required and partial outcomes remain meaningful.
 
+`functional_tests/test_group_document_fixture_parity.py` holds the three group
+document fixtures (reads, management and collaboration) to the real routes,
+route by route: only server keys, every field the page reads present on both
+sides, and matching statuses and error codes. The browser suites script
+management receipts from builders that equal the real route's response to the
+same request. When it was added, after version **0.261.161**, it corrected the
+fixtures in every family, from the read rows' fields and refusal texts to each
+management receipt and the collaboration reads' codes. Three product findings
+are pinned as strict `xfail` tests in `ui_tests/test_v2_group_document_management.py`
+until they're fixed:
+
+- a coded failure's dialog shows its machine code, such as
+  `document_propagation_incomplete`, instead of the server's sentence;
+- the conversation delete guard doesn't name the conversation the file
+  belongs to;
+- a multi-document download is saved as `documents.zip`, whatever the server
+  names the archive.
+
 No live service mutation, deployment, or large-workspace benchmark is implied.
