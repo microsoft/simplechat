@@ -8,6 +8,7 @@ import {
 } from './documentExplorer';
 import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './types';
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
+import { WORKFLOW_ALERT_FIELDS, workflowAlertDraftErrors, workflowAlertsForSave } from './workflowAlerts';
 import {
     analyzeWorkflowFlow,
     DEFAULT_FLOW_LIMITS,
@@ -1094,6 +1095,7 @@ export function workflowForSave(
         ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
         ...(scope.type === 'group' ? workflowFileSyncForSave(draft, original) : {}),
+        ...workflowAlertsForSave(draft, original),
     };
     if (!includeDurable) {
         delete next.durable_execution;
@@ -1152,8 +1154,9 @@ export function preservedWorkflowFieldLabels(
         'flow',
         'limits',
         'group_id',
-        // Group editors author File Sync and show the stored alerts in their own summary.
-        ...(scope.type === 'group' ? ['file_sync', ...WORKFLOW_ALERT_FIELDS] : []),
+        // Alerts have their own section in both scopes; group editors also author File Sync.
+        ...WORKFLOW_ALERT_FIELDS,
+        ...(scope.type === 'group' ? ['file_sync'] : []),
     ]);
     const labels: Record<string, string> = {
         file_sync: 'file sync settings',
@@ -1249,15 +1252,11 @@ function workflowFileSyncActive(draft: WorkflowDefinition): boolean {
 
 /**
  * The server lets Analyze run without selected documents when File Sync supplies the changed
- * files (`allow_empty_file_sync_targets` in `save_group_workflow`). Group workflows only.
+ * files: `allow_empty_file_sync_targets` in both `save_personal_workflow` and `save_group_workflow`
+ * is `file_sync.enabled and file_sync.use_changed_documents`. Personal drafts carry their loaded
+ * `file_sync` unchanged, since V2 authors File Sync for group workflows only.
  */
-export function workflowFileSyncProvidesAnalyzeTargets(
-    draft: WorkflowDefinition,
-    scope: Pick<WorkflowScope, 'type'> | WorkflowEditorOptions['scope'],
-): boolean {
-    if (scope.type !== 'group') {
-        return false;
-    }
+export function workflowFileSyncProvidesAnalyzeTargets(draft: WorkflowDefinition): boolean {
     const config = workflowFileSyncConfig(draft.file_sync);
     return config.enabled && config.use_changed_documents;
 }
@@ -1391,49 +1390,19 @@ export async function fetchWorkflowFileSyncSources(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Stored alerts. V2 does not edit them yet; the editor summarizes them the way the server
-// resolves them (`resolve_workflow_alert_config`), including the legacy priority-only shape.
+// Stored alerts live in workflowAlerts.ts, which mirrors the server's alert normalizer. The
+// names below are re-exported so existing importers keep one entry point.
 // ---------------------------------------------------------------------------------------------
 
-export const WORKFLOW_ALERT_FIELDS = ['alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation'] as const;
-export const WORKFLOW_ALERT_MODES = ['off', 'every_run', 'rules'] as const;
-export const WORKFLOW_ALERT_PRIORITIES = ['none', 'low', 'medium', 'high'] as const;
-export type WorkflowAlertMode = typeof WORKFLOW_ALERT_MODES[number];
-export type WorkflowAlertPriority = typeof WORKFLOW_ALERT_PRIORITIES[number];
-const WORKFLOW_LEGACY_ALERT_RULE_COUNT = 2;
-
-export interface WorkflowAlertSummary {
-    mode: WorkflowAlertMode;
-    priority: WorkflowAlertPriority;
-    ruleCount: number;
-}
-
-export function workflowAlertSummary(workflow: Record<string, unknown> | null): WorkflowAlertSummary {
-    const record = workflow ?? {};
-    const storedRules = Array.isArray(record.alert_rules) ? record.alert_rules : null;
-    const storedMode = String(record.alert_mode || '').trim().toLowerCase();
-    const storedPriority = String(record.alert_priority || 'none').trim().toLowerCase();
-    const priority = (WORKFLOW_ALERT_PRIORITIES as readonly string[]).includes(storedPriority)
-        ? storedPriority as WorkflowAlertPriority : 'none';
-    if ((WORKFLOW_ALERT_MODES as readonly string[]).includes(storedMode)) {
-        return { mode: storedMode as WorkflowAlertMode, priority, ruleCount: storedRules?.length ?? 0 };
-    }
-    if (storedRules?.length) {
-        return { mode: 'rules', priority, ruleCount: storedRules.length };
-    }
-    if (priority !== 'none') {
-        return { mode: 'rules', priority, ruleCount: WORKFLOW_LEGACY_ALERT_RULE_COUNT };
-    }
-    return { mode: 'off', priority, ruleCount: 0 };
-}
-
-/**
- * The classic editor opens only definition version 1 without structured flow
- * (`workflowNeedsNativeEditor` in workspace_workflows.js), so only those alerts are editable there.
- */
-export function workflowAlertsEditableInClassic(original: WorkflowDefinition | null): boolean {
-    return Boolean(original) && original?.definition_version === 1 && original.flow === undefined;
-}
+export {
+    WORKFLOW_ALERT_FIELDS,
+    WORKFLOW_ALERT_MODES,
+    WORKFLOW_ALERT_PRIORITIES,
+    workflowAlertSummary,
+    type WorkflowAlertMode,
+    type WorkflowAlertPriority,
+    type WorkflowAlertSummary,
+} from './workflowAlerts';
 
 export function workflowTaskHasLocalRunner(
     workflow: WorkflowDefinition,
@@ -1484,6 +1453,8 @@ export function workflowInputProcessingErrors(
 export function workflowValidationErrors(
     draft: WorkflowDefinition,
     options: WorkflowEditorOptions,
+    /** The loaded record (null when creating). Alerts are validated only when it is supplied. */
+    original?: WorkflowDefinition | null,
 ): string[] {
     const errors: string[] = [];
     if (!draft.name.trim()) {
@@ -1569,7 +1540,7 @@ export function workflowValidationErrors(
         errors.push('Enable durable execution before requiring task approval.');
     }
     const taskIds = new Map(draft.tasks.map((task, index) => [task.id, index]));
-    const changedFileTargets = workflowFileSyncProvidesAnalyzeTargets(draft, options.scope);
+    const changedFileTargets = workflowFileSyncProvidesAnalyzeTargets(draft);
     draft.tasks.forEach((task, index) => {
         errors.push(...workflowInputProcessingErrors(draft, task, options));
         if (!task.name.trim()) {
@@ -1672,6 +1643,10 @@ export function workflowValidationErrors(
             errors.push(`Shared reference ${reference.document_id} has an alias that must start with a letter and use only letters, numbers, underscores, or dashes, up to 64 characters.`);
         }
     });
+    if (original !== undefined) {
+        // The editor passes the loaded record so alerts are checked exactly as the server will see them.
+        errors.push(...workflowAlertDraftErrors(draft, original));
+    }
     return [...new Set(errors)];
 }
 

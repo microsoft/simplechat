@@ -1,18 +1,15 @@
 // WorkflowAlertSummary.tsx
-// Read-only summary of a group workflow's stored alerts, with the classic editor where it can open them.
+// Read-only summary of a workflow's stored alerts, for viewers who cannot manage the workflow.
 
 import { useId } from 'react';
-import { ArrowUpRight } from 'lucide-react';
-import { GlassButton } from '../ui/primitives';
 import {
     workflowAlertSummary,
-    workflowAlertsEditableInClassic,
     type WorkflowAlertMode,
     type WorkflowAlertPriority,
-    type WorkflowDefinition,
-} from '../../lib/workflowEditor';
+} from '../../lib/workflowAlerts';
+import type { WorkflowDefinition } from '../../lib/workflowEditor';
 
-// The classic alert editor's own option labels, so both editors describe a setting the same way.
+// The alert editor's own option labels, so both views describe a setting the same way.
 const MODE_LABELS: Record<WorkflowAlertMode, string> = {
     off: 'Never notify me',
     rules: 'Only when a condition is met',
@@ -25,20 +22,9 @@ const PRIORITY_LABELS: Record<WorkflowAlertPriority, string> = {
     high: 'High priority',
 };
 
-export function WorkflowAlertSummary({
-    workflow,
-    original,
-    canEdit,
-    onOpenClassic,
-}: {
-    workflow: WorkflowDefinition;
-    original: WorkflowDefinition | null;
-    canEdit: boolean;
-    onOpenClassic?: () => void;
-}) {
+export function WorkflowAlertSummary({ workflow }: { workflow: WorkflowDefinition }) {
     const titleId = useId();
     const summary = workflowAlertSummary(workflow);
-    const classic = workflowAlertsEditableInClassic(original);
     return (
         <section aria-labelledby={titleId} className="space-y-3 rounded-2xl border border-edge p-4">
             <h3 id={titleId} className="text-base font-semibold text-text-1">Alerts</h3>
@@ -56,25 +42,6 @@ export function WorkflowAlertSummary({
                     <dd className="text-text-1">{summary.ruleCount === 1 ? '1 rule' : `${summary.ruleCount} rules`}</dd>
                 </div>
             </dl>
-            {classic ? (
-                <>
-                    <p className="max-w-prose text-xs text-text-3">
-                        Alerts are edited in the classic group workspace. Saving this workflow here converts it to a V2
-                        definition, and the classic editor can no longer open it, so edit alerts first.
-                    </p>
-                    {canEdit && onOpenClassic ? (
-                        <GlassButton type="button" size="sm" onClick={onOpenClassic}>
-                            Edit alerts in the classic workspace<ArrowUpRight size={14} />
-                        </GlassButton>
-                    ) : null}
-                </>
-            ) : (
-                <p className="max-w-prose text-xs text-text-3">
-                    {original
-                        ? 'Alert settings are kept unchanged when you save. The classic editor cannot open workflows saved by V2, so these alerts cannot be changed until native alert editing is available.'
-                        : 'Alerts cannot be added to workflows created in V2 until native alert editing is available.'}
-                </p>
-            )}
         </section>
     );
 }

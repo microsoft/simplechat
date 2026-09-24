@@ -1,22 +1,24 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.141
+Version: 0.261.144
 Implemented in: 0.261.141
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
 group File Sync source list with the real `_serialize_workflow_file_sync_source`, and validates
-group saves with the real `_normalize_file_sync_config`, `_normalize_schedule` and Monitor File
-Sync trigger rules. They cover:
+group saves with the real `_normalize_file_sync_config`, `_normalize_schedule`, Monitor File Sync
+trigger rules and, since 0.261.144, `normalize_workflow_alert_settings`. They cover:
 
 * authoring a Monitor File Sync changes trigger and File Sync before run, checked on the POST body;
 * editing an existing File Sync workflow, including a V2 round trip that keeps alerts, URL
   access, File Sync and document actions unchanged;
 * the source list requested with the page's explicit `?group_id`, and never for members;
 * client-side enforcement of the server rules, and the server's refusal text shown as returned;
-* the read-only alert summary, and the classic link offered only for definition version 1;
+* the read-only alert summary for members; managers edit alerts natively (0.261.144), so the M6
+  classic alerts link is gone (`test_v2_workflow_alerts.py` covers the editor);
 * approval decisions for a group durable run;
-* personal workflows unchanged;
+* personal workflows keep their File Sync unchanged, and since 0.261.144 personal Analyze tasks may
+  rely on File Sync's changed files, as the server allows;
 * the general personal-route trap on group workflow pages.
 """
 
@@ -37,9 +39,7 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     FILE_SYNC_SOURCES_PATH,
     GROUP_ID,
     OWNER_ID,
-    SECOND_GROUP_ID,
     WORKFLOW_ID,
-    ORIGIN,
     connect_options,  # noqa: F401
     workflow_record,
     workflow_ui,  # noqa: F401
@@ -412,8 +412,8 @@ def test_members_see_a_read_only_summary_and_never_request_sources(workflow_ui):
     assert not ui.workflow_writes
 
 
-def test_alert_summary_mirrors_the_stored_alerts_and_links_classic_only_for_version_one(workflow_ui):
-    """V1 workflows link to classic with the group selected; V2 definitions say alerts are kept unchanged."""
+def test_managers_edit_stored_alerts_natively_with_no_classic_link(workflow_ui):
+    """The Alerts section opens on the stored configuration as the server resolves it, for every definition version."""
     ui, page = workflow_ui, workflow_ui.page
     ui.group_workflows[GROUP_ID][MONITOR_ID] = monitored_workflow()
     ui.group_workflows[GROUP_ID]["every-run"] = workflow_record(
@@ -425,47 +425,39 @@ def test_alert_summary_mirrors_the_stored_alerts_and_links_classic_only_for_vers
         definition_version=1, alert_priority="medium",
     )
     open_group_workflows(ui)
+    alerts = page.get_by_role("region", name="Alerts", exact=True)
+    rules = page.get_by_role("list", name="Alert rules", exact=True).get_by_role("listitem")
 
     page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
-    alerts = page.get_by_role("region", name="Alerts")
-    expect(alerts.get_by_text("Only when a condition is met", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("High priority", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("2 rules", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("Alert settings are kept unchanged when you save.", exact=False)).to_be_visible()
-    expect(alerts.get_by_role("button", name=re.compile(r"Edit alerts in the classic workspace"))).to_have_count(0)
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("rules")
+    expect(rules).to_have_count(2)
+    expect(alerts.get_by_role("heading", name="Rule 1: Files changed", exact=True)).to_be_visible()
+    expect(alerts.get_by_label("Alert rule 2 task", exact=True)).to_have_value("summarize")
+    expect(alerts.get_by_label("If a model evaluated condition cannot be judged", exact=True)).to_have_count(0)
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
 
     page.get_by_role("button", name="Edit Every run alerts", exact=True).click()
-    expect(alerts.get_by_text("On every run", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("Low priority", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("0 rules", exact=True)).to_be_visible()
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
+    expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("every_run")
+    expect(alerts.get_by_label("Pop-up alert priority", exact=True)).to_have_value("low")
+    expect(rules).to_have_count(0)
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
 
     page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(alerts.get_by_text("Never notify me", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("Alerts cannot be added to workflows created in V2", exact=False)).to_be_visible()
+    expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("off")
     page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
 
     page.get_by_role("button", name="Edit Legacy alerts", exact=True).click()
-    # A priority-only record resolves on the server to the two legacy rules; the summary says so too.
-    expect(alerts.get_by_text("Only when a condition is met", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("Medium priority", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("2 rules", exact=True)).to_be_visible()
-    expect(alerts.get_by_text("Saving this workflow here converts it", exact=False)).to_be_visible()
-    classic = alerts.get_by_role("button", name=re.compile(r"^Edit alerts in the classic workspace"))
-    labelled(page, "Description").first.fill("A draft that must not be lost silently.")
-    classic.click()
-    expect(page.get_by_role("dialog", name="Discard unsaved changes?", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Keep editing", exact=True).click()
-    expect(labelled(page, "Description").first).to_have_value("A draft that must not be lost silently.")
+    # A priority-only record resolves on the server to the two legacy rules; the editor shows them.
+    expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("rules")
+    expect(alerts.get_by_role("heading", name="Rule 1: Run failed", exact=True)).to_be_visible()
+    expect(alerts.get_by_role("heading", name="Rule 2: Run completed", exact=True)).to_be_visible()
+    expect(alerts.get_by_label("Alert rule 2 severity", exact=True)).to_have_value("medium")
+    expect(dialog.get_by_role("button", name=re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    expect(dialog.get_by_role("link", name=re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
     assert not ui.classic_visits
-
-    labelled(page, "Description").first.fill(ui.group_workflows[GROUP_ID]["legacy-alerts"]["description"])
-    ui.active_group_id = SECOND_GROUP_ID
-    with page.expect_navigation(url=f"{ORIGIN}/group_workspaces"):
-        classic.click()
-    assert ui.classic_visits == [("/group_workspaces", GROUP_ID)]
-    assert ui.non_navigation_writes == []
+    assert not ui.workflow_writes
 
 
 def test_group_durable_run_approval_decides_through_the_group_route(workflow_ui):
@@ -512,7 +504,7 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
     expect(source_checkbox(page, "Archive share (Group)")).to_be_visible()
     expect(page.get_by_label("Continue the workflow", exact=True)).to_be_visible()
     alerts.scroll_into_view_if_needed()
-    expect(alerts.get_by_text("2 rules", exact=True)).to_be_visible()
+    expect(page.get_by_role("list", name="Alert rules", exact=True).get_by_role("listitem")).to_have_count(2)
     clipped = page.evaluate("""() => [...document.querySelectorAll('[role="dialog"] *')]
         .filter((element) => element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX !== 'visible')
         .map((element) => element.tagName)""")
@@ -520,19 +512,20 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
-def test_personal_workflows_are_unchanged(workflow_ui):
-    """Personal editors keep their triggers, preserved-settings list and payloads, and never list sources."""
+def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
+    """Personal editors keep their triggers, File Sync and payloads, and never list sources."""
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["trigger_type"] = "file_sync"
     ui.open("/workspace/workflows")
     page.get_by_role("button", name="Create workflow", exact=True).click()
     assert trigger_options(page) == ["Manual", "Interval"]
     expect(page.get_by_role("region", name="File Sync")).to_have_count(0)
-    expect(page.get_by_role("region", name="Alerts")).to_have_count(0)
+    # Alerts are authored natively in both scopes since 0.261.144.
+    expect(page.get_by_role("region", name="Alerts", exact=True).get_by_label("When to alert", exact=True)).to_have_value("off")
     page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
     expect(page.get_by_text(
-        "Native V2 authoring is available for manual and interval workflows. File sync, alert and publication "
-        "settings from existing workflows are preserved unchanged.",
+        "Native V2 authoring is available for manual and interval workflows, and for their alerts. File sync and "
+        "publication settings from existing workflows are preserved unchanged.",
         exact=True,
     )).to_be_visible()
 
@@ -548,6 +541,55 @@ def test_personal_workflows_are_unchanged(workflow_ui):
     assert body["trigger_type"] == "file_sync"
     assert body["file_sync"] == {"source_id": "legacy-source", "delete_policy": "preserve"}
     assert not source_requests(ui)
+
+
+def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui):
+    """0.261.144: a personal workflow with File Sync on changed files saves an Analyze task without evidence.
+
+    Both saves allow it (`allow_empty_file_sync_targets`); `test_workflow_file_sync_analyze_targets.py`
+    pins the real `save_personal_workflow` accepting exactly these payloads. Personal File Sync is
+    not authored in V2, so the loaded configuration is carried unchanged.
+    """
+    ui, page = workflow_ui, workflow_ui.page
+    personal_action = {**SUMMARIZE_ACTION, "doc_scope": "personal", "active_group_ids": []}
+    personal_file_sync = {
+        "enabled": True, "wait_mode": "complete", "continue_mode": "always", "use_changed_documents": True,
+        "sources": [{"scope_type": "personal", "scope_id": OWNER_ID, "source_id": "home-share",
+                     "name": "Home share", "source_type": "onedrive"}],
+    }
+    ui.personal_workflows["personal-sync"] = workflow_record(
+        "personal-sync", name="Personal changed files", file_sync=copy.deepcopy(personal_file_sync),
+        tasks=[{
+            "id": "analyze", "type": "instructions", "name": "Analyze changes", "order": 1,
+            "instructions": "Summarize each changed file.", "runner": {"type": "inherit"},
+            "document_action": copy.deepcopy(personal_action),
+        }],
+    )
+    ui.open("/workspace/workflows")
+    page.get_by_role("button", name="Edit Personal changed files", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    expect(page.get_by_role("region", name="File Sync")).to_have_count(0)
+    page.get_by_text("Runner, inputs, references and outputs", exact=True).first.click()
+    expect(labelled(page, "Document action").first).to_have_value("analyze")
+    expect(page.get_by_text(
+        "No evidence is selected, so this task analyzes the files each File Sync run changed.", exact=True,
+    )).to_be_visible()
+    expect(page.get_by_text("Select at least one evidence document for this document action.", exact=True)).to_have_count(0)
+    expect(page.get_by_role("status").filter(has_text="needs selected evidence for Analyze")).to_have_count(0)
+
+    labelled(page, "Description").first.fill("Edited in V2.")
+    page.get_by_role("button", name="Save workflow", exact=True).click()
+    expect(dialog).to_have_count(0)
+    body = workflow_post(ui).body
+    assert body["file_sync"] == personal_file_sync
+    assert body["tasks"][0]["document_action"] == personal_action
+    assert not source_requests(ui)
+
+    # Without changed files as targets the same draft needs evidence, as the server requires.
+    ui.personal_workflows["personal-sync"]["file_sync"]["use_changed_documents"] = False
+    page.reload()
+    page.get_by_role("button", name="Edit Personal changed files", exact=True).click()
+    expect(page.get_by_role("status").filter(has_text="Analyze changes needs selected evidence for Analyze.")).to_be_visible()
 
 
 def test_group_workflow_pages_trap_personal_reads(workflow_ui):

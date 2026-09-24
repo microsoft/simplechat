@@ -298,8 +298,9 @@ class GroupWorkflowStore:
             "functions_workflow_runtime_store": _module("functions_workflow_runtime_store"),
             **_document_analysis_seams(),
         }
+        # Load order follows the import graph: the alert normalizer imports the definitions module.
         real = (
-            "functions_workflow_alert_safety", "functions_workflow_alerts", "functions_workflow_definitions",
+            "functions_workflow_alert_safety", "functions_workflow_definitions", "functions_workflow_alerts",
             "functions_m365_workflow_binding", "functions_workflow_definition_store", "functions_document_actions",
             "functions_personal_workflows", "functions_group_workflows",
         )
@@ -506,7 +507,7 @@ def test_the_real_server_rules_run_in_this_harness(store):
     with pytest.raises(ValueError, match="between 1 and 59"):
         store.save({**base, "schedule": {"unit": "minutes", "value": 90}})
     orphaned_rule = {**base["alert_rules"][1], "scope": {"type": "task", "task_id": "removed-task"}}
-    with pytest.raises(ValueError, match="task that is not part of this workflow"):
+    with pytest.raises(ValueError, match="watches a task that is no longer in this workflow"):
         store.save({**base, "alert_rules": [base["alert_rules"][0], orphaned_rule]})
     store.file_sync_groups.discard(GROUP_ID)
     with pytest.raises(ValueError, match="Group File Sync must be enabled"):

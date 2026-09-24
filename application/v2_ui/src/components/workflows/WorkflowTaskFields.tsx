@@ -1086,7 +1086,7 @@ export function WorkflowTaskFields({
                         onChange={onChange}
                     />
                     {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange}
-                        changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow, scope)}
+                        changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow)}
                         loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} /> : null}
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
