@@ -5,7 +5,6 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_governance import ensure_governance_access
-from functions_azure_endpoint_validation import validate_azure_ai_endpoint_host
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_group_endpoint_access import (
     group_endpoint_error_response,
@@ -15,6 +14,7 @@ from functions_group_endpoint_access import (
 )
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_endpoint_app_identity import check_application_identity_request, check_application_identity_save
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
@@ -258,6 +258,10 @@ def register_route_backend_models(bp):
                 item_entity_type="global_endpoint",
                 item_id=endpoint_id,
             )
+            # A group or user route also resolves global endpoints. Each is hydrated
+            # under the scope it is stored in, so a global endpoint is never judged by
+            # the group and personal application identity rule.
+            endpoint["_endpoint_scope"] = endpoint_scope
         return endpoint
 
     def resolve_endpoint_scope_value(endpoint_cfg, fallback_endpoint_id=""):
@@ -265,80 +269,6 @@ def register_route_backend_models(bp):
         if not endpoint_id:
             raise ValueError("Endpoint ID is required to resolve stored secrets.")
         return endpoint_id
-
-    def apply_transient_server_credential_policy(endpoint_cfg, scope):
-        """Constrain a transient personal or group request that would use the app's identity.
-
-        With no ``endpoint_id`` the connection and authentication come from the request.
-        Unless they carry the caller's own API key or service principal, the discovery and
-        test clients fall back to the application's own identity
-        (``DefaultAzureCredential``), so the caller must not choose where that token goes
-        or what it is for:
-
-        - a request-supplied token audience (``foundry_scope``), authority
-          (``custom_authority``) or ``custom`` management cloud is refused, and the
-          management cloud, audience and authority are derived from server settings;
-        - the endpoint host must be an Azure AI service host of the configured cloud.
-
-        Custom connections never use the application identity and are unaffected. Global
-        (admin) requests and saved endpoints (stored configuration) do not come here.
-        """
-        provider = str(endpoint_cfg.get("provider") or "aoai").strip().lower()
-        if provider in (MODEL_ENDPOINT_PROVIDER_CUSTOM, "openai_compatible"):
-            return endpoint_cfg
-        auth = endpoint_cfg.get("auth") if isinstance(endpoint_cfg.get("auth"), dict) else {}
-        auth_type = str(auth.get("type") or "managed_identity").strip().lower()
-        if auth_type in ("api_key", "service_principal"):
-            return endpoint_cfg
-
-        connection = endpoint_cfg.get("connection") if isinstance(endpoint_cfg.get("connection"), dict) else {}
-        server_cloud = get_model_endpoint_management_cloud_for_environment()
-        server_authority = get_model_endpoint_default_custom_authority()
-        try:
-            server_scope = resolve_model_endpoint_foundry_scope(
-                {"management_cloud": server_cloud}, endpoint=connection.get("endpoint"),
-            )
-        except ValueError:
-            server_scope = ""
-        requested_scope = str(auth.get("foundry_scope") or "").strip()
-        requested_authority = str(auth.get("custom_authority") or "").strip()
-        requested_cloud = normalize_model_endpoint_management_cloud(auth.get("management_cloud"))
-        if (
-            (requested_scope and requested_scope != server_scope)
-            or (requested_authority and requested_authority != server_authority)
-            or (requested_cloud == "custom" and server_cloud != "custom")
-        ):
-            log_event(
-                "[MODELS] Refused a request-supplied token audience or authority for the application identity",
-                extra={"scope": scope, "provider": provider, "auth_type": auth_type},
-                level=logging.WARNING,
-            )
-            raise AIConnectionError(
-                "The application identity uses this deployment's own token audience and authority. "
-                "Remove the Foundry scope, custom authority and custom cloud, or use an API key or a service principal.",
-                "server_credential_override_refused",
-            )
-        try:
-            validate_azure_ai_endpoint_host(connection.get("endpoint"), server_cloud)
-        except ValueError:
-            log_event(
-                "[MODELS] Refused the application identity for an endpoint outside the Azure AI allowlist",
-                extra={"scope": scope, "provider": provider, "auth_type": auth_type, "cloud": server_cloud},
-                level=logging.WARNING,
-            )
-            raise AIConnectionError(
-                "The application identity can be used only with an Azure AI endpoint in this cloud. "
-                "Use an API key or a service principal for other endpoints.",
-                "server_credential_endpoint_refused",
-            ) from None
-
-        derived_auth = {
-            key: value for key, value in auth.items() if key not in ("foundry_scope", "custom_authority")
-        }
-        derived_auth["management_cloud"] = server_cloud
-        if server_authority:
-            derived_auth["custom_authority"] = server_authority
-        return {**endpoint_cfg, "auth": derived_auth}
 
     def resolve_request_endpoint_payload(payload, scope="global", *, for_chat_test=False, group_id=None):
         user_id = get_current_user_id()
@@ -394,7 +324,12 @@ def register_route_backend_models(bp):
         else:
             merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
             if scope in ("user", "group"):
-                merged_payload = apply_transient_server_credential_policy(merged_payload, scope)
+                merged_payload = check_application_identity_request(merged_payload, scope)
+
+        # Hydrate under the scope the endpoint is stored in: a group or user route also
+        # resolves global endpoints. An unsaved draft keeps the route's own scope.
+        merged_payload.pop("_endpoint_scope", None)
+        endpoint_scope = (persisted_endpoint or {}).get("_endpoint_scope") or scope
 
         if endpoint_id:
             merged_payload["id"] = endpoint_id
@@ -415,7 +350,7 @@ def register_route_backend_models(bp):
             merged_payload = keyvault_model_endpoint_get_helper(
                 merged_payload,
                 resolve_endpoint_scope_value(merged_payload, scope_value),
-                scope=scope,
+                scope=endpoint_scope,
                 return_type=SecretReturnType.VALUE,
             )
         return merged_payload
@@ -1266,11 +1201,19 @@ def register_route_backend_models(bp):
     def save_scoped_endpoint_secrets(normalized, existing_by_id, scope):
         """Run the Key Vault save pass for a personal or group endpoint collection.
 
-        Returns ``(saved_endpoints, None)``, or ``(None, response)`` when the helper
-        refuses a credential, for example a reference that is not the endpoint's own
-        stored one. Nothing has been written at that point, so a credential this pass
-        has already staged for an earlier endpoint is deleted again.
+        Returns ``(saved_endpoints, None)``, or ``(None, response)`` when a save is
+        refused. The application identity rule is applied first to every new or changed
+        endpoint, before anything is staged. The helper may then refuse a credential, for
+        example a reference that is not the endpoint's own stored one. Nothing has been
+        written at that point, so a credential this pass has already staged for an
+        earlier endpoint is deleted again.
         """
+        try:
+            for endpoint in normalized:
+                check_application_identity_save(endpoint, existing_by_id.get(endpoint.get("id")), scope)
+        except AIConnectionError as exc:
+            return None, (jsonify({"error": exc.public_message, "code": exc.code}), 400)
+
         saved_endpoints = []
         try:
             for endpoint in normalized:
@@ -1653,12 +1596,17 @@ def register_route_backend_models(bp):
         route. The caller has already authorized the endpoint; its stored credentials
         are hydrated here and reach only its stored Foundry project.
         """
-        endpoint_cfg = keyvault_model_endpoint_get_helper(
-            endpoint_cfg,
-            resolve_endpoint_scope_value(endpoint_cfg, endpoint_id),
-            scope=scope,
-            return_type=SecretReturnType.VALUE,
-        )
+        endpoint_cfg = dict(endpoint_cfg)
+        endpoint_scope = endpoint_cfg.pop("_endpoint_scope", None) or scope
+        try:
+            endpoint_cfg = keyvault_model_endpoint_get_helper(
+                endpoint_cfg,
+                resolve_endpoint_scope_value(endpoint_cfg, endpoint_id),
+                scope=endpoint_scope,
+                return_type=SecretReturnType.VALUE,
+            )
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         provider = (endpoint_cfg.get("provider") or "aoai").lower()
         requested_resource_type = str(data.get("resource_type") or "").strip().lower()
         if provider not in ("aifoundry", "new_foundry", "foundry_workflow"):

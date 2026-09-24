@@ -1447,10 +1447,23 @@ def keyvault_model_endpoint_get_helper(
 
     ``strict`` only affects VALUE retrieval. NAME/TRIGGER and plaintext values
     keep their legacy behavior, including when Key Vault storage is disabled.
+
+    VALUE hydration is the step every consumer of a stored endpoint takes before
+    calling it, so for group and user endpoints it also applies the application
+    identity rule (``functions_model_endpoint_app_identity``): an endpoint that would
+    send the application's token to a disallowed host or audience fails closed with
+    ``ApplicationIdentityPolicyError``, whether or not Key Vault storage is on.
     """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+    if return_type == SecretReturnType.VALUE and scope in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES:
+        # Deferred so the rule, and the settings helpers it reads, load only when a
+        # group or user endpoint is hydrated for use; this helper's importers and its
+        # import-time dependencies are otherwise unchanged.
+        from functions_model_endpoint_app_identity import resolve_application_identity_for_use
+
+        endpoint_dict = resolve_application_identity_for_use(endpoint_dict, scope)
 
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)

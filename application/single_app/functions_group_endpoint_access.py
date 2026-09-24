@@ -45,6 +45,11 @@ The native surface manages the providers the endpoint editor offers
 (``is_frontend_visible_model_endpoint_provider``). Any other provider stored on the
 group is not listed or addressable here, and every write preserves it.
 
+An endpoint that would use the application's own identity follows the one rule in
+``functions_model_endpoint_app_identity``: an Azure AI host of the configured cloud,
+no token audience or authority override and no identity selection. A new or changed
+endpoint that breaks it is refused before anything is staged.
+
 Native writes log a tagged ``[MODELS]`` diagnostic for create, update and delete
 with ``group_id`` and ``endpoint_id``, and no activity event, matching the personal
 and admin per-item APIs.
@@ -90,6 +95,7 @@ from functions_keyvault import (
 )
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_endpoint_app_identity import check_application_identity_save
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoints
 from functions_settings import (
@@ -601,6 +607,10 @@ def _write_endpoint_change(user_id, group_id, settings, change):
         normalized, _changed = normalize_model_endpoints(endpoints)
         validate_custom_model_endpoints(normalized, settings)
         previous_by_id = {str(endpoint.get("id") or ""): endpoint for endpoint in stored}
+        # The application identity rule, judged before anything is staged. Only a new
+        # or changed endpoint is judged here; an unchanged stored one is judged when used.
+        for endpoint in normalized:
+            check_application_identity_save(endpoint, previous_by_id.get(str(endpoint.get("id") or "")), "group")
         saved = []
         for endpoint in normalized:
             key = str(endpoint.get("id") or "")

@@ -21,7 +21,9 @@ For the personal (``user``) and group scopes only, on the legacy
 - the application identity reaches only an Azure AI host of the configured cloud
   (``AZURE_AI_ENDPOINT_SUFFIXES``); anything else is a stable 400;
 - a caller's own key or service principal, and custom connections, are unaffected;
-- the admin (global) routes and saved-endpoint requests are unchanged;
+- the admin (global) routes are unchanged;
+- saved endpoints follow the same rule, which the use-time suite
+  (``test_model_endpoint_app_identity_rule.py``) covers;
 - Foundry discovery has no transient path at all.
 
 The real ``route_backend_models`` runs unchanged (``test_support/group_endpoint_harness.py``);
@@ -225,7 +227,11 @@ def test_an_azure_openai_host_is_allowed_on_test_model(env, path):
 
 
 def test_a_government_deployment_allows_only_government_hosts(env, monkeypatch):
-    monkeypatch.setattr(env.modules.models, "get_model_endpoint_management_cloud_for_environment", lambda: "government")
+    # The shared rule reads the deployment's cloud from the settings helper itself.
+    monkeypatch.setattr(
+        env.modules.settings, "get_model_endpoint_management_cloud_for_environment",
+        lambda environment=None: "government",
+    )
     refused = env.call("POST", FETCH_ROUTES[2], foundry_draft())
     assert refused.status_code == 400 and refused.get_json() == ENDPOINT_REFUSED
     allowed = env.call("POST", FETCH_ROUTES[2], foundry_draft("https://contoso.services.ai.azure.us/api/projects/proj"))
@@ -289,15 +295,16 @@ def test_the_admin_routes_are_unchanged(env):
 @pytest.mark.parametrize("path", [
     "/api/group/models/test-model", f"/api/groups/{GROUP_A}/models/test-model",
 ])
-def test_saved_endpoints_keep_todays_behaviour(env, path):
-    """Stored configuration is out of scope here (reported separately), and unchanged."""
+def test_saved_endpoints_follow_the_same_rule(env, path):
+    """A saved endpoint stored before the rule fails closed at use (see the use-time suite)."""
     stored = env.legacy_stored_endpoints(GROUP_A, [aoai_endpoint(
         "saved-mi", url="https://attacker.example.com", auth={"type": "managed_identity"},
     )])
     env.seed_group(GROUP_A, endpoints=stored)
     response = env.call("POST", path, {"endpoint_id": "saved-mi", "model": {"id": "chat"}})
-    assert response.status_code == 200, response.get_json()
-    assert env.chat_clients[0]["endpoint"] == "https://attacker.example.com"
+    assert response.status_code == 400
+    assert response.get_json() == ENDPOINT_REFUSED
+    assert env.chat_clients == []
 
 
 @pytest.mark.parametrize("path", ["/api/models/foundry/agents", f"/api/groups/{GROUP_B}/models/foundry/agents"])
