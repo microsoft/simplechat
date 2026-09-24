@@ -1052,9 +1052,14 @@ legacy answer step had, and the planner states what the answer may rely on. See 
     gathered, and does not present that content as sourced.
   - A retry is offered only when another step also failed. It runs that producer again,
     and also runs again the steps that completed without it and every step computed from
-    them, so the retried answer and files can use what the first attempt missed. Other
-    completed steps are still reused.
+    them, so the retried work can use what the first attempt missed. Other completed
+    steps are still reused.
   - Required inputs still fail closed.
+- **Retrying a run with files.** Each attempt owns its files, and preparing a retry
+  supersedes the previous attempt's files. So a whole-run retry never reuses a render
+  step: it renders the files again, from reused content where possible, without calling
+  a model, and the previous attempt's files are shown as superseded. React V2 offers that
+  retry only for an attempt without files; an attempt with files is recovered per file.
 - **Visuals.** The planner names the visuals a Markdown answer should author, and a chart
   over an action's rows, as structured `visuals` arguments. Keyword detection is not
   used. Charts drawn during gathering are placed at their tokens.

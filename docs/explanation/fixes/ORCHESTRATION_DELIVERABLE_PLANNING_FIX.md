@@ -137,6 +137,41 @@ The plan panel also never showed which model wrote a plan.
   `deep_research`) retry once after a transient failure, within the step deadline, and
   emit a "Retrying after a temporary service error." progress event.
 
+### Retrying runs with files
+
+Found while reviewing the stacked image layer: a whole-run retry of a plan ended failed
+whenever the new attempt had to render a file that the previous attempt had already
+created or admitted. React V2 offers **Retry from failed step** only for an attempt
+without files, so users reached this through the retry API rather than the button. It
+also blocked the retry that the image layer needs to recover a missing requested image.
+The output store withdraws an attempt's files once a retry supersedes it, and never lets
+another attempt adopt an output's identity. Whole-run retry accounted for neither rule:
+
+- `prepare_retry` copied the parent's `render_output_ids` into the child. The child listed
+  the parent's superseded file as its own, and finalization failed the run with
+  `result_unavailable`.
+- A completed render step was reused, but its file had already been superseded.
+- A render run again from reused content presented the first attempt's work ID, because
+  `approved_work_id` was the attempt root. It computed the first attempt's output identity
+  and was refused with `output_producer_changed`.
+
+Now each attempt owns its files:
+
+- `_reuse_invalidated_by_rerun` never reuses a render step in a new attempt: retry
+  preparation (`source_run_id`) or the attempt it created (`retry_of_run_id`). A restart
+  of the same attempt still reuses its completed files.
+- `prepare_retry` drops `render_output_ids` from the child.
+- `bind_context` uses the attempt's own run ID as its approved work.
+
+Rendering again calls no model, and the rule against adopting another attempt's output
+identity is unchanged. The V2 recovery notice is unchanged too: an attempt with files is
+still recovered per file. Offering a whole-run retry for an attempt that has files but
+failed elsewhere would withdraw its available files as soon as the retry is prepared, so
+it is left as a product decision rather than changed here. One upgrade edge case remains.
+A retry attempt created before this change that is still waiting on a file it admitted
+keeps its old identity, so that file fails when the run resumes. Retrying the run again
+renders a new file.
+
 ### Planner model visibility
 
 `plan.planner` records the planning model's display label, how it was chosen
@@ -156,7 +191,8 @@ plan panel and approval card show "Planned by ...". No connection details are ex
 | `functions_orchestration_execution.py` | Auto binding validation and per-step model scope in the harness |
 | `functions_orchestration_executor.py` | Step model scope, optional-input dependencies, one transient retry |
 | `functions_orchestration_result_runtime.py`, `functions_orchestration_checkpoints.py` | Missing optional inputs |
-| `functions_orchestration_recovery.py` | Retries run again the steps that completed without a retried producer |
+| `functions_orchestration_recovery.py` | Retries run again the steps that completed without a retried producer, never reuse a render, and start without the parent's file admissions |
+| `functions_orchestration_services.py` | Each run attempt is its own approved work for file identity |
 | `functions_orchestration_composition.py` | Memory, conversation, knowledge basis, missing inputs, visuals, chart placement |
 | `functions_orchestration_adapters.py`, `functions_orchestration_actions.py` | Structured visuals, web search failures, chart sub-step under capture |
 | `functions_web_search_results.py`, `route_backend_chats.py` | Citation links and structured failure facts |
@@ -171,8 +207,10 @@ plan panel and approval card show "Planned by ...". No connection details are ex
   fail-closed stale bindings, Auto rebinding after plan edits, final-response answer
   selection, knowledge-basis policies and defaults, memory and conversation references,
   the optional-input retry and disclosure, a run retry that fetches the missing input and
-  rewrites the answer with it (this test fails with `recovery_changed` without the fix),
-  required inputs failing closed,
+  rewrites the answer and its file with it (this test fails with `recovery_changed`
+  without the fix), a run retry that renders its own file from reused content while the
+  first attempt's file reads as superseded (it fails without each of the three file
+  changes), required inputs failing closed,
   optional-input validation, planner-named visuals, chart placement, the planner
   descriptor, web search classification, and citation links.
 - `functional_tests/test_orchestration_external_configuration_capture.py` drives the real

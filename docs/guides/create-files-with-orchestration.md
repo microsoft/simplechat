@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.134"
 ---
 
 ## Availability
@@ -117,6 +117,11 @@ should not run again.
 If retry admission cannot be confirmed, retry the same action rather than
 creating a new orchestration request. The interface retains the submission
 identity needed to reconcile an uncertain response.
+
+Files are recovered one at a time. When an attempt has files, the conversation
+offers **Retry file** for each failed file rather than **Retry from failed step**,
+so recovering one file never withdraws another that is already available. If
+other work in that attempt failed, ask again to create a new plan.
 
 Retrying cannot repair an unsupported format, invalid data or revoked source
 access. Restore the required access or revise the plan when its requirements
