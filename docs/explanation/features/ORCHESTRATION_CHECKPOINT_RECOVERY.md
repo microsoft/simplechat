@@ -265,7 +265,7 @@ instruction to reinterpret an old plan.
 | `execution_deadline_at` | The attempt's timezone-aware total deadline, preserved across same-attempt restart. |
 
 Large text, records, excerpts and provenance remain in the existing private
-result store. V2 checkpoints exclude incidental sibling evidence, notes and
+result store. Checkpoints exclude incidental sibling evidence, notes and
 message bodies, retaining compact source snapshots and typed references.
 The existing 8 MiB checkpoint limit, transactional lifecycle guard and
 immutable completed manifests still apply.
@@ -601,7 +601,7 @@ the failure does not create terminal checkpoint facts or grant a fresh budget.
 `test_orchestration_source_authority_runtime.py` covers both capture paths and
 the composition boundary without changing the control exception's constructor.
 
-V2 checkpoint reads distinguish `checkpoint_storage_unavailable` from a
+Checkpoint reads distinguish `checkpoint_storage_unavailable` from a
 missing or invalid checkpoint. Composition and initial/sticky capture preserve
 that operational code without recording a terminal producer result. Saved
 Render reads also preserve retryable storage uncertainty for actual cause-free
@@ -642,7 +642,7 @@ release, with unchanged references, attempt and deadline and no final message
 or file publication.
 
 Headless owners span source decisions and model work with the existing
-`strict_source_authority()` scope. V2 Gather/Reason dispatch checks that
+`strict_source_authority()` scope. Gather and Reason dispatch checks that
 scope's fence before entering an adapter and after it returns, so an adapter
 cannot turn a caught authority failure into a terminal result or allow another
 model step. Receipt lookup also checks the fence before accepting a cached
@@ -653,7 +653,7 @@ caught failures, actual composition model boundaries, typed metadata-service
 and cancellation errors, pending waits, final verification, exact recovery
 boundaries, and ordinary-model/known-denial controls.
 
-V2 run `result_outputs` is an internal retained-data availability projection;
+A run's `result_outputs` is an internal retained-data availability projection;
 `outputs` is reserved for actual public file outcomes. A prepared retry clears
 both projections, and the admitted file index `render_output_ids`, so an unstarted
 child cannot inherit a parent's delivery claims or list the parent's superseded

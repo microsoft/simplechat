@@ -505,7 +505,11 @@ legacy-record message and stops loading.
 - Tests: new `functional_tests/test_orchestration_single_contract.py`,
   `test_orchestration_route_recovery.py` and `test_orchestration_elicitation_routes.py`;
   deleted the admission, phase-ordering, v1-only checkpoint and admin toggle tests;
-  migrated the remaining suites and UI tests to Gather / Reason / Render.
+  migrated the remaining suites and UI tests to Gather / Reason / Render. The deleted
+  `test_orchestration_analysis_checkpoint_access.py` checked saved Analyze descriptors in
+  checkpoint state, a path that no longer exists, because retained results are now rechecked
+  through the result service. Its check that a resume probe leaves the live run context
+  unchanged on success and on failure moved to `test_orchestration_dependency_recovery.py`.
 - Docs: `docs/admin/orchestration.md`, `CHAT_ORCHESTRATION.md`, the renamed
   `ORCHESTRATION_GATHER_REASON_RENDER.md` (was `ORCHESTRATION_RENDERING_HARNESS.md`), the
   external source, checkpoint recovery, output lifecycle, deliverables and actions feature

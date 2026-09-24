@@ -77,7 +77,7 @@ the removed `respond` capability. The default `get_adapter(name)` and `name=` ke
 the existing version-1 registry unchanged. The runtime owns selecting the plan
 contract; model arguments cannot select this dispatch policy.
 
-For v2 tabular steps, the adapter delegates only to the existing
+For tabular orchestration steps, the adapter delegates only to the existing
 `NativeOrchestrationBridge` returned by the private server callback
 `context.native_bridge_for_step(step, context)`. Missing or invalid binding fails
 before planning or publication. The bridge owns strict single-source
@@ -125,7 +125,7 @@ receipt/status/authorization checks remain available in a denied scope and do
 not repair acknowledgements or mutate approval state.
 
 The producer helpers accept an optional server-computed `input_fingerprint`.
-The v2 Analyze/Compare adapters require the owning runtime's declaration-scoped
+The orchestration Analyze/Compare adapters require the owning runtime's declaration-scoped
 digest and pass it unchanged to the result facade for authenticated
 committed-result recovery, including a lost acknowledgement after commit.
 The owning getter is resolved once before checkpoint preparation or result
@@ -150,14 +150,14 @@ preserve the owning checkpoint's existing `resume_from` binding. Re-preparing
 that same token as a fresh attempt is rejected by the shared lifecycle store;
 the adapter does not bypass this fence or substitute another token.
 
-The v2 native adapter uses the shared native infrastructure classifier before
+The orchestration native adapter uses the shared native infrastructure classifier before
 returning a failed step. Recognized source, configuration and storage uncertainty
 remains a typed operational exception rather than a terminal result. Ordinary
-validation, genuine missing/denied/held outcomes and v1 behavior are unchanged.
+validation and genuine missing/denied/held outcomes are unchanged.
 
 ### Private external configuration capture
 
-The v2 external contract uses four server-owned callbacks:
+The orchestration external source contract uses four server-owned callbacks:
 `external_source_preflight`, `capture_external_source_configuration`,
 `external_source_admission`, and `external_source_authorizer`.
 After validating the exact owning producer and original selector, all five
@@ -190,7 +190,7 @@ preparation, or call `attestor.capture` for other preparation and actual engine
 events. Preparation does not stand in for a model constructor or observed run.
 Retention-time admission and current-read authorization remain mandatory.
 Operational failures and cancellation keep their typed meaning rather than
-becoming source-access denial. V1 callers do not acquire these hooks.
+becoming source-access denial. Only orchestration runs bind these hooks.
 
 Engines receive the private capture object, not callback arguments supplied by a
 model. Callback settings and source records are independent copies; callback
@@ -507,7 +507,7 @@ workflow receipts, including retries and source revocation.
 `test_orchestration_external_configuration_capture.py` exercises real web and
 source-review engines with external I/O doubles, checking invocation-time capture,
 all producer identity fields, isolated execution settings, planner binding,
-configuration denial, cancellation, and unchanged v1 behavior.
+configuration denial and cancellation.
 
 Stage durations and observable model-call counts distinguish source analysis
 from collection, reporting, and exports. Provider-managed internal calls may be

@@ -225,7 +225,7 @@ everything you asked to receive."
 - Plans carry `deliverables` and steps carry `delivers` through the planner, plan
   revisions, the plan editor, and checkpoints. A step's `delivers` and
   `deliverable_context` are part of its checkpoint identity.
-- The V2 plan panel and the approval card show **You asked for**: each explicit deliverable
+- In the V2 interface, the plan panel and the approval card show **You asked for**: each explicit deliverable
   with its state (planned, in progress, delivered, not delivered, turned off, or not
   available with its reason) and, in the plan panel, the step that produces it.
   Suggested deliverables appear under **Also included**.
