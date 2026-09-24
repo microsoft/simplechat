@@ -30,6 +30,12 @@ the running version. Equal or older releases do not trigger an upgrade notice.
 The checker retains classic behavior: it selects the greatest numeric version
 among release-tag links on the fetched releases page.
 
+V2 requests the update check separately from the settings, so the settings load
+and stay editable while the version banner shows **Checking for updates...**. A
+slow or unreachable releases page delays only that banner, never the settings.
+Classic Admin Settings runs the same check while the page renders, so a check that
+has to contact GitHub still delays the classic page.
+
 The application server needs outbound HTTPS access to GitHub; browsers do not
 contact GitHub to perform the check. A failed check shows an unavailable message
 and labels any last known release information as potentially stale. Failed
@@ -37,8 +43,10 @@ attempts are also cached for 24 hours when settings storage is available. If the
 check cannot be saved, the page reports that failure and a later visit may retry.
 Settings remain editable while update checks are unavailable.
 
-V2 version/update display was implemented in **0.261.126**. There is no manual
-refresh button, automatic installation, or upgrade triggered by saving settings.
+V2 version/update display was implemented in **0.261.126**, and since
+**0.261.133** V2 runs the check alongside the settings instead of before them.
+There is no manual refresh button, automatic installation, or upgrade triggered
+by saving settings.
 
 ## Settings groups
 

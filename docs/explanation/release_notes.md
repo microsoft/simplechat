@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.158)**
+
+#### Bug Fixes
+
+*   **V2 Admin Settings No Longer Wait On The Update Check**
+    *   Fixed V2 Admin Settings showing only loading placeholders, with the version banner reading "Checking for updates...", until the server finished checking GitHub for a newer release. When the daily cached check had expired, the settings response waited for the releases page to download and be parsed, and an unreachable GitHub held the page for at least the full timeout.
+    *   The update check is now its own admin-only request, `GET /api/v2/admin/update-status`, sent at the same time as the settings. Settings appear and can be edited and saved as soon as they load, and only the version banner waits for the check. A failed check still shows "Unable to check for application updates." without affecting the settings.
+    *   Classic Admin Settings is unchanged.
+    *   Merged from the React V2 branch, where it shipped as 0.261.133. This branch had already assigned 0.261.133 to native public document management, so here the fix carries the merge's version.
+    *   (Ref: `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminFields.ts`, [Administration](../admin/index.md), [Update Check Non-Blocking Fix](fixes/V2_ADMIN_UPDATE_CHECK_NON_BLOCKING_FIX.md))
+
 ### **(v0.261.157)**
 
 #### Bug Fixes
