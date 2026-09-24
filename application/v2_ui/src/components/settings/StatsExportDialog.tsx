@@ -29,6 +29,7 @@ import {
     validateCustomRange,
     type ActivityTrends,
     type ExportSections,
+    type StatsExportAdapter,
     type StatsWindow,
     type UserSettingsWithMetrics,
 } from '../../lib/userStats';
@@ -42,9 +43,11 @@ const SECTION_LABELS: { key: keyof ExportSections; label: string; hint: string }
 ];
 
 /** Hand the assembled text to the browser as a file. */
-function downloadCsv(contents: string, fileName: string) {
-    // The BOM is what makes Excel open a UTF-8 CSV without mangling non-ASCII names.
-    const blob = new Blob([`\ufeff${contents}`], { type: 'text/csv;charset=utf-8;' });
+function downloadCsv(contents: string, fileName: string, withBom = true) {
+    // The BOM is what makes Excel open a UTF-8 CSV without mangling non-ASCII names. A scope whose
+    // classic export writes no BOM (the group export) opts out so the two stay byte-for-byte equal.
+    const body = withBom ? `\ufeff${contents}` : contents;
+    const blob = new Blob([body], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -59,15 +62,25 @@ export function StatsExportDialog({
     initialWindow,
     userName,
     userEmail,
+    adapter,
     onClose,
 }: {
     /** The tab's current window, offered as the starting point. */
     initialWindow: StatsWindow;
     userName: string;
     userEmail: string;
+    /**
+     * An optional scope contract. Its absence keeps the personal behaviour byte-for-byte: the
+     * personal sections, the personal CSV builder and the BOM. Its presence drives a different set
+     * of sections and a different loader through the same dialog, with no fork.
+     */
+    adapter?: StatsExportAdapter;
     onClose: () => void;
 }) {
-    const [sections, setSections] = useState<ExportSections>(DEFAULT_EXPORT_SECTIONS);
+    const sectionLabels = adapter ? adapter.sections : SECTION_LABELS;
+    const [sections, setSections] = useState<Record<string, boolean>>(
+        adapter ? { ...adapter.defaultSections } : { ...DEFAULT_EXPORT_SECTIONS },
+    );
     const [days, setDays] = useState<number | 'custom'>(
         initialWindow.startDate && initialWindow.endDate ? 'custom' : initialWindow.days,
     );
@@ -113,9 +126,25 @@ export function StatsExportDialog({
             selected = { days, startDate: '', endDate: '' };
         }
 
+        if (adapter?.validateWindow) {
+            const windowError = adapter.validateWindow(selected);
+            if (windowError) {
+                setError(windowError);
+                return;
+            }
+        }
+
         setBusy(true);
         setError(null);
         try {
+            if (adapter) {
+                const { csv, fileName } = await adapter.build(selected, sections);
+                downloadCsv(csv, fileName, !adapter.omitBom);
+                toast.success(adapter.successMessage);
+                onClose();
+                return;
+            }
+
             const [trends, settings] = await Promise.all([
                 api.get<ActivityTrends>(`/api/user/activity-trends?${statsWindowQuery(selected)}`),
                 api.get<UserSettingsWithMetrics>('/api/user/settings'),
@@ -124,7 +153,7 @@ export function StatsExportDialog({
             const csv = buildActivityCsv({
                 trends,
                 metrics: settings?.settings?.metrics ?? {},
-                sections,
+                sections: sections as unknown as ExportSections,
                 userName,
                 userEmail,
                 // Prefer the window the server resolved: for a custom range it is the
@@ -142,7 +171,7 @@ export function StatsExportDialog({
         } finally {
             setBusy(false);
         }
-    }, [anySelected, days, startDate, endDate, sections, userName, userEmail, onClose]);
+    }, [anySelected, days, startDate, endDate, sections, userName, userEmail, adapter, onClose]);
 
     return (
         <div
@@ -164,10 +193,10 @@ export function StatsExportDialog({
                 <div className="flex items-start justify-between gap-3">
                     <div>
                         <h2 id="stats-export-title" className="text-sm font-semibold text-text-1">
-                            Export activity
+                            {adapter ? adapter.title : 'Export activity'}
                         </h2>
                         <p className="mt-1 text-xs text-text-3">
-                            Downloads a CSV of your own activity. Nothing is shared.
+                            {adapter ? adapter.description : 'Downloads a CSV of your own activity. Nothing is shared.'}
                         </p>
                     </div>
                     <button
@@ -184,7 +213,7 @@ export function StatsExportDialog({
                 <fieldset className="mt-4">
                     <legend className="text-xs font-semibold text-text-2">Include</legend>
                     <div className="mt-2 space-y-1.5">
-                        {SECTION_LABELS.map(({ key, label, hint }) => (
+                        {sectionLabels.map(({ key, label, hint }) => (
                             <label
                                 key={key}
                                 className="flex cursor-pointer items-start gap-2.5 rounded-lg px-1 py-1"
