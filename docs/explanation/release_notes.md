@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.159)**
+
+#### Bug Fixes
+
+*   **Held Documents No Longer Offer Ordinary Actions In Their Details**
+    *   The V2 documents Details pane showed Chat, Download, Tag, Edit, Extract, Share and Delete for a document held by content screening. Most were disabled, but Share was live, so a held file in My Workspace could be shared from the pane.
+    *   A held document's details now explain the hold and offer only the cleanup its workspace allows: Delete where a group or public workspace permits it for that document, and the group sharing review where it's available. A personal held document offers no action; the hold is resolved in Content review.
+    *   Documents that are only blocked from chat, such as a shared group document awaiting approval, keep their other permitted actions.
+    *   (Ref: `DocumentDetailsPane.tsx`, [Held Document Details Actions Fix](fixes/V2_HELD_DOCUMENT_DETAILS_ACTIONS_FIX.md))
+
 ### **(v0.261.158)**
 
 #### Bug Fixes
