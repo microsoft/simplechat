@@ -83,17 +83,53 @@ to conversations can require additional explicit choices. Historical or
 restricted content does not acquire ordinary editing rights merely because it
 is visible in the explorer.
 
-Use **Classic** for sharing and approval decisions that have not moved to V2.
-Group-specific saved views and content previews remain deferred.
+Share a document with another group, withdraw a share, accept a document
+another group shared with yours, or remove your group's access from the same
+explorer (version **0.261.131**). A generated file that a member asked to
+publish into the group waits for an owner-side decision, and reviewers approve,
+reject or cancel it without leaving the workspace. Group-specific saved views
+and content previews remain deferred.
+
+### Prompts, actions, and agents
+
+These sections use the same editors as My Workspace. Each one reads and saves
+through the selected group, never through whichever group your account last
+made active.
+
+- **Prompts** (version **0.261.136**). Owners, Admins, and DocumentManagers
+  create, edit, duplicate, and delete the group's prompts while the group is
+  active. Everyone in the group can read them and use them in chat. Rewording a
+  group prompt in the chat composer applies to that one message and never
+  changes the saved prompt.
+- **Actions** (version **0.261.137**). Owners and Admins create, edit, test,
+  and delete group actions. When an administrator requires it, only the Owner
+  can. Everyone else sees read-only details. Actions provided by an
+  administrator appear as **Provided · Read only**. Reusable group identities
+  and saved MCP preconfigurations cannot yet be chosen in the group action
+  editor. An action that already uses a group identity keeps it.
+- **Agents** (version **0.261.138**). Owners and Admins create, edit, and delete
+  group agents, under the same owner-only rule. Everyone in the group can open
+  an agent and use it in chat. **Use in chat** opens the agent in its own
+  group. An agent's model list, assigned knowledge, actions, and instruction
+  drafting are all resolved for the selected group. The model list holds the
+  administrator's connections you may use, plus the group's own when allowed.
+  Discovery of agents behind a group-scoped Foundry connection is not available
+  yet; enter those project fields manually.
+
+If two people edit the same prompt, action, or agent at once, the second save
+is refused and the editor keeps your changes, so you can reload and reapply
+them. When group agents are turned off for your organization, the Agents
+section is not offered. When only group actions are off, **Actions** keeps the
+**Call agent** manager.
 
 ### Use group tools and manage the workspace
 
-Use **Workflows** for the existing native workflow editor and run history.
-**Actions** includes native **Call agent** configuration and local caller
-bindings. Other sections are explicitly marked **Classic** while their native
-V2 experiences are being built. **Open classic group workspace** confirms the
+Use **Workflows** for the native workflow editor and run history. **Identities**,
+**Sync**, and **Endpoints** are marked **Classic** while their native V2
+experiences are being built. **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
-Owners and administrators also have **Manage group (classic)**.
+Owners and administrators also have **Manage group (classic)** for members,
+join requests, and group settings.
 
 Save or cancel open changes before switching groups. Navigating away from an
 unfinished editor asks whether to discard it. Returning to the browser refreshes
@@ -106,8 +142,9 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-This release does not replace group sharing/approval management, other classic
-editors, group membership administration, or public workspace pages.
+Identities, File Sync sources, model endpoints, group membership
+administration, group settings, and public workspace pages still use the
+classic interface.
 
 ## Use the classic workspace
 
