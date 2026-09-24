@@ -124,16 +124,42 @@ function ActionButtons({
     selectionReason: (document: WorkspaceDocument) => string | null;
 }) {
     const single = documents.length === 1 ? documents[0] : null;
+    const review = single && actions.onReview && availability.canReview?.(single) ? (
+        <GlassButton variant="subtle" size="sm" onClick={() => actions.onReview?.(single)}>
+            <Share2 size={14} />Sharing and review
+        </GlassButton>
+    ) : null;
+    if (documents.some((document) => !isScreeningAvailable(document))) {
+        // A held source is never chatted with, downloaded, tagged, edited, analyzed or shared from
+        // here. Only the cleanup its workspace authorizes for it remains: a group or public workspace
+        // may advertise deletion, and sharing inspection where collaboration allows it.
+        const removable = availability.deleteDocuments && availability.allows('delete', documents);
+        return (
+            <>
+                <p className="px-3 py-2.5 text-xs text-text-3">
+                    Held sources cannot be selected for chat, analyzed, shared, or downloaded here.
+                    An authorized reviewer must resolve the hold in Content review.
+                </p>
+                {review || removable ? (
+                    <div className="flex flex-wrap gap-1.5 px-3 pb-2.5">
+                        {review}
+                        {removable ? (
+                            <GlassButton variant="danger" size="sm" onClick={() => actions.onDelete(documents)}>
+                                <Trash2 size={14} />
+                                Delete
+                            </GlassButton>
+                        ) : null}
+                    </div>
+                ) : null}
+            </>
+        );
+    }
     const blockedReason = documents.map(selectionReason).find(Boolean);
     return (
         <>
         {blockedReason ? <p className="px-3 py-2.5 text-xs text-text-3">{blockedReason}</p> : null}
         <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
-            {single && actions.onReview && availability.canReview?.(single) ? (
-                <GlassButton variant="subtle" size="sm" onClick={() => actions.onReview?.(single)}>
-                    <Share2 size={14} />Sharing and review
-                </GlassButton>
-            ) : null}
+            {review}
             <GlassButton variant="primary" size="sm" disabled={!availability.chat || Boolean(blockedReason)} onClick={() => actions.onChat(documents)}>
                 <MessageSquare size={14} />
                 Chat

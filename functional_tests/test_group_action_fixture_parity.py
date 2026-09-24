@@ -1,8 +1,8 @@
 # test_group_action_fixture_parity.py
 """
 Per-route shape parity between the M4 group action UI fixture and the real routes.
-Version: 0.261.157
-Implemented in: 0.261.157
+Version: 0.261.161
+Implemented in: 0.261.161
 
 The V2 group Actions workbench and its editor mock the network with the closed HTTP fixture
 ``ui_tests/fixtures/group_actions.py``, whose dispatch lives in the shared

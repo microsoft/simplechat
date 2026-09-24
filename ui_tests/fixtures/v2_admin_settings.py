@@ -1,12 +1,15 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.122
+Version: 0.261.133
 Implemented in: 0.261.093
+Separate release check boundary: 0.261.133
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
 account, or live settings writes are needed. Unexpected requests fail the test.
+The release check is its own request, so a test can hold it to stand in for a slow
+GitHub check and prove the settings do not wait on it.
 
 The default browser is local. To use Azure Playwright, set PLAYWRIGHT_SERVICE_URL
 and PLAYWRIGHT_WORKSPACE_RESOURCE_ID. The workspace is read with
@@ -79,6 +82,16 @@ class AdminSettingsFixture:
             "runtime_flags": {},
             "suppressed_capabilities": fields_module.get_suppressed_capability_keys(),
         }
+        self.update_payload = {
+            "version": "0.261.093",
+            "update_status": {
+                "latest_version": "0.261.093", "update_available": False,
+                "status": "checked", "checked_at": "2026-09-21T12:00:00+00:00",
+                "attempted_at": "2026-09-21T12:00:00+00:00", "error": None,
+            },
+        }
+        self.hold_update_status = False
+        self.held_update_status = []
         self.preferences = {}
         self.catalog_agents = [
             {
@@ -151,6 +164,11 @@ class AdminSettingsFixture:
             route.fulfill(json={"message": "Saved fixture preferences."})
         elif path == "/api/v2/admin/settings" and request.method == "GET":
             route.fulfill(json=self.payload)
+        elif path == "/api/v2/admin/update-status" and request.method == "GET":
+            if self.hold_update_status:
+                self.held_update_status.append(route)
+            else:
+                route.fulfill(json=self.update_payload)
         elif path == "/api/v2/admin/settings" and request.method == "PATCH":
             updates = request.post_data_json["settings"]
             self.patches.append(copy.deepcopy(updates))
@@ -181,7 +199,7 @@ class AdminSettingsFixture:
             self.unexpected_requests.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})
 
-    def open(self, theme="light", width=1440, font_size="m"):
+    def open(self, theme="light", width=1440, font_size="m", *, wait_until="networkidle"):
         if not SPA_INDEX.is_file():
             pytest.fail("Build the V2 SPA first: npm --prefix application/v2_ui run build")
         source_root = REPO_ROOT / "application" / "v2_ui" / "src"
@@ -197,9 +215,16 @@ class AdminSettingsFixture:
             "fontSizePreference": font_size,
         }
         self.page.set_viewport_size({"width": width, "height": 1000})
-        self.page.goto(f"{ORIGIN}/v2/admin", wait_until="networkidle")
+        # A held release check keeps a request open, which networkidle would wait on.
+        self.page.goto(f"{ORIGIN}/v2/admin", wait_until=wait_until)
         expect(self.page.get_by_role("region", name="Agent Runtime", exact=True)).to_be_visible()
         expect(self.page.locator("html")).to_have_attribute("data-font-size", font_size)
+
+    def release_update_status(self):
+        """Answer release checks held by `hold_update_status`, as a slow check finishing would."""
+        self.hold_update_status = False
+        while self.held_update_status:
+            self.held_update_status.pop(0).fulfill(json=self.update_payload)
 
     def capture(self, name):
         artifacts = REPO_ROOT / "ui_tests" / "artifacts" / "v2_admin_agents"
@@ -209,5 +234,6 @@ class AdminSettingsFixture:
         )
 
     def assert_clean(self):
+        assert not self.held_update_status, "A held release check was never answered."
         assert not self.unexpected_requests, self.unexpected_requests
         assert not self.errors, self.errors

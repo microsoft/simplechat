@@ -1,7 +1,7 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.160
+Version: 0.261.161
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.

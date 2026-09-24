@@ -8,6 +8,11 @@ from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 
 from functions_appinsights import log_event
+from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    GroupDocumentWriteConflict,
+)
 from functions_simplechat_operations import (
     SIMPLECHAT_CAPABILITY_DEFINITIONS,
     add_conversation_message_for_current_user,
@@ -28,6 +33,27 @@ from functions_simplechat_operations import (
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+
+
+def _agent_group_summary(group: Any) -> Dict[str, Any]:
+    """The group fields a tool answers the model, never the stored group document.
+
+    The document carries every member's email, pending join requests, status history
+    and, with Key Vault storage off, inline model endpoint credentials.
+    """
+    group = group if isinstance(group, dict) else {}
+    return {
+        "id": group.get("id"),
+        "name": group.get("name"),
+        "status": str(group.get("status") or "active"),
+    }
+
+
+def _with_agent_group_summary(result: Any) -> Any:
+    """An operation's answer with its ``group`` reduced to the summary."""
+    if isinstance(result, dict) and "group" in result:
+        return {**result, "group": _agent_group_summary(result["group"])}
+    return result
 
 
 class SimpleChatPlugin(BasePlugin):
@@ -109,6 +135,21 @@ class SimpleChatPlugin(BasePlugin):
             return {"success": False, "error": str(exc), "error_type": "not_found"}
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_type": "validation"}
+        except GroupDocumentWriteConflict:
+            # The group kept changing, so nothing was saved and the request can be
+            # repeated: the model gets the shared sentence to relay, and the log
+            # carries no group data and no traceback.
+            log_event(
+                "[SIMPLE_CHAT_PLUGIN] A group change was not saved because the group kept changing.",
+                extra={"operation": operation_name},
+                level=logging.WARNING,
+            )
+            return {
+                "success": False,
+                "error": GROUP_WRITE_CONFLICT_MESSAGE,
+                "error_type": "conflict",
+                "error_code": GROUP_WRITE_CONFLICT_CODE,
+            }
         except Exception as exc:
             log_event(
                 f"[SIMPLE_CHAT_PLUGIN] {operation_name} failed: {exc}",
@@ -195,7 +236,7 @@ class SimpleChatPlugin(BasePlugin):
         return self._execute_operation(
             "create_group",
             lambda: {
-                "group": create_group_for_current_user(name=name, description=description),
+                "group": _agent_group_summary(create_group_for_current_user(name=name, description=description)),
             },
         )
 
@@ -323,11 +364,11 @@ class SimpleChatPlugin(BasePlugin):
     ) -> dict:
         return self._execute_operation(
             "make_group_inactive",
-            lambda: make_group_inactive_for_current_user(
+            lambda: _with_agent_group_summary(make_group_inactive_for_current_user(
                 group_id=group_id,
                 reason=reason,
                 default_group_id=self._default_group_id,
-            ),
+            )),
         )
 
     # bac-check: ignore - add_conversation_message_for_current_user validates personal ownership or collaboration access.
@@ -447,14 +488,14 @@ class SimpleChatPlugin(BasePlugin):
     ) -> dict:
         return self._execute_operation(
             "add_group_member",
-            lambda: add_group_member_for_current_user(
+            lambda: _with_agent_group_summary(add_group_member_for_current_user(
                 group_id=group_id,
                 user_identifier=user_identifier,
                 email=email,
                 display_name=display_name,
                 role=role,
                 default_group_id=self._default_group_id,
-            ),
+            )),
         )
 
     def _build_seeded_creation_payload(

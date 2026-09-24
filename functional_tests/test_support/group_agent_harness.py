@@ -1,7 +1,7 @@
 # group_agent_harness.py
 """Shared, isolated harness for the native group agent endpoint tests (M4C).
 
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.138
 
 Extracted verbatim from ``test_group_agent_apis.py`` so the API suite and the

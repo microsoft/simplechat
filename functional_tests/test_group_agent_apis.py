@@ -1,9 +1,9 @@
 # test_group_agent_apis.py
 """
 Functional tests for the immutable-target group agent APIs.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.138
-Backend harness extracted to test_support/group_agent_harness.py: 0.261.157
+Backend harness extracted to test_support/group_agent_harness.py: 0.261.161
 
 The real policy, access, projection and route modules run against the real
 personal-editor authoring engine (``functions_workspace_authoring``), executed

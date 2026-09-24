@@ -1,7 +1,7 @@
 # group_document_collaboration.py
 """
 Closed M2C sharing/publication HTTP fixtures for the real production V2 SPA.
-Version: 0.261.160
+Version: 0.261.161
 Implemented in: 0.261.130
 The review states, recipient directory, receipts, refusals and partial outcomes are the real
 collaboration routes', held to them by functional_tests/test_group_document_fixture_parity.py.

@@ -1346,10 +1346,14 @@ def register_route_backend_v2_admin(bp):
         not been described yet keep working. ``suppressed_capabilities`` names the keys
         that scan must skip because they are derived or are staged rollout flags with no
         administrator control.
+
+        The application release status is deliberately not part of this response. A
+        release check can contact GitHub, so it is served by ``v2_admin_get_update_status``
+        and requested alongside this one; a slow or unreachable release page then delays
+        only the version banner rather than every setting on the page.
         """
         try:
             settings = get_settings()
-            update_status = get_application_update_status(settings, VERSION)
             return (
                 jsonify(
                     {
@@ -1371,7 +1375,6 @@ def register_route_backend_v2_admin(bp):
                         "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
                         "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
-                        "update_status": update_status,
                     }
                 ),
                 200,
@@ -1383,6 +1386,45 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load settings"}), 500
+
+    @bp.route("/api/v2/admin/update-status", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_update_status():
+        """Return the running version and the shared application release status.
+
+        This is kept apart from the settings GET on purpose. When the shared 24-hour
+        cache has expired, ``get_application_update_status`` fetches the GitHub releases
+        page and persists what it found, which can take seconds -- longer still when the
+        server cannot reach GitHub. Served on its own, the SPA requests it at the same
+        time as the settings, so the settings render as soon as they are read and only
+        the version banner waits for the check.
+
+        ``version`` is the running server version that ``update_available`` was compared
+        against. A failed check is not an error here: it comes back as a ``stale`` or
+        ``unavailable`` status, exactly as the settings page used to receive it. Only an
+        unexpected failure returns a 500, with a stable message rather than exception text.
+        """
+        try:
+            settings = get_settings()
+            return (
+                jsonify(
+                    {
+                        "version": VERSION,
+                        "update_status": get_application_update_status(settings, VERSION),
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                "[APP_UPDATES] Failed to load the application update status.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Unable to check for application updates."}), 500
 
     @bp.route("/api/v2/admin/settings", methods=["PATCH"])
     @swagger_route(security=get_auth_security())

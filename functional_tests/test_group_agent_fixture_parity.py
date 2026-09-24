@@ -2,7 +2,7 @@
 """
 Per-route shape parity between the M4C group agent UI fixture and the real routes.
 Version: 0.261.163
-Implemented in: 0.261.157
+Implemented in: 0.261.161
 Group agents keep group knowledge only (agentWorkbench.ts knowledgeScopes): 0.261.163
 
 The V2 group Agents workbench and its editor mock the network with the closed HTTP fixture

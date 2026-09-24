@@ -1,8 +1,8 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.160
-Implemented in: 0.261.160
+Version: 0.261.161
+Implemented in: 0.261.161
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:

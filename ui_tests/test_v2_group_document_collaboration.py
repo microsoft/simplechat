@@ -1,7 +1,7 @@
 # test_v2_group_document_collaboration.py
 """
 Production-SPA M2C sharing and publication browser scenarios.
-Version: 0.261.160
+Version: 0.261.161
 Implemented in: 0.261.130
 Every scripted refusal and partial outcome is the server's (fixtures/group_document_collaboration.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately malformed

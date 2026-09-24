@@ -1,7 +1,7 @@
 # test_group_membership_fixture_parity.py
 """
 Per-route shape parity between the M7B group membership UI fixture and the real routes.
-Version: 0.261.155
+Version: 0.261.160
 Implemented in: 0.261.155
 
 The V2 Members browser suite mocks the network with the closed HTTP fixture
@@ -230,6 +230,12 @@ def test_the_fixture_policy_is_the_real_policy_module(env):
 ])
 def test_the_fixture_messages_are_the_server_messages(env, name):
     assert getattr(fixture_module, name) == getattr(env.modules.membership, name)
+
+
+def test_the_fixture_write_conflict_text_is_the_one_group_constant(env):
+    """The fixture reads functions_group's own sentence, the one every group route answers with."""
+    assert fixture_module.WRITE_CONFLICT_MESSAGE == env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE
+    assert env.modules.membership.WRITE_CONFLICT_MESSAGE is env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE
 
 
 # --------------------------------------------------------------------------

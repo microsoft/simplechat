@@ -1,7 +1,7 @@
 # group_action_harness.py
 """Shared, isolated harness for the native group action endpoint tests (M4).
 
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.137
 
 Extracted verbatim from ``test_group_action_apis.py`` so the API suite and the

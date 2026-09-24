@@ -61,7 +61,9 @@ Only these:
   recreated;
 - a group that keeps changing through three attempts gets 409
   `{"error": "The group changed while this change was being saved. Try again.",
-  "error_code": "group_write_conflict"}`;
+  "error_code": "group_write_conflict"}`. From version 0.261.160 the text is
+  the one every group-document write now shares, "The group changed while your
+  request was being saved. Try again."; the code is unchanged;
 - a join request on a group with no `pendingUsers` list creates the list and
   succeeds;
 - removing or leaving when you're not a member writes nothing and gives the

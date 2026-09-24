@@ -46,7 +46,7 @@ document list shows them.
 import logging
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from flask import request
 
@@ -64,7 +64,7 @@ from functions_settings import get_settings
 from functions_stats_windows import (
     ALLOWED_STATS_WINDOW_DAYS,
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -73,13 +73,6 @@ from functions_stats_windows import (
 GROUP_ACTIVITY_LIMITS = (10, 20, 50)
 GROUP_ACTIVITY_DEFAULT_LIMIT = 50
 GROUP_STATS_MAX_CUSTOM_DAYS = 366
-# Custom windows stay well inside the calendar, so neither a date's UTC offset nor the
-# day-by-day series built from the window can step past its first or last day.
-GROUP_STATS_EARLIEST_DATE = date(2000, 1, 1)
-GROUP_STATS_LATEST_DATE = date(9998, 12, 31)
-GROUP_STATS_DATE_RANGE_MESSAGE = (
-    f"Choose dates between {GROUP_STATS_EARLIEST_DATE.isoformat()} and {GROUP_STATS_LATEST_DATE.isoformat()}."
-)
 GROUP_STATS_UNAVAILABLE_MESSAGE = "Group statistics are unavailable right now. Try again."
 GROUP_ACTIVITY_UNAVAILABLE_MESSAGE = "Group activity is unavailable right now. Try again."
 WHOLE_NUMBER = re.compile(r"[1-9][0-9]{0,5}")
@@ -199,19 +192,14 @@ def read_stats_window():
         if not WHOLE_NUMBER.fullmatch(raw) or int(raw) not in ALLOWED_STATS_WINDOW_DAYS:
             raise _invalid("The days must be 7, 30 or 90.")
     try:
-        window = resolve_stats_time_window(arguments)
-    except OverflowError as error:
-        # A date whose UTC offset moves it past the calendar's first or last day.
-        raise _invalid(GROUP_STATS_DATE_RANGE_MESSAGE) from error
+        # The shared checker refuses a custom date outside 2000-01-01 to 9998-12-31,
+        # including one whose UTC offset carries it past the calendar's edge. The window
+        # helpers' messages name only their own fields, formats and range.
+        window = resolve_bounded_stats_time_window(arguments)
     except ValueError as error:
-        # The window helper's messages name only its own fields and formats.
         raise _invalid(str(error)) from error
-    if window["type"] == "custom":
-        if (window["start_date"].date() < GROUP_STATS_EARLIEST_DATE
-                or window["end_date"].date() > GROUP_STATS_LATEST_DATE):
-            raise _invalid(GROUP_STATS_DATE_RANGE_MESSAGE)
-        if window["days"] > GROUP_STATS_MAX_CUSTOM_DAYS:
-            raise _invalid(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.")
+    if window["type"] == "custom" and window["days"] > GROUP_STATS_MAX_CUSTOM_DAYS:
+        raise _invalid(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.")
     return window
 
 

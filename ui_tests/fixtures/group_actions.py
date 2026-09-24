@@ -1,9 +1,9 @@
 # group_actions.py
 """
 Closed M4 group action HTTP fixtures for the real production V2 SPA.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.137
-Seeds held to the real routes (test_group_action_fixture_parity.py): 0.261.157
+Seeds held to the real routes (test_group_action_fixture_parity.py): 0.261.161
 
 The fixture serves the immutable `/api/groups/<group_id>/actions[...]` family and
 the `/actions/types` catalogue, and injects the `action_management` context hint
