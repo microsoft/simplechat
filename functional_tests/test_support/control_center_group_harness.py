@@ -45,7 +45,8 @@ from test_support.group_directory_harness import group_directory_environment
 
 SOURCE = "route_backend_control_center.py"
 MODULE_LEVEL = {"enhance_group_with_activity", "_GroupChangeAnswer",
-                "GROUP_OWNERSHIP_CHANGED_MESSAGE", "GROUP_NO_LONGER_EXISTS_MESSAGE"}
+                "GROUP_OWNERSHIP_CHANGED_MESSAGE", "GROUP_NO_LONGER_EXISTS_MESSAGE",
+                "GROUP_APPROVAL_CONFLICT_MESSAGE"}
 NESTED = {"api_update_group_status", "api_admin_add_group_member", "_execute_approved_action",
           "_execute_take_ownership", "_execute_transfer_ownership"}
 CC_ADMIN = {"oid": "cc-admin", "roles": ["Admin"], "name": "Casey Control", "preferred_username": "cc.admin@example.test"}

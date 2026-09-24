@@ -42,8 +42,9 @@ Every writer now goes through the guard and decides on the fresh copy.
 
 ### One conflict text
 
-A group that keeps changing through every attempt gets 409 with one text
-everywhere:
+A group that keeps changing through every attempt gets 409 with one text on
+every route (approved ownership changes are the one exception, described
+below):
 
 ```json
 {"error": "The group changed while your request was being saved. Try again.",
@@ -76,8 +77,11 @@ The V2 endpoint editor's fallback text uses the same sentence.
     `executed` rather than `failed`;
   - if anyone else owns it, it's refused with "The group's owner changed after
     this request was made, so it wasn't applied. Submit a new request.";
-  - a deleted group gives "The group no longer exists.", and a conflict the
-    shared text. The approval ends `failed` in those three cases.
+  - a deleted group gives "The group no longer exists.", and a group that keeps
+    changing gives "The group kept changing while this request was being
+    applied, so it wasn't applied. Submit a new request." The approval ends
+    `failed` in those three cases. A failed approval can't be approved again,
+    so the routes' "Try again" would send the approver to a dead end.
 
 ### Tags
 

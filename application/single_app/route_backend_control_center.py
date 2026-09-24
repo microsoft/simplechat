@@ -55,6 +55,11 @@ GROUP_OWNERSHIP_CHANGED_MESSAGE = (
     "The group's owner changed after this request was made, so it wasn't applied. Submit a new request."
 )
 GROUP_NO_LONGER_EXISTS_MESSAGE = "The group no longer exists."
+# A failed approval can't be approved again, so a group that keeps changing asks for a new
+# request rather than the routes' "Try again".
+GROUP_APPROVAL_CONFLICT_MESSAGE = (
+    "The group kept changing while this request was being applied, so it wasn't applied. Submit a new request."
+)
 
 
 class _GroupChangeAnswer(Exception):
@@ -7264,7 +7269,7 @@ def register_route_backend_control_center(bp):
             except _GroupChangeAnswer as answer:
                 return answer.answer
             except GroupDocumentWriteConflict:
-                return {'success': False, 'message': GROUP_WRITE_CONFLICT_MESSAGE}
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
             if group is None:
                 return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
             
@@ -7511,7 +7516,7 @@ def register_route_backend_control_center(bp):
             except _GroupChangeAnswer as answer:
                 return answer.answer
             except GroupDocumentWriteConflict:
-                return {'success': False, 'message': GROUP_WRITE_CONFLICT_MESSAGE}
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
             if group is None:
                 return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
             old_owner = replaced['old_owner']

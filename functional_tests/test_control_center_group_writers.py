@@ -20,7 +20,9 @@ applying its change on the copy it writes. This test runs them for real in
 - a concurrent change is kept, and the decision (status unchanged, already a member,
   who owns the group) is made on the current copy;
 - a deleted group is not recreated;
-- a group that keeps changing gets the one conflict answer, with nothing written.
+- a group that keeps changing gets the one conflict answer, with nothing written. An
+  approval can't be approved again once it fails, so the approved actions answer with
+  their own text, which asks for a new request.
 
 Take and transfer ownership re-check the approval on the current copy. The request
 applies when the recorded owner still owns the group. It has already been applied,
@@ -487,10 +489,12 @@ def test_take_ownership_of_a_deleted_group_fails_without_recreating_it(env):
     assert stored_approval(env, "approval-take") == ("failed", "The group no longer exists.")
 
 
-def test_take_ownership_of_a_group_that_keeps_changing_fails_with_the_conflict_text(env):
+def test_take_ownership_of_a_group_that_keeps_changing_fails_and_asks_for_a_new_request(env):
     keep_changing(env)
     result = execute(env, take(env))
-    assert result == {"success": False, "message": env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE}
+    # A failed approval can't be approved again, so the answer can't be the routes' "Try again".
+    assert result == {"success": False, "message": ns(env)["GROUP_APPROVAL_CONFLICT_MESSAGE"]}
+    assert result["message"].endswith("Submit a new request.")
     assert env.stored_group(GROUP)["owner"]["id"] == "owner-1"
     assert env.bumps == [] and env.activity_records() == []
     assert stored_approval(env, "approval-take") == ("failed", result["message"])
@@ -549,11 +553,13 @@ def test_transfer_ownership_of_a_deleted_group_fails_without_recreating_it(env):
     assert env.groups.records == {} and env.bumps == [] and env.activity_records() == []
 
 
-def test_transfer_ownership_of_a_group_that_keeps_changing_fails_with_the_conflict_text(env):
+def test_transfer_ownership_of_a_group_that_keeps_changing_fails_and_asks_for_a_new_request(env):
     keep_changing(env)
     result = execute(env, transfer(env))
-    assert result == {"success": False, "message": env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE}
+    assert result == {"success": False, "message": ns(env)["GROUP_APPROVAL_CONFLICT_MESSAGE"]}
+    assert result["message"].endswith("Submit a new request.")
     assert env.stored_group(GROUP)["owner"]["id"] == "owner-1"
+    assert stored_approval(env, "approval-transfer") == ("failed", result["message"])
 
 
 @pytest.mark.parametrize("request_type,metadata", [(TAKE, OWNER_METADATA), (TRANSFER, TRANSFER_METADATA)])
