@@ -2,13 +2,16 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.250.037
+Version: 0.261.150
 Implemented in: 0.250.006
 Settings write invalidation scoped in: 0.250.037
+Guarded group membership writers: 0.261.150
 
 This test ensures chat bootstrap cache keys are versioned and invalidated by
 global and per-user cache version bumps without relying on generic settings
-write invalidation.
+write invalidation. A writer committed through
+``update_group_document_with_etag_guard`` is wired by the ``cache_reason`` it
+passes, because the guard bumps with that reason after the commit.
 """
 
 import copy
@@ -258,14 +261,14 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         ],
         "functions_simplechat_operations.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"group_marked_inactive\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
+            "cache_reason=\"group_member_added\"",
         ],
         "route_backend_groups.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"group_updated\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_request_approved\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_removed\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_role_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_ownership_transferred\")",
+            "cache_reason=\"group_member_role_updated\"",
+            "cache_reason=\"group_ownership_transferred\"",
         ],
         "route_backend_public_workspaces.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_updated\")",

@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.146
+Version: 0.261.150
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
 Group model endpoint policy coverage: 0.261.140
 Group directory policy coverage: 0.261.146
+Group membership policy coverage: 0.261.150
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -59,6 +60,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_group_endpoints_scoped": ("login_required", "user_required"),
     "backend_group_file_sources_scoped": ("login_required", "user_required"),
     "backend_group_directory": ("login_required", "user_required"),
+    "backend_group_membership": ("login_required", "user_required"),
     "backend_groups": ("login_required", "user_required"),
     "backend_models": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
@@ -201,6 +203,14 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_directory.py", "api_group_directory_create"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_directory.py", "api_group_join_request_create"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_directory.py", "api_group_join_request_cancel"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_add"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_role"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_requests"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_request_approve"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_request_reject"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_owner"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_documents"): ("login_required", "user_required", "enabled_required"),

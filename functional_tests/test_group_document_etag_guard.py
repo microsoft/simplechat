@@ -1,9 +1,11 @@
 # test_group_document_etag_guard.py
 """
 Functional test for the conditional group-document writer.
-Version: 0.261.146
+Version: 0.261.150
 Implemented in: 0.261.140
 No-bump commits (``cache_reason=None``): 0.261.146
+Native membership writers' cache reasons: 0.261.150
+Classic membership writers on the guard: 0.261.150
 
 ``update_group_document_with_etag_guard`` is the group-document equivalent of the
 File Sync ``_write_with_etag_guard`` (``fae9d6ef``). The real ``functions_group``
@@ -204,7 +206,8 @@ def _guard_calls():
 
 
 def test_every_guarded_writer_names_its_cache_reason():
-    """Only the group directory opts out of the bump; the model endpoint writes keep theirs."""
+    """The group directory opts out of the bump; the model endpoint writes keep theirs,
+    and the membership module forwards each write's own reason (pinned below)."""
     reasons = {}
     for file_name, call in _guard_calls():
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
@@ -216,7 +219,65 @@ def test_every_guarded_writer_names_its_cache_reason():
     assert reasons == {
         "functions_group_endpoint_access.py": {"GROUP_ENDPOINT_CACHE_REASON"},
         "functions_group_directory.py": {"None"},
+        "functions_group_membership.py": {"cache_reason"},
+        "functions_simplechat_operations.py": {"'group_member_added'"},
+        "route_backend_groups.py": {"cache_reason"},
     }
+
+
+def _forwarded_reasons(file_name, writer):
+    """``cache_reason`` per innermost calling function, for a module's own guarded-write wrapper."""
+    tree = ast.parse((APP_DIR / file_name).read_text(encoding="utf-8"))
+    reasons = {}
+
+    def visit(node, owner):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == writer:
+                [value] = [keyword.value for keyword in child.keywords if keyword.arg == "cache_reason"]
+                assert owner not in reasons, f"{owner} calls {writer} more than once"
+                reasons[owner] = value.value
+            visit(child, owner)
+
+    visit(tree, None)
+    return reasons
+
+
+def test_the_classic_membership_writers_keep_their_cache_reasons():
+    """Converted to the guard with the bumps they always had: approve bumps after
+    the commit (the action is read inside the change), removal only when a member
+    was removed, and the classic join and reject never."""
+    assert _forwarded_reasons("route_backend_groups.py", "_guarded_group_write") == {
+        "request_to_join": None,
+        "approve_reject_request": None,
+        "remove_member": None,
+        "update_member_role": "group_member_role_updated",
+        "transfer_ownership": "group_ownership_transferred",
+    }
+    source = (APP_DIR / "route_backend_groups.py").read_text(encoding="utf-8")
+    assert source.count('bump_chat_bootstrap_global_cache_version(reason="group_member_request_approved")') == 1
+    assert source.count('bump_chat_bootstrap_global_cache_version(reason="group_member_removed")') == 1
+
+
+def _membership_write_reasons():
+    return _forwarded_reasons("functions_group_membership.py", "_write")
+
+
+def test_the_membership_writes_keep_the_classic_cache_reasons():
+    """Each native write bumps exactly as its classic counterpart does; removal bumps
+    itself only when a ``users[]`` entry was removed."""
+    assert _membership_write_reasons() == {
+        "add_group_member": "group_member_added",
+        "change_group_member_role": "group_member_role_updated",
+        "remove_group_member": None,
+        "approve_join_request": "group_member_request_approved",
+        "reject_join_request": None,
+        "transfer_group_ownership": "group_ownership_transferred",
+    }
+    source = (APP_DIR / "functions_group_membership.py").read_text(encoding="utf-8")
+    assert source.count('bump_chat_bootstrap_global_cache_version(reason="group_member_removed")') == 1
 
 
 def test_the_model_endpoint_cache_reason_is_a_real_reason(env):

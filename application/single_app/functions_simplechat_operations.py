@@ -89,6 +89,7 @@ from functions_generated_artifact_sources import (
     has_generated_artifact_source,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+import functions_group
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -2160,28 +2161,53 @@ def add_group_member_for_current_user(
         "email": resolved_user.get("email", ""),
         "displayName": resolved_user.get("displayName") or resolved_user.get("email") or target_user_id,
     }
-    group_doc.setdefault("users", []).append(new_member_doc)
+    added = {}
 
-    if member_role == "admin":
-        if target_user_id not in group_doc.get("admins", []):
-            group_doc.setdefault("admins", []).append(target_user_id)
-    elif member_role == "document_manager":
-        if target_user_id not in group_doc.get("documentManagers", []):
-            group_doc.setdefault("documentManagers", []).append(target_user_id)
+    def apply(fresh_group_doc):
+        # Re-checked on every fresh copy: a concurrent change is kept, and a
+        # demotion or an approval that lands first refuses the add.
+        fresh_actor_role = get_user_role_in_group(fresh_group_doc, current_user["userId"])
+        if fresh_actor_role not in ["Owner", "Admin"]:
+            raise PermissionError("Only the owner or admin can add members")
+        if get_user_role_in_group(fresh_group_doc, target_user_id):
+            raise ValueError("User is already a member")
 
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_member_added")
+        fresh_group_doc.setdefault("users", []).append(dict(new_member_doc))
+        if member_role == "admin":
+            if target_user_id not in fresh_group_doc.get("admins", []):
+                fresh_group_doc.setdefault("admins", []).append(target_user_id)
+        elif member_role == "document_manager":
+            if target_user_id not in fresh_group_doc.get("documentManagers", []):
+                fresh_group_doc.setdefault("documentManagers", []).append(target_user_id)
+        # A member added directly has no request left to decide.
+        pending_users = fresh_group_doc.get("pendingUsers")
+        if isinstance(pending_users, list):
+            fresh_group_doc["pendingUsers"] = [
+                entry for entry in pending_users
+                if not (isinstance(entry, dict) and entry.get("userId") == target_user_id)
+            ]
+
+        fresh_group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        added["actor_role"] = fresh_actor_role
+        return fresh_group_doc
+
+    # Reached through the module so callers that stub functions_group with only the
+    # names imported above can still import this module.
+    updated_group_doc = functions_group.update_group_document_with_etag_guard(
+        group_doc.get("id"), apply, cache_reason="group_member_added",
+    )
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
 
     _log_group_member_addition(
         actor_user=current_user,
-        actor_role=actor_role,
-        group_doc=group_doc,
+        actor_role=added["actor_role"],
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
     )
     _notify_group_member_addition(
-        group_doc=group_doc,
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
         added_by_email=current_user.get("email", "unknown"),
@@ -2191,8 +2217,8 @@ def add_group_member_for_current_user(
     return {
         "success": True,
         "message": "Member added",
-        "group_id": group_doc.get("id"),
-        "group_name": group_doc.get("name", "Unknown"),
+        "group_id": updated_group_doc.get("id"),
+        "group_name": updated_group_doc.get("name", "Unknown"),
         "member": new_member_doc,
         "member_role": member_role,
         "group": updated_group_doc,

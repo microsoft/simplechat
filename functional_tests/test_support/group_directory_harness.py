@@ -1,7 +1,7 @@
 # group_directory_harness.py
-"""Shared, isolated harness for the native group directory tests (M7A).
+"""Shared, isolated harness for the native group directory and membership tests (M7A, M7B).
 
-Version: 0.261.146
+Version: 0.261.150
 Implemented in: 0.261.146
 
 Loaded unchanged from their files:
@@ -10,13 +10,19 @@ Loaded unchanged from their files:
 - ``functions_workspace_branding``: hero colour and logo metadata;
 - ``functions_group_directory_policy``, ``functions_group_directory`` and
   ``route_backend_group_directory``;
+- ``functions_group_membership_policy``, ``functions_group_membership``,
+  ``functions_group_membership_audit`` and ``route_backend_group_membership``;
 - the classic ``route_backend_groups``, registered first as ``app.py`` does, so the
-  classic routes that share the shape of ``/api/groups/directory`` answer for real.
+  classic routes answer for real: the ones that share the shape of
+  ``/api/groups/directory``, and every classic membership route.
 
 The session decorators, ``create_group_role_required`` and ``enabled_required`` are
 the real definitions, and ``create_group_for_current_user`` runs with the real
 helpers it calls: the configuration checks and the creator's notification. The
-member-added notification helper is loaded too, for the notification link pins.
+classic direct add, ``add_group_member_for_current_user``, runs for real with the
+helpers it calls: the group and role checks, the directory resolution, the
+activity record (``_log_group_member_addition``) and the two notifications.
+``log_group_member_deleted`` is the real function too.
 
 Only services outside the application are replaced:
 
@@ -26,9 +32,13 @@ Only services outside the application are replaced:
   model holds its own copy of the query text and refuses any other query, so the
   projection the tests rely on is the one the module sends, evaluated as Cosmos
   evaluates it: undefined properties are omitted, equality is type-strict and
-  iterating a missing array yields nothing;
+  iterating a missing array yields nothing. Activity records go to a second
+  ``FakeContainer``;
+- Microsoft Graph is an in-memory directory (``directory_users``) whose lookups can
+  be made to fail (``directory_failure``) the way a missing token, a refused
+  permission or a transport error does;
 - notifications, the chat bootstrap cache bump, ``log_event``, user settings writes
-  and the classic activity logger are recorders;
+  and any other activity logger are recorders;
 - network access, including DNS, is refused.
 """
 
@@ -71,6 +81,7 @@ PEOPLE = {
     "member-1": ("Max Member", "max.member@example.test"),
     "applicant-1": ("Ana Applicant", "ana.applicant@example.test"),
     "outsider-1": ("Oscar Outsider", "oscar.outsider@example.test"),
+    "newcomer-1": ("Nia Newcomer", "nia.newcomer@example.test"),
 }
 
 # The directory query, as this fixture models it. Kept here rather than read from
@@ -264,6 +275,9 @@ class GroupDirectoryEnvironment:
         self.logs = []
         self.user_settings_writes = []
         self.activity = Recorder("functions_activity_logging")
+        self.directory_users = {}
+        self.directory_failure = None
+        self.directory_calls = []
 
     # --- seams ------------------------------------------------------------
 
@@ -281,6 +295,41 @@ class GroupDirectoryEnvironment:
         self.user_settings_writes.append((user_id, copy.deepcopy(updates)))
         return True
 
+    def get_directory_user_by_id(self, user_id):
+        """Graph ``GET /users/<id>``: a user, ``None`` for a 404, or the configured failure."""
+        self.directory_calls.append(("by_id", user_id))
+        if self.directory_failure is not None:
+            raise self.directory_failure
+        user = self.directory_users.get(str(user_id or "").strip())
+        return copy.deepcopy(user) if user else None
+
+    def find_directory_users_by_email(self, email):
+        self.directory_calls.append(("by_email", email))
+        if self.directory_failure is not None:
+            raise self.directory_failure
+        wanted = str(email or "").strip().lower()
+        return [copy.deepcopy(user) for user in self.directory_users.values() if user["email"].lower() == wanted]
+
+    def search_directory_users(self, query, limit=10):
+        self.directory_calls.append(("search", query))
+        if self.directory_failure is not None:
+            raise self.directory_failure
+        wanted = str(query or "").strip().lower()
+        return [
+            copy.deepcopy(user) for user in self.directory_users.values()
+            if user["displayName"].lower().startswith(wanted) or user["email"].lower().startswith(wanted)
+        ][:limit]
+
+    def add_directory_user(self, user_id, name=None, email=None):
+        default_name, default_email = PEOPLE.get(user_id, (f"Name {user_id}", f"{user_id}@example.test"))
+        self.directory_users[user_id] = {
+            "id": user_id, "displayName": name or default_name, "email": email or default_email,
+        }
+        return self.directory_users[user_id]
+
+    def activity_records(self):
+        return [record for record in self.activity_logs.records.values()]
+
     # --- state ------------------------------------------------------------
 
     def reset(self):
@@ -297,6 +346,9 @@ class GroupDirectoryEnvironment:
         self.logs.clear()
         self.user_settings_writes.clear()
         self.activity.calls.clear()
+        self.directory_users.clear()
+        self.directory_failure = None
+        self.directory_calls.clear()
         self.operations_namespace["get_settings"] = self.get_settings
         self.as_user("outsider-1")
 
@@ -353,6 +405,30 @@ class GroupDirectoryEnvironment:
 
     def cancel(self, group_id, **kwargs):
         return self.call("DELETE", f"/api/groups/{group_id}/join-request", **kwargs)
+
+    def members(self, group_id, query_string=None, **kwargs):
+        return self.call("GET", f"/api/groups/{group_id}/membership/members", query_string=query_string, **kwargs)
+
+    def add_member(self, group_id, body, **kwargs):
+        return self.call("POST", f"/api/groups/{group_id}/membership/members", body, **kwargs)
+
+    def change_role(self, group_id, user_id, body, **kwargs):
+        return self.call("PATCH", f"/api/groups/{group_id}/membership/members/{user_id}", body, **kwargs)
+
+    def remove_member(self, group_id, user_id, **kwargs):
+        return self.call("DELETE", f"/api/groups/{group_id}/membership/members/{user_id}", **kwargs)
+
+    def pending_requests(self, group_id, **kwargs):
+        return self.call("GET", f"/api/groups/{group_id}/membership/requests", **kwargs)
+
+    def approve(self, group_id, user_id, **kwargs):
+        return self.call("POST", f"/api/groups/{group_id}/membership/requests/{user_id}/approve", **kwargs)
+
+    def reject(self, group_id, user_id, **kwargs):
+        return self.call("POST", f"/api/groups/{group_id}/membership/requests/{user_id}/reject", **kwargs)
+
+    def transfer(self, group_id, body, **kwargs):
+        return self.call("PUT", f"/api/groups/{group_id}/membership/owner", body, **kwargs)
 
 
 def _register(app, authentication, name, registrar):
@@ -452,49 +528,87 @@ def group_directory_environment():
         }
         stack.enter_context(patch.dict(sys.modules, stubs))
 
+        # The real classic removal logger, writing to the activity container.
+        activity_namespace = {
+            "Optional": typing.Optional, "datetime": datetime, "logging": logging,
+            "cosmos_activity_logs_container": env.activity_logs,
+            "log_event": env.log_event, "debug_print": lambda *args, **kwargs: None,
+        }
+        execute_functions("functions_activity_logging.py", {"log_group_member_deleted"}, activity_namespace)
+        env.activity.log_group_member_deleted = activity_namespace["log_group_member_deleted"]
+
         branding = _load(stack, "functions_workspace_branding")
         group = _load(stack, "functions_group")
 
-        # create_group_for_current_user with the real helpers it calls.
+        # create_group_for_current_user and add_group_member_for_current_user with the
+        # real helpers they call; Graph is the in-memory directory.
         operations_namespace = {
             "Any": typing.Any, "Dict": typing.Dict, "List": typing.List, "Optional": typing.Optional,
-            "logging": logging, "session": session, "quote": quote,
+            "Tuple": typing.Tuple,
+            "logging": logging, "session": session, "quote": quote, "uuid": uuid, "datetime": datetime,
             "get_settings": env.get_settings,
             "get_current_user_info": auth_namespace["get_current_user_info"],
             "create_group": group.create_group,
+            "find_group_by_id": group.find_group_by_id,
+            "assert_group_role": group.assert_group_role,
+            "require_active_group": group.require_active_group,
+            "get_user_role_in_group": group.get_user_role_in_group,
+            "update_group_document_with_etag_guard": group.update_group_document_with_etag_guard,
+            "GroupDocumentWriteConflict": group.GroupDocumentWriteConflict,
+            "functions_group": group,
+            "cosmos_groups_container": env.groups,
+            "cosmos_activity_logs_container": env.activity_logs,
+            "bump_chat_bootstrap_global_cache_version": lambda reason=None, **kwargs: env.bumps.append(reason),
             "create_notification": env.create_notification,
             "log_event": env.log_event,
+            "_get_directory_user_by_id": env.get_directory_user_by_id,
+            "_find_directory_users_by_email": env.find_directory_users_by_email,
+            "search_directory_users": env.search_directory_users,
         }
         execute_functions("functions_simplechat_operations.py", {
             "create_group_for_current_user", "_require_group_workspaces_enabled",
             "_require_group_creation_enabled", "_require_current_user_info",
             "_notify_group_created", "_create_personal_notification", "_build_group_link_context",
             "_build_group_manage_url", "_notify_group_member_addition",
+            "add_group_member_for_current_user", "_resolve_group_doc_for_current_user",
+            "resolve_directory_user", "_log_group_member_addition",
         }, operations_namespace)
         env.operations_namespace = operations_namespace
         stack.enter_context(patch.dict(sys.modules, {
             "functions_simplechat_operations": module_stub(
                 "functions_simplechat_operations",
                 create_group_for_current_user=operations_namespace["create_group_for_current_user"],
-                add_group_member_for_current_user=_refuse("add_group_member_for_current_user"),
+                add_group_member_for_current_user=operations_namespace["add_group_member_for_current_user"],
+                _get_directory_user_by_id=env.get_directory_user_by_id,
+                _log_group_member_addition=operations_namespace["_log_group_member_addition"],
+                _notify_group_member_addition=operations_namespace["_notify_group_member_addition"],
             ),
         }))
 
         policy = _load(stack, "functions_group_directory_policy")
         directory = _load(stack, "functions_group_directory")
         routes = _load(stack, "route_backend_group_directory")
+        audit = _load(stack, "functions_group_membership_audit")
+        membership_policy = _load(stack, "functions_group_membership_policy")
+        membership = _load(stack, "functions_group_membership")
+        membership_routes = _load(stack, "route_backend_group_membership")
         legacy_routes = _load(stack, "route_backend_groups")
 
         env.modules = SimpleNamespace(
             branding=branding, group=group, policy=policy, directory=directory,
             routes=routes, legacy_routes=legacy_routes, authentication=authentication,
-            settings=settings_module,
+            settings=settings_module, audit=audit, membership_policy=membership_policy,
+            membership=membership, membership_routes=membership_routes,
         )
 
         app = Flask("group_directory_contract", root_path=str(APP_ROOT))
         app.config.update(TESTING=True, SECRET_KEY="test-only-session-key")
         _register(app, authentication, "backend_groups", legacy_routes.register_route_backend_groups)
         _register(app, authentication, "backend_group_directory", routes.register_route_backend_group_directory)
+        _register(
+            app, authentication, "backend_group_membership",
+            membership_routes.register_route_backend_group_membership,
+        )
 
         legacy_app = Flask("group_directory_legacy_server", root_path=str(APP_ROOT))
         legacy_app.config.update(TESTING=True, SECRET_KEY="test-only-session-key")
