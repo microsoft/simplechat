@@ -169,6 +169,20 @@ with 29 cases:
 - the section staying unavailable, with no agent request, when group agents are
   off.
 
+`functional_tests/test_group_agent_fixture_parity.py` holds that fixture to the
+real group agent routes, route by route. For each response it checks that the
+fixture returns only keys the server returns, including inside each agent, its
+options and its knowledge catalogue, that every field the editor reads is
+present on both sides, and that statuses and error codes match. Where a harness
+stub would answer with an invented shape, the pin runs the real code: the agent
+sanitizer, the combined model endpoint builder and the knowledge catalogue
+builder. When it was added, after version **0.261.161**, it corrected ten
+places where the fixture had drifted, including an unstorable Foundry agent,
+invented refusal texts, editor options the server never sends, and a knowledge
+catalogue with a public source no group catalogue lists. One is a product
+finding, pinned as a strict `xfail` until it's fixed: the group editor offers
+public knowledge, but a group agent never keeps it.
+
 The group and public fixtures record any request for personal data from a
 shared page as unexpected, so a test fails on it rather than the fixture
 answering it. Personal data here means `/api/user/*` except settings, personal

@@ -1,8 +1,10 @@
 # group_documents.py
 """
 Closed M2A group document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.128
+The served rows, read texts and restricted projections are the real read routes', held to them by
+functional_tests/test_group_document_fixture_parity.py.
 
 The fixture serves full-set query results and separately scoped details/versions.
 It never permits personal document APIs or document mutations. Navigation and
@@ -33,7 +35,7 @@ def document(group_id, identifier, title, *, timestamp, **overrides):
         "shared_approval_status": "owner",
         "file_name": f"{identifier}.pdf", "title": title,
         "abstract": f"Approved metadata for {title}.", "authors": ["Research team"],
-        "tags": ["Team"], "document_classification": "Internal",
+        "tags": ["team"], "document_classification": "Internal",
         "status": "Processing complete", "percentage_complete": 100,
         "file_size": 4096, "number_of_pages": 12, "num_chunks": 15,
         "version": 3, "revision_family_id": f"family-{group_id}-{identifier}",
@@ -56,6 +58,56 @@ def restricted(record):
             "is_current_version", "_ts", "upload_date", "content_screening",
         }
     }
+
+
+# The read texts and statuses the real group document routes send
+# (`functions_group_document_access.py`, `functions_group_document_reads.py` and the screening
+# projection), held to them by functional_tests/test_group_document_fixture_parity.py.
+GROUP_DOCUMENTS_DENIED_ERROR = "You do not have access to the selected group."
+GROUP_DOCUMENTS_STATUS_ERROR = "Documents are unavailable for this group's current status."
+GROUP_DOCUMENT_NOT_FOUND_ERROR = "Document not found or access denied."
+SHARE_AWAITING_APPROVAL_STATUS = "Awaiting group share approval"
+SCREENING_UNAVAILABLE_STATUS = "Content screening: document unavailable"
+ARTIFACT_AWAITING_APPROVAL_STATUS = "Awaiting generated artifact approval"
+
+
+def restricted_status(record):
+    """A row whose content is restricted shows the reason instead of its stored status, to every
+    viewer: an unapproved share awaits approval, and held content is unavailable while screening
+    completes."""
+    if record.get("shared_approval_status") == "not_approved":
+        record["status"] = SHARE_AWAITING_APPROVAL_STATUS
+    elif isinstance(record.get("content_screening"), dict) and record["content_screening"].get("available") is False:
+        record["status"] = SCREENING_UNAVAILABLE_STATUS
+    return record
+
+
+def pending_artifact(record, *, requested_by_user_id, requested_by_display_name, requested_at):
+    """A generated artifact awaiting publication approval, as every viewer's read projection shows
+    it: only the fields a held document keeps, the request, and why it is unavailable."""
+    projected = restricted(record)
+    projected.update({
+        "status": ARTIFACT_AWAITING_APPROVAL_STATUS, "generated_artifact_promotion_status": "pending_approval",
+        "generated_artifact_requested_by_user_id": requested_by_user_id,
+        "generated_artifact_requested_by_display_name": requested_by_display_name,
+        "generated_artifact_requested_at": requested_at,
+        "enhanced_citations": False, "document_actions": [],
+    })
+    return projected
+
+
+def member_projection(record):
+    """The fields the read projection computes for an ordinary member's row. A member may inspect
+    a document's review state but offers no management operation."""
+    record.setdefault("document_actions", [])
+    record.setdefault("document_collaboration_actions", ["inspect"])
+    return restricted_status(record)
+
+
+def served(record):
+    """A row as the routes return it. `_ts` is the server's own sort and recent key, so the final
+    projection never carries it; the explorer dates a row by its upload date instead."""
+    return {key: copy.deepcopy(value) for key, value in record.items() if key != "_ts"}
 
 
 class GroupDocumentsFixture(GroupWorkspaceFixture):
@@ -85,10 +137,11 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
             "query": {"place": "recent", "search": "personal", "tags": ["Private"], "classification": None},
         }]
         for group_id, name in (("group-a", "Research brief"), ("group-b", "Read-only brief")):
-            owned = document(group_id, "same-document", name, timestamp=self.now, tags=["Finance", "Team"])
+            # Stored tags are normalized to lowercase (`validate_tags`), so every row carries them in lowercase.
+            owned = document(group_id, "same-document", name, timestamp=self.now, tags=["finance", "team"])
             shared = document("origin", "shared-report", "Published report", timestamp=self.now - 1,
                 shared_group_active_id=group_id, shared_approval_status="approved",
-                owner_group_name="Publishing group", tags=["Finance"], document_classification="Confidential")
+                owner_group_name="Publishing group", tags=["finance"], document_classification="Confidential")
             pending = restricted(document("origin", "pending-report", "Restricted pending title", timestamp=self.now - 2,
                 shared_group_active_id=group_id, shared_approval_status="not_approved", owner_group_name="Publishing group"))
             held = restricted(document(group_id, "held-report", "Restricted held title", timestamp=self.now - 3,
@@ -105,20 +158,20 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
                 for index in range(1, 59):
                     rows.append(document(group_id, f"team-{index:02d}", f"Team research {index:02d}",
                         timestamp=self.now - (index + 10 if index % 3 else 200 * 86400),
-                        tags=["Team", "Finance"] if index % 2 else [],
+                        tags=["team", "finance"] if index % 2 else [],
                         file_size=index * 1000, number_of_pages=index, version=index % 4 + 1,
                         document_classification="Internal" if index % 2 else "Confidential"))
-            self.documents[group_id] = rows
+            self.documents[group_id] = [member_projection(row) for row in rows]
             self.versions[(group_id, "same-document")] = [
                 copy.deepcopy(owned),
-                document(group_id, "previous-version", "Earlier research brief", timestamp=self.now - 86400,
-                    version=2, is_current_version=False, revision_family_id=owned["revision_family_id"]),
+                member_projection(document(group_id, "previous-version", "Earlier research brief", timestamp=self.now - 86400,
+                    version=2, is_current_version=False, revision_family_id=owned["revision_family_id"])),
             ]
             self.versions[(group_id, "shared-report")] = [
                 copy.deepcopy(shared),
-                restricted(document("origin", "pending-version", "Restricted earlier share", timestamp=self.now - 86400,
+                member_projection(restricted(document("origin", "pending-version", "Restricted earlier share", timestamp=self.now - 86400,
                     version=1, is_current_version=False, revision_family_id=shared["revision_family_id"],
-                    shared_group_active_id=group_id, shared_approval_status="not_approved", owner_group_name="Publishing group")),
+                    shared_group_active_id=group_id, shared_approval_status="not_approved", owner_group_name="Publishing group"))),
             ]
 
     def _bootstrap(self):
@@ -188,8 +241,11 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
             assert "group_ids" not in entry.query, f"The chat aggregate is not a workspace read: {entry}"
             group_id = entry.query["group_id"][0]
             assert group_id in self.groups, entry
-            if group_id in self.denied_groups or not self.groups[group_id]["document_permissions"]["can_view"]:
-                self._json(route, {"error": "Group documents are unavailable."}, 403)
+            if group_id in self.denied_groups:
+                self._json(route, {"error": GROUP_DOCUMENTS_DENIED_ERROR}, 403)
+                return
+            if not self.groups[group_id]["document_permissions"]["can_view"]:
+                self._json(route, {"error": GROUP_DOCUMENTS_STATUS_ERROR}, 403)
                 return
             if path == "/api/group_documents":
                 assert set(entry.query) <= {
@@ -217,7 +273,7 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
                 page = int(entry.query.get("page", ["1"])[0])
                 size = int(entry.query.get("page_size", ["50"])[0])
                 self._json(route, {
-                    "documents": rows[(page - 1) * size:page * size], "total_count": len(rows),
+                    "documents": [served(row) for row in rows[(page - 1) * size:page * size]], "total_count": len(rows),
                     "page": page, "page_size": size, "file_downloads_enabled": True,
                 })
             elif path == "/api/group_documents/facets":
@@ -226,7 +282,7 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
             elif path == "/api/group_documents/tags":
                 assert entry.query == {"group_id": [group_id]}
                 self._json(route, {"tags": [
-                    {"name": name, "count": count, "color": "#0078d4" if name == "Finance" else "#059669"}
+                    {"name": name, "count": count, "color": "#0078d4" if name == "finance" else "#059669"}
                     for name, count in sorted(self.facets(group_id)["by_tag"].items())
                 ]})
             else:
@@ -236,16 +292,16 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
                 if record is None:
                     record = next((row for row in self.visible(group_id) if row["id"] == identifier), None)
                 if record is None:
-                    self._json(route, {"error": "Document is not available in this group."}, 404)
+                    self._json(route, {"error": GROUP_DOCUMENT_NOT_FOUND_ERROR}, 404)
                 elif len(parts) == 5 and parts[4] == "versions":
                     self._json(route, {
                         "document_id": identifier, "group_id": group_id,
                         "revision_family_id": record["revision_family_id"],
-                        "versions": self.versions.get((group_id, identifier), [record]),
+                        "versions": [served(row) for row in self.versions.get((group_id, identifier), [record])],
                     })
                 else:
                     assert len(parts) == 4
-                    self._json(route, record)
+                    self._json(route, served(record))
         elif path == "/api/chat/stream" and self.lock_chat:
             self._json(route, {"error": "Context scope is locked for this conversation."}, 409)
         elif path == "/api/v2/orchestration/runs" and method == "GET":
