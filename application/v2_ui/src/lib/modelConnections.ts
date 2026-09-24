@@ -1175,7 +1175,7 @@ export class EndpointConflictError extends Error {
  * own revision is still valid, so the draft is kept and a plain retry succeeds; no reload is needed.
  */
 export class GroupWriteConflictError extends Error {
-    constructor(message = 'The group changed while this model endpoint was being saved. Try again.') {
+    constructor(message = 'The group changed while your request was being saved. Try again.') {
         super(message);
         this.name = 'GroupWriteConflictError';
     }

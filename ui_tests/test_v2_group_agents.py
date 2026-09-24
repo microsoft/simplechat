@@ -1,7 +1,7 @@
 # test_v2_group_agents.py
 """
 Production-SPA coverage for the native scope-aware V2 group agents workbench.
-Version: 0.261.145
+Version: 0.261.157
 Implemented in: 0.261.138
 
 Exercises the real agent collection and full-page editor against closed synthetic
@@ -30,7 +30,7 @@ from ui_tests.fixtures.group_agents import (  # noqa: F401
     GroupAgentsFixture, connect_options, group_agents_ui,
     EDITABLE_AGENT_ID, WITHHELD_AGENT_ID, FOUNDRY_AGENT_ID, MEMBER_AGENT_ID, PROVIDED_AGENT_ID,
 )
-from ui_tests.fixtures.group_workspace import GROUP_FOUNDRY_ENDPOINT_ID  # noqa: F401
+from ui_tests.fixtures.group_workspace import GROUP_AGENTS_DISABLED_REASON, GROUP_FOUNDRY_ENDPOINT_ID  # noqa: F401
 from ui_tests.test_v2_workspace_authoring import (
     begin_action, collection_item, configure_agent, editor_section, name_field,
 )
@@ -422,8 +422,8 @@ def test_group_without_the_agents_capability_does_not_mount_the_native_workbench
     """Agents off: the native workbench never mounts and the group agents route is never read."""
     ui, page = group_agents_ui, group_agents_ui.page
     ui.open("/groups/group-c/agents")
-    # The section is unavailable, so the honest reason renders instead of a native collection.
-    expect(page.get_by_text("Group agents are not enabled.", exact=True)).to_be_visible()
+    # The section is unavailable, so the server's reason renders instead of a native collection.
+    expect(page.get_by_text(GROUP_AGENTS_DISABLED_REASON, exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="New agent", exact=True)).to_have_count(0)
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/group-c/agents")], (
         "The agents route must not be read when the group agent capability is off."

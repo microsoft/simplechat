@@ -1,10 +1,12 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.155
+Version: 0.261.161
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
-Settings, Activity and Statistics sections in the group context (M7C): 0.261.157
+File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
+Group context held to the server's builder, field by field: 0.261.157
+Settings, Activity and Statistics sections in the group context (M7C): 0.261.161
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -20,6 +22,7 @@ the base class and is reused unchanged by the dedicated per-section fixtures, so
 answers these routes with one implementation.
 """
 
+import ast
 import base64
 import copy
 import hashlib
@@ -27,6 +30,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from email import policy as email_policy
 from email.parser import BytesParser
+from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 import pytest
@@ -36,6 +40,22 @@ from ui_tests.fixtures.workspace_authoring import (
     _editor_candidate, _set_pointer, action_record, agent_record, connect_options,  # noqa: F401
     editor_options, personal_scope_leak,
 )
+
+
+# The application package, so a handful of reviewed constants are read from the server itself by AST
+# rather than duplicated as a literal that could silently drift from it.
+APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
+
+
+def _app_constant(file_name, name):
+    """Return the module-level literal ``name`` assigned in ``application/single_app/<file_name>``."""
+    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise LookupError(f"{file_name} defines no literal {name}")
 
 
 SECTION_GROUPS = {
@@ -311,7 +331,8 @@ def _sanitize_identity(record):
 # so a member sees the read-only collection, exactly as the server projects it. The response carries
 # no per-item group ID: identity is proven at the envelope, so a returned endpoint never has to name
 # its group and the reader validates the list shape instead.
-ENDPOINT_OPERATIONS = ("create", "edit", "enable", "delete", "test")
+# The workspace operations in the server's order (GROUP_ENDPOINT_OPERATIONS), as the context sends them.
+ENDPOINT_OPERATIONS = ("create", "edit", "delete", "enable", "test")
 ENDPOINT_ACTIONS = ("edit", "enable", "delete", "test")
 # The server's GROUP_ENDPOINT_WRITE_ROLES: only Owner and Admin may write. A DocumentManager reads
 # the collection but never manages it, so it is deliberately excluded and left read-only.
@@ -319,7 +340,7 @@ ENDPOINT_MANAGE_ROLES = ("Owner", "Admin")
 
 # The strict write body the native endpoint routes accept; `expected_revision` rides the PATCH.
 ENDPOINT_CONFLICT_ERROR = "This model endpoint changed. Reload it before saving."
-GROUP_WRITE_CONFLICT_ERROR = "The group changed while this model endpoint was being saved. Try again."
+GROUP_WRITE_CONFLICT_ERROR = "The group changed while your request was being saved. Try again."
 # The server's exact in-use and no-change texts (functions_group_endpoint_access.py), shown verbatim
 # by the editor so a test proves the server's own wording renders (§11 F3.5).
 ENDPOINT_IN_USE_ERROR = (
@@ -445,7 +466,8 @@ def file_source_management(role, status):
 def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=True,
                       recursive=True, connection=None, filters=None, identity_id="",
                       identity_name="", auth_type="username_password", secret_stored=True,
-                      username="", domain="", client_identity="", schedule_enabled=False,
+                      username="", domain="", client_identity="", tenant_id="",
+                      managed_identity_client_id="", schedule_enabled=False,
                       interval_minutes=60, actions=FILE_SOURCE_ITEM_ACTIONS,
                       last_run_status="completed", last_run_at="2024-01-02T00:00:00+00:00"):
     """One group file source as the native projector returns it, before config_revision and masking.
@@ -453,6 +475,8 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
     The stored credential is a boolean plus a placeholder, never a plaintext secret, so a blank
     secret on save keeps it and a fresh value replaces it. An identity binding stores the id and a
     display name the list row shows; inline auth stores the fields the sanitized credentials expose.
+    A service principal keeps its client ID in `identity` and its tenant in `tenant_id`; a managed
+    identity keeps its client ID in `managed_identity_client_id`, as `_prepare_auth_payload` stores them.
     """
     conn = dict(connection or {})
     for key in FILE_SOURCE_CONNECTION_KEYS.get(source_type, ()):  # ensure every key is present
@@ -492,6 +516,8 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
         "_username": username,
         "_domain": domain,
         "_client_identity": client_identity,
+        "_tenant_id": tenant_id,
+        "_mi_client_id": managed_identity_client_id,
         "_secret": bool(secret_stored),
         "_identity_name": identity_name,
         "_supported_source_types": [source_type],
@@ -509,7 +535,8 @@ def _file_source_credentials(record):
         "username": record.get("_username", ""),
         "domain": record.get("_domain", ""),
         "identity": record.get("_client_identity", ""),
-        "tenant_id": "",
+        "tenant_id": record.get("_tenant_id", ""),
+        "managed_identity_client_id": record.get("_mi_client_id", ""),
         "password_stored": stored and uses_password,
         "secret_stored": stored and not uses_password,
         "password": placeholder if uses_password else "",
@@ -530,29 +557,114 @@ def _sanitize_file_source(record):
     return result
 
 
-# ---------------------------------------------------------------------------
-# M7C: native group settings, activity and statistics
-# ---------------------------------------------------------------------------
-# The group settings policy the native routes enforce, mirrored from
-# functions_group_settings_policy so the fixture refuses exactly what the server
-# refuses. Profile and logo writes need the owner and are read-only in a locked or
-# inactive group; downloads and retention need the owner or an admin and their
-# capability switch; the two insight reads need a manager and the file count needs
-# the owner, in every status. Write roles are Owner and Admin only.
-GROUP_SETTINGS_OWNER_ROLE = "Owner"
-GROUP_SETTINGS_MANAGER_ROLES = ("Owner", "Admin")
-GROUP_PROFILE_OPERATIONS = ("edit_name", "edit_description", "edit_color")
+# --- The selected-group context (`GET /api/v2/workspaces/group/<group_id>`) -----------------------
+# `group_context` mirrors `build_group_workspace_context` (functions_workspace_context.py) for the one
+# deployment the fixtures model: Semantic Kernel with per-user kernels; group agents, plugins, custom
+# endpoints, multiple model endpoints and workflows on; File Sync on for the group; governance allowing
+# everything; the administrator's group downloads allowed and not turned off by the group; group
+# retention off; no CreateGroups role requirement; metadata extraction off. Its keyword switches model
+# the only variants a per-section fixture claims, each named for the server setting it stands for.
+# functional_tests/test_group_context_fixture_parity.py holds every field the V2 client reads to the
+# real builder, for every role and status, so a browser test that reads a value from here -- or one of
+# the reason constants below -- reads the server's value rather than one the fixture invented.
+GROUP_STATUSES = ("active", "locked", "upload_disabled", "inactive")
+GROUP_VIEWABLE_STATUSES = ("active", "locked", "upload_disabled")
+GROUP_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+
+# The server's reasons, verbatim: a status that bars viewing (check_group_status_allows_operation, and
+# the builder's own text for a status it does not recognize), a role that may not manage the group's
+# connections, and a tenant capability that is switched off.
+GROUP_INACTIVE_REASON = "This group is inactive. Access is restricted to administrators."
+GROUP_STATUS_UNKNOWN_REASON = "This group's status is not recognized. Contact an administrator."
+GROUP_CONNECTIONS_ROLE_REASON = "Your role does not permit managing this group's connections."
+GROUP_AGENTS_DISABLED_REASON = "Group agents are not enabled."
+GROUP_ACTIONS_DISABLED_REASON = "Group actions are not enabled."
+GROUP_DELEGATION_GOVERNANCE_REASON = "Your administrator has restricted access to this capability."
+GROUP_CONTEXT_NOT_FOUND_ERROR = "The selected group was not found."
+
+# The hint vocabularies, in the server's order (functions_group_document_policy.py and
+# functions_group_prompt_policy.py).
+GROUP_DOCUMENT_OPERATIONS = (
+    "upload", "edit_metadata", "tag_documents", "manage_tags",
+    "delete", "download", "extract_metadata", "reprocess",
+)
+GROUP_DOCUMENT_COLLABORATION_OPERATIONS = (
+    "inspect", "share", "unshare", "approve_share", "remove_share",
+    "approve_artifact", "reject_artifact", "cancel_artifact",
+)
+GROUP_PROMPT_OPERATIONS = ("create", "edit", "delete")
+
+
+def group_status_reason(status):
+    """The reason every section carries when the group's status bars viewing it; None otherwise."""
+    if status in GROUP_VIEWABLE_STATUSES:
+        return None
+    return GROUP_INACTIVE_REASON if status == "inactive" else GROUP_STATUS_UNKNOWN_REASON
+
+
+def _ordered_hint(vocabulary, operations):
+    return {"schema_version": 1, "operations": [operation for operation in vocabulary if operation in operations]}
+
+
+def document_management(role, status, *, extract_metadata=False):
+    """`group_document_management_operations`, with the group's downloads allowed."""
+    operations = set()
+    if role in GROUP_CONTENT_MANAGER_ROLES and status in GROUP_VIEWABLE_STATUSES:
+        operations.add("download")
+        if status == "active":
+            operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags"})
+            if extract_metadata:
+                operations.add("extract_metadata")
+        if status in ("active", "upload_disabled"):
+            operations.update({"delete", "reprocess"})
+    return _ordered_hint(GROUP_DOCUMENT_OPERATIONS, operations)
+
+
+def document_collaboration(role, status):
+    """`group_document_collaboration_operations`: every member may inspect in a viewable group and
+    cancel their own publication request where the group still takes changes; managers review shares
+    and publications too, and approve a publication only in an active group."""
+    operations = set()
+    if role in (*GROUP_CONTENT_MANAGER_ROLES, "User") and status in GROUP_VIEWABLE_STATUSES:
+        operations.add("inspect")
+        if status in ("active", "upload_disabled"):
+            operations.add("cancel_artifact")
+            if role in GROUP_CONTENT_MANAGER_ROLES:
+                operations.update({"share", "unshare", "approve_share", "remove_share", "reject_artifact"})
+                if status == "active":
+                    operations.add("approve_artifact")
+    return _ordered_hint(GROUP_DOCUMENT_COLLABORATION_OPERATIONS, operations)
+
+
+def prompt_management(role, status):
+    """`group_prompt_management_operations`: a content manager in an active group. Always present."""
+    active_manager = role in GROUP_CONTENT_MANAGER_ROLES and status == "active"
+    return _ordered_hint(GROUP_PROMPT_OPERATIONS, GROUP_PROMPT_OPERATIONS if active_manager else ())
+
+
+# --- settings_management: a self-contained port of functions_group_settings_policy.py ------------
+# The operations in the server's order (GROUP_SETTINGS_OPERATIONS), and the settings the modelled
+# deployment gives the policy: the administrator's group downloads allowed, group retention off, and
+# no CreateGroups role requirement.
 GROUP_SETTINGS_OPERATIONS = (
     "edit_name", "edit_description", "edit_color", "edit_logo", "edit_downloads",
     "edit_retention", "view_activity", "view_stats", "view_file_count",
 )
 GROUP_SETTINGS_READ_ONLY_STATUSES = ("locked", "inactive")
+# As the server's GROUP_SETTINGS_WRITABLE_STATUSES (0.261.157): the only statuses in which the profile
+# and logo can change. Any other value, including one the server doesn't recognize, is read-only.
+GROUP_SETTINGS_WRITABLE_STATUSES = ("active", "upload_disabled")
 GROUP_SETTINGS_MANAGEMENT_SCHEMA_VERSION = 1
+
+# Write roles in the server's terms; the profile operations are the three the owner may edit.
+GROUP_SETTINGS_OWNER_ROLE = "Owner"
+GROUP_SETTINGS_MANAGER_ROLES = ("Owner", "Admin")
+GROUP_PROFILE_OPERATIONS = ("edit_name", "edit_description", "edit_color")
 
 # Reason codes. Each is also the ``error_code`` a route refuses that operation with.
 GROUP_OWNER_REQUIRED = "group_owner_required"
 GROUP_MANAGER_REQUIRED = "group_manager_required"
-GROUP_CREATION_ROLE_REQUIRED = "create_group_role_required"
+GROUP_CREATION_ROLE_REQUIRED = "create_groups_role_required"
 GROUP_STATUS_UNAVAILABLE = "group_status_unavailable"
 GROUP_DOWNLOADS_NOT_ENABLED = "group_downloads_not_enabled"
 GROUP_RETENTION_DISABLED = "group_retention_disabled"
@@ -568,11 +680,24 @@ GROUP_SETTINGS_REFUSAL_MESSAGES = {
     GROUP_DOWNLOADS_NOT_ENABLED: "An administrator hasn't turned on file downloads for this group.",
     GROUP_RETENTION_DISABLED: "Retention policies aren't turned on for group workspaces.",
 }
+# An unrecognized status has its own profile/logo refusal text, verbatim from functions_group_settings.
+# functions_group_settings.refusal() picks it in place of the "locked or inactive" sentence when the
+# refused reason is the status refusal and the status is "unknown"; the error_code stays
+# group_status_unavailable. The fixture picks it the same way.
+GROUP_STATUS_UNRECOGNIZED_MESSAGE = (
+    "This group's status isn't recognized, so its name, description, color and logo can't be changed."
+)
+
+# The navigation reason the real builder's section() default gives a viewable but disabled manage
+# section, verbatim from functions_workspace_context.section().
+GROUP_SECTION_DISABLED_REASON = "This section is not enabled for this group."
 
 # The reviewed 409/400 texts, verbatim from functions_group_settings and functions_group_insights.
 GROUP_SETTINGS_CHANGED_MESSAGE = "These settings changed since you opened them. Reload them before saving."
-# The settings writes raise the group directory's shared write-conflict message, verbatim.
-GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
+# The settings writes raise the group directory's shared write-conflict message. It is read from
+# functions_group.GROUP_WRITE_CONFLICT_MESSAGE by AST, the way group_members.py reads it, so the
+# fixture and the server can never drift apart on the one sentence.
+GROUP_WRITE_CONFLICT_MESSAGE = _app_constant("functions_group.py", "GROUP_WRITE_CONFLICT_MESSAGE")
 NO_GROUP_LOGO_MESSAGE = "This group has no logo to remove."
 # Membership boundary messages, verbatim from functions_group_settings and functions_group_directory.
 GROUP_ACCESS_DENIED_MESSAGE = "You do not have access to the selected group."
@@ -604,13 +729,14 @@ def group_settings_flags(group=None):
 
     They mirror the administrator settings the real policy consults: whether an admin has
     turned on group file downloads, whether group retention is on, and whether the group's
-    name, description and color need the CreateGroups app role of a caller who lacks it.
-    Defaults let an owner see and change every card, so absence is scripted per test.
+    name, description and color need the CreateGroups app role of a caller who lacks it. The
+    defaults are the modelled deployment the context parity test pins: downloads on, retention
+    off, and no CreateGroups requirement, so a settings variant opts in per test.
     """
     source = group.get("settings_flags") if isinstance(group, dict) else None
     flags = {
         "downloads_admin": True,
-        "retention_enabled": True,
+        "retention_enabled": False,
         "create_role_required": False,
         "has_create_role": True,
     }
@@ -619,15 +745,24 @@ def group_settings_flags(group=None):
     return flags
 
 
-def group_settings_decisions(role, status, flags):
-    """Return ``{operation: None or reason}`` for every operation, in a fixed order."""
+def settings_decisions(role, status, *, downloads_admin=True, retention_enabled=False,
+                       create_role_required=False, has_create_role=True):
+    """Return ``{operation: None or reason}`` for every operation, in the server's order.
+
+    A self-contained port of functions_group_settings_policy.group_settings_decisions: the profile and
+    logo need the owner and a writable status; the profile also needs the CreateGroups role when the
+    deployment requires it and the caller lacks it; downloads and retention need a manager and their
+    capability switch; the two insight reads need a manager and the file count the owner, in every
+    status. Like the server's group_settings_read_only, any status outside the writable set, recognized
+    or not, is read-only (fail closed).
+    """
     owner = role == GROUP_SETTINGS_OWNER_ROLE
     manager = role in GROUP_SETTINGS_MANAGER_ROLES
-    read_only = status in GROUP_SETTINGS_READ_ONLY_STATUSES
+    read_only = status not in GROUP_SETTINGS_WRITABLE_STATUSES
 
     if not owner:
         profile = GROUP_OWNER_REQUIRED
-    elif flags["create_role_required"] and not flags["has_create_role"]:
+    elif create_role_required and not has_create_role:
         profile = GROUP_CREATION_ROLE_REQUIRED
     elif read_only:
         profile = GROUP_STATUS_UNAVAILABLE
@@ -640,13 +775,13 @@ def group_settings_decisions(role, status, flags):
     )
     if not manager:
         decisions["edit_downloads"] = GROUP_MANAGER_REQUIRED
-    elif not flags["downloads_admin"]:
+    elif not downloads_admin:
         decisions["edit_downloads"] = GROUP_DOWNLOADS_NOT_ENABLED
     else:
         decisions["edit_downloads"] = None
     if not manager:
         decisions["edit_retention"] = GROUP_MANAGER_REQUIRED
-    elif not flags["retention_enabled"]:
+    elif not retention_enabled:
         decisions["edit_retention"] = GROUP_RETENTION_DISABLED
     else:
         decisions["edit_retention"] = None
@@ -656,13 +791,33 @@ def group_settings_decisions(role, status, flags):
     return {operation: decisions[operation] for operation in GROUP_SETTINGS_OPERATIONS}
 
 
-def group_settings_management(role, status, flags):
-    """The ``settings_management`` block: the allowed operations and why the others are not."""
-    decisions = group_settings_decisions(role, status, flags)
+def settings_management(role, status, **flags):
+    """`build_group_settings_management` for the modelled deployment, flags-aware.
+
+    Without flags it is the modelled deployment: the administrator's group downloads allowed, group
+    retention off and no CreateGroups requirement, as the context parity test pins. A settings variant
+    passes the switches settings_decisions reads.
+    """
+    decisions = settings_decisions(role, status, **flags)
     return {
         "schema_version": GROUP_SETTINGS_MANAGEMENT_SCHEMA_VERSION,
         "operations": [operation for operation, reason in decisions.items() if reason is None],
         "reasons": {operation: reason for operation, reason in decisions.items() if reason is not None},
+    }
+
+
+def _settings_kwargs(flags):
+    """Map an internal settings-flags dict to the four ``group_context`` keyword switches it feeds.
+
+    ``group_settings_flags`` fills any absent switch with the modelled deployment's default, so a
+    partial dict (one test turning retention on, say) rebuilds a complete, consistent context.
+    """
+    resolved = group_settings_flags({"settings_flags": flags})
+    return {
+        "allow_group_workspace_file_downloads": resolved["downloads_admin"],
+        "enable_retention_policy_group": resolved["retention_enabled"],
+        "require_member_of_create_group": resolved["create_role_required"],
+        "holds_create_groups_role": resolved["has_create_role"],
     }
 
 
@@ -681,53 +836,76 @@ class _GroupSettingsRefusal(Exception):
 
 
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID,
-                  settings_flags=None):
-    manager = role in ("Owner", "Admin", "DocumentManager")
-    automation = role in ("Owner", "Admin")
-    readable = status not in ("inactive", "unknown")
-    sections = {
-        section: {
-            "group": group, "enabled": readable, "reason": None if readable else "This group is inactive.",
-            "can_manage": status == "active" and (manager if group == "knowledge" else automation),
-        }
-        for section, group in SECTION_GROUPS.items()
+                  enable_extract_meta_data=False, allow_group_agents=True, allow_group_plugins=True,
+                  allow_group_workspace_file_downloads=True, enable_retention_policy_group=False,
+                  require_member_of_create_group=False, holds_create_groups_role=True):
+    """The selected-group context the server builds, as a fresh copy on every call.
+
+    `enable_extract_meta_data` turns metadata extraction on, as the document fixtures' deployment does.
+    `allow_group_plugins=False` switches group actions off; the Call agent tools stay open but read-only,
+    as managing them also needs group plugins. `allow_group_agents=False` switches group agents off, and
+    with them group actions and the Call agent tools, which both need group agents on the server.
+
+    The four settings switches feed the native group settings policy, each named for the server setting
+    it stands for so one dict configures both this fixture and the real builder: whether the
+    administrator allows group file downloads, whether group retention is on, whether creating a group's
+    profile needs the CreateGroups app role, and whether the caller holds it. The defaults are the
+    deployment the context parity test pins: downloads on, retention off and no CreateGroups requirement.
+    """
+    status = status if status in GROUP_STATUSES else "unknown"
+    status_reason = group_status_reason(status)
+    viewable = status_reason is None
+    active = status == "active"
+    manager = role in GROUP_CONTENT_MANAGER_ROLES
+    automation = role in WRITER_ROLES
+    actions_available = allow_group_agents and allow_group_plugins
+    # The four settings switches, mapped to the internal flag names settings_decisions and
+    # settings_management read, so the manage sections and the settings hint model one deployment.
+    settings_flags = {
+        "downloads_admin": allow_group_workspace_file_downloads,
+        "retention_enabled": enable_retention_policy_group,
+        "create_role_required": require_member_of_create_group,
+        "has_create_role": holds_create_groups_role,
     }
-    for section in ("identities", "sync"):
-        sections[section]["enabled"] = readable and manager
-        sections[section]["can_manage"] = manager and status == "active"
-        if readable and not manager:
-            sections[section]["reason"] = "Your role does not permit managing group connections."
+
+    def section(group, enabled, can_manage, reason):
+        available = viewable and enabled
+        return {
+            "group": group, "enabled": available,
+            "can_manage": available and active and can_manage,
+            "reason": None if available else status_reason or reason,
+        }
+
+    rules = {
+        "documents": (True, manager, None),
+        "tags": (True, manager, None),
+        "prompts": (True, manager, None),
+        "agents": (allow_group_agents, automation, GROUP_AGENTS_DISABLED_REASON),
+        "actions": (actions_available, automation, GROUP_ACTIONS_DISABLED_REASON),
+        "endpoints": (True, role in ENDPOINT_MANAGE_ROLES, None),
+        "workflows": (True, automation, None),
+        # Identities and Sync are content-manager surfaces; an ordinary member is told why.
+        "identities": (manager, manager, GROUP_CONNECTIONS_ROLE_REASON),
+        "sync": (manager, manager, GROUP_CONNECTIONS_ROLE_REASON),
+    }
+    sections = {key: section(SECTION_GROUPS[key], *rule) for key, rule in rules.items()}
     # M7B: Members is a group-only section in the "manage" group, open to every member of a
     # viewable group and managed by the Owner and Admins in an active one, as the context builds it.
-    sections["members"] = {
-        "group": "manage", "enabled": readable, "reason": None if readable else "This group is inactive.",
-        "can_manage": readable and status == "active" and automation,
-    }
-    # M7C: Settings, Activity and Statistics join Members in the "manage" group. Their
-    # availability is the native group settings decision, exactly as the server derives it:
-    # Settings opens to a manager (Owner or Admin) in any viewable status, and each insight
-    # view opens when its decision is unrefused. The controls each offers still come from
-    # settings_management, never from these navigation entries.
-    flags = group_settings_flags({"settings_flags": settings_flags} if settings_flags else None)
-    decisions = group_settings_decisions(role, status, flags)
+    sections["members"] = section("manage", True, automation, None)
+    # M7C: Settings, Activity and Statistics join Members in the "manage" group, built exactly as the
+    # server's build_group_workspace_context builds them beside members. Settings opens to a manager
+    # (Owner or Admin), and each insight view opens when its native settings decision is unrefused; the
+    # shared section() rule closes them in a status that isn't viewable. The controls each offers still
+    # come from settings_management, never from these navigation entries.
     manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
-    settings_enabled = readable and manage_manager
-    activity_enabled = readable and decisions["view_activity"] is None
-    statistics_enabled = readable and decisions["view_stats"] is None
-    manage_off_reason = "This group is inactive." if not readable else "This section is not enabled for this group."
-    sections["settings"] = {
-        "group": "manage", "enabled": settings_enabled,
-        "reason": None if settings_enabled else manage_off_reason,
-        "can_manage": settings_enabled and status == "active",
-    }
-    sections["activity"] = {
-        "group": "manage", "enabled": activity_enabled,
-        "reason": None if activity_enabled else manage_off_reason, "can_manage": False,
-    }
-    sections["statistics"] = {
-        "group": "manage", "enabled": statistics_enabled,
-        "reason": None if statistics_enabled else manage_off_reason, "can_manage": False,
-    }
+    manage_decisions = settings_decisions(role, status, **settings_flags)
+    sections["settings"] = section("manage", manage_manager, manage_manager, GROUP_SECTION_DISABLED_REASON)
+    sections["activity"] = section(
+        "manage", manage_decisions["view_activity"] is None, False, GROUP_SECTION_DISABLED_REASON,
+    )
+    sections["statistics"] = section(
+        "manage", manage_decisions["view_stats"] is None, False, GROUP_SECTION_DISABLED_REASON,
+    )
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
         "scope": {"kind": "group", "id": identifier},
@@ -738,22 +916,16 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         },
         "role": role, "status": status, "can_manage_workspace": automation,
         "sections": sections,
-        "action_management": action_management(role, status),
-        "agent_management": agent_management(role, status),
-        "identity_management": identity_management(role, status),
-        "endpoint_management": endpoint_management(role, status),
-        "file_source_management": file_source_management(role, status),
-        "settings_management": group_settings_management(role, status, flags),
-        "native_delegation": {
-            "group": "automation", "enabled": readable,
-            "reason": None if readable else "This group is inactive.",
-            "can_manage": automation and status == "active",
-        },
+        "native_delegation": section(
+            "automation", allow_group_agents, automation and allow_group_plugins,
+            GROUP_DELEGATION_GOVERNANCE_REASON if allow_group_agents else GROUP_AGENTS_DISABLED_REASON,
+        ),
         "document_permissions": {
-            "can_view": readable, "can_chat": readable,
-            "can_upload": manager and status == "active", "can_edit": manager and status == "active",
+            # Every viewable status allows chat, including `locked` (read-only: view and chat only).
+            "can_view": viewable, "can_chat": viewable,
+            "can_upload": manager and active, "can_edit": manager and active,
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and readable,
+            "can_download": manager and viewable,
         },
         "document_queries": {
             "sort_fields": [
@@ -762,6 +934,20 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             ],
             "facets": True, "places": True,
         },
+        "document_management": document_management(role, status, extract_metadata=enable_extract_meta_data),
+        "document_collaboration": document_collaboration(role, status),
+        "prompt_management": prompt_management(role, status),
+        # A switched-off capability sends an empty hint, as its availability predicate empties it.
+        "action_management": (
+            action_management(role, status) if actions_available else {"schema_version": 1, "operations": []}
+        ),
+        "agent_management": (
+            agent_management(role, status) if allow_group_agents else {"schema_version": 1, "operations": []}
+        ),
+        "identity_management": identity_management(role, status),
+        "endpoint_management": endpoint_management(role, status),
+        "file_source_management": file_source_management(role, status),
+        "settings_management": settings_management(role, status, **settings_flags),
     }
 
 
@@ -969,7 +1155,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         context = self.groups[group_id]
         self.groups[group_id] = group_context(
             group_id, context["workspace"]["name"], role=context["role"], status=context["status"],
-            viewer=self.viewer_id, settings_flags=flags,
+            viewer=self.viewer_id, **_settings_kwargs(flags),
         )
 
     def _bootstrap(self):
@@ -1107,7 +1293,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             if group_id in self.denied_groups:
                 self._json(route, {"error": "You do not have access to the selected group."}, 403)
             elif group_id not in self.groups:
-                self._json(route, {"error": "Group not found."}, 404)
+                self._json(route, {"error": GROUP_CONTEXT_NOT_FOUND_ERROR}, 404)
             else:
                 payload = copy.deepcopy(self.groups[group_id])
                 payload["viewer_id"] = self.viewer_id
@@ -1233,10 +1419,16 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
     def _settings_flags(self, group_id):
         return group_settings_flags({"settings_flags": self.group_settings_flags_by_id.get(group_id)})
 
-    def _require_operation(self, decisions, operation):
+    def _require_operation(self, decisions, operation, status=None):
         reason = decisions[operation]
-        if reason is not None:
-            self._refuse(GROUP_SETTINGS_REFUSAL_MESSAGES[reason], 403, reason)
+        if reason is None:
+            return
+        message = GROUP_SETTINGS_REFUSAL_MESSAGES[reason]
+        # functions_group_settings.refusal() swaps in the unrecognized-status text for a profile or
+        # logo write refused by the status in an "unknown" group; the error_code stays the same.
+        if reason == GROUP_STATUS_UNAVAILABLE and status == "unknown":
+            message = GROUP_STATUS_UNRECOGNIZED_MESSAGE
+        self._refuse(message, 403, reason)
 
     def _check_settings_write(self, group_id, section, revision):
         """Raise the scripted or natural write conflict, exactly as the server's guarded write does."""
@@ -1276,7 +1468,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 ),
                 "revision": self._settings_revision(group_id, "logo"),
             },
-            "settings_management": group_settings_management(role, status, flags),
+            "settings_management": settings_management(role, status, **flags),
         }
         if flags["downloads_admin"]:
             read["downloads"] = {
@@ -1338,7 +1530,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         context = self._load_settings_group(group_id)
         role, status = context["role"], context["status"]
         flags = self._settings_flags(group_id)
-        decisions = group_settings_decisions(role, status, flags)
+        decisions = settings_decisions(role, status, **flags)
         if method == "PATCH" and section == "profile":
             return self._write_group_profile(group_id, role, status, flags, decisions, entry)
         if section == "logo" and method == "PUT":
@@ -1389,7 +1581,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
 
     def _write_group_profile(self, group_id, role, status, flags, decisions, entry):
         for operation in ("edit_name", "edit_description", "edit_color"):
-            self._require_operation(decisions, operation)
+            self._require_operation(decisions, operation, status)
         body, revision = self._read_settings_body(
             entry, ("name", "description", "hero_color"),
             "Only the name, description and hero_color can be changed here.",
@@ -1447,7 +1639,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         return revision
 
     def _replace_group_logo(self, route, group_id, role, status, flags, decisions):
-        self._require_operation(decisions, "edit_logo")
+        self._require_operation(decisions, "edit_logo", status)
         revision = self._parse_logo_upload(route)
         self._check_settings_write(group_id, "logo", revision)
         store = self.native_group_settings[group_id]
@@ -1457,7 +1649,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
 
     def _remove_group_logo(self, group_id, role, status, flags, decisions, entry):
-        self._require_operation(decisions, "edit_logo")
+        self._require_operation(decisions, "edit_logo", status)
         _body, revision = self._read_settings_body(
             entry, (), "Only the logo revision can be sent to remove the logo.",
         )
@@ -1529,7 +1721,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if name == "activity":
             limit = self._read_activity_limit(entry.query)
             context = self._load_settings_group(group_id)
-            decisions = group_settings_decisions(context["role"], context["status"], self._settings_flags(group_id))
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
             self._require_operation(decisions, "view_activity")
             if group_id in self.activity_unavailable:
                 self._refuse(GROUP_ACTIVITY_UNAVAILABLE_MESSAGE, 503, "group_activity_unavailable")
@@ -1538,7 +1730,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if name == "stats":
             window = self._read_stats_window(entry.query)
             context = self._load_settings_group(group_id)
-            decisions = group_settings_decisions(context["role"], context["status"], self._settings_flags(group_id))
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
             self._require_operation(decisions, "view_stats")
             if group_id in self.stats_unavailable:
                 self._refuse(GROUP_STATS_UNAVAILABLE_MESSAGE, 503, "group_stats_unavailable")
@@ -1547,7 +1739,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             if entry.query:
                 self._refuse("This request does not accept query parameters.", 400, "invalid_request")
             context = self._load_settings_group(group_id)
-            decisions = group_settings_decisions(context["role"], context["status"], self._settings_flags(group_id))
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
             self._require_operation(decisions, "view_file_count")
             return {"file_count": self.group_file_count.get(group_id, 0)}
         self.unexpected_requests.append(f"{entry.method} {entry.path}")
@@ -2600,6 +2792,20 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if identity_id:
             match = self.record_identity(group_id, identity_id)
             identity_name = match["name"] if match else identity_id
+        # The identifiers `_prepare_auth_payload` stores for each inline auth method. A key the body
+        # carries wins even when empty, which is how a value is cleared; a missing key keeps the
+        # stored one.
+        client_identity = tenant_id = managed_identity_client_id = ""
+        if not identity_id and auth_type == "client_secret":
+            client_identity = str(credentials.get(
+                "client_id", credentials.get("identity", prior["_client_identity"] if prior else ""),
+            ) or "")
+            tenant_id = str(credentials.get("tenant_id", prior.get("_tenant_id", "") if prior else "") or "")
+        elif not identity_id and auth_type == "managed_identity":
+            managed_identity_client_id = str(credentials.get(
+                "managed_identity_client_id",
+                credentials.get("client_id", prior.get("_mi_client_id", "") if prior else ""),
+            ) or "")
         now = datetime.now(timezone.utc).isoformat()
         record = group_file_source(
             group_id, identifier,
@@ -2615,11 +2821,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             secret_stored=secret_stored,
             username=str(credentials.get("username", prior["_username"] if prior else "")),
             domain=str(credentials.get("domain", prior["_domain"] if prior else "")),
-            client_identity=str(
-                credentials.get("managed_identity_client_id")
-                or credentials.get("identity")
-                or (prior["_client_identity"] if prior else "")
-            ),
+            client_identity=client_identity,
+            tenant_id=tenant_id,
+            managed_identity_client_id=managed_identity_client_id,
             schedule_enabled=bool(schedule.get("enabled")) if schedule else (prior["schedule"]["enabled"] if prior else False),
             interval_minutes=int(schedule.get("interval_minutes") or (prior["schedule"]["interval_minutes"] if prior else 60)),
             actions=list(prior["source_actions"]) if prior else list(FILE_SOURCE_ITEM_ACTIONS),

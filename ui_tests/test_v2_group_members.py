@@ -1,7 +1,7 @@
 # test_v2_group_members.py
 """
 Production-SPA coverage for the native V2 group Members section.
-Version: 0.261.155
+Version: 0.261.157
 Implemented in: 0.261.155
 
 Exercises the real Members section -- a section of the group WorkspaceShell in its Manage group,
@@ -27,6 +27,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID  # noqa: F401
+from ui_tests.fixtures.group_workspace import GROUP_INACTIVE_REASON
 from ui_tests.fixtures.group_members import (  # noqa: F401
     GroupMembersFixture, group_members_ui,
     ALREADY_MEMBER_MESSAGE, LEE, LONG_NAME, MAYA, MEMBERSHIP_PERMISSION_MESSAGE, NIA, NORA,
@@ -258,7 +259,7 @@ def test_an_inactive_group_offers_no_members_section(group_members_ui):
     ui.set_viewer_role("group-a", "Owner", status="inactive")
     ui.open("/groups/group-a/members")
     expect(page.get_by_text("Members is not available", exact=True)).to_be_visible()
-    expect(page.get_by_text("This group is inactive.", exact=True)).to_be_visible()
+    expect(page.get_by_text(GROUP_INACTIVE_REASON, exact=True)).to_be_visible()
     assert not ui.membership_requests(), "An unavailable section must not read the membership routes."
 
 

@@ -1,7 +1,7 @@
 # group_directory_harness.py
 """Shared, isolated harness for the native group directory and membership tests (M7A, M7B).
 
-Version: 0.261.151
+Version: 0.261.160
 Implemented in: 0.261.146
 
 Loaded unchanged from their files:
@@ -516,6 +516,7 @@ def group_directory_environment():
             "functions_stats_windows": module_stub(
                 "functions_stats_windows",
                 build_stats_date_series=_refuse("build_stats_date_series"),
+                resolve_bounded_stats_time_window=_refuse("resolve_bounded_stats_time_window"),
                 resolve_stats_time_window=_refuse("resolve_stats_time_window"),
                 stats_window_response_payload=_refuse("stats_window_response_payload"),
                 timestamp_to_stats_date_key=_refuse("timestamp_to_stats_date_key"),

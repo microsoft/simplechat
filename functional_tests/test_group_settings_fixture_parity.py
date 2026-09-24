@@ -117,7 +117,12 @@ def drive_fixture(fixture, method, path, body=None, query=None, headers=None, po
 
 
 def new_fixture():
-    return GroupWorkspaceFixture(_FakePage())
+    # BASE_SETTINGS on the real side models a deployment with group downloads and retention both on.
+    # The base fixture keeps retention off (the deployment the context parity test pins), so group-a
+    # opts in here to match the modelled deployment this parity test compares against.
+    fixture = GroupWorkspaceFixture(_FakePage())
+    fixture.apply_group_settings_flags(FIXTURE_GROUP, downloads_admin=True, retention_enabled=True)
+    return fixture
 
 
 def fixture_revision(fixture, section):

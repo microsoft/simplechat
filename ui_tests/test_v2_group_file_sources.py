@@ -1,8 +1,9 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.152
+Version: 0.261.157
 Implemented in: 0.261.147
+Credential identifiers kept on edit: 0.261.156
 
 Exercises the real file sources section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/file-sources` family and
@@ -33,7 +34,7 @@ from playwright.sync_api import expect
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
     FILE_SOURCE_BUSY_ERROR, FILE_SOURCE_SYNC_BUSY_ERROR, FILE_SOURCE_SYNC_LIMIT_ERROR,
-    FILE_SOURCE_CONFLICT_ERROR,
+    FILE_SOURCE_CONFLICT_ERROR, GROUP_CONNECTIONS_ROLE_REASON, group_file_source,
 )
 from ui_tests.fixtures.group_file_sources import (  # noqa: F401
     GroupFileSourcesFixture, group_file_sources_ui,
@@ -239,6 +240,58 @@ def test_edit_preserves_the_stored_secret(group_file_sources_ui):
     # A blank secret means "keep the stored value"; it rides as an empty string, never a placeholder.
     assert write.body["credentials"]["password"] == ""
     assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["_secret"] is True
+
+
+BLOB_CONNECTION = {"account_url": "https://contoso.blob.core.windows.net", "container_name": "finance", "blob_prefix": ""}
+SP_SOURCE_ID, SP_NAME = "group-a-service-principal-source", "Finance blob container"
+SP_CLIENT, SP_TENANT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "11111111-2222-3333-4444-555555555555"
+MI_SOURCE_ID, MI_NAME = "group-a-managed-identity-source", "Archive blob container"
+MI_CLIENT = "99999999-8888-7777-6666-555555555555"
+
+
+def rename_and_save(ui, source_id, name, *, opened=False):
+    page = ui.page
+    if not opened:
+        open_manager(ui)
+        open_editor_for(ui, name)
+    page.get_by_label("Name", exact=True).fill(f"{name} (2024)")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{source_id}"
+    ) as response:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert response.value.ok
+    return last_write(ui, f"/api/groups/group-a/file-sources/{source_id}", "PATCH")
+
+
+def test_editing_a_service_principal_source_keeps_its_tenant(group_file_sources_ui):
+    """The editor shows the stored tenant and sends it back, so a rename keeps it."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui._seed_file_sources("group-a", [*ui.native_file_sources["group-a"], group_file_source(
+        "group-a", SP_SOURCE_ID, SP_NAME, source_type="azure_blob", auth_type="client_secret",
+        client_identity=SP_CLIENT, tenant_id=SP_TENANT, secret_stored=True, connection=BLOB_CONNECTION,
+    )])
+    open_manager(ui)
+    open_editor_for(ui, SP_NAME)
+    expect(page.get_by_label("Tenant ID (optional)", exact=True)).to_have_value(SP_TENANT)
+    write = rename_and_save(ui, SP_SOURCE_ID, SP_NAME, opened=True)
+    assert write.body["credentials"]["tenant_id"] == SP_TENANT
+    assert write.body["credentials"]["client_id"] == SP_CLIENT
+    assert write.body["credentials"]["secret"] == ""
+    stored = ui.record_file_source("group-a", SP_SOURCE_ID)
+    assert (stored["_tenant_id"], stored["_client_identity"], stored["_secret"]) == (SP_TENANT, SP_CLIENT, True)
+
+
+def test_editing_a_managed_identity_source_keeps_its_client_id(group_file_sources_ui):
+    """A managed identity's client ID isn't shown, but a rename sends the stored one back."""
+    ui = group_file_sources_ui
+    ui._seed_file_sources("group-a", [*ui.native_file_sources["group-a"], group_file_source(
+        "group-a", MI_SOURCE_ID, MI_NAME, source_type="azure_blob", auth_type="managed_identity",
+        managed_identity_client_id=MI_CLIENT, secret_stored=False, connection=BLOB_CONNECTION,
+    )])
+    write = rename_and_save(ui, MI_SOURCE_ID, MI_NAME)
+    assert write.body["credentials"] == {"auth_type": "managed_identity", "managed_identity_client_id": MI_CLIENT}
+    assert ui.record_file_source("group-a", MI_SOURCE_ID)["_mi_client_id"] == MI_CLIENT
 
 
 def test_config_conflict_keeps_the_draft_and_offers_a_reload(group_file_sources_ui):
@@ -704,7 +757,7 @@ def test_member_has_no_native_file_sources_section(group_file_sources_ui, theme,
     ui, page = group_file_sources_ui, group_file_sources_ui.page
     open_sources(ui, group="group-b", theme=theme, width=width, height=height)
     expect(page.get_by_text("File sources is not available", exact=True)).to_be_visible()
-    expect(page.get_by_text("Your role does not permit managing group connections.", exact=True)).to_be_visible()
+    expect(page.get_by_text(GROUP_CONNECTIONS_ROLE_REASON, exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="New file source", exact=True)).to_have_count(0)
     assert not sources_get(ui, group="group-b"), (
         "A member's unavailable section must not read the group file sources route."

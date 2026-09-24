@@ -1,8 +1,9 @@
 # test_group_settings_policy.py
 """
 Functional test for the native group settings policy and its seam with the classic routes.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 ``group_settings_decisions`` is the one decision behind the native group settings and
 insights routes and their ``settings_management`` block. This test holds it, and the
@@ -313,10 +314,23 @@ def test_roles_that_are_not_a_list_of_names_count_as_no_roles(env, roles):
     assert decisions["edit_name"] == "create_groups_role_required"
 
 
-@pytest.mark.parametrize("status", [None, "unknown-status", "archived", "", "upload_disabled"])
-def test_only_locked_and_inactive_keep_the_profile_read_only(env, status):
-    decisions = env.modules.policy.group_settings_decisions("Owner", {"id": GROUP, "status": status}, {}, ["User"])
+@pytest.mark.parametrize("group", [{"id": GROUP}, {"id": GROUP, "status": "active"}, {"id": GROUP, "status": "upload_disabled"}],
+                         ids=["missing", "active", "upload_disabled"])
+def test_only_active_and_upload_disabled_groups_can_change_the_profile(env, group):
+    decisions = env.modules.policy.group_settings_decisions("Owner", group, {}, ["User"])
     assert decisions["edit_name"] is None and decisions["edit_logo"] is None
+
+
+@pytest.mark.parametrize("status", ["locked", "inactive", None, "", "archived", "unknown-status"])
+def test_every_other_status_keeps_the_profile_and_logo_read_only(env, status):
+    """Locked and inactive, as the classic page makes them; a status this version doesn't
+    recognize fails closed, as the workspace context and adding a member do. The reads keep
+    working, and only the status-restricted operations change."""
+    decisions = env.modules.policy.group_settings_decisions("Owner", {"id": GROUP, "status": status}, {}, ["User"])
+    for operation in ("edit_name", "edit_description", "edit_color", "edit_logo"):
+        assert decisions[operation] == "group_status_unavailable", operation
+    assert decisions["view_activity"] is None and decisions["view_stats"] is None
+    assert decisions["view_file_count"] is None
 
 
 def test_settings_that_are_not_a_dict_turn_off_every_gated_operation(env):

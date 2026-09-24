@@ -1902,6 +1902,14 @@ def create_group_for_current_user(name: str, description: str = "") -> Dict[str,
     return group_doc
 
 
+class _GroupAlreadyInactive(Exception):
+    """The group's current copy is already inactive; carries it, so nothing is written."""
+
+    def __init__(self, group_doc):
+        super().__init__("The group is already inactive.")
+        self.group_doc = group_doc
+
+
 def make_group_inactive_for_current_user(
     group_id: str = "",
     reason: str = "",
@@ -1914,20 +1922,6 @@ def make_group_inactive_for_current_user(
     if not resolved_group_id:
         resolved_group_id = require_active_group(current_user_info["userId"])
 
-    group_doc = find_group_by_id(resolved_group_id)
-    if not group_doc:
-        raise LookupError("Group not found")
-
-    old_status = str(group_doc.get("status") or "active").strip() or "active"
-    if old_status == "inactive":
-        return {
-            "group": group_doc,
-            "old_status": old_status,
-            "new_status": old_status,
-            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
-        }
-
-    changed_at = datetime.utcnow().isoformat()
     changed_by_user_id = str(admin_session_user.get("oid") or current_user_info.get("userId") or "").strip() or "unknown"
     changed_by_email = str(
         admin_session_user.get("preferred_username")
@@ -1936,25 +1930,51 @@ def make_group_inactive_for_current_user(
         or ""
     ).strip() or "unknown"
     normalized_reason = str(reason or "").strip()
+    transition = {}
 
-    group_doc["status"] = "inactive"
-    group_doc["modifiedDate"] = changed_at
-    group_doc.setdefault("statusHistory", []).append(
-        {
-            "old_status": old_status,
+    def apply_inactive(fresh_group_doc):
+        # Decided on the copy being written: a status or membership change made
+        # meanwhile is kept, and the previous status logged is the one replaced.
+        old_status = str(fresh_group_doc.get("status") or "active").strip() or "active"
+        if old_status == "inactive":
+            raise _GroupAlreadyInactive(fresh_group_doc)
+        changed_at = datetime.utcnow().isoformat()
+        fresh_group_doc["status"] = "inactive"
+        fresh_group_doc["modifiedDate"] = changed_at
+        fresh_group_doc.setdefault("statusHistory", []).append(
+            {
+                "old_status": old_status,
+                "new_status": "inactive",
+                "changed_by_user_id": changed_by_user_id,
+                "changed_by_email": changed_by_email,
+                "changed_at": changed_at,
+                "reason": normalized_reason,
+            }
+        )
+        transition["old_status"] = old_status
+        return fresh_group_doc
+
+    # Reached through the module, as the direct add is, so callers that stub
+    # functions_group with only the names imported above can still import this module.
+    try:
+        updated_group_doc = functions_group.update_group_document_with_etag_guard(
+            resolved_group_id, apply_inactive, cache_reason="group_marked_inactive",
+        )
+    except _GroupAlreadyInactive as already:
+        group_doc = already.group_doc
+        return {
+            "group": group_doc,
+            "old_status": "inactive",
             "new_status": "inactive",
-            "changed_by_user_id": changed_by_user_id,
-            "changed_by_email": changed_by_email,
-            "changed_at": changed_at,
-            "reason": normalized_reason,
+            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
         }
-    )
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_marked_inactive")
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
+    old_status = transition["old_status"]
 
     log_group_status_change(
         group_id=resolved_group_id,
-        group_name=str(group_doc.get("name") or "Unknown").strip() or "Unknown",
+        group_name=str(updated_group_doc.get("name") or "Unknown").strip() or "Unknown",
         old_status=old_status,
         new_status="inactive",
         changed_by_user_id=changed_by_user_id,
@@ -1965,7 +1985,7 @@ def make_group_inactive_for_current_user(
         "[SIMPLE_CHAT] Group marked inactive",
         {
             "group_id": resolved_group_id,
-            "group_name": group_doc.get("name"),
+            "group_name": updated_group_doc.get("name"),
             "old_status": old_status,
             "new_status": "inactive",
             "changed_by_user_id": changed_by_user_id,
@@ -1978,7 +1998,7 @@ def make_group_inactive_for_current_user(
         "group": updated_group_doc,
         "old_status": old_status,
         "new_status": "inactive",
-        "message": f"Marked group '{group_doc.get('name', 'Unknown')}' as inactive.",
+        "message": f"Marked group '{updated_group_doc.get('name', 'Unknown')}' as inactive.",
     }
 
 

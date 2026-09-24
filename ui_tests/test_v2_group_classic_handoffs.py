@@ -1,7 +1,7 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.153
+Version: 0.261.157
 Implemented in: 0.261.153
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
@@ -16,7 +16,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.group_workspace import (
-    connect_options, group_context, group_ui,  # noqa: F401
+    GROUP_CONNECTIONS_ROLE_REASON, connect_options, group_context, group_ui,  # noqa: F401
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN
 
@@ -55,7 +55,7 @@ def test_member_overview_shows_the_reason_not_a_classic_label(group_ui):
     main = ui.page.get_by_role("main")
     # A read-only member cannot manage the group's connections, so Identities and Sync are locked
     # with the server's reason rather than pointed at a classic tab.
-    expect(main.get_by_text("Your role does not permit managing group connections.", exact=True).first).to_be_visible()
+    expect(main.get_by_text(GROUP_CONNECTIONS_ROLE_REASON, exact=True).first).to_be_visible()
     expect(main.get_by_text("Classic", exact=True)).to_have_count(0)
     expect(main.get_by_role("button", name=CLASSIC_BUTTON, exact=True)).to_have_count(0)
     ui.assert_clean()
@@ -64,15 +64,11 @@ def test_member_overview_shows_the_reason_not_a_classic_label(group_ui):
 def test_actions_off_with_call_agent_on_drops_the_classic_button(group_ui):
     ui = group_ui
     ui.active_group = "group-a"
-    # A delegation-only workspace: the group action capability is off (the backend empties the
-    # management hint to match), but the Call agent tools (native_delegation) stay on, so the nav
-    # slot advertises Call agent and the section renders the delegation manager with no classic
-    # handoff. This mirrors the group-c shape the group_actions fixture models.
-    actions = ui.groups["group-a"]["sections"]["actions"]
-    actions["enabled"] = False
-    actions["can_manage"] = False
-    actions["reason"] = "Group actions are turned off for this workspace."
-    ui.groups["group-a"]["action_management"] = {"schema_version": 1, "operations": []}
+    # A delegation-only workspace: group plugins are off, so the server withholds the Actions section
+    # and empties the management hint, but the Call agent tools (native_delegation) stay on, so the
+    # nav slot advertises Call agent and the section renders the delegation manager with no classic
+    # handoff. This is the group-c shape the group_actions fixture models.
+    ui.groups["group-a"] = group_context("group-a", "Research group", allow_group_plugins=False)
     ui.open("/groups/group-a")
     overview = ui.page.get_by_role("main")
     expect(overview.get_by_text("Call agent", exact=True).first).to_be_visible()

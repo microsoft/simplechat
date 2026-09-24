@@ -1,7 +1,7 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.152
+Version: 0.261.157
 Implemented in: 0.261.139
 
 Exercises the real identities section and its editor dialog against closed synthetic
@@ -27,6 +27,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
+from ui_tests.fixtures.group_workspace import GROUP_CONNECTIONS_ROLE_REASON
 from ui_tests.fixtures.group_identities import (  # noqa: F401
     GroupIdentitiesFixture, group_identities_ui,
     EDITABLE_IDENTITY_ID, WITHHELD_IDENTITY_ID, FILE_SYNC_IDENTITY_ID,
@@ -384,10 +385,10 @@ def test_member_has_no_native_identities_section(group_identities_ui, theme, wid
     """A member's identities section is manager-only, so it is locked with the server's reason."""
     ui, page = group_identities_ui, group_identities_ui.page
     open_identities(ui, group="group-b", theme=theme, width=width, height=height)
-    # The manager-only section is unavailable to a member: a locked notice with the governance
+    # The manager-only section is unavailable to a member: a locked notice with the server's role
     # reason, no native create control, and no group identity read at all.
     expect(page.get_by_text("Identities is not available", exact=True)).to_be_visible()
-    expect(page.get_by_text("Your role does not permit managing group connections.", exact=True)).to_be_visible()
+    expect(page.get_by_text(GROUP_CONNECTIONS_ROLE_REASON, exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="New identity", exact=True)).to_have_count(0)
     assert not identities_get(ui, group="group-b"), (
         "A member's unavailable section must not read the group identity route."

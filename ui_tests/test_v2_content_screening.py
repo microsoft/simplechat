@@ -1,9 +1,10 @@
 # test_v2_content_screening.py
 """
 Production V2 browser regressions for screening-controlled documents and review.
-Version: 0.261.127
+Version: 0.261.133
 Implemented in: 0.261.106
 Empty-policy activation coverage: 0.261.114
+Separate admin release-check request: 0.261.133
 
 Runs the real SPA with the existing closed workspace fixture and its Azure
 Playwright/DefaultAzureCredential connection support or explicit local fallback.
@@ -206,6 +207,13 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
                 "field_schema": copy.deepcopy(screening_admin_schema()),
                 "section_status": {}, "runtime_flags": {}, "suppressed_capabilities": [],
             })
+        elif entry.path == "/api/v2/admin/update-status" and entry.method == "GET":
+            version = self._bootstrap()["version"]
+            self._json(route, {"version": version, "update_status": {
+                "latest_version": version, "update_available": False, "status": "checked",
+                "checked_at": "2026-09-08T18:00:00Z", "attempted_at": "2026-09-08T18:00:00Z",
+                "error": None,
+            }})
         elif entry.path == "/api/v2/admin/settings" and entry.method == "PATCH":
             self.settings_writes.append(copy.deepcopy(entry.body))
             updates = entry.body["settings"]

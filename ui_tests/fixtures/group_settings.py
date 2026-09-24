@@ -22,7 +22,7 @@ from ui_tests.fixtures.group_workspace import (  # noqa: F401
     DEFAULT_STATS_WINDOW_DAYS, GROUP_OWNER_REQUIRED, GROUP_MANAGER_REQUIRED,
     GROUP_SETTINGS_CHANGED_MESSAGE, GROUP_WRITE_CONFLICT_MESSAGE, NO_GROUP_LOGO_MESSAGE,
     GROUP_ACTIVITY_UNAVAILABLE_MESSAGE, GROUP_STATS_UNAVAILABLE_MESSAGE,
-    GROUP_SETTINGS_REFUSAL_MESSAGES, GroupWorkspaceFixture, group_context,
+    GROUP_SETTINGS_REFUSAL_MESSAGES, GroupWorkspaceFixture, _settings_kwargs, group_context,
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID  # noqa: F401
 
@@ -32,6 +32,10 @@ class GroupSettingsFixture(GroupWorkspaceFixture):
 
     def __init__(self, page):
         super().__init__(page)
+        # The Settings suite models a deployment with group downloads and retention both on, so the
+        # Downloads and Retention cards render unless a test turns one off. The base fixture keeps
+        # retention off (the deployment the context parity test pins), so group-a opts in here.
+        self.configure("group-a", role="Owner", status="active")
         self.active_group = "group-a"
 
     # --- state a test arranges -------------------------------------------------------------
@@ -40,13 +44,16 @@ class GroupSettingsFixture(GroupWorkspaceFixture):
         """Rebuild a group's context for `role`, `status` and capability `flags`.
 
         The handlers derive every refusal from the same flags through `group_settings_flags_by_id`,
-        so both the context's `settings_management` hint and the routes' answers stay in step.
+        so both the context's `settings_management` hint and the routes' answers stay in step. This
+        suite's deployment has group downloads and retention on, so both default on and a test turns
+        just the one it is proving off.
         """
         name = self.groups[group_id]["workspace"]["name"] if group_id in self.groups else "Research group"
-        self.group_settings_flags_by_id[group_id] = dict(flags)
+        resolved = {"downloads_admin": True, "retention_enabled": True, **flags}
+        self.group_settings_flags_by_id[group_id] = dict(resolved)
         self.groups[group_id] = group_context(
             group_id, name, role=role, status=status, viewer=self.viewer_id,
-            settings_flags=flags or None,
+            **_settings_kwargs(resolved),
         )
         if group_id not in self.native_group_settings:
             self._seed_group_settings(group_id)

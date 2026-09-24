@@ -30,6 +30,27 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
 
+def _agent_group_summary(group: Any) -> Dict[str, Any]:
+    """The group fields a tool answers the model, never the stored group document.
+
+    The document carries every member's email, pending join requests, status history
+    and, with Key Vault storage off, inline model endpoint credentials.
+    """
+    group = group if isinstance(group, dict) else {}
+    return {
+        "id": group.get("id"),
+        "name": group.get("name"),
+        "status": str(group.get("status") or "active"),
+    }
+
+
+def _with_agent_group_summary(result: Any) -> Any:
+    """An operation's answer with its ``group`` reduced to the summary."""
+    if isinstance(result, dict) and "group" in result:
+        return {**result, "group": _agent_group_summary(result["group"])}
+    return result
+
+
 class SimpleChatPlugin(BasePlugin):
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         super().__init__(manifest)
@@ -195,7 +216,7 @@ class SimpleChatPlugin(BasePlugin):
         return self._execute_operation(
             "create_group",
             lambda: {
-                "group": create_group_for_current_user(name=name, description=description),
+                "group": _agent_group_summary(create_group_for_current_user(name=name, description=description)),
             },
         )
 
@@ -323,11 +344,11 @@ class SimpleChatPlugin(BasePlugin):
     ) -> dict:
         return self._execute_operation(
             "make_group_inactive",
-            lambda: make_group_inactive_for_current_user(
+            lambda: _with_agent_group_summary(make_group_inactive_for_current_user(
                 group_id=group_id,
                 reason=reason,
                 default_group_id=self._default_group_id,
-            ),
+            )),
         )
 
     # bac-check: ignore - add_conversation_message_for_current_user validates personal ownership or collaboration access.
@@ -447,14 +468,14 @@ class SimpleChatPlugin(BasePlugin):
     ) -> dict:
         return self._execute_operation(
             "add_group_member",
-            lambda: add_group_member_for_current_user(
+            lambda: _with_agent_group_summary(add_group_member_for_current_user(
                 group_id=group_id,
                 user_identifier=user_identifier,
                 email=email,
                 display_name=display_name,
                 role=role,
                 default_group_id=self._default_group_id,
-            ),
+            )),
         )
 
     def _build_seeded_creation_payload(

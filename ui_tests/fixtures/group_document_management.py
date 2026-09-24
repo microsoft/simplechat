@@ -1,7 +1,7 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.129
+Version: 0.261.157
 Implemented in: 0.261.129
 
 Reuse M2A reads, local production assets, request recording, response gates and
@@ -122,8 +122,10 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
         self.groups["group-b"] = group_context("group-b", "Operations group", role="DocumentManager")
         self.documents = {}
         self.versions = {}
-        for group_id, title in (("group-a", "Research brief"), ("group-b", "Operations brief")):
-            self.set_policy(group_id)
+        for group_id, role, title in (
+            ("group-a", "Owner", "Research brief"), ("group-b", "DocumentManager", "Operations brief"),
+        ):
+            self.set_policy(group_id, role=role)
             owned = document(
                 group_id, "same-document", title, timestamp=self.now,
                 tags=["finance", "team"], keywords=["baseline"],
@@ -177,20 +179,16 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
         page.on("requestfailed", self._request_failed)
 
     def set_policy(self, group_id="group-a", *, role=None, status="active"):
+        """Recompute a group's context for a role and status, exactly as the server builds it.
+
+        The document deployment extracts metadata, so an active manager's handshake carries
+        `extract_metadata`; every other bit, including chat in a locked group, is the server's.
+        """
         current = self.groups[group_id]
-        role = role or current["role"]
-        context = group_context(
-            group_id, current["workspace"]["name"], role=role, status=status,
+        self.groups[group_id] = group_context(
+            group_id, current["workspace"]["name"], role=role or current["role"], status=status,
+            enable_extract_meta_data=True,
         )
-        manager = role in ("Owner", "Admin", "DocumentManager")
-        operations = list(OPERATIONS) if manager and status == "active" else []
-        if manager and status == "locked":
-            operations = ["download"]
-        elif manager and status == "upload_disabled":
-            operations = ["delete", "download", "reprocess"]
-        context["document_management"] = {"schema_version": 1, "operations": operations}
-        context["document_permissions"]["can_chat"] = status in ("active", "upload_disabled")
-        self.groups[group_id] = context
 
     def record(self, identifier, group_id="group-a"):
         return next(record for record in self.documents[group_id] if record["id"] == identifier)

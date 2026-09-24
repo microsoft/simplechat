@@ -89,6 +89,15 @@ closed fixture that enforces the server's rules, with 21 cases:
 - a malformed list is treated as a load error rather than an empty one;
 - personal identities are unchanged.
 
+`functional_tests/test_group_identity_fixture_parity.py` holds that fixture to
+the real identity routes, route by route. For each response it checks that the
+fixture returns only keys the server returns, including inside each item, its
+credentials and its references. It also checks that every field the page reads
+is present on both sides, and that statuses and error codes match. The
+routes covered are list, read, create, update, both conflicts, delete, not
+found, the manager-only refusal and a malformed query. It found no drift when
+it was added, after version **0.261.157**.
+
 On the integrated tree these pass unchanged:
 
 - group actions (25), including the updated identity-copy test;

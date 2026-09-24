@@ -60,7 +60,9 @@ Creating or editing opens a dialog with:
   directly. Only identities whose uses include File Sync and whose type suits
   the source are offered, which is the same rule the server applies when saving.
   A stored password or secret is never shown. Leaving it blank keeps it, and a
-  new value replaces it.
+  new value replaces it. From version **0.261.156**, a service principal's
+  **Tenant ID** shows its stored value, and editing a source keeps the tenant and
+  a managed identity's client ID unless you change them.
 - **Test connection**, which runs against the draft. Success shows what was
   checked, for example "Connected. Checked 25 entries: 3 folders, 22 files." A
   failure shows the server's message as returned.

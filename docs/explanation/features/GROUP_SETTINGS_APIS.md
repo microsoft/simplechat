@@ -68,12 +68,19 @@ real outcomes in every cell.
 | Activity and statistics (`view_activity`, `view_stats`) | yes | yes | no |
 | Document count (`view_file_count`) | yes | no | no |
 
-- **Group status.** The name, description, color and logo are refused while
-  the group is `locked` or `inactive`, with 403 `group_status_unavailable`:
-  "This group is locked or inactive, so its name, description, color and logo
-  can't be changed." That matches the classic manage page, which makes those
-  fields read-only there. `upload_disabled` allows them. Downloads, retention
-  and every read are allowed in every status, as classic allows.
+- **Group status.** The name, description, color and logo can change only
+  while the group is `active` or `upload_disabled`. Otherwise they're refused
+  with 403 `group_status_unavailable`:
+  - in a `locked` or `inactive` group: "This group is locked or inactive, so
+    its name, description, color and logo can't be changed." That matches the
+    classic manage page, which makes those fields read-only there;
+  - from version **0.261.157**, in a group whose status isn't recognized: "This
+    group's status isn't recognized, so its name, description, color and logo
+    can't be changed." An unrecognized status fails closed, as the workspace
+    context and adding a member do.
+
+  Downloads, retention and every read are allowed in every status, as classic
+  allows.
 - **Reasons.** A refused operation is 403 with its reason as the `error_code`:
   `group_owner_required`, `group_manager_required`,
   `create_groups_role_required`, `group_status_unavailable`,
@@ -297,10 +304,10 @@ request could not be completed. Try again.", logged with the error type only.
 
 | Suite | Cases | Coverage |
 |---|---|---|
-| `functional_tests/test_group_settings_apis.py` | 196 | The read and every write through the real Flask app: validation and messages, revisions, refusals, guard races, cache effects and the boundary |
+| `functional_tests/test_group_settings_apis.py` | 203 | The read and every write through the real Flask app: validation and messages, revisions, refusals, guard races, cache effects and the boundary |
 | `functional_tests/test_group_insights_apis.py` | 167 | The activity projection, the statistics and their window rules, the document count, and access in every status |
-| `functional_tests/test_group_settings_policy.py` | 388 | The policy against the classic routes' real outcomes, for every role, app role, switch and status |
-| `functional_tests/test_group_settings_context_seam.py` | 369 | `settings_management` in the selected-group context is the decision the routes enforce |
+| `functional_tests/test_group_settings_policy.py` | 392 | The policy against the classic routes' real outcomes, for every role, app role, switch and status |
+| `functional_tests/test_group_settings_context_seam.py` | 370 | `settings_management` in the selected-group context is the decision the routes enforce |
 | `functional_tests/test_group_settings_transport.py` | 50 | The nine declared routes, and that no native path matches a classic route |
 | `functional_tests/test_group_settings_legacy_writers.py` | 44 | The classic writers on the guard |
 | `functional_tests/test_group_settings_legacy_fixes.py` | 57 | The classic file count, error text and retention fixes |

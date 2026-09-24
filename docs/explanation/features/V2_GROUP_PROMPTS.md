@@ -81,16 +81,35 @@ unaffected.
 
 ## Testing and validation
 
-`ui_tests/test_v2_group_prompts.py` covers the group surface with 17 cases:
+`ui_tests/test_v2_group_prompts.py` covers the group surface with 20 cases:
 manager create, edit, duplicate, and delete; read-only for ordinary members and
 for locked groups; a prompt with empty `prompt_actions` beside one with actions,
 proving the gate works prompt by prompt; hidden favorites; draft retention on a
-conflict; group and legacy chat links; a stale group link naming the group; and
+conflict; refreshing after a conflict, which merges an untouched field, names a
+field both managers changed, and reports a deleted prompt without saving it
+again; group and legacy chat links; a stale group link naming the group; and
 layout in light and dark at 1440x900 and 390x844.
 
 `functional_tests/test_v2_group_prompts_seam.py` pins the adapter's structure:
 no personal prompt URL of its own, personal calls delegated to
 `workspaceApi.ts`, encoded group URLs, and chat saves staying personal.
+
+`functional_tests/test_group_prompt_fixture_parity.py` holds the page's
+fixture, `ui_tests/fixtures/group_prompts.py`, to the real scoped prompt
+routes. For each response it checks that the fixture returns only keys the
+server returns, including inside each prompt, that every field the page reads
+is present on both sides, and that statuses and error codes match. The routes
+covered are list, create, update, delete, both conflicts, an unknown prompt and
+the non-member refusal. When it was added, after version **0.261.157**, it
+found two places where the fixture had drifted, and both are corrected in the
+fixture:
+
+- a delete returned `{"success": true}`, where the route returns a message;
+- a conflict put `prompt_changed` in `error` and sent no `error_code`, where the
+  route sends a sentence in `error` and the code in `error_code`.
+
+The page was unaffected by either: it treats any 409 as a conflict and ignores
+the delete response.
 
 The personal prompt suites pass unchanged, as do the group and public document
 browser suites.

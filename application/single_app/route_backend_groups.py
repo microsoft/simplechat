@@ -16,7 +16,7 @@ from functions_simplechat_operations import (
 )
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -89,8 +89,8 @@ def build_group_details_payload(group_doc, role, app_settings):
 # concurrent change is kept and a group deleted mid-write is not recreated. A group
 # that keeps changing is the one response those routes did not have before.
 GROUP_WRITE_CONFLICT_RESPONSE = {
-    "error": "The group changed while this change was being saved. Try again.",
-    "error_code": "group_write_conflict",
+    "error": GROUP_WRITE_CONFLICT_MESSAGE,
+    "error_code": GROUP_WRITE_CONFLICT_CODE,
 }
 
 
@@ -331,8 +331,12 @@ def register_route_backend_groups(bp):
                 "error": "File downloads have not been enabled for this group by an administrator"
             }), 403
 
-        data = request.get_json(silent=True) or {}
-        disable_file_downloads = bool(data.get("disable_file_downloads", False))
+        # The classic page always sends the checkbox's boolean. Anything else, or a body
+        # that isn't a JSON object, changes nothing rather than turning downloads on.
+        data = request.get_json(silent=True)
+        disable_file_downloads = data.get("disable_file_downloads") if isinstance(data, dict) else None
+        if not isinstance(disable_file_downloads, bool):
+            return jsonify({"error": "Set disable_file_downloads to true or false."}), 400
 
         def apply_download_settings(fresh):
             # The caller's role is checked again on the copy being written.
@@ -342,8 +346,6 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             group_doc = update_group_document_with_etag_guard(
                 group_id, apply_download_settings, cache_reason="group_updated",
@@ -351,7 +353,7 @@ def register_route_backend_groups(bp):
         except PermissionError:
             return jsonify({"error": "Only group owners and admins can update download settings"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic download settings save failed.",
@@ -433,8 +435,6 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             updated = update_group_document_with_etag_guard(
                 group_id, apply_group_update, cache_reason="group_updated",
@@ -442,7 +442,7 @@ def register_route_backend_groups(bp):
         except PermissionError:
             return jsonify({"error": "Only the owner can rename/edit the group"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic group update failed.",
@@ -531,14 +531,12 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             updated = update_group_document_with_etag_guard(group_id, apply_logo, cache_reason=None)
         except PermissionError:
             return jsonify({"error": "Only the owner can update the group logo"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic group logo save failed.",
@@ -1167,7 +1165,10 @@ def register_route_backend_groups(bp):
             return jsonify({"error": "Forbidden"}), 403
 
         try:
-            stats_window = resolve_stats_time_window(request.args)
+            # A custom date outside 2000-01-01 to 9998-12-31, or one whose UTC offset
+            # carries it past the calendar's edge, is refused here, so the day-by-day
+            # series below can't overflow. Classic windows keep no length cap.
+            stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400
 

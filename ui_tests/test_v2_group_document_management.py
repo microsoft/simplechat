@@ -1,7 +1,7 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.129
+Version: 0.261.159
 Implemented in: 0.261.129
 
 Only HTTP responses are scripted. Components, stores, navigation, downloads,
@@ -231,11 +231,15 @@ def test_locked_workspace_only_offers_eligible_downloads(group_management_ui):
     open_documents(ui)
     select_documents(ui, "same-document")
     expect(command(ui, "Download")).to_be_enabled()
-    expect(command(ui, "Chat")).to_be_disabled()
+    # A locked group is read-only, not closed to chat: the server keeps chat on in it.
+    expect(command(ui, "Chat")).to_be_enabled()
     for label in ("Upload", "Tag", "Edit", "Delete", "Extract", "Switch to Enhanced"):
         expect(explorer(ui).get_by_role("button", name=label, exact=True)).to_have_count(0)
     expect(checkbox(ui, "held-report")).to_be_disabled()
-    show_details(ui, "source-denied")
+    # With chat on, a document whose source cannot be downloaded is still selectable (so opening its
+    # details keeps the selection). Selected on its own, it offers no download in the command bar or
+    # in its details.
+    select_documents(ui, "source-denied")
     expect(command(ui, "Download")).to_be_disabled()
     expect(ui.page.get_by_role("complementary").get_by_role("button", name="Download", exact=True)).to_be_disabled()
     assert_no_personal_controls(ui)
@@ -376,8 +380,10 @@ def test_owned_held_cleanup_selection_never_enables_chat_or_inflight_deletion(gr
         expect(checkbox(ui, identifier)).to_be_disabled()
     select_documents(ui, "held-report")
     expect(command(ui, "Delete")).to_be_enabled()
-    for label in ("Chat", "Tag", "Edit", "Extract", "Download"):
+    for label in ("Chat", "Tag", "Extract", "Download"):
         expect(command(ui, label)).to_be_disabled()
+    # Editing is a details-pane action, and a held source's details offer only its cleanup.
+    expect(ui.page.get_by_role("complementary").get_by_role("button", name="Edit", exact=True)).to_have_count(0)
     expect(ui.page.get_by_text("Restricted held title", exact=True)).to_have_count(0)
     command(ui, "Delete").click()
     dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
@@ -394,6 +400,30 @@ def test_owned_held_cleanup_selection_never_enables_chat_or_inflight_deletion(gr
     expect(dialog).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Details for held-report.pdf", exact=True)).to_have_count(0)
     assert not any(entry.path in ("/api/create_conversation", "/api/chat/stream") for entry in ui.requests)
+
+
+def test_held_details_offer_only_the_advertised_cleanup(group_management_ui):
+    """A held source's details never offer chat, download, tagging, editing, analysis or sharing.
+
+    The owned held-report advertises deletion, so its details keep Delete; the incoming held-share
+    advertises nothing, so its details offer no action at all.
+    """
+    ui = group_management_ui
+    open_documents(ui)
+    details = ui.page.get_by_role("complementary")
+    notice = "Held sources cannot be selected for chat, analyzed, shared, or downloaded here."
+    for identifier, deletable in (("held-report", True), ("held-share", False)):
+        show_details(ui, identifier)
+        expect(details.get_by_text(notice, exact=False)).to_be_visible()
+        for label in ("Chat", "Download", "Tag", "Edit", "Extract", "Share"):
+            expect(details.get_by_role("button", name=label, exact=True)).to_have_count(0)
+        delete = details.get_by_role("button", name="Delete", exact=True)
+        if deletable:
+            expect(delete).to_be_enabled()
+        else:
+            expect(delete).to_have_count(0)
+    expect(ui.page.get_by_text("Restricted held title", exact=True)).to_have_count(0)
+    assert not ui.operation_requests
 
 
 def test_upload_repeated_file_parts_partial_acceptance_and_real_polling(group_management_ui):
@@ -518,8 +548,9 @@ def test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening(
     expect(details_button(ui, "same-document")).to_be_visible()
     expect(ui.page.get_by_text(body["abstract"], exact=True)).to_have_count(0)
     select_documents(ui, "same-document")
-    for label in ("Chat", "Tag", "Edit", "Extract", "Download"):
+    for label in ("Chat", "Tag", "Extract", "Download"):
         expect(command(ui, label)).to_be_disabled()
+    expect(ui.page.get_by_role("complementary").get_by_role("button", name="Edit", exact=True)).to_have_count(0)
     expect(command(ui, "Delete")).to_be_enabled()
     assert len(ui.operation_requests) == 1
 

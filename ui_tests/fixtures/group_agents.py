@@ -1,7 +1,7 @@
 # group_agents.py
 """
 Closed M4C group agent HTTP fixtures for the real production V2 SPA.
-Version: 0.261.145
+Version: 0.261.157
 Implemented in: 0.261.138
 
 The fixture serves the immutable `/api/groups/<group_id>/agents[...]` family, the
@@ -82,20 +82,17 @@ class GroupAgentsFixture(GroupWorkspaceFixture):
         self._seed_agents("group-b", [
             group_agent("group-b", MEMBER_AGENT_ID, "Team charter agent", actions=("chat",)),
         ])
-        # group-c: group actions are on but group agents are off. The agents section is unavailable,
-        # so its slot never mounts the native workbench and the honest tenant-flag reason renders in
-        # its place; no /api/groups/group-c/agents request may be made.
-        actions_only = group_context("group-c", "Actions only workspace", role="Owner", status="active")
-        actions_only["sections"]["agents"]["enabled"] = False
-        actions_only["sections"]["agents"]["can_manage"] = False
-        actions_only["sections"]["agents"]["reason"] = "Group agents are not enabled."
-        # The backend empties the management hint when the capability is off; mirror that so nothing
-        # can read create rights for a workspace whose native routes are refused.
-        actions_only["agent_management"] = {"schema_version": 1, "operations": []}
-        self.groups["group-c"] = actions_only
+        # group-c: group agents are off. On the server group actions and the Call agent tools need
+        # group agents too, so all three are withheld with the server's reasons and both hints are
+        # empty. The agents section is unavailable, so its slot never mounts the native workbench and
+        # the honest tenant-flag reason renders in its place; no /api/groups/group-c/agents request
+        # may be made.
+        self.groups["group-c"] = group_context(
+            "group-c", "Agents off workspace", role="Owner", status="active", allow_group_agents=False,
+        )
         # group-c is added after the parent seeded its per-group delegation stores, so mirror that
-        # seeding here: the seeded caller agent is the Actions page's Call agent manager target, not
-        # a native agents view, which is unavailable for this workspace.
+        # seeding here and keep every group's stores complete, even though no Call agent manager or
+        # native agents view opens for this workspace.
         self.group_agents["group-c"] = [{
             "id": "caller", "name": "caller", "display_name": "Local caller",
             "agent_type": "local", "group_id": "group-c", "is_group": True,

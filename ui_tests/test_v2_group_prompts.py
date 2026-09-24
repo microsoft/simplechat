@@ -1,7 +1,7 @@
 # test_v2_group_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 group prompts workbench.
-Version: 0.261.152
+Version: 0.261.157
 Implemented in: 0.261.136
 
 Exercises the real workbench, adapter and chat resolution against closed synthetic
@@ -228,7 +228,7 @@ def test_conditional_conflict_keeps_draft_open(group_prompts_ui):
     conflicts = [
         entry for entry in ui.responses
         if entry[0].endswith("/api/groups/group-a/prompts/weekly-status")
-        and isinstance(entry[1], dict) and entry[1].get("error") == "prompt_changed"
+        and isinstance(entry[1], dict) and entry[1].get("error_code") == "prompt_changed"
     ]
     assert conflicts, "The stale-etag edit should have produced a 409 prompt_changed."
 

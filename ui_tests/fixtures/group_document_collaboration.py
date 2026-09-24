@@ -1,7 +1,7 @@
 # group_document_collaboration.py
 """
 Closed M2C sharing/publication HTTP fixtures for the real production V2 SPA.
-Version: 0.261.130
+Version: 0.261.157
 Implemented in: 0.261.130
 
 Reuse the existing local asset boundary, M2A reads, response gates, request
@@ -189,16 +189,11 @@ class GroupDocumentCollaborationFixture(GroupDocumentManagementFixture):
             ]
 
     def configure_group(self, group_id="group-a", *, role=None, status="active", operations=None):
+        """Recompute a group's context, whose collaboration handshake is the server's. A test may
+        still pass `operations` to intersect the handshake with a narrower record-level scenario."""
         super().set_policy(group_id, role=role, status=status)
-        context = self.groups[group_id]
-        if operations is None:
-            manager = context["role"] in ("Owner", "Admin", "DocumentManager")
-            operations = COLLABORATION_OPERATIONS if manager and status == "active" else ("inspect",)
-            if manager and status == "upload_disabled":
-                operations = tuple(action for action in COLLABORATION_OPERATIONS if action != "approve_artifact")
-            elif status in ("inactive", "unknown"):
-                operations = ()
-        context["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
+        if operations is not None:
+            self.groups[group_id]["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
 
     def review_state(self, identifier="same-document", group_id="group-a"):
         return self.reviews[(group_id, identifier)]

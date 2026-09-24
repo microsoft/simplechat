@@ -211,6 +211,24 @@ labels, and desktop/mobile light/dark layouts. Existing workflow suites use a
 real selector-and-navigation helper, preserving their authoring, read-only
 inspection, and runtime assertions.
 
+`functional_tests/test_group_context_fixture_parity.py` holds the browser
+fixture's context to the real one, field by field. Every group browser suite
+builds its context with `group_context` in `ui_tests/fixtures/group_workspace.py`.
+The test runs the real context builder for:
+- every role and status, including an unrecognized status;
+- the deployment variants the suites model;
+- the fixture's per-section seeds and the setters that recompute a context.
+
+It compares the union of keys at every level, so a section the server adds is
+compared as soon as the server sends it. It was added after version
+**0.261.157**. Before it, the fixture had drifted from the server in these ways:
+- reason texts;
+- how an unrecognized status was treated;
+- four missing management blocks;
+- some capabilities.
+
+Those were corrected, and so were the browser tests that relied on them.
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action

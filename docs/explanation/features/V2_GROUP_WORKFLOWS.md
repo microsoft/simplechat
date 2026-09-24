@@ -119,6 +119,14 @@ runtime read also carries `group_id`. No change was needed.
   be saved in V2; see the [Analyze changed files fix](../fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md).
   So a personal workflow whose stored source was deleted can't be fixed in V2:
   the save is refused with a reviewed message and the draft is kept.
+- **Someone else saved the workflow first.** The editor sends the revision it
+  opened, and the server refuses a save made from an older copy ("This workflow
+  changed since it was opened. Reload it before saving."). So a save can never
+  overwrite someone else's changes. The editor keeps your draft on screen, but
+  it can't merge it with theirs: closing and reopening the workflow loads the
+  saved version, and your unsaved edits are lost. Note what you changed before
+  reopening. The prompt, identity, endpoint and file source editors merge
+  instead (version 0.261.152).
 
 Fixed in 0.261.149, and listed here as limitations until then:
 - **Deleted sources.** A source deleted after the editor loaded its list made

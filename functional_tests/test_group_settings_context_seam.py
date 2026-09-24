@@ -1,8 +1,9 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 The selected-group context (``GET /api/v2/workspaces/group/<group_id>``) publishes
 ``settings_management`` so the V2 workspace can offer group settings without another
@@ -114,7 +115,7 @@ def test_an_admin_of_a_locked_group_keeps_downloads_retention_and_the_reads(envi
     assert management["reasons"]["view_file_count"] == "group_owner_required"
 
 
-@pytest.mark.parametrize("status", ["locked", "inactive"])
+@pytest.mark.parametrize("status", ["locked", "inactive", "archived"])
 def test_a_read_only_status_holds_the_owner_profile_and_logo(environment, status):
     environment.records["group-a"]["status"] = status
     management = read_with_roles(environment, "owner", ["User"]).get_json()["settings_management"]

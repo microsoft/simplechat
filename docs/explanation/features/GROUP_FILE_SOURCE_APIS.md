@@ -91,9 +91,15 @@ the Cosmos system fields removed. Stored secrets are never returned. Instead,
 
 ```json
 {"auth_type": "...", "username": "", "domain": "", "identity": "",
+ "tenant_id": "", "managed_identity_client_id": "",
  "password_stored": true, "secret_stored": false,
  "password": "Stored_In_KeyVault", "secret": ""}
 ```
+
+`tenant_id` and `managed_identity_client_id` are returned from version
+**0.261.156**. They aren't secrets, and an editor needs them to send the stored
+values back unchanged; see
+[File Source Credential Round Trip Fix](../fixes/FILE_SOURCE_CREDENTIAL_ROUND_TRIP_FIX.md).
 
 A source bound to a workspace identity also carries `identity_name`. The routes
 add two fields:

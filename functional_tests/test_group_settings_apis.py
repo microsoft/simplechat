@@ -1,8 +1,9 @@
 # test_group_settings_apis.py
 """
 Functional test for the native group settings read and writes.
-Version: 0.261.154
+Version: 0.261.157
 Implemented in: 0.261.154
+Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
 ``GET /api/groups/<group_id>/settings`` and the writes under it run for real in
 ``test_support/group_settings_harness.py``, over the etag-enforcing groups container,
@@ -433,6 +434,7 @@ def test_a_write_to_another_section_does_not_refuse_a_profile_write(env):
     ("owner-1", ["Admin"], True, "active", "create_groups_role_required"),
     ("owner-1", ["User", "CreateGroups"], True, "locked", "group_status_unavailable"),
     ("owner-1", ["User"], False, "inactive", "group_status_unavailable"),
+    ("owner-1", ["User"], False, "archived", "group_status_unavailable"),
 ])
 def test_profile_refusals_are_decided_before_the_body_is_read(env, caller, roles, narrowed, status, reason):
     reseed(env, status=status)
@@ -625,6 +627,7 @@ def test_a_stale_logo_revision_is_refused(env):
     ("member-1", "active", "group_owner_required"),
     ("owner-1", "locked", "group_status_unavailable"),
     ("owner-1", "inactive", "group_status_unavailable"),
+    ("owner-1", "archived", "group_status_unavailable"),
 ])
 def test_logo_refusals_are_decided_before_the_upload_is_read(env, caller, status, reason):
     reseed(env, status=status, logoBase64="c3RvcmVk")
@@ -741,7 +744,7 @@ def test_an_assigned_group_may_change_its_download_switch(env):
     assert env.stored_group(ASSIGNED_GROUP)["disable_file_downloads"] is True
 
 
-@pytest.mark.parametrize("status", ["locked", "inactive", "upload_disabled"])
+@pytest.mark.parametrize("status", ["locked", "inactive", "upload_disabled", "archived"])
 def test_downloads_can_be_changed_in_every_status(env, status):
     reseed(env, status=status)
     written(env, patch_downloads(env, True))
@@ -849,10 +852,25 @@ def test_the_retention_refusal_is_reviewed(env):
                  "Retention policies aren't turned on for group workspaces.")
 
 
-@pytest.mark.parametrize("status", ["locked", "inactive"])
+@pytest.mark.parametrize("status", ["locked", "inactive", "archived"])
 def test_retention_can_be_changed_in_every_status(env, status):
     reseed(env, status=status)
     written(env, patch_retention(env, conversation_retention_days="none"))
+
+
+@pytest.mark.parametrize("status,message", [
+    ("locked", "This group is locked or inactive, so its name, description, color and logo can't be changed."),
+    ("inactive", "This group is locked or inactive, so its name, description, color and logo can't be changed."),
+    ("archived", "This group's status isn't recognized, so its name, description, color and logo can't be changed."),
+])
+def test_a_status_refusal_names_its_cause(env, status, message):
+    """A status this version doesn't recognize fails closed for the profile and logo, as the
+    workspace context and adding a member do, and says so rather than calling it locked."""
+    reseed(env, status=status, logoBase64="c3RvcmVk")
+    before = env.stored_group(GROUP)
+    assert_error(patch_profile(env, name="Renamed"), 403, "group_status_unavailable", message)
+    assert_error(put_logo(env), 403, "group_status_unavailable", message)
+    assert_untouched(env, before)
 
 
 # ---------------------------------------------------------------------------

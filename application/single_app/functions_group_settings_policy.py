@@ -16,9 +16,11 @@ routes' outcomes):
   ``create_group_role_required``. ``enable_group_creation`` plays no part, as it
   doesn't there, and the ``Admin`` app role does not stand in for the role;
 - ``edit_logo`` needs the owner only, as ``POST /api/groups/<group_id>/logo`` does;
-- those four are refused while the group is ``locked`` or ``inactive``, where the
-  classic manage page makes the form read-only. ``upload_disabled`` allows them.
-  This rule is native only: the classic routes check no status;
+- those four are refused unless the group is ``active`` or ``upload_disabled``:
+  while it's ``locked`` or ``inactive``, where the classic manage page makes the
+  form read-only, and while its status isn't recognized, which fails closed as
+  the workspace context and adding a member do. This rule is native only: the
+  classic routes check no status;
 - ``edit_downloads`` needs the owner or an admin, and the administrator's download
   capability for the group;
 - ``edit_retention`` needs the owner or an admin, with group workspaces and
@@ -56,6 +58,9 @@ GROUP_SETTINGS_OWNER_ROLE = "Owner"
 GROUP_SETTINGS_MANAGER_ROLES = ("Owner", "Admin")
 # The statuses in which the classic manage page makes the group's profile read-only.
 GROUP_SETTINGS_READ_ONLY_STATUSES = ("locked", "inactive")
+# The only statuses in which the profile and logo can change. Any other value,
+# including one this version doesn't recognize, keeps them read-only.
+GROUP_SETTINGS_WRITABLE_STATUSES = ("active", "upload_disabled")
 
 # Reason codes. Each is also the ``error_code`` a route refuses that operation with.
 GROUP_OWNER_REQUIRED = "group_owner_required"
@@ -72,9 +77,13 @@ def group_retention_enabled(settings):
 
 
 def group_settings_read_only(group):
-    """Whether the group's status keeps its profile read-only."""
+    """Whether the group's status keeps its profile read-only.
+
+    A missing status is ``active``, as everywhere else; a value that isn't one of the
+    writable statuses, recognized or not, is read-only.
+    """
     source = group if isinstance(group, dict) else {}
-    return source.get("status", "active") in GROUP_SETTINGS_READ_ONLY_STATUSES
+    return source.get("status", "active") not in GROUP_SETTINGS_WRITABLE_STATUSES
 
 
 def group_settings_decisions(role, group, settings, session_roles):
@@ -142,6 +151,7 @@ __all__ = [
     "GROUP_SETTINGS_MANAGER_ROLES",
     "GROUP_SETTINGS_OPERATIONS",
     "GROUP_SETTINGS_READ_ONLY_STATUSES",
+    "GROUP_SETTINGS_WRITABLE_STATUSES",
     "GROUP_STATUS_UNAVAILABLE",
     "build_group_settings_management",
     "group_retention_enabled",
