@@ -46,7 +46,7 @@ depending on the first page of a membership list.
 | `workspace` | Allowlisted name, description, owner display/email, normalized color, and a local versioned logo URL. |
 | `role`, `status` | Effective group role and lifecycle state; unknown stored states are reported as `unknown`. |
 | `can_manage_workspace` | Whether the role permits workspace-level management. |
-| `sections` | Shared Knowledge/Automation/Connections grouping, availability, management eligibility, and unavailable reasons for each known section. |
+| `sections` | Shared Knowledge/Automation/Connections grouping, availability, management eligibility, and unavailable reasons for each known section. From version **0.261.155** it also reports `members` in a group-only `manage` group: available to every member while the group can be viewed, with `can_manage` for navigation only. See [V2 Group Members](V2_GROUP_MEMBERS.md). |
 | `native_delegation` | Eligibility for the already-shipped Call agent interface, which does not depend on the personal-kernel flag required by the full legacy authoring tabs. |
 | `document_permissions` | Distinct view, chat, upload, edit, delete, and download eligibility. |
 | `document_queries` | Actual current query capabilities, not a promise that personal explorer features already work for groups. |
@@ -158,7 +158,9 @@ group section is native, so no section carries the Classic label or hands off
 to classic. A section URL with an item segment that the section doesn't
 support, such as `/v2/groups/<group_id>/prompts/<id>`, opens the section itself.
 A `/workflows/<id>` segment becomes the `?workflow_id=` link the Workflows
-section already understands. Disabled sections explain the
+section already understands. From version **0.261.155** a group workspace also
+has a **Manage** group holding **Members**, and the same rule covers it:
+`/v2/groups/<group_id>/members/<id>` opens the section. Disabled sections explain the
 server's reason. Call agent availability remains separate from full group
 agent/action authoring, preserving the existing tool under its own policy.
 

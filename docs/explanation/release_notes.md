@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.155)**
+
+#### New Features
+
+*   **V2 Group Members**
+    *   Group workspaces in V2 have a **Members** section, under a new **Manage** group in the navigation. Everyone in the group can see who belongs to it and leave; owners and admins manage it there.
+    *   Owners and admins can add members from the directory, import them from a CSV file in the classic format, change roles, remove members, and approve or reject requests to join. Several members can be changed or removed together, with each member's result shown. The owner can transfer ownership.
+    *   The page offers only what the server allows each person, and shows the server's message when a change is refused. A request someone else already handled is reported as handled, not as an error.
+    *   Members isn't available in inactive groups; **Manage group (classic)** still covers them, and group settings.
+    *   (Ref: `GroupMembersSection.tsx`, `groupMembership.ts`, `sections.members` in `functions_workspace_context.py`, [V2 Group Members](features/V2_GROUP_MEMBERS.md))
+
 ### **(v0.261.154)**
 
 #### New Features

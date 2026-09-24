@@ -4,9 +4,9 @@
 
 These routes manage a group's members, its pending join requests and its owner
 for a named group, without touching the account's active group. They are the
-server side of the native V2 Members view, which arrives in a later release.
-Until then, members are managed on the classic manage page, which this release
-also makes safe to use alongside other changes.
+server side of the V2 Members section, native from version **0.261.155**
+([V2 Group Members](V2_GROUP_MEMBERS.md)). This release also makes the classic
+manage page safe to use alongside other changes.
 
 A client can use them to:
 - list the members, paged and searchable, with what the caller may do to each;
@@ -76,7 +76,8 @@ The member list carries what the caller may do:
   `transfer_ownership` and `leave`.
 
 A client offers only what these list. The hints are published only by the
-member list, not by the workspace context.
+member list. The workspace context's `sections.members` (version 0.261.155)
+says only whether the Members section can open, not what it may do.
 
 ## Routes
 
@@ -204,8 +205,9 @@ could not be completed. Try again.", logged with the error type only.
 
 ## Known limitations
 
-- **The V2 Members view is a later release.** Use the classic manage page until
-  then.
+- **The V2 Members section isn't available in inactive groups,** or groups
+  with an unrecognized status, although these routes still allow management
+  there. Use the classic manage page for those groups.
 - **Directory fallback.** When the directory can't be reached, an add stores
   the name and email the client sent.
 - **Membership changes don't appear in the group activity feed,** as before.

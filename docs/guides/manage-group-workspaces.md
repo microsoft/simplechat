@@ -207,8 +207,9 @@ From version **0.261.153** every section of the group workspace is native, so
 none of them sends you to the classic page. **Classic tools**, in Documents,
 still opens the classic group workspace for its one remaining tool: upgrading
 legacy documents. It confirms the selected group before navigating.
-Owners and administrators also have **Manage group (classic)** for members,
-join requests, and group settings. From version **0.261.151**, membership
+
+Owners and administrators also have **Manage group (classic)** for group
+settings, and for members in an inactive group. From version **0.261.151**, membership
 changes made there no longer overwrite each other. For example, two admins
 approving and removing members at the same time both take effect. Approving
 someone who is already a member no longer adds them twice, and a bulk removal
@@ -230,8 +231,22 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-Group membership administration, group settings, and public workspace pages
-still use the classic interface.
+Group settings, and public workspace pages, still use the classic interface.
+
+### Manage members
+
+From version **0.261.155**, **Members**, under **Manage** in the group's
+navigation, lists everyone in the group with their role. Search by name or
+email, and filter by role.
+- Owners and admins can **Add member** from the directory, **Import CSV** in
+  the classic format, change roles, remove members, and approve or reject
+  **Requests to join**.
+- Select several members to change their role or remove them together. Each
+  member's result is shown, and the ones that failed stay selected.
+- The owner can **Make owner** another member, which makes you a member.
+- Anyone except the owner can **Leave this group**.
+- Members isn't available in an inactive group. Use **Manage group (classic)**
+  there.
 
 ## Use the classic workspace
 
