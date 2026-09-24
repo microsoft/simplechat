@@ -135,7 +135,9 @@ so a demotion or a membership change that lands mid-write is respected.
 
 - A group deleted mid-write is 404 `group_not_found`, and is never recreated.
 - A group that keeps changing is 409 `group_write_conflict`: "The group changed
-  while this change was being saved. Try again."
+  while your request was being saved. Try again." From version **0.261.160**
+  every group-document write shares this text; before it, these routes said
+  "while this change was being saved".
 - Audit records, notifications and chat bootstrap cache bumps run once, after
   the write commits, and never on a refusal.
 

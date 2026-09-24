@@ -101,6 +101,9 @@ These are recorded for a follow-up:
 - `make_group_inactive_for_current_user`;
 - the legacy `update_group_model_endpoints`.
 
+All of them are on the conditional write from version 0.261.160; see the
+[Group Residual Writers Write Safety Fix](GROUP_RESIDUAL_WRITERS_WRITE_SAFETY_FIX.md).
+
 ## Validation
 
 - Before: a settings save could silently undo a membership change, and a late

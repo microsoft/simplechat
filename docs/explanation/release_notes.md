@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.160)**
+
+#### Bug Fixes
+
+*   **The Last Group Writers No Longer Overwrite Concurrent Changes**
+    *   Control Center's activity refresh, group status change, add member and ownership approvals, the classic tag routes, the SimpleChat agent's inactive marker, and the legacy bulk model endpoint save each saved a copy of the group read earlier. Any of them could undo a change made in between, and one that saved after a deletion brought the group back. Control Center's refresh, which runs nightly by default, did this to every group.
+    *   Each now applies its change to the group as it currently is, never recreates a deleted group, and refuses a group that keeps changing with one shared message: "The group changed while your request was being saved. Try again."
+    *   Ownership approvals are re-checked when approved: a request whose owner has since changed is refused, and approving the same request twice no longer marks it failed.
+    *   The bulk endpoint save deletes superseded Key Vault secrets only after the save commits, and never one the saved endpoints still use. A failed Key Vault delete no longer fails the save.
+    *   (Ref: `route_backend_control_center.py`, `route_backend_group_documents.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_group.py`, `route_backend_models.py`, [Group Residual Writers Write Safety Fix](fixes/GROUP_RESIDUAL_WRITERS_WRITE_SAFETY_FIX.md))
+
+*   **SimpleChat Agent Tools No Longer Return The Stored Group**
+    *   The create group, add member and mark inactive tools answered the model with the whole stored group, including member emails, pending requests and, with Key Vault storage off, inline model endpoint credentials.
+    *   They now answer only the group's ID, name and status.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+*   **Classic Group Requests Refuse Malformed Input Cleanly**
+    *   The group download setting treated the string "false" as true, a retention save with a non-JSON body answered 500, and a statistics date at the calendar's edge failed the request.
+    *   Each now answers 400 with a clear message and changes nothing.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, `functions_stats_windows.py`, [Group Classic Request Gaps Fix](fixes/GROUP_CLASSIC_REQUEST_GAPS_FIX.md))
+
 ### **(v0.261.159)**
 
 #### Bug Fixes

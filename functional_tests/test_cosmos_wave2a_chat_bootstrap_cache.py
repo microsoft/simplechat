@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.261.154
+Version: 0.261.160
 Implemented in: 0.250.006
 Settings write invalidation scoped in: 0.250.037
 Guarded group membership writers: 0.261.151
@@ -249,7 +249,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         "functions_group.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"group_created\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_deleted\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_model_endpoints_updated\")",
+            "cache_reason=\"group_model_endpoints_updated\"",
         ],
         "functions_public_workspaces.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_created\")",
@@ -260,7 +260,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_rejected\")",
         ],
         "functions_simplechat_operations.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_marked_inactive\")",
+            "cache_reason=\"group_marked_inactive\"",
             "cache_reason=\"group_member_added\"",
         ],
         "route_backend_groups.py": [
@@ -279,12 +279,12 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
         ],
         "route_backend_control_center.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_status_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
+            "cache_reason=\"group_status_updated\"",
+            "cache_reason=\"group_member_added\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_status_updated\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_bulk_status_updated\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_ownership_transferred\")",
+            "cache_reason=\"group_ownership_transferred\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
         ],
     }

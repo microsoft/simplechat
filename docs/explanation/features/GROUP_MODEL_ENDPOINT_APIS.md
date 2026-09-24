@@ -127,9 +127,13 @@ does, and replaces the group document conditionally through
 - after the last attempt, it returns 409:
 
   ```json
-  {"error": "The group changed while this model endpoint was being saved. Try again.",
+  {"error": "The group changed while your request was being saved. Try again.",
    "error_code": "group_write_conflict"}
   ```
+
+  From version **0.261.160** this is the text every group-document write
+  shares; before it, these routes said "while this model endpoint was being
+  saved".
 
 - a group deleted mid-write is 404, and is never recreated;
 - a commit whose response was lost is detected, because the re-read matches the

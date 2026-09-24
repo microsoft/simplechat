@@ -71,6 +71,8 @@ from config import cosmos_groups_container
 from functions_appinsights import log_event
 from functions_group import (
     GROUP_DIRECTORY_TYPE_FILTER,
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     get_user_role_in_group,
     update_group_document_with_etag_guard,
@@ -128,7 +130,7 @@ GROUP_DIRECTORY_QUERY = (
 )
 
 GROUP_NOT_FOUND_MESSAGE = "Group not found."
-GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
+# GROUP_WRITE_CONFLICT_MESSAGE is functions_group's, imported above and re-exported here.
 GROUP_ALREADY_MEMBER_MESSAGE = "You're already a member of this group."
 GROUP_REQUEST_PENDING_MESSAGE = "You've already asked to join this group."
 GROUP_NO_PENDING_REQUEST_MESSAGE = "You don't have a pending request to join this group."
@@ -502,7 +504,7 @@ def _write_group(group_id, apply_changes):
     try:
         committed = update_group_document_with_etag_guard(group_id, apply_changes, cache_reason=None)
     except GroupDocumentWriteConflict as error:
-        raise GroupDirectoryError(GROUP_WRITE_CONFLICT_MESSAGE, 409, error_code="group_write_conflict") from error
+        raise GroupDirectoryError(GROUP_WRITE_CONFLICT_MESSAGE, 409, error_code=GROUP_WRITE_CONFLICT_CODE) from error
     if committed is None:
         raise _group_not_found()
     return committed

@@ -22,6 +22,12 @@ class GroupDocumentWriteConflict(RuntimeError):
     """The group document kept changing while a write was being applied to it."""
 
 
+# Every group route answers GroupDocumentWriteConflict the same way: 409 with this
+# code and this reviewed sentence. Other modules import these rather than copy them.
+GROUP_WRITE_CONFLICT_CODE = "group_write_conflict"
+GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
+
+
 def create_group(name, description):
     """Creates a new group. The creator is the Owner by default."""
     user_info = functions_authentication.get_current_user_info()
@@ -463,27 +469,47 @@ def get_group_model_endpoints(group_id: str):
     return []
 
 
-def update_group_model_endpoints(group_id: str, endpoints):
-    """Persist the model endpoints list onto the group document.
+def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outcome=None):
+    """Replace the model endpoint list on the group document.
 
-    This is the legacy collection writer behind ``POST /api/group/model-endpoints``
-    and it remains an unconditional ``upsert_item`` of the copy it just read, so a
-    write that races a membership or status change can restore the older fields, and
-    a group deleted between the read and the upsert is recreated. The immutable-target
-    ``/api/groups/<group_id>/model-endpoints`` routes do not use it: they write through
-    ``update_group_document_with_etag_guard``, which is where the other legacy
-    group-document writers are expected to move (M7B).
+    This is the collection writer behind the legacy ``POST /api/group/model-endpoints``.
+    The list replaces the stored one, so the last bulk or per-item endpoint writer
+    wins, as before. It is applied to the copy ``update_group_document_with_etag_guard``
+    reads: membership, status and every other field come from that copy, and a group
+    deleted meanwhile raises ``LookupError`` rather than being recreated. With
+    ``user_id``, the caller must still be the group's Owner or an Admin on that copy
+    (``PermissionError`` otherwise). ``outcome``, when given, receives the endpoints
+    the committed write replaced (``previous``) and wrote (``saved``), so the caller
+    removes superseded credentials only after the commit. A group that keeps changing
+    raises ``GroupDocumentWriteConflict``.
     """
-    group_doc = find_group_by_id(group_id)
-    if not group_doc:
-        raise ValueError("Group not found")
     if not isinstance(endpoints, list):
         raise ValueError("model_endpoints must be a list")
-    group_doc["model_endpoints"] = endpoints
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
-    return group_doc
+
+    def apply(group_doc):
+        if user_id is not None:
+            role = get_user_role_in_group(group_doc, user_id)
+            if not role:
+                raise PermissionError("User is not a member of this group")
+            if role not in ("Owner", "Admin"):
+                raise PermissionError("Insufficient permissions for this group")
+        previous = group_doc.get("model_endpoints")
+        if outcome is not None:
+            outcome.update(
+                previous=[endpoint for endpoint in previous if isinstance(endpoint, dict)]
+                if isinstance(previous, list) else [],
+                saved=endpoints,
+            )
+        group_doc["model_endpoints"] = endpoints
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        return group_doc
+
+    committed = update_group_document_with_etag_guard(
+        group_id, apply, cache_reason="group_model_endpoints_updated",
+    )
+    if committed is None:
+        raise LookupError("Group not found")
+    return committed
 
 
 def _stored_group_fields(document):

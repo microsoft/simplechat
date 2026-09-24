@@ -514,16 +514,18 @@ def register_route_backend_retention_policy(bp):
                 }), 403
 
             user_id = get_current_user_id()
-            data = request.get_json()
+            # Read quietly: a body that isn't JSON is answered below, after the role check.
+            data = request.get_json(silent=True)
             
             # Get group and verify permissions
             from functions_group import (
+                GROUP_WRITE_CONFLICT_CODE,
+                GROUP_WRITE_CONFLICT_MESSAGE,
                 GroupDocumentWriteConflict,
                 find_group_by_id,
                 get_user_role_in_group,
                 update_group_document_with_etag_guard,
             )
-            from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
             group = find_group_by_id(group_id)
             
             if not group:
@@ -538,6 +540,12 @@ def register_route_backend_retention_policy(bp):
                     'success': False,
                     'error': 'Insufficient permissions. Must be group owner or admin.'
                 }), 403
+
+            if not isinstance(data, dict):
+                return jsonify({
+                    'success': False,
+                    'error': 'A JSON object is required for this request.'
+                }), 400
             
             retention_settings = {}
             
@@ -633,7 +641,7 @@ def register_route_backend_retention_policy(bp):
                 return jsonify({
                     'success': False,
                     'error': GROUP_WRITE_CONFLICT_MESSAGE,
-                    'error_code': 'group_write_conflict'
+                    'error_code': GROUP_WRITE_CONFLICT_CODE
                 }), 409
             if updated is None:
                 return jsonify({
