@@ -283,13 +283,30 @@ def register_route_backend_groups(bp):
             }), 403
 
         data = request.get_json(silent=True) or {}
-        group_doc["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        disable_file_downloads = bool(data.get("disable_file_downloads", False))
+
+        def apply_download_settings(fresh):
+            # The caller's role is checked again on the copy being written.
+            if get_user_role_in_group(fresh, user_id) not in ("Owner", "Admin"):
+                raise PermissionError("Only group owners and admins can update download settings")
+            fresh["disable_file_downloads"] = disable_file_downloads
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        # Imported beside its use, like this module's other function-level imports.
+        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
-            cosmos_groups_container.upsert_item(group_doc)
-            bump_chat_bootstrap_global_cache_version(reason="group_updated")
+            group_doc = update_group_document_with_etag_guard(
+                group_id, apply_download_settings, cache_reason="group_updated",
+            )
+        except PermissionError:
+            return jsonify({"error": "Only group owners and admins can update download settings"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
+        if group_doc is None:
+            return jsonify({"error": "Group not found"}), 404
 
         return jsonify({
             "success": True,
@@ -346,23 +363,36 @@ def register_route_backend_groups(bp):
             return jsonify({"error": "Only the owner can rename/edit the group"}), 403
 
         data = request.get_json()
-        name = data.get("name", group_doc.get("name"))
-        description = data.get("description", group_doc.get("description"))
-        hero_color = normalize_workspace_hero_color(
-            data.get("heroColor"),
-            group_doc.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
-        )
 
-        group_doc["name"] = name
-        group_doc["description"] = description
-        group_doc["heroColor"] = hero_color
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        def apply_group_update(fresh):
+            # The owner is checked again on the copy being written, and the fields the
+            # request leaves out are kept from that copy.
+            if (fresh.get("owner") or {}).get("id") != user_id:
+                raise PermissionError("Only the owner can rename/edit the group")
+            fresh["name"] = data.get("name", fresh.get("name"))
+            fresh["description"] = data.get("description", fresh.get("description"))
+            fresh["heroColor"] = normalize_workspace_hero_color(
+                data.get("heroColor"),
+                fresh.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+            )
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        # Imported beside its use, like this module's other function-level imports.
+        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
-            cosmos_groups_container.upsert_item(group_doc)
+            updated = update_group_document_with_etag_guard(
+                group_id, apply_group_update, cache_reason="group_updated",
+            )
+        except PermissionError:
+            return jsonify({"error": "Only the owner can rename/edit the group"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
+        if updated is None:
+            return jsonify({"error": "Group not found"}), 404
 
-        bump_chat_bootstrap_global_cache_version(reason="group_updated")
         return jsonify({"message": "Group updated", "id": group_id}), 200
 
     @bp.route("/api/groups/<group_id>/logo", methods=["GET"])
@@ -428,19 +458,34 @@ def register_route_backend_groups(bp):
         except (ValueError, OSError) as ex:
             return jsonify({"error": str(ex)}), 400
 
-        current_logo_version = get_workspace_logo_metadata(group_doc)["logoVersion"]
-        group_doc["logoBase64"] = processed_logo["base64_str"]
-        group_doc["logoVersion"] = current_logo_version + 1
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        stored_logo = processed_logo["base64_str"]
 
+        def apply_logo(fresh):
+            # The owner is checked again on the copy being written, and the version
+            # follows that copy's, so a cached image is never reused.
+            if (fresh.get("owner") or {}).get("id") != user_id:
+                raise PermissionError("Only the owner can update the group logo")
+            fresh["logoBase64"] = stored_logo
+            fresh["logoVersion"] = get_workspace_logo_metadata(fresh)["logoVersion"] + 1
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        # Imported beside its use, like this module's other function-level imports.
+        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
-            cosmos_groups_container.upsert_item(group_doc)
+            updated = update_group_document_with_etag_guard(group_id, apply_logo, cache_reason=None)
+        except PermissionError:
+            return jsonify({"error": "Only the owner can update the group logo"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
+        if updated is None:
+            return jsonify({"error": "Group not found"}), 404
 
         return jsonify({
             "message": "Group logo updated",
-            "logoVersion": group_doc["logoVersion"],
+            "logoVersion": updated["logoVersion"],
         }), 200
 
     @bp.route("/api/groups/setActive", methods=["PATCH"])

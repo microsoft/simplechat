@@ -261,7 +261,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
         ],
         "route_backend_groups.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"group_updated\")",
+            "cache_reason=\"group_updated\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_request_approved\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_removed\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"group_member_role_updated\")",
@@ -296,8 +296,10 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         groups_source.index("def api_update_group(group_id):"):
         groups_source.index("def api_get_group_logo(group_id):")
     ]
-    assert "cosmos_groups_container.upsert_item(group_doc)" in group_update_route
-    assert "bump_chat_bootstrap_global_cache_version(reason=\"group_updated\")" in group_update_route
+    # The rename writes through the group etag guard, which bumps the cache on commit.
+    assert "update_group_document_with_etag_guard(" in group_update_route
+    assert "cosmos_groups_container.upsert_item" not in group_update_route
+    assert "cache_reason=\"group_updated\"" in group_update_route
 
 
 def test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis():

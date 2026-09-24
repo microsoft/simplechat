@@ -220,6 +220,8 @@ def test_every_guarded_writer_names_its_cache_reason():
         "functions_group_directory.py": {"None"},
         # The native group settings writes name theirs at each _write call.
         "functions_group_settings.py": {"cache_reason"},
+        "route_backend_groups.py": {"'group_updated'", "None"},
+        "route_backend_retention_policy.py": {"None"},
     }
 
 
@@ -253,6 +255,15 @@ def _cache_reasons_by_function(file_name, callee):
         "replace_group_logo": {"None"},
         "remove_group_logo": {"None"},
         "update_group_retention": {"None"},
+    }),
+    ("route_backend_groups.py", "update_group_document_with_etag_guard", {
+        "api_update_group": {"'group_updated'"},
+        "api_update_group_download_settings": {"'group_updated'"},
+        "api_upload_group_logo": {"None"},
+    }),
+    ("route_backend_retention_policy.py", "update_group_document_with_etag_guard", {
+        "update_group_retention_settings": {"None"},
+        "force_push_retention_defaults": {"None"},
     }),
 ])
 def test_each_group_settings_writer_names_the_classic_cache_reason(file_name, callee, expected):
