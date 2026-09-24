@@ -4,7 +4,26 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.138)**
 
+#### New Features
+
+*   **Native Group Agents**
+    *   Group agents can now be listed, opened, created, edited and deleted from the native group workspace, in the same collection and editor as personal agents. Previously the group Agents section sent users to the classic interface.
+    *   Owners and admins can change group agents while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees read-only details and can use the group's agents in chat.
+    *   Everything the editor loads is resolved for the group: the model list (the global connections the member may use, and the group's own when allowed), the group's documents for assigned knowledge, the group's actions, Call agent targets, and instruction drafting. A group page never reads the member's personal agents, endpoints, knowledge or identities.
+    *   "Use in chat" opens the agent in its own group, whichever group the account last selected. A stale link names the group instead of silently choosing another agent.
+    *   Agents created in the classic group workspace keep their stored credentials when edited in V2, and the reverse.
+    *   If two managers edit the same agent, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   When group agents are turned off or restricted, the section is left out of the group's navigation, as in the classic workspace.
+    *   The template gallery's submit button on a group agent follows the same rule as the template service, so it is offered only when a submission would be accepted.
+    *   Foundry discovery is not offered for group-scoped Foundry connections yet; global connections discover as before, and project fields can be entered manually.
+    *   (Ref: `route_backend_group_agents_scoped.py`, `functions_group_agent_access.py`, `functions_group_agent_policy.py`, `agentWorkbench.ts`, [V2 Group Agents](features/V2_GROUP_AGENTS.md), [Group Agent APIs](features/GROUP_AGENT_APIS.md))
+
 #### Bug Fixes
+
+*   **Native Group Action Changes Were Missing From the Activity Log**
+    *   Creating, editing or deleting a group action from the native V2 group workspace (0.261.137) recorded no activity event, while the classic workspace records one for every change.
+    *   Native group action changes now record the same events, with the group, as the classic routes do. The new native group agent routes do the same.
+    *   (Ref: `functions_workspace_authoring.py` `log_committed_group_editor_change`, `functions_group_action_access.py`, [Group Action APIs](features/GROUP_ACTION_APIS.md))
 
 *   **File Sync Runs Undid Changes Made While They Were Running**
     *   Fixed a File Sync run overwriting a manager's changes made while it was running. When the run finished, an edit to the source was lost, a source or schedule that had been turned off was turned back on, a deleted source was recreated and kept syncing, and an ignored path was un-ignored.

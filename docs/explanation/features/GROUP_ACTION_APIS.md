@@ -137,6 +137,19 @@ Every 409 carries the editor engine's single message, "This resource changed.
 Reload it before saving.", including the duplicate-name case. On a 409, reload
 and reapply the change. The V2 editor keeps the draft open.
 
+## Activity log
+
+Since **0.261.138**, every committed create, update and delete records the same
+activity event as the classic group routes:
+
+- `log_action_creation`, `log_action_update` or `log_action_deletion`;
+- with `scope='group'` and the group named in the path;
+- with the action's ID, name and, except on delete, its type.
+
+A refused write (400, 403 or 409) records nothing. A failure to record activity
+is logged as a warning and never undoes the committed change. In 0.261.137 these
+routes recorded no activity.
+
 ## Per-action operations
 
 Each listed action carries `action_actions`, computed fresh on every request and
