@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
 
+from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos import ContainerProxy
 from redis import Redis
@@ -49,6 +50,7 @@ CACHE_VERSION_DOC_TYPE = 'cache_version'
 CACHE_VERSION_READ_TTL_SECONDS = 15
 COSMOS_CACHE_ENTRY_DOC_TYPE = 'app_cache_entry'
 COSMOS_CACHE_ENTRY_PREFIX = 'app_cache_entry:'
+STREAM_SESSION_APPEND_MAX_ATTEMPTS = 5
 update_settings_cache = None
 get_settings_cache = None
 get_app_settings_cache_version = None
@@ -375,13 +377,18 @@ def _get_stream_session_events_key(cache_key):
 
 def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=None, log_event_func=None):
     expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
+    existing_events = _get_cosmos_cache_entry(
+        _get_stream_session_events_key(cache_key),
+        log_event_func=log_event_func,
+    )
+    events_payload = list(existing_events) if isinstance(existing_events, list) else []
     with _app_cache_lock:
         APP_STREAM_SESSION_METADATA[cache_key] = {
             'value': copy.deepcopy(metadata or {}),
             'expires_at': expiration_timestamp,
         }
         APP_STREAM_SESSION_EVENTS[cache_key] = {
-            'value': [],
+            'value': events_payload,
             'expires_at': expiration_timestamp,
         }
     _set_cosmos_cache_entry(
@@ -390,12 +397,30 @@ def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=N
         ttl_seconds=ttl_seconds,
         log_event_func=log_event_func,
     )
-    _set_cosmos_cache_entry(
-        _get_stream_session_events_key(cache_key),
-        [],
-        ttl_seconds=ttl_seconds,
-        log_event_func=log_event_func,
-    )
+    if existing_events is None:
+        now = datetime.utcnow()
+        expires_at = None
+        if ttl_seconds is not None:
+            expires_at = now + timedelta(seconds=max(int(ttl_seconds), 0))
+        try:
+            _get_cosmos_cache_container().create_item({
+                'id': _build_cosmos_cache_doc_id(_get_stream_session_events_key(cache_key)),
+                'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
+                'cache_key': _get_stream_session_events_key(cache_key),
+                'payload': [],
+                'created_at': now.isoformat(),
+                'updated_at': now.isoformat(),
+                'expires_at': _serialize_datetime(expires_at),
+            })
+        except AzureError as ex:
+            if getattr(ex, 'status_code', None) != 409:
+                _logger.warning("[ASC] Cosmos stream event initialization failed for %s: %s", cache_key, ex)
+                if callable(log_event_func):
+                    log_event_func(
+                        "[ASC] Cosmos stream event initialization failed.",
+                        extra={'cache_key': cache_key, 'error': str(ex)},
+                        level=logging.WARNING,
+                    )
 
 
 def _set_stream_session_meta_fallback(cache_key, metadata, ttl_seconds=None, log_event_func=None):
@@ -430,37 +455,94 @@ def _get_stream_session_meta_fallback(cache_key, log_event_func=None):
 
 def _append_stream_session_event_fallback(cache_key, event_text, ttl_seconds=None, log_event_func=None):
     expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
+    cache_entry_key = _get_stream_session_events_key(cache_key)
+    doc_id = _build_cosmos_cache_doc_id(cache_entry_key)
+    container = _get_cosmos_cache_container()
+    events_payload = None
+
+    for _ in range(STREAM_SESSION_APPEND_MAX_ATTEMPTS):
+        now = datetime.utcnow()
+        expires_at = None
+        if ttl_seconds is not None:
+            expires_at = now + timedelta(seconds=max(int(ttl_seconds), 0))
+        try:
+            document = container.read_item(item=doc_id, partition_key=doc_id)
+            events_payload = list(document.get('payload') or [])
+            events_payload.append(event_text)
+            document['payload'] = events_payload
+            document['updated_at'] = now.isoformat()
+            document['expires_at'] = _serialize_datetime(expires_at)
+            container.replace_item(
+                item=doc_id,
+                body=document,
+                etag=document.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except AzureError as ex:
+            status_code = getattr(ex, 'status_code', None)
+            if status_code in {404, 409, 412}:
+                if status_code == 404:
+                    try:
+                        container.create_item({
+                            'id': doc_id,
+                            'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
+                            'cache_key': cache_entry_key,
+                            'payload': [event_text],
+                            'created_at': now.isoformat(),
+                            'updated_at': now.isoformat(),
+                            'expires_at': _serialize_datetime(expires_at),
+                        })
+                    except AzureError as create_error:
+                        if getattr(create_error, 'status_code', None) in {409, 412}:
+                            continue
+                        ex = create_error
+                    else:
+                        events_payload = [event_text]
+                        break
+                else:
+                    continue
+            _logger.warning("[ASC] Cosmos stream event append failed for %s: %s", cache_key, ex)
+            if callable(log_event_func):
+                log_event_func(
+                    "[ASC] Cosmos stream event append failed.",
+                    extra={'cache_key': cache_key, 'error': str(ex), 'status_code': status_code},
+                    level=logging.WARNING,
+                )
+            break
+        else:
+            break
+    else:
+        events_payload = None
+
+    if not isinstance(events_payload, list):
+        with _app_cache_lock:
+            entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
+            events_payload = list(entry.get('value') or []) if entry and not _is_expired(entry) else []
+            events_payload.append(event_text)
+
     with _app_cache_lock:
-        entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
-        if _is_expired(entry):
-            entry = {'value': [], 'expires_at': expiration_timestamp}
-            APP_STREAM_SESSION_EVENTS[cache_key] = entry
-        entry['value'].append(event_text)
-        if expiration_timestamp is not None:
-            entry['expires_at'] = expiration_timestamp
-        events_payload = list(entry.get('value') or [])
-    _set_cosmos_cache_entry(
-        _get_stream_session_events_key(cache_key),
-        events_payload,
-        ttl_seconds=ttl_seconds,
-        log_event_func=log_event_func,
-    )
+        APP_STREAM_SESSION_EVENTS[cache_key] = {
+            'value': events_payload,
+            'expires_at': expiration_timestamp,
+        }
 
 
 def _get_stream_session_events_fallback(cache_key, start_index=0, log_event_func=None):
     start = int(start_index or 0)
+    cached = _get_cosmos_cache_entry(
+        _get_stream_session_events_key(cache_key),
+        log_event_func=log_event_func,
+    )
+    if cached is not None:
+        return list(cached[start:])
+
     with _app_cache_lock:
         entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
         if entry and not _is_expired(entry):
             return list((entry.get('value') or [])[start:])
         if entry:
             APP_STREAM_SESSION_EVENTS.pop(cache_key, None)
-
-    cached = _get_cosmos_cache_entry(
-        _get_stream_session_events_key(cache_key),
-        log_event_func=log_event_func,
-    )
-    return list((cached or [])[start:])
+    return []
 
 
 def _delete_stream_session_cache_fallback(cache_key, log_event_func=None):
@@ -949,12 +1031,32 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
             _set_ttl_cached_version(APP_GOVERNANCE_SHARED_VERSION_CACHE, fallback_version)
             return fallback_version
 
-        initialize_stream_session_cache = initialize_stream_session_cache_mem
-        set_stream_session_meta = set_stream_session_meta_mem
-        get_stream_session_meta = get_stream_session_meta_mem
-        append_stream_session_event = append_stream_session_event_mem
-        get_stream_session_events = get_stream_session_events_mem
-        delete_stream_session_cache = delete_stream_session_cache_mem
+        # Stream sessions must be visible across application workers. The Cosmos
+        # fallback preserves that contract when Redis is intentionally disabled.
+        initialize_stream_session_cache = lambda cache_key, metadata, ttl_seconds=None: (
+            _initialize_stream_session_cache_fallback(
+                cache_key, metadata, ttl_seconds=ttl_seconds, log_event_func=log_event,
+            )
+        )
+        set_stream_session_meta = lambda cache_key, metadata, ttl_seconds=None: (
+            _set_stream_session_meta_fallback(
+                cache_key, metadata, ttl_seconds=ttl_seconds, log_event_func=log_event,
+            )
+        )
+        get_stream_session_meta = lambda cache_key: _get_stream_session_meta_fallback(
+            cache_key, log_event_func=log_event,
+        )
+        append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None: (
+            _append_stream_session_event_fallback(
+                cache_key, event_text, ttl_seconds=ttl_seconds, log_event_func=log_event,
+            )
+        )
+        get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(
+            cache_key, start_index=start_index, log_event_func=log_event,
+        )
+        delete_stream_session_cache = lambda cache_key: _delete_stream_session_cache_fallback(
+            cache_key, log_event_func=log_event,
+        )
         get_user_ui_settings_cache = get_user_ui_settings_cache_mem
         set_user_ui_settings_cache = set_user_ui_settings_cache_mem
         delete_user_ui_settings_cache = delete_user_ui_settings_cache_mem

@@ -1,9 +1,9 @@
 # test_cosmos_wave1_cache_fallback.py
 #!/usr/bin/env python3
 """
-Functional test for Cosmos Wave 1 cache fallback behavior.
-Version: 0.261.027
-Implemented in: 0.250.005
+Functional test for Cosmos cache fallback behavior.
+Version: 0.261.052
+Implemented in: 0.261.052
 
 This test ensures Redis failures in the app cache layer fall back to
 Cosmos-backed cache/source reads instead of failing callers.
@@ -13,6 +13,7 @@ import copy
 import importlib
 import os
 import sys
+from azure.core.exceptions import AzureError
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 
@@ -22,7 +23,7 @@ if SINGLE_APP_DIR not in sys.path:
     sys.path.insert(0, SINGLE_APP_DIR)
 
 
-class FakeCosmosError(Exception):
+class FakeCosmosError(AzureError):
     def __init__(self, status_code, message):
         super().__init__(message)
         self.status_code = status_code
@@ -67,6 +68,21 @@ class FakeCosmosContainer:
         if item not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
         del self.items[item]
+
+
+class StreamAppendConflictContainer(FakeCosmosContainer):
+    def __init__(self):
+        super().__init__()
+        self.conflicts_remaining = 1
+
+    def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):
+        if self.conflicts_remaining:
+            self.conflicts_remaining -= 1
+            concurrent_body = copy.deepcopy(self.items[item])
+            concurrent_body['payload'].append('data: concurrent-message\n\n')
+            self.items[item] = self._copy_with_new_etag(concurrent_body)
+            raise FakeCosmosError(412, "Concurrent stream append")
+        return super().replace_item(item, body, etag=etag, match_condition=match_condition, **kwargs)
 
 
 class FailingRedis:
@@ -186,11 +202,54 @@ def test_redis_initialization_failure_assigns_fallback_functions():
     assert cache_module.get_settings_cache()["feature_flag"] == "fallback-configured"
 
 
+def test_stream_event_fallback_is_shared_between_workers():
+    """Worker-local stream snapshots must not hide collaboration events."""
+    container = FakeCosmosContainer()
+    worker_one = _load_cache_module()
+    worker_two = _load_cache_module()
+    settings = {"enable_redis_cache": False}
+
+    worker_one.configure_app_cache(settings, dependencies=_dependencies(worker_one, container, RaisingRedis))
+    worker_two.configure_app_cache(settings, dependencies=_dependencies(worker_two, container, RaisingRedis))
+
+    cache_key = "collaboration:test-conversation"
+    metadata = {"conversation_id": "test-conversation", "active": True}
+    worker_one.initialize_stream_session_cache(cache_key, metadata, ttl_seconds=60)
+    worker_one.append_stream_session_event(cache_key, "data: owner-message\n\n", ttl_seconds=60)
+    assert worker_two.get_stream_session_meta(cache_key) == metadata
+    worker_two.set_stream_session_meta(cache_key, metadata, ttl_seconds=60)
+    worker_two.append_stream_session_event(cache_key, "data: invitee-message\n\n", ttl_seconds=60)
+
+    expected_events = ["data: owner-message\n\n", "data: invitee-message\n\n"]
+    assert worker_one.get_stream_session_events(cache_key) == expected_events
+    assert worker_two.get_stream_session_events(cache_key) == expected_events
+
+
+def test_stream_event_fallback_retries_concurrent_append():
+    """Concurrent stream publishes must retain both events after an ETag conflict."""
+    container = StreamAppendConflictContainer()
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({"enable_redis_cache": False}, dependencies=_dependencies(
+        cache_module, container, RaisingRedis,
+    ))
+
+    cache_key = "collaboration:conflict-test"
+    cache_module.initialize_stream_session_cache(cache_key, {"active": True}, ttl_seconds=60)
+    cache_module.append_stream_session_event(cache_key, "data: owner-message\n\n", ttl_seconds=60)
+
+    assert cache_module.get_stream_session_events(cache_key) == [
+        "data: concurrent-message\n\n",
+        "data: owner-message\n\n",
+    ]
+
+
 if __name__ == "__main__":
     tests = [
         test_redis_runtime_failure_falls_back_to_cosmos_settings,
         test_redis_write_failure_persists_user_ui_cache_to_cosmos,
         test_redis_initialization_failure_assigns_fallback_functions,
+        test_stream_event_fallback_is_shared_between_workers,
+        test_stream_event_fallback_retries_concurrent_append,
     ]
     results = []
     for test in tests:

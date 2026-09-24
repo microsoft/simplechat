@@ -309,18 +309,17 @@ def _collaboration_events_for_viewer(events, viewer_user_id, conversation_id):
                 messages = hydrate_m365_pending_action_cards(
                     [payload['message']], viewer_user_id, conversation_id,
                 )
-            except (M365PolicyError, PermissionError, AzureError, ValueError) as error:
+            except Exception as error:
                 log_event(
                     '[COLLABORATION] Shared Microsoft 365 action cards could not be projected.',
                     extra={'conversation_id': conversation_id, 'exception_type': type(error).__name__},
                     level=logging.WARNING,
                 )
-                failure = _build_collaboration_event(
-                    conversation_id, 'collaboration.m365.pending_action',
-                    {'error': 'm365_pending_actions_unavailable'},
-                )
-                yield f'data: {json.dumps(failure)}\n\n'
-                return
+                # M365 card projection is optional. Preserve the collaboration
+                # message event so one viewer's Graph failure cannot terminate
+                # their live conversation stream.
+                yield event_text
+                continue
             event = {**event, 'payload': {**payload, 'message': messages[0]}}
             yield f'data: {json.dumps(make_json_serializable(event))}\n\n'
         else:

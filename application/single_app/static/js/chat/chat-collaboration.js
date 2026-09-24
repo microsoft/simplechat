@@ -43,7 +43,6 @@ const sendBtn = document.getElementById('send-btn');
 let cachedUserSettingsPromise = null;
 let activeCollaborativeConversationId = null;
 let activeCollaborationEventSource = null;
-let activeSubscriptionStartedAt = 0;
 let activeReplyContext = null;
 let typingUsers = new Map();
 let lastTypingState = false;
@@ -176,6 +175,8 @@ function setConversationDataset(conversationId, metadata = {}) {
             element.dataset.currentUserRole = metadata.current_user_role || '';
         }
     });
+
+    applyConversationMetadataUpdate(conversationId, metadata);
 }
 
 function normalizeCollaborator(rawUser) {
@@ -577,37 +578,6 @@ function buildEventKey(eventEnvelope = {}) {
         pendingActionKey || payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
         eventEnvelope.occurred_at || '',
     ].join('|');
-}
-
-function parseCollaborationEventTimestamp(timestamp) {
-    const normalizedTimestamp = String(timestamp || '').trim();
-    if (!normalizedTimestamp) {
-        return Number.NaN;
-    }
-
-    if (/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalizedTimestamp)) {
-        return Date.parse(normalizedTimestamp);
-    }
-
-    const utcTimestamp = Date.parse(`${normalizedTimestamp}Z`);
-    if (!Number.isNaN(utcTimestamp)) {
-        return utcTimestamp;
-    }
-
-    return Date.parse(normalizedTimestamp);
-}
-
-function isReplayEvent(eventEnvelope = {}) {
-    if (!activeSubscriptionStartedAt) {
-        return false;
-    }
-
-    const occurredAt = parseCollaborationEventTimestamp(eventEnvelope.occurred_at || '');
-    if (Number.isNaN(occurredAt)) {
-        return false;
-    }
-
-    return occurredAt < (activeSubscriptionStartedAt - 1000);
 }
 
 async function getCachedUserSettings() {
@@ -1027,7 +997,6 @@ async function loadConversationMessages(conversationId) {
         renderCollaborationMessage(decoratedMessage);
         cacheCollaborationMessage(message);
     });
-    void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
     reapplyPendingSearchHighlight();
     return messages;
 }
@@ -1060,8 +1029,6 @@ function disconnectConversationEvents() {
         activeCollaborationEventSource = null;
     }
 
-    activeSubscriptionStartedAt = 0;
-
     if (typingStopHandle) {
         window.clearTimeout(typingStopHandle);
         typingStopHandle = null;
@@ -1082,6 +1049,17 @@ function handleConversationEvent(eventEnvelope = {}) {
         return;
     }
 
+    const payload = eventEnvelope.payload || {};
+    const eventConversationId = String(
+        eventEnvelope.conversation_id || payload.conversation_id || payload.message?.conversation_id || ''
+    ).trim();
+    if (eventConversationId && (
+        (activeCollaborativeConversationId && eventConversationId !== activeCollaborativeConversationId)
+        || (window.currentConversationId && eventConversationId !== window.currentConversationId)
+    )) {
+        return;
+    }
+
     const eventKey = buildEventKey(eventEnvelope);
     if (eventKey && seenCollaborationEventKeys.has(eventKey)) {
         return;
@@ -1090,18 +1068,7 @@ function handleConversationEvent(eventEnvelope = {}) {
         seenCollaborationEventKeys.add(eventKey);
     }
 
-    if (isReplayEvent(eventEnvelope)) {
-        return;
-    }
-
-    const payload = eventEnvelope.payload || {};
     if (eventEnvelope.event_type === 'collaboration.m365.pending_action') {
-        const conversationId = String(eventEnvelope.conversation_id || payload.conversation_id || '').trim();
-        if (conversationId && conversationId === activeCollaborativeConversationId
-            && conversationId === window.currentConversationId
-            && (!payload.conversation_id || payload.conversation_id === conversationId)) {
-            void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
-        }
         return;
     }
     if (payload.conversation) {
@@ -1247,7 +1214,6 @@ function subscribeToConversationEvents(conversationId) {
 
     disconnectConversationEvents();
     activeCollaborativeConversationId = conversationId;
-    activeSubscriptionStartedAt = Date.now();
     activeCollaborationEventSource = new EventSource(`/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events`);
     activeCollaborationEventSource.onmessage = event => {
         if (!event?.data) {
@@ -1903,7 +1869,7 @@ async function respondToInvite(conversationId, action) {
     }
 
     if (action === 'accept' && payload.conversation?.id && window.chatConversations?.selectConversation) {
-        await window.chatConversations.selectConversation(payload.conversation.id);
+        await window.chatConversations.selectConversation(payload.conversation.id, payload.conversation);
     }
 
     window.hideConversationDetails?.();

@@ -2,6 +2,105 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.052)**
+
+#### Bug Fixes
+
+*   **Concurrent Shared Events Remain Ordered and Visible**
+    *   Cosmos-backed collaboration event storage now preserves an existing stream during worker attachment and retries conflicting appends, preventing simultaneous prompts or typing updates from overwriting one another.
+    *   (Ref: `app_settings_cache.py`)
+
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Shared Conversation Events Reach Every Application Worker**
+    *   When Redis is disabled or unavailable, collaboration event sessions now use the Cosmos-backed stream cache instead of isolated worker memory.
+    *   Participants connected through different workers now receive the same shared prompts, responses, and typing updates.
+    *   (Ref: `app_settings_cache.py`)
+
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Normal Shared Prompts Skip Pending-Action Recovery**
+    *   The shared AI streaming lifecycle now contacts Microsoft 365 pending actions only after receiving explicit action data, preventing unrelated `500` responses and warning states in ordinary shared conversations.
+    *   (Ref: `chat-streaming.js`)
+
+### **(v0.261.049)**
+
+#### Bug Fixes
+
+*   **Shared Chat Updates No Longer Trigger Unrelated M365 Requests**
+    *   Shared prompts, responses, typing indicators, and EventSource reconnects now process independently from Microsoft 365 pending-action refreshes.
+    *   M365 recovery remains available for messages that explicitly reference a saved action, while ordinary shared conversations avoid both unnecessary requests and unrelated warnings.
+    *   (Ref: `chat-collaboration.js`, `m365-pending-actions.js`)
+
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Shared Updates Survive Viewer-Specific M365 Errors**
+    *   Unexpected Microsoft 365 action-card projection errors no longer stop an individual participant's live collaboration stream.
+    *   (Ref: `route_backend_collaboration.py`)
+
+### **(v0.261.047)**
+
+#### Bug Fixes
+
+*   **Participant Updates Survive M365 Projection Failures**
+    *   A viewer-specific Microsoft 365 action-card hydration failure no longer terminates the shared conversation event stream, so typing indicators, prompts, and model responses continue to arrive.
+    *   (Ref: `route_backend_collaboration.py`)
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **M365 Startup Warnings Stay Out of Unrelated Chats**
+    *   Generic transient M365 action-load failures now retry silently in conversations without known actions, so unrelated chats do not display an alarming outgoing-actions warning during container warm-up.
+    *   (Ref: `m365-pending-actions.js`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Transient M365 Action Errors Recover Automatically**
+    *   Temporary outgoing-action load failures during container startup now retry automatically, clearing the warning once the service is available instead of requiring a manual refresh.
+    *   (Ref: `m365-pending-actions.js`)
+
+### **(v0.261.044)**
+
+#### Bug Fixes
+
+*   **Shared Conversation Prompts Persist After Invite Approval**
+    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
+
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Add Participants Remains Available Before Sharing**
+    *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
+    *   (Ref: `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.042)**
+
+#### Bug Fixes
+
+*   **Add Participants Appears After the First Shared Exchange**
+    *   Collaboration metadata updates now refresh the conversation menus after prompt/response completion, so the Add participants action appears without a page refresh.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.041)**
+
+#### Bug Fixes
+
+*   **Shared Conversation State No Longer Leaks Into New Conversations**
+    *   Starting a new conversation now disconnects the previous shared conversation's event stream and clears its typing state, preventing participant activity and messages from appearing in the new conversation.
+    *   Conversation metadata updates now refresh the Add participants action immediately, without requiring a page refresh after sharing a conversation.
+    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
 ### **(v0.261.040)**
 
 #### Bug Fixes

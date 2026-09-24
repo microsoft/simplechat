@@ -2,8 +2,8 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.261.040
-Implemented in: 0.261.040
+Version: 0.261.052
+Implemented in: 0.261.052
 
 This test ensures collaborative conversations route shared AI requests through
 the collaboration stream bridge, persist explicit AI-request metadata, and
@@ -92,6 +92,36 @@ def test_streaming_metadata_alignment_for_explicit_agent_targets():
     assert "user_metadata['agent_selection'] = agent_selection_metadata" in chat_route_source
     assert "user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model" in chat_route_source
     assert "model_deployment=final_model_used if use_agent_streaming else gpt_model" in chat_route_source
+
+
+def test_collaboration_lifecycle_and_participant_action_wiring():
+    conversations_source = read_repo_file('application', 'single_app', 'static', 'js', 'chat', 'chat-conversations.js')
+    collaboration_source = read_repo_file('application', 'single_app', 'static', 'js', 'chat', 'chat-collaboration.js')
+    sidebar_source = read_repo_file('application', 'single_app', 'static', 'js', 'chat', 'chat-sidebar-conversations.js')
+
+    assert 'window.chatCollaboration?.deactivateConversation?.();' in conversations_source
+    assert 'function syncConversationAddParticipantsAction(convoItem)' in conversations_source
+    assert "!metadataIsCollaborative && [" in conversations_source
+    assert 'syncConversationAddParticipantsAction(convoItem);' in conversations_source
+    assert 'function syncSidebarAddParticipantsAction(sidebarItem)' in sidebar_source
+    assert '!isCollaborativeConversation' in sidebar_source
+    assert "'personal_single_user', 'personal_multi_user'" in sidebar_source
+    assert 'syncSidebarAddParticipantsAction(sidebarItem);' in sidebar_source
+    assert 'applyConversationMetadataUpdate(conversationId, metadata);' in collaboration_source
+    assert "convoItem.dataset.canAcceptInvite === 'true'" in conversations_source
+    assert "metadata.conversation_kind === 'collaborative'" in conversations_source
+    assert 'metadataOverride = null' in conversations_source
+    assert 'selectConversation(payload.conversation.id, payload.conversation)' in collaboration_source
+    route_source = read_repo_file('application', 'single_app', 'route_backend_collaboration.py')
+    assert "yield event_text" in route_source
+    assert "continue" in route_source
+    assert 'if (isReplayEvent(eventEnvelope))' not in collaboration_source
+    assert 'SimpleChatM365PendingActions?.refreshConversation(conversationId)' not in collaboration_source
+    streaming_source = read_repo_file('application', 'single_app', 'static', 'js', 'chat', 'chat-streaming.js')
+    assert 'let receivedM365PendingAction = false;' in streaming_source
+    assert 'if (!receivedM365PendingAction)' in streaming_source
+    assert 'eventConversationId !== activeCollaborativeConversationId' in collaboration_source
+    assert 'eventConversationId !== window.currentConversationId' in collaboration_source
 
 
 if __name__ == '__main__':

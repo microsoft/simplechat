@@ -703,6 +703,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     let persistedUserMessageId = String(initialPersistedUserMessageId || '').trim() || null;
     let lastChunkAt = null;
     let eventCount = 0;
+    let receivedM365PendingAction = false;
     const pendingActionConversationEpoch = window.SimpleChatM365PendingActions?.getConversationEpoch();
 
     function finalizePendingUserMessageMetadata() {
@@ -736,7 +737,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     }
 
     function capturePendingActions(data) {
-        if (data?.type === 'm365_pending_action' || Array.isArray(data?.m365_pending_actions)) {
+        const hasPendingAction = data?.type === 'm365_pending_action'
+            || Array.isArray(data?.m365_pending_actions)
+            || Array.isArray(data?.metadata?.m365_pending_action_ids);
+        if (hasPendingAction) {
+            receivedM365PendingAction = true;
             window.SimpleChatM365PendingActions?.handleChatPayload(data, {
                 conversationId: streamContext.conversationId || recoveryConversationId || data.conversation_id,
                 userMessageId: persistedUserMessageId || tempUserMessageId,
@@ -746,6 +751,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     }
 
     function recoverPendingActions() {
+        if (!receivedM365PendingAction) {
+            return;
+        }
         void window.SimpleChatM365PendingActions?.refreshConversation(
             streamContext.conversationId || recoveryConversationId
         );

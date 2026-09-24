@@ -1064,6 +1064,57 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   }
 }
 
+function syncSidebarAddParticipantsAction(sidebarItem) {
+  const dropdownMenu = sidebarItem?.querySelector('.dropdown-menu');
+  if (!dropdownMenu) {
+    return;
+  }
+
+  const chatType = sidebarItem.dataset.chatType || '';
+  const isCollaborativeConversation = sidebarItem.dataset.conversationKind === 'collaborative';
+  const canManageMembers = isCollaborativeConversation
+    ? sidebarItem.dataset.canManageMembers === 'true'
+    : ['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(chatType);
+  const canShowAddParticipants = [
+    'personal_single_user',
+    'personal_multi_user',
+    'group-single-user',
+    'group_multi_user',
+  ].includes(chatType) && canManageMembers;
+  const existingAction = dropdownMenu.querySelector('.add-participants-btn');
+
+  if (!canShowAddParticipants) {
+    existingAction?.closest('li')?.remove();
+    return;
+  }
+
+  if (existingAction) {
+    return;
+  }
+
+  const actionItem = document.createElement('li');
+  const actionLink = document.createElement('a');
+  actionLink.classList.add('dropdown-item', 'add-participants-btn');
+  actionLink.href = '#';
+  const actionIcon = document.createElement('i');
+  actionIcon.classList.add('bi', 'bi-person-plus', 'me-2');
+  actionLink.append(actionIcon, document.createTextNode('Add participants'));
+  actionLink.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const dropdownButton = sidebarItem.querySelector('[data-bs-toggle="dropdown"]');
+    const dropdownInstance = getSidebarConversationDropdownInstance(dropdownButton);
+    closeSidebarConversationDropdown(dropdownButton, dropdownInstance);
+    window.chatCollaboration?.openParticipantPicker?.({
+      conversationId: sidebarItem.dataset.conversationId,
+    });
+  });
+  actionItem.appendChild(actionLink);
+
+  const pinItem = dropdownMenu.querySelector('.pin-btn')?.closest('li');
+  dropdownMenu.insertBefore(actionItem, pinItem || null);
+}
+
 export function applySidebarConversationMetadataUpdate(conversationId, updates = {}) {
   const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
   if (!sidebarItem) {
@@ -1106,6 +1157,8 @@ export function applySidebarConversationMetadataUpdate(conversationId, updates =
     applySidebarConversationContextAttributes(sidebarItem, updates.chat_type || '', updates.context || []);
     renderSidebarConversationScopeBadge(sidebarItem, updates.chat_type || '', updates.context || []);
   }
+
+  syncSidebarAddParticipantsAction(sidebarItem);
 }
 
 // Enable inline editing for a conversation title in the sidebar
