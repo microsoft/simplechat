@@ -60,6 +60,7 @@ from functions_documents import (
 from functions_group import assert_group_role
 from functions_keyvault import (
     keyvault_file_sync_cleanup_helper,
+    keyvault_file_sync_delete_helper,
     keyvault_file_sync_discard_staged_helper,
     retrieve_secret_from_key_vault_by_full_name,
     store_secret_in_key_vault,
@@ -169,6 +170,23 @@ class FileSyncConfigConflict(RuntimeError):
 
 class FileSyncSourceBusy(RuntimeError):
     """A native delete was refused because the source has a queued or running sync."""
+
+
+class FileSyncDeleteIncomplete(ValueError):
+    """A native delete's associated-document deletion could not remove every document.
+
+    Carries the ``delete_result`` counts so the route can report ``delete_incomplete``
+    with the numbers. It subclasses ``ValueError`` so the legacy delete path, which
+    catches ``ValueError``, is unchanged.
+    """
+
+    def __init__(self, delete_result: Dict[str, Any], public_message: Optional[str] = None):
+        self.delete_result = dict(delete_result or {})
+        self.public_message = str(
+            public_message
+            or "Some of this source's documents could not be deleted, so the source was kept. Try again."
+        )
+        super().__init__(self.public_message)
 
 
 FILE_SYNC_DEFAULTS = {
@@ -726,15 +744,36 @@ def sanitize_file_sync_run(run: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized_run
 
 
+# The non-secret ``auth`` keys any preparer (SMB, Azure Files, Azure Blob) can
+# write. The conflict hash covers all of them, including the secret reference
+# names, but never the inline ``password`` or ``secret`` values.
+_FILE_SYNC_EDITABLE_AUTH_FIELDS = (
+    "auth_type",
+    "username",
+    "domain",
+    "identity",
+    "tenant_id",
+    "managed_identity_client_id",
+    "password_secret_name",
+    "secret_secret_name",
+)
+
+
 def _file_sync_editable_projection(source: Dict[str, Any]) -> Dict[str, Any]:
     """The user-editable fields of a source, for the conflict hash.
 
     Only what a manager configures appears here. The engine writes ``last_run_*``,
     ``updated_at`` and ``schedule.next_run_at`` (dropped below), so a sync run
     finishing never changes :func:`compute_file_sync_config_revision` and so never
-    causes a native ``expected_config_revision`` 409. Secrets never appear: ``auth``
-    is limited to the non-secret ``auth_type``, ``username`` and ``domain``, so
-    rotating a stored credential under the same reference does not shift the hash.
+    causes a native ``expected_config_revision`` 409. Secrets never appear: the
+    inline ``password`` and ``secret`` values (stored when Key Vault is off) are
+    excluded, so a client-visible hash can never be tested offline against a guess.
+    Every other non-secret ``auth`` field a preparer writes is included, though,
+    including the secret **reference names** ``password_secret_name`` and
+    ``secret_secret_name``: a concurrent rotation stages a fresh reference and its
+    post-commit cleanup deletes the old one, so a PATCH that excluded the reference
+    names could still commit a stale reference that no longer resolves. Covering
+    them makes such a rotation-in-flight a clean ``config_conflict``.
     """
     source = source or {}
     schedule = dict(source.get("schedule") or {})
@@ -750,11 +789,7 @@ def _file_sync_editable_projection(source: Dict[str, Any]) -> Dict[str, Any]:
         "schedule": schedule,
         "remote_delete_policy": source.get("remote_delete_policy"),
         "identity_id": source.get("identity_id") or "",
-        "auth": {
-            "auth_type": auth.get("auth_type"),
-            "username": auth.get("username"),
-            "domain": auth.get("domain"),
-        },
+        "auth": {key: auth.get(key) for key in _FILE_SYNC_EDITABLE_AUTH_FIELDS},
     }
 
 
@@ -2347,10 +2382,13 @@ def _normalize_azure_storage_error_code(value: Any) -> str:
 
 def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False, *, expected_config_revision: Optional[str] = None, refuse_active_run: bool = False) -> Dict[str, Any]:
     source = get_authorized_sync_source(scope_type, source_id, deleted_by, scope_id=scope_id)
-    # Native deletes refuse while a run is queued or running (so a run cannot keep
-    # processing a source that is being removed) and are conditional on the caller's
-    # config revision and the fresh etag. Legacy callers pass neither keyword and
-    # delete unconditionally, exactly as before.
+    # A native delete (the immutable-target group routes) refuses while a run is
+    # queued or running, is conditional on the caller's config revision, and deletes
+    # the record only after re-checking under the current etag. Legacy callers pass
+    # neither keyword and delete unconditionally, exactly as before.
+    native = expected_config_revision is not None
+    # Pre-checks run before any associated document is deleted, so a refusal here is
+    # never "partial" and keeps the standard (non-partial) messages.
     if refuse_active_run and _source_has_active_run(source):
         raise FileSyncSourceBusy("Wait for the running sync to finish, then delete the source.")
     if expected_config_revision is not None and compute_file_sync_config_revision(source) != expected_config_revision:
@@ -2363,21 +2401,65 @@ def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, dele
     }
     if delete_associated_files:
         delete_result = _delete_associated_synced_documents(source)
-    conditional = expected_config_revision is not None
-    if conditional:
+
+    if not native:
+        # Legacy unconditional delete, unchanged.
+        _get_sources_container(scope_type).delete_item(item=source_id, partition_key=scope_id)
+        _log_file_sync_activity(
+            source,
+            deleted_by,
+            "source_deleted",
+            {
+                "source_name": source.get("name"),
+                "delete_associated_files": bool(delete_associated_files),
+                **delete_result,
+            },
+        )
+        return delete_result
+
+    # Native conditional delete. The associated documents (if any) are already gone,
+    # so a refusal from here on carries ``partial`` and the counts when at least one
+    # was deleted. The final delete is conditional on the *current* etag, re-read on
+    # a 412, so a sync run that merely finished (which bumps the etag but not the
+    # config revision) retries to success instead of a false 409.
+    documents_deleted = delete_result.get("documents_deleted", 0) > 0
+
+    def _partial(exc):
+        if documents_deleted:
+            exc.delete_result = dict(delete_result)
+            exc.partial = True
+        return exc
+
+    current = source
+    committed = False
+    container = _get_sources_container(scope_type)
+    for _attempt in range(FILE_SYNC_WRITE_ATTEMPTS):
+        if refuse_active_run and _source_has_active_run(current):
+            raise _partial(FileSyncSourceBusy("Wait for the running sync to finish, then delete the source."))
         try:
-            _get_sources_container(scope_type).delete_item(
+            container.delete_item(
                 item=source_id,
                 partition_key=scope_id,
-                etag=source.get("_etag"),
+                etag=current.get("_etag"),
                 match_condition=MatchConditions.IfNotModified,
             )
+            committed = True
+            break
         except CosmosResourceNotFoundError:
-            raise LookupError("File sync source not found")
+            raise _partial(LookupError("File sync source not found"))
         except CosmosAccessConditionFailedError:
-            raise FileSyncConfigConflict("File sync source configuration changed before the delete")
-    else:
-        _get_sources_container(scope_type).delete_item(item=source_id, partition_key=scope_id)
+            try:
+                current = container.read_item(item=source_id, partition_key=scope_id)
+            except CosmosResourceNotFoundError:
+                raise _partial(LookupError("File sync source not found"))
+            if compute_file_sync_config_revision(current) != expected_config_revision:
+                raise _partial(FileSyncConfigConflict("File sync source configuration changed before the delete"))
+            # An etag-only change (for example a run finishing) with the config
+            # revision intact: retry against the fresh etag.
+            continue
+    if not committed:
+        raise _partial(FileSyncWriteConflict("File sync source kept changing during the delete"))
+
     _log_file_sync_activity(
         source,
         deleted_by,
@@ -2388,6 +2470,19 @@ def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, dele
             **delete_result,
         },
     )
+    # The record is gone, so remove its Key Vault secrets, best effort. A Key Vault
+    # failure must never turn a committed delete into an error, and this runs only
+    # after the commit so a refused delete never drops a live credential.
+    try:
+        keyvault_file_sync_delete_helper(
+            source.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
+        )
+    except Exception as error:  # pragma: no cover - defensive; helper already swallows
+        log_event(
+            "[FILE_SYNC] Unable to remove a deleted source's Key Vault secrets.",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
     return delete_result
 
 
@@ -2426,11 +2521,7 @@ def _delete_associated_synced_documents(source: Dict[str, Any]) -> Dict[str, Any
             )
 
     if failed_document_ids:
-        raise ValueError(
-            "Could not delete all associated synced files. "
-            f"Deleted {delete_result['documents_deleted']}, failed {delete_result['documents_failed']}. "
-            "The File Sync source was not deleted."
-        )
+        raise FileSyncDeleteIncomplete(delete_result)
     return delete_result
 
 
@@ -2531,9 +2622,13 @@ def _update_run(run: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
 def queue_file_sync_source_run(source: Dict[str, Any], triggered_by: Optional[str], trigger: str = "manual", run_inline: bool = False) -> Dict[str, Any]:
     config = get_file_sync_config()
     if _count_active_runs() >= config["file_sync_max_concurrent_runs"]:
-        raise ValueError("The configured File Sync concurrent run limit has been reached")
+        raise FileSyncPublicValidationError(
+            "The File Sync concurrent run limit has been reached. Try again later."
+        )
     if _source_has_active_run(source):
-        raise ValueError("This File Sync source already has a queued or running sync")
+        raise FileSyncPublicValidationError(
+            "This source already has a queued or running sync."
+        )
 
     run = _create_run(source, triggered_by, trigger)
     if run_inline:

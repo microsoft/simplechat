@@ -515,6 +515,53 @@ def full_secret_name(env, source_id, field="password"):
     )
 
 
+def seed_identity(
+    env,
+    identity_id,
+    *,
+    group_id="group-a",
+    usage_contexts=("file_sync",),
+    supported_source_types=("smb",),
+    auth_type="username_password",
+    name=None,
+):
+    """Seed one native group workspace identity the file-source options and the
+    save-time gate both read, so a test can pin their agreement over a matrix.
+
+    ``usage_contexts``/``supported_source_types`` of ``None`` omit the field, so a
+    stored shape can exercise the ``["action"]`` and ``[provider]`` defaults.
+    """
+    record = {
+        "id": identity_id,
+        "group_id": group_id,
+        "scope_type": "group",
+        "name": name or identity_id,
+        "provider": "generic",
+        "auth": {"auth_type": auth_type, "username": "svc", "password_secret_name": f"{identity_id}-p"},
+    }
+    if usage_contexts is not None:
+        record["usage_contexts"] = list(usage_contexts)
+    if supported_source_types is not None:
+        record["supported_source_types"] = list(supported_source_types)
+    env.identities._get_identities_container("group").seed(record)
+    return identity_id
+
+
+def seed_synced_document(env, source_id, document_id):
+    """Seed one synced item so a delete-with-associated-files has documents to remove."""
+    env.items_container.seed({
+        "id": f"{source_id}-{document_id}",
+        "type": "file_sync_item",
+        "source_id": source_id,
+        "scope_type": "group",
+        "group_id": "group-a",
+        "document_id": document_id,
+        "remote_path": f"{UNC_PATH}\\{document_id}.txt",
+        "status": "synced",
+    })
+    return document_id
+
+
 # --------------------------------------------------------------------------
 # Versioning
 # --------------------------------------------------------------------------
@@ -747,6 +794,67 @@ def test_update_deleted_source_is_404(environment):
 
 
 # --------------------------------------------------------------------------
+# B1: config_revision covers every non-secret auth field (rotation safety)
+# --------------------------------------------------------------------------
+
+def test_config_revision_covers_every_non_secret_auth_field(environment):
+    """The conflict hash must cover every non-secret auth field a preparer writes,
+    including the secret *reference* names, so a rotation that lands between a
+    PATCH's read and its conditional write is a clean conflict. It must never
+    cover the inline ``password``/``secret`` plaintext (Key Vault off), so the
+    client-visible revision can't be tested offline against a guess."""
+    base = {
+        "scope_type": "group", "group_id": "group-a", "name": "S", "source_type": "smb",
+        "connection": {"unc_path": UNC_PATH},
+        "auth": {
+            "auth_type": "username_password", "username": "svc", "domain": "CORP",
+            "identity": "id-x", "tenant_id": "tenant-x", "managed_identity_client_id": "mi-x",
+            "password_secret_name": "ref-password", "secret_secret_name": "ref-secret",
+        },
+    }
+    base_revision = environment.filesync.compute_file_sync_config_revision(base)
+    covered = (
+        "auth_type", "username", "domain", "identity", "tenant_id",
+        "managed_identity_client_id", "password_secret_name", "secret_secret_name",
+    )
+    for auth_field in covered:
+        changed = deepcopy(base)
+        changed["auth"][auth_field] = "different-value"
+        assert environment.filesync.compute_file_sync_config_revision(changed) != base_revision, auth_field
+    for secret_field in ("password", "secret"):
+        changed = deepcopy(base)
+        changed["auth"][secret_field] = "PLAINTEXT-ROTATED"
+        assert environment.filesync.compute_file_sync_config_revision(changed) == base_revision, secret_field
+
+
+def test_rotation_in_flight_is_a_config_conflict(environment):
+    """A concurrent write that rotates the secret reference between a PATCH's read
+    and its conditional write is refused with config_conflict, because the
+    reference name is part of config_revision. Without that coverage the guard
+    would re-read an unchanged revision and commit the caller's stale snapshot,
+    pointing ``auth`` back at a secret the other writer's cleanup already deleted."""
+    source = create_source(environment)
+    key = ("group-a", source["id"])
+
+    def rotate_reference():
+        record = environment.sources_container.records[key]
+        record["auth"]["password_secret_name"] = "group-a--file-sync--group--file-sync-rotated-elsewhere"
+        record["_etag"] = '"etag-rotated"'
+
+    environment.sources_container.before_replace.append(rotate_reference)
+    as_user(environment, "owner")
+    response = environment.client.patch(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "name": "Renamed"},
+    )
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "config_conflict"
+    # The concurrent writer's rotation stands; the stale snapshot was not committed.
+    stored = environment.sources_container.get("group-a", source["id"])
+    assert stored["auth"]["password_secret_name"] == "group-a--file-sync--group--file-sync-rotated-elsewhere"
+
+
+# --------------------------------------------------------------------------
 # Delete: body contract, busy, associated files, conflict
 # --------------------------------------------------------------------------
 
@@ -810,14 +918,40 @@ def test_delete_success_without_associated_files(environment):
     assert environment.sources_container.get("group-a", source["id"]) is None
 
 
-def test_delete_mid_flight_write_is_conflict(environment):
+def test_delete_etag_only_change_retries_to_success(environment):
+    """An etag-only change between the read and the conditional delete (a run
+    finishing, which bumps the etag but no editable field) must retry against the
+    fresh etag and succeed, not surface a false 409. This corrects the previous
+    behaviour, which treated any 412 as a conflict."""
     source = create_source(environment)
     key = ("group-a", source["id"])
 
-    def bump_etag():
+    def bump_etag_only():
         environment.sources_container.records[key]["_etag"] = '"etag-raced"'
 
-    environment.sources_container.before_delete.append(bump_etag)
+    environment.sources_container.before_delete.append(bump_etag_only)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": False},
+    )
+    assert response.status_code == 200
+    assert environment.sources_container.get("group-a", source["id"]) is None
+
+
+def test_delete_config_change_mid_flight_is_conflict(environment):
+    """An editable change landing between the read and the conditional delete
+    changes the config revision, so the re-read refuses with config_conflict and
+    keeps the source."""
+    source = create_source(environment)
+    key = ("group-a", source["id"])
+
+    def edit_underneath():
+        record = environment.sources_container.records[key]
+        record["name"] = "Renamed By Someone Else"
+        record["_etag"] = '"etag-edited"'
+
+    environment.sources_container.before_delete.append(edit_underneath)
     as_user(environment, "owner")
     response = environment.client.delete(
         f"{LIST_PATH}/{source['id']}",
@@ -826,6 +960,155 @@ def test_delete_mid_flight_write_is_conflict(environment):
     assert response.status_code == 409
     assert response.get_json()["error_code"] == "config_conflict"
     assert environment.sources_container.get("group-a", source["id"]) is not None
+
+
+def test_delete_run_starting_mid_flight_is_busy(environment):
+    """A run that starts between the read and the conditional delete is caught on
+    the retry's active-run re-check and refused as busy, so a delete can never
+    orphan a source a run is still processing."""
+    source = create_source(environment)
+    key = ("group-a", source["id"])
+
+    def start_run_underneath():
+        environment.runs_container.seed({
+            "id": str(uuid.uuid4()), "source_id": source["id"], "scope_type": "group",
+            "group_id": "group-a", "status": "running",
+        })
+        environment.sources_container.records[key]["_etag"] = '"etag-run-started"'
+
+    environment.sources_container.before_delete.append(start_run_underneath)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": False},
+    )
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "source_busy"
+    assert environment.sources_container.get("group-a", source["id"]) is not None
+
+
+def test_delete_gone_mid_flight_is_404(environment):
+    """A source removed underneath the conditional delete is a 404, never a
+    recreate."""
+    source = create_source(environment)
+    key = ("group-a", source["id"])
+
+    def remove_underneath():
+        environment.sources_container.records.pop(key, None)
+
+    environment.sources_container.before_delete.append(remove_underneath)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": False},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_with_associated_files_reports_counts(environment):
+    """A successful delete that removes associated files reports the counts and
+    removes the source."""
+    source = create_source(environment)
+    seed_synced_document(environment, source["id"], "doc-1")
+    seed_synced_document(environment, source["id"], "doc-2")
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": True},
+    )
+    assert response.status_code == 200
+    result = response.get_json()["delete_result"]
+    assert result["associated_files_requested"] is True
+    assert result["documents_deleted"] == 2
+    assert result["documents_failed"] == 0
+    assert environment.sources_container.get("group-a", source["id"]) is None
+
+
+def test_delete_incomplete_when_a_document_cannot_be_removed(environment):
+    """If an associated document cannot be deleted, the source is kept and the
+    caller gets a 409 delete_incomplete with the counts, so it never looks like a
+    clean delete."""
+    source = create_source(environment)
+    seed_synced_document(environment, source["id"], "doc-ok")
+    seed_synced_document(environment, source["id"], "doc-bad")
+
+    def maybe_fail(*_args, document_id=None, **_kwargs):
+        if document_id == "doc-bad":
+            raise RuntimeError("provider rejected the delete")
+
+    environment.filesync.delete_document_revision = Mock(side_effect=maybe_fail)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": True},
+    )
+    assert response.status_code == 409
+    body = response.get_json()
+    assert body["error_code"] == "delete_incomplete"
+    assert body["partial"] is True
+    assert body["delete_result"]["documents_deleted"] == 1
+    assert body["delete_result"]["documents_failed"] == 1
+    assert environment.sources_container.get("group-a", source["id"]) is not None
+
+
+def test_delete_partial_conflict_after_documents_removed(environment):
+    """When the associated documents are deleted but the source then changes before
+    it can be removed, the refusal is honest: config_conflict with ``partial`` and
+    the delete counts, not a clean success."""
+    source = create_source(environment)
+    seed_synced_document(environment, source["id"], "doc-1")
+    key = ("group-a", source["id"])
+
+    def edit_underneath():
+        record = environment.sources_container.records[key]
+        record["name"] = "Renamed Mid Delete"
+        record["_etag"] = '"etag-edited"'
+
+    environment.sources_container.before_delete.append(edit_underneath)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": True},
+    )
+    assert response.status_code == 409
+    body = response.get_json()
+    assert body["error_code"] == "config_conflict"
+    assert body["partial"] is True
+    assert body["delete_result"]["documents_deleted"] == 1
+    assert "documents were deleted" in body["error"]
+    assert environment.sources_container.get("group-a", source["id"]) is not None
+
+
+# --------------------------------------------------------------------------
+# B3: Key Vault secrets removed after a committed delete, never on a refusal
+# --------------------------------------------------------------------------
+
+def test_delete_removes_key_vault_secrets_after_commit(environment):
+    source = create_source(environment)
+    secret_name = full_secret_name(environment, source["id"])
+    assert secret_name in environment.state.vault
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "delete_associated_files": False},
+    )
+    assert response.status_code == 200
+    assert secret_name in environment.state.secret_deletes
+    assert secret_name not in environment.state.vault
+
+
+def test_delete_refusal_keeps_key_vault_secrets(environment):
+    source = create_source(environment)
+    secret_name = full_secret_name(environment, source["id"])
+    deletes_before = list(environment.state.secret_deletes)
+    as_user(environment, "owner")
+    response = environment.client.delete(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": "stale", "delete_associated_files": False},
+    )
+    assert response.status_code == 409
+    assert environment.state.secret_deletes == deletes_before
+    assert secret_name in environment.state.vault
 
 
 # --------------------------------------------------------------------------
@@ -917,6 +1200,129 @@ def test_options_offers_scope_valid_types_only(environment):
 def test_options_requires_manager(environment):
     as_user(environment, "member")
     assert environment.client.get(OPTIONS_PATH).status_code == 403
+
+
+# --------------------------------------------------------------------------
+# B4: identity binding and options ⇔ save-time eligibility
+# --------------------------------------------------------------------------
+
+def test_options_eligible_identities_match_save_time_validation(environment):
+    """Over a seeded identity matrix, ``eligible_identity_ids[source_type]`` must
+    list exactly the identities the save-time gate ``_get_file_sync_identity``
+    would accept for that type, so a client's identity picker never offers an
+    identity the server would then reject (nor hides one it would accept)."""
+    seed_identity(environment, "id-smb", usage_contexts=("file_sync",), supported_source_types=("smb",), auth_type="username_password")
+    seed_identity(environment, "id-generic", usage_contexts=("file_sync",), supported_source_types=("generic",), auth_type="username_password")
+    seed_identity(environment, "id-azure", usage_contexts=("file_sync",), supported_source_types=("azure_files",), auth_type="managed_identity")
+    seed_identity(environment, "id-action-only", usage_contexts=("action",), supported_source_types=("smb",), auth_type="username_password")
+    seed_identity(environment, "id-missing-usage", usage_contexts=None, supported_source_types=("smb",), auth_type="username_password")
+
+    as_user(environment, "owner")
+    eligible = environment.client.get(OPTIONS_PATH).get_json()["eligible_identity_ids"]
+
+    identity_ids = ["id-smb", "id-generic", "id-azure", "id-action-only", "id-missing-usage"]
+    for source_type in eligible:
+        for identity_id in identity_ids:
+            try:
+                environment.filesync._get_file_sync_identity("group", "group-a", identity_id, source_type)
+                save_time_accepts = True
+            except (ValueError, LookupError, PermissionError):
+                save_time_accepts = False
+            assert (identity_id in eligible[source_type]) == save_time_accepts, (source_type, identity_id)
+
+
+def test_create_with_another_groups_identity_is_refused(environment):
+    """An identity that belongs to a different group is not visible in this group's
+    partition, so binding it on create is refused rather than silently reaching
+    across the workspace boundary."""
+    seed_identity(environment, "gb-identity", group_id="group-b")
+    payload = smb_payload()
+    payload["identity_id"] = "gb-identity"
+    as_user(environment, "owner")
+    response = environment.client.post(LIST_PATH, json=payload)
+    assert response.status_code == 404
+    assert not environment.sources_container.records
+
+
+def test_update_with_another_groups_identity_is_refused(environment):
+    source = create_source(environment)
+    seed_identity(environment, "gb-identity", group_id="group-b")
+    as_user(environment, "owner")
+    response = environment.client.patch(
+        f"{LIST_PATH}/{source['id']}",
+        json={"expected_config_revision": source["config_revision"], "identity_id": "gb-identity"},
+    )
+    assert response.status_code == 404
+
+
+def test_unsaved_test_with_another_groups_identity_is_refused(environment):
+    seed_identity(environment, "gb-identity", group_id="group-b")
+    payload = smb_payload()
+    payload["identity_id"] = "gb-identity"
+    as_user(environment, "owner")
+    response = environment.client.post(f"{LIST_PATH}/test-connection", json=payload)
+    assert response.status_code == 404
+
+
+def test_unsaved_browse_with_another_groups_identity_is_refused(environment):
+    seed_identity(environment, "gb-identity", group_id="group-b")
+    payload = smb_payload()
+    payload["identity_id"] = "gb-identity"
+    payload["browse_path"] = UNC_PATH
+    as_user(environment, "owner")
+    response = environment.client.post(f"{LIST_PATH}/browse", json=payload)
+    assert response.status_code == 404
+
+
+def test_unsaved_test_and_browse_refuse_non_manager(environment):
+    """The unsaved test and browse are manager-only and refuse before any identity
+    is resolved or connector runs, so a member can never pair a destination with a
+    stored identity's credentials."""
+    as_user(environment, "member")
+    assert environment.client.post(f"{LIST_PATH}/test-connection", json=smb_payload()).status_code == 403
+    payload = smb_payload()
+    payload["browse_path"] = UNC_PATH
+    assert environment.client.post(f"{LIST_PATH}/browse", json=payload).status_code == 403
+
+
+def test_unsaved_test_and_browse_refuse_in_locked_group(environment):
+    """A locked group is read-only: even a manager cannot run an unsaved test or
+    browse, so a non-active group can never be used to exercise credentials."""
+    as_user(environment, "owner")
+    locked_list = "/api/groups/locked-grp/file-sources"
+    assert environment.client.post(f"{locked_list}/test-connection", json=smb_payload()).status_code == 403
+    payload = smb_payload()
+    payload["browse_path"] = UNC_PATH
+    assert environment.client.post(f"{locked_list}/browse", json=payload).status_code == 403
+
+
+# --------------------------------------------------------------------------
+# B5: queue refusals are public validation errors on both routes
+# --------------------------------------------------------------------------
+
+def test_sync_reports_already_running_as_public_message(environment):
+    """A second sync while one is queued or running is a 400 with the reviewed
+    public message, not a leaked internal error."""
+    source = create_source(environment)
+    environment.runs_container.seed({
+        "id": str(uuid.uuid4()), "source_id": source["id"], "scope_type": "group",
+        "group_id": "group-a", "status": "running",
+    })
+    as_user(environment, "owner")
+    response = environment.client.post(f"{LIST_PATH}/{source['id']}/sync")
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "This source already has a queued or running sync."
+
+
+def test_sync_reports_concurrent_limit_as_public_message(environment, monkeypatch):
+    """Reaching the concurrent-run limit is a 400 with the reviewed public
+    message."""
+    source = create_source(environment)
+    monkeypatch.setattr(environment.filesync, "_count_active_runs", lambda *a, **k: 9999)
+    as_user(environment, "owner")
+    response = environment.client.post(f"{LIST_PATH}/{source['id']}/sync")
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "The File Sync concurrent run limit has been reached. Try again later."
 
 
 # --------------------------------------------------------------------------

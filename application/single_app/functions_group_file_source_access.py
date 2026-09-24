@@ -23,6 +23,7 @@ from werkzeug.exceptions import HTTPException
 from functions_file_sync import (
     FILE_SYNC_SCOPE_GROUP,
     FileSyncConfigConflict,
+    FileSyncDeleteIncomplete,
     FileSyncPublicValidationError,
     FileSyncSourceBusy,
     FileSyncWriteConflict,
@@ -187,27 +188,60 @@ def group_file_source_error_response(exc):
         response.headers["Cache-Control"] = "no-store"
         return response, status
 
+    def _partial_fields(error):
+        # A native delete that already removed some associated documents attaches the
+        # counts, so a refusal after that point reports the partial outcome honestly.
+        result = getattr(error, "delete_result", None)
+        if result is None:
+            return {}
+        return {"partial": bool(getattr(error, "partial", False)), "delete_result": dict(result)}
+
     if isinstance(exc, GroupFileSourceError):
         return _json({"error": exc.description}, exc.code)
+    if isinstance(exc, FileSyncDeleteIncomplete):
+        return _json(
+            {
+                "error": exc.public_message,
+                "error_code": "delete_incomplete",
+                "partial": exc.delete_result.get("documents_deleted", 0) > 0,
+                "delete_result": dict(exc.delete_result),
+            },
+            409,
+        )
     if isinstance(exc, FileSyncSourceBusy):
-        return _json(
-            {"error": "Wait for the running sync to finish, then delete the source.", "error_code": "source_busy"},
-            409,
+        partial = _partial_fields(exc)
+        message = (
+            "The source's documents were deleted, but a sync started before the source could be removed. "
+            "Wait for it to finish, then delete the source again."
+            if partial
+            else "Wait for the running sync to finish, then delete the source."
         )
+        return _json({"error": message, "error_code": "source_busy", **partial}, 409)
     if isinstance(exc, FileSyncConfigConflict):
-        return _json(
-            {"error": "This file source changed while it was being saved. Reload it and try again.", "error_code": "config_conflict"},
-            409,
+        partial = _partial_fields(exc)
+        message = (
+            "The source's documents were deleted, but the source changed before it could be removed. "
+            "Reload it and try again."
+            if partial
+            else "This file source changed while it was being saved. Reload it and try again."
         )
+        return _json({"error": message, "error_code": "config_conflict", **partial}, 409)
     if isinstance(exc, FileSyncWriteConflict):
+        partial = _partial_fields(exc)
         return _json(
-            {"error": "This file source changed while it was being saved. Reload it and try again.", "error_code": "write_conflict"},
+            {"error": "This file source changed while it was being saved. Reload it and try again.", "error_code": "write_conflict", **partial},
             409,
         )
     if isinstance(exc, FileSyncPublicValidationError):
         return _json({"error": exc.public_message}, 400)
     if isinstance(exc, LookupError):
-        return _json({"error": "The requested File Sync resource was not found."}, 404)
+        partial = _partial_fields(exc)
+        message = (
+            "The source was already removed. Its documents were deleted."
+            if partial
+            else "The requested File Sync resource was not found."
+        )
+        return _json({"error": message, **partial}, 404)
     if isinstance(exc, PermissionError):
         return _json({"error": "You do not have permission to perform this File Sync operation."}, 403)
     if isinstance(exc, ValueError):
