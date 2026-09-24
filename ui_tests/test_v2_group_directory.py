@@ -29,6 +29,7 @@ from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 from ui_tests.fixtures.group_directory import (  # noqa: F401
     GroupDirectoryFixture, group_directory_ui,
     MEMBER_GROUP, LOGO_MEMBER_GROUP, PENDING_GROUP, JOINABLE_GROUP,
+    LONG_GROUP, LONG_GROUP_NAME,
 )
 
 
@@ -46,6 +47,15 @@ RESEARCH_GROUP_NAME = "Research group"       # MEMBER_GROUP, a member row (Owner
 DESIGN_GROUP_NAME = "Design group"           # LOGO_MEMBER_GROUP, a member row whose logo is stored.
 MARKETING_GROUP_NAME = "Marketing circle"    # JOINABLE_GROUP, a none row with a stored logo hidden.
 PLATFORM_GROUP_NAME = "Platform guild"       # PENDING_GROUP, a pending row.
+LONG_CONTENT_SEARCH = "Long content group"   # isolates the LONG_GROUP row for the long-content case.
+
+
+def served_bootstrap(ui):
+    """The bootstrap payload the fixture actually served, read back from its recorded responses."""
+    for url, payload in ui.responses:
+        if url.endswith("/api/v2/bootstrap"):
+            return payload
+    raise AssertionError("The bootstrap was never served.")
 
 
 def open_directory(ui, **options):
@@ -270,10 +280,24 @@ def test_create_is_gated_on_the_server_hint(group_directory_ui):
 def test_create_is_hidden_when_the_hint_refuses(group_directory_ui):
     """With creation allowed by the flag but refused by the hint, Create is not offered at all."""
     ui, page = group_directory_ui, group_directory_ui.page
+    # Production forwards enable_group_creation into the bootstrap, so the flag is genuinely on here;
+    # only the server hint refuses. Create must still follow the hint, not the flag.
+    assert ui.enable_group_creation is True
     ui.set_hints(can_create=False)
     open_directory(ui)
+    assert served_bootstrap(ui)["features"]["enable_group_creation"] is True
     expect(row(ui, DESIGN_GROUP_NAME)).to_be_visible()
     expect(page.get_by_role("button", name="Create group", exact=True)).to_have_count(0)
+
+
+def test_create_is_shown_when_the_hint_allows_despite_the_flag_off(group_directory_ui):
+    """Create follows the hint alone: the hint allowing with the feature flag off still offers it."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    ui.enable_group_creation = False
+    ui.set_hints(can_create=True)
+    open_directory(ui)
+    assert served_bootstrap(ui)["features"]["enable_group_creation"] is False
+    expect(page.get_by_role("button", name="Create group", exact=True)).to_be_visible()
 
 
 def test_create_validates_before_calling_the_server(group_directory_ui):
@@ -346,6 +370,110 @@ def test_a_malformed_list_is_a_hard_error(group_directory_ui):
     expect(row(ui, DESIGN_GROUP_NAME)).to_have_count(0)
     expect(row(ui, "Directory group 01")).to_have_count(0)
     assert_no_group_context_or_activation(ui)
+
+
+# --------------------------------------------------------------------------
+# Long content: an 80-char name, a 500-char description and a long owner stay contained.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_a_long_content_row_never_overflows(group_directory_ui, theme, width, height):
+    """A maximal name, description and owner stay inside the row at both breakpoints and themes."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    open_directory(ui, theme=theme, width=width, height=height)
+    search_for(ui, LONG_CONTENT_SEARCH)
+    long_row = row(ui, LONG_GROUP_NAME)
+    expect(long_row).to_be_visible()
+    # The visible action label stays short; the full name rides in the accessible name via
+    # aria-label, so an 80-character name can never stretch the shrink-0 action container.
+    action = long_row.get_by_role("button", name=f"Request to join {LONG_GROUP_NAME}", exact=True)
+    expect(action).to_be_visible()
+    assert action.inner_text().strip() == "Request to join"
+    ui.assert_no_overflow()
+
+
+# --------------------------------------------------------------------------
+# Length limits counted by code point, matching the server, not by UTF-16 unit.
+# --------------------------------------------------------------------------
+
+def test_an_emoji_name_at_the_limit_is_created(group_directory_ui):
+    """An 80-code-point name of astral characters is accepted; UTF-16 miscounting would reject it."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    open_directory(ui)
+    page.get_by_role("button", name="Create group", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Group name", exact=True).fill("\U0001F600" * 80)
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith("/api/groups/directory")
+    ) as created:
+        dialog.get_by_role("button", name="Create group", exact=True).click()
+    assert created.value.status == 201
+    expect(page).to_have_url(re.compile(r"/v2/groups/dir-created-1(?:[/?#]|$)"))
+
+
+def test_an_emoji_name_over_the_limit_is_blocked_client_side(group_directory_ui):
+    """81 code points is refused by the client, counted by code point, so no create is sent."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    open_directory(ui)
+    page.get_by_role("button", name="Create group", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Group name", exact=True).fill("\U0001F600" * 81)
+    dialog.get_by_role("button", name="Create group", exact=True).click()
+    expect(dialog.get_by_role("alert").filter(has_text="Group names can be at most 80 characters.")).to_be_visible()
+    assert not [entry for entry in ui.requests if entry.path == "/api/groups/directory" and entry.method == "POST"], (
+        "A name over the code-point limit must never reach the server."
+    )
+
+
+# --------------------------------------------------------------------------
+# Dead ends the server would only answer with a repeatable 400 are held client-side.
+# --------------------------------------------------------------------------
+
+def test_a_search_over_the_limit_is_held_client_side(group_directory_ui):
+    """A search past 200 code points shows the server's message, keeps the list and sends nothing."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    open_directory(ui)
+    expect(row(ui, DESIGN_GROUP_NAME)).to_be_visible()
+    search_for(ui, "x" * 201)
+    expect(page.get_by_role("alert").filter(has_text="Search terms can be at most 200 characters.")).to_be_visible()
+    # The list is untouched and no over-limit search reaches the server, which would only 400.
+    expect(row(ui, DESIGN_GROUP_NAME)).to_be_visible()
+    assert not any("search" in entry.query for entry in directory_gets(ui)), (
+        "A search over the code-point limit must never be sent to the server."
+    )
+
+
+def test_an_out_of_range_url_page_is_clamped(group_directory_ui):
+    """A hand-edited page far beyond the maximum is clamped into range, not sent as a repeatable 400."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    ui.open("/groups/directory?page=25000")
+    expect(page.get_by_role("heading", name="Group directory", exact=True)).to_be_visible()
+    gets = directory_gets(ui)
+    assert gets, "The page must load from the group directory route."
+    assert gets[-1].query.get("page") == ["10000"], (
+        "An out-of-range URL page must be clamped to the server maximum before the request."
+    )
+    expect(page.get_by_role("alert").filter(has_text="The group directory could not be read")).to_have_count(0)
+
+
+# --------------------------------------------------------------------------
+# Membership badges share the header's role labels.
+# --------------------------------------------------------------------------
+
+def test_membership_badges_use_the_shared_role_labels(group_directory_ui):
+    """A member row's badge reads the friendly role label, not the raw stored role string."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    # The raw stored roles the header translates: DocumentManager -> "Document manager", User ->
+    # "Member". Mutating the two seeded member rows proves the badge shares that mapping.
+    ui.directory_groups[LOGO_MEMBER_GROUP]["user_role"] = "DocumentManager"
+    ui.directory_groups[MEMBER_GROUP]["user_role"] = "User"
+    open_directory(ui)
+    page.get_by_role("button", name="My groups", exact=True).click()
+    expect(row(ui, DESIGN_GROUP_NAME).get_by_text("Document manager", exact=True)).to_be_visible()
+    expect(row(ui, DESIGN_GROUP_NAME).get_by_text("DocumentManager", exact=True)).to_have_count(0)
+    expect(row(ui, RESEARCH_GROUP_NAME).get_by_text("Member", exact=True)).to_be_visible()
+    expect(row(ui, RESEARCH_GROUP_NAME).get_by_text("User", exact=True)).to_have_count(0)
 
 
 if __name__ == "__main__":

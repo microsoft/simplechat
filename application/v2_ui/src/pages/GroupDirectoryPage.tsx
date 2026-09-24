@@ -20,7 +20,8 @@ import { SectionSearch } from '../components/workspace/primitives';
 import { DirectoryList } from '../components/workspace/DirectoryList';
 import { CreateGroupDialog } from '../components/workspace/CreateGroupDialog';
 import {
-    DIRECTORY_PAGE_SIZE, GROUP_DIRECTORY, directoryErrorCode,
+    DIRECTORY_PAGE_SIZE, DIRECTORY_MAX_PAGE, DIRECTORY_SEARCH_MAX_LENGTH, GROUP_DIRECTORY,
+    codePointLength, directoryErrorCode,
     type DirectoryPage, type DirectoryView,
 } from '../lib/groupDirectory';
 import { useBootstrapStore } from '../stores/bootstrapStore';
@@ -40,7 +41,10 @@ function readView(value: string | null): DirectoryView {
 
 function readPageNumber(value: string | null): number {
     const parsed = Number(value);
-    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+    if (!Number.isInteger(parsed) || parsed < 1) return 1;
+    // Clamp into the server's accepted range so a hand-edited or stale URL can't strand the reader
+    // on a load error whose Retry would only repeat the same rejected request.
+    return Math.min(parsed, DIRECTORY_MAX_PAGE);
 }
 
 export function GroupDirectoryPage() {
@@ -55,6 +59,7 @@ export function GroupDirectoryPage() {
     const page = readPageNumber(searchParams.get('page'));
 
     const [searchInput, setSearchInput] = useState(urlSearch);
+    const [searchError, setSearchError] = useState('');
     const [result, setResult] = useState<DirectoryPage | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -70,10 +75,17 @@ export function GroupDirectoryPage() {
     // Keep the search box in step with the URL so back and forward restore the typed term.
     useEffect(() => { setSearchInput(urlSearch); }, [urlSearch]);
 
-    // A debounced commit of the typed term. A new search resets to the first page.
+    // A debounced commit of the typed term. A new search resets to the first page. A term longer
+    // than the server's limit is never sent -- it would only earn a 400 -- so it holds the current
+    // list and shows the server's message beside the box until the reader shortens it.
     useEffect(() => {
         const handle = window.setTimeout(() => {
             const trimmed = searchInput.trim();
+            if (codePointLength(trimmed) > DIRECTORY_SEARCH_MAX_LENGTH) {
+                setSearchError(`Search terms can be at most ${DIRECTORY_SEARCH_MAX_LENGTH} characters.`);
+                return;
+            }
+            setSearchError('');
             if (trimmed === urlSearch) return;
             const next = new URLSearchParams(searchParams);
             if (trimmed) next.set('search', trimmed); else next.delete('search');
@@ -204,6 +216,7 @@ export function GroupDirectoryPage() {
                     ))}
                 </div>
                 <SectionSearch value={searchInput} onChange={setSearchInput} placeholder="Search groups by name or description" />
+                {searchError ? <p role="alert" className="text-xs text-danger">{searchError}</p> : null}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="mx-auto max-w-3xl space-y-4">

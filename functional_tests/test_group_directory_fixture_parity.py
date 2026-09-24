@@ -84,10 +84,12 @@ class _FakeRoute:
         self.request = _FakeRequest(url)
         self.status = 200
         self.payload = None
+        self.headers = {}
 
     def fulfill(self, status=200, json=None, **kwargs):
         self.status = status
         self.payload = json
+        self.headers = kwargs.get("headers") or {}
 
 
 def drive_fixture(fixture, method, path, body=None, query=None):
@@ -96,6 +98,14 @@ def drive_fixture(fixture, method, path, body=None, query=None):
     route = _FakeRoute(f"{ORIGIN}{path}")
     fixture._dispatch(route, entry)
     return route.status, route.payload
+
+
+def drive_fixture_with_headers(fixture, method, path, body=None, query=None):
+    """Like `drive_fixture`, but also returns the fulfilled response headers for header parity."""
+    entry = ApiRequest(method=method, path=path, query=query or {}, body=body)
+    route = _FakeRoute(f"{ORIGIN}{path}")
+    fixture._dispatch(route, entry)
+    return route.status, route.payload, route.headers
 
 
 def new_fixture():
@@ -379,6 +389,159 @@ def test_join_group_write_conflict_shape_parity(env):
     assert_no_invented_keys("group_write_conflict", payload, real_payload)
     assert_shared_keys("group_write_conflict", payload, real_payload, {"error", "error_code"})
     assert payload["error_code"] == real_payload["error_code"] == "group_write_conflict"
+
+
+def assert_list_parity(scenario, fixture_payload, real_payload):
+    """The shared list-shape checks: no invented keys, the read keys present, rows and hint aligned."""
+    assert_no_invented_keys(scenario, fixture_payload, real_payload)
+    assert_shared_keys(scenario, fixture_payload, real_payload, LIST_KEYS)
+    assert_shared_keys(f"{scenario}-hint", fixture_payload["group_directory"],
+                       real_payload["group_directory"], HINT_KEYS)
+    real_union = row_key_union(real_payload["groups"])
+    fixture_union = row_key_union(fixture_payload["groups"])
+    invented = fixture_union - real_union
+    assert not invented, f"{scenario}: the fixture row invents keys the server never returns: {sorted(invented)}"
+
+
+def test_list_view_mine_shape_parity(env):
+    """`view=mine` returns only member rows in both, with the same envelope and row keys."""
+    env.seed_group("mine-group", members=("member-1",))
+    env.seed_group("other-group", members=("owner-1",))
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "mine"})
+
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH, query={"view": ["mine"]})
+
+    assert (status, real.status_code) == (200, 200)
+    real_payload = real.get_json()
+    assert_list_parity("view_mine", payload, real_payload)
+    assert real_payload["groups"] and payload["groups"]
+    assert all(row["membership"] == "member" for row in real_payload["groups"])
+    assert all(row["membership"] == "member" for row in payload["groups"])
+
+
+def test_list_view_discover_shape_parity(env):
+    """`view=discover` returns only non-member rows in both, with the same keys."""
+    env.seed_group("mine-group", members=("member-1",))
+    env.seed_group("other-group", members=("owner-1",))
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "discover"})
+
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH, query={"view": ["discover"]})
+
+    assert (status, real.status_code) == (200, 200)
+    real_payload = real.get_json()
+    assert_list_parity("view_discover", payload, real_payload)
+    assert real_payload["groups"] and payload["groups"]
+    assert all(row["membership"] != "member" for row in real_payload["groups"])
+    assert all(row["membership"] != "member" for row in payload["groups"])
+
+
+def test_list_search_shape_parity(env):
+    """A search narrows both listings and keeps the same envelope and row keys."""
+    env.seed_group("beacon-group", name="Zephyr parity beacon", members=("member-1",))
+    env.seed_group("other-group", name="Unrelated crew", members=("owner-1",))
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "all", "search": "Zephyr parity beacon"})
+
+    fixture = new_fixture()
+    # "Marketing circle" is a seeded fixture row; searching its name must narrow the list too.
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH,
+                                    query={"view": ["all"], "search": ["Marketing circle"]})
+
+    assert (status, real.status_code) == (200, 200)
+    real_payload = real.get_json()
+    assert_list_parity("search", payload, real_payload)
+    assert real_payload["total_count"] == 1
+    assert payload["total_count"] == 1
+
+
+def test_list_later_page_shape_parity(env):
+    """A later page echoes `page`/`page_size` and keeps the row keys the page reads."""
+    for index in range(5):
+        env.seed_group(f"page-group-{index}", name=f"Paging group {index}", members=("member-1",))
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "all", "page": "2", "page_size": "2"})
+
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH,
+                                    query={"view": ["all"], "page": ["2"], "page_size": ["2"]})
+
+    assert (status, real.status_code) == (200, 200)
+    real_payload = real.get_json()
+    assert_list_parity("later_page", payload, real_payload)
+    assert (payload["page"], payload["page_size"]) == (2, 2)
+    assert (real_payload["page"], real_payload["page_size"]) == (2, 2)
+
+
+def test_list_strict_parameter_400_shape_parity(env):
+    """An unknown query parameter is a reviewed `invalid_request` 400 with the same verbatim text."""
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "all", "bogus": "x"})
+
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH,
+                                    query={"view": ["all"], "bogus": ["x"]})
+
+    assert (status, real.status_code) == (400, 400)
+    real_payload = real.get_json()
+    assert_no_invented_keys("list_400", payload, real_payload)
+    assert_shared_keys("list_400", payload, real_payload, {"error", "error_code"})
+    assert payload["error_code"] == real_payload["error_code"] == "invalid_request"
+    assert payload["error"] == real_payload["error"]
+
+
+def test_list_owner_nested_keys_parity(env):
+    """Each row's `owner` object carries exactly the nested keys the server returns."""
+    env.seed_group("mine-group", members=("member-1",))
+    env.as_user("member-1")
+    real = env.directory(query_string={"view": "all"})
+
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", DIRECTORY_PATH, query={"view": ["all"]})
+
+    assert (status, real.status_code) == (200, 200)
+    real_payload = real.get_json()
+    real_owner_keys = set().union(*(set(row["owner"]) for row in real_payload["groups"]))
+    fixture_owner_keys = set().union(*(set(row["owner"]) for row in payload["groups"]))
+    invented = fixture_owner_keys - real_owner_keys
+    assert not invented, f"owner: the fixture invents nested owner keys: {sorted(invented)}"
+    assert "displayName" in real_owner_keys and "displayName" in fixture_owner_keys
+
+
+def test_cache_control_no_store_on_every_route_parity(env):
+    """Every directory response -- list, create, join and cancel -- carries `Cache-Control: no-store`."""
+    env.seed_group("open-group")
+    env.seed_group("pending-group", pending=("applicant-1",))
+
+    def real_header(response):
+        return response.headers.get("Cache-Control")
+
+    env.as_user("member-1")
+    real_list = env.directory(query_string={"view": "all"})
+    env.as_user("outsider-1")
+    real_create = env.create({"name": "Header parity group"})
+    env.seed_group("join-group")
+    real_join = env.join("join-group")
+    env.as_user("applicant-1")
+    real_cancel = env.cancel("pending-group")
+
+    fixture = new_fixture()
+    _, _, list_headers = drive_fixture_with_headers(fixture, "GET", DIRECTORY_PATH, query={"view": ["all"]})
+    _, _, create_headers = drive_fixture_with_headers(fixture, "POST", DIRECTORY_PATH, body={"name": "Header parity group"})
+    _, _, join_headers = drive_fixture_with_headers(fixture, "POST", join_path(JOINABLE_GROUP))
+    _, _, cancel_headers = drive_fixture_with_headers(fixture, "DELETE", join_path(PENDING_GROUP))
+
+    for scenario, real_response, fixture_headers in (
+        ("list", real_list, list_headers),
+        ("create", real_create, create_headers),
+        ("join", real_join, join_headers),
+        ("cancel", real_cancel, cancel_headers),
+    ):
+        assert real_header(real_response) == "no-store", f"{scenario}: the server no longer sets no-store"
+        assert fixture_headers.get("Cache-Control") == "no-store", f"{scenario}: the fixture dropped no-store"
 
 
 if __name__ == "__main__":

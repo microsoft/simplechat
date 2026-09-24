@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import { ArrowUpRight, Loader2, Users } from 'lucide-react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill } from './primitives';
+import { groupRoleLabel } from '../../lib/groupWorkspaceNavigation';
 import type { DirectoryGroup, DirectoryHints } from '../../lib/groupDirectory';
 
 function DirectoryLogo({ group, logoUrl }: { group: DirectoryGroup; logoUrl: string | null }) {
@@ -38,7 +39,7 @@ function MembershipBadge({ group }: { group: DirectoryGroup }) {
     return (
         <div className="flex min-h-[1.25rem] shrink-0 items-center">
             {group.membership === 'member' ? (
-                <Pill tone="accent">{group.userRole ?? 'Member'}</Pill>
+                <Pill tone="accent">{groupRoleLabel(group.userRole ?? 'User')}</Pill>
             ) : group.membership === 'pending' ? (
                 <Pill tone="warn">Requested</Pill>
             ) : null}
@@ -59,22 +60,25 @@ function RowAction({
 }): ReactNode {
     if (group.membership === 'member') {
         return (
-            <GlassButton size="sm" variant="subtle" disabled={disabled} onClick={() => onOpen(group.id)}>
-                Open {group.name}<ArrowUpRight size={14} />
+            <GlassButton size="sm" variant="subtle" disabled={disabled} aria-label={`Open ${group.name}`}
+                onClick={() => onOpen(group.id)}>
+                Open<ArrowUpRight size={14} />
             </GlassButton>
         );
     }
     if (group.membership === 'pending') {
         return (
-            <GlassButton size="sm" disabled={busy || disabled} onClick={() => onCancel(group.id)}>
-                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Cancel request for {group.name}
+            <GlassButton size="sm" disabled={busy || disabled} aria-label={`Cancel request for ${group.name}`}
+                onClick={() => onCancel(group.id)}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Cancel request
             </GlassButton>
         );
     }
     if (hints.canRequestToJoin) {
         return (
-            <GlassButton size="sm" variant="primary" disabled={busy || disabled} onClick={() => onJoin(group.id)}>
-                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Request to join {group.name}
+            <GlassButton size="sm" variant="primary" disabled={busy || disabled} aria-label={`Request to join ${group.name}`}
+                onClick={() => onJoin(group.id)}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Request to join
             </GlassButton>
         );
     }

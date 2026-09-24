@@ -29,6 +29,7 @@ test holds to the real routes.
 
 import base64
 import copy
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -55,16 +56,24 @@ LOGO_MEMBER_GROUP = "group-b"     # a member row whose stored logo makes hasLogo
 PENDING_GROUP = "dir-pending"     # a pending row: Cancel request.
 JOINABLE_GROUP = "dir-joinable"   # a none row the caller may ask to join.
 SECOND_JOINABLE_GROUP = "dir-joinable-2"
+LONG_GROUP = "dir-long"           # an 80-char name, 500-char description and a long owner.
+
+# Exactly 80 code points ("Long content group " is 19, plus 61) and a 500-code-point description,
+# so the long-content layout case exercises the real server maxima, not a token stand-in.
+LONG_GROUP_NAME = "Long content group " + "x" * 61
+LONG_GROUP_DESCRIPTION = "This description fills the server's 500-character ceiling. " + "d" * 442
+LONG_GROUP_OWNER = "Dr. Alexandria Featherstonehaugh-Wolfeschlegelsteinhausenbergerdorff Jr."
 
 
 def directory_record(identifier, name, *, membership="none", user_role=None, description=None,
-                     member_count=1, hero_color="#0078d4", logo_stored=False, logo_version=1):
+                     member_count=1, hero_color="#0078d4", logo_stored=False, logo_version=1,
+                     owner_display=None):
     """One stored directory group, shaped so `_project` yields the server's row."""
     return {
         "id": identifier,
         "name": name,
         "description": f"Shared workspace for {name}." if description is None else description,
-        "owner_display": f"{name} owner",
+        "owner_display": f"{name} owner" if owner_display is None else owner_display,
         "member_count": member_count,
         "hero_color": hero_color,
         "logo_stored": logo_stored,
@@ -82,6 +91,10 @@ class GroupDirectoryFixture(GroupWorkspaceFixture):
         self.active_group = None
         self.can_create = True
         self.can_request_to_join = True
+        # Production forwards every enable_* setting into the bootstrap, so the flag rides there too.
+        # It gates NOTHING on its own: Create follows the directory hint's can_create, and the flag
+        # being on while can_create is false is the real "hint refuses" case the suite pins.
+        self.enable_group_creation = True
         # Forced, one-shot outcomes a test arranges before it drives the UI, each modelling a
         # concurrent change the server saw first. A join/cancel code is consumed on the next write to
         # that id and reconciled so the reload shows the truth; a create refusal answers the next
@@ -112,12 +125,46 @@ class GroupDirectoryFixture(GroupWorkspaceFixture):
                              member_count=index)
             for index in range(1, 21)
         ])
+        # A long-content row so the layout case can prove an 80-character name, a 500-character
+        # description and a long owner never overflow at either width in either theme.
+        self._seed_directory([
+            directory_record(LONG_GROUP, LONG_GROUP_NAME, membership="none",
+                             description=LONG_GROUP_DESCRIPTION, owner_display=LONG_GROUP_OWNER,
+                             member_count=15),
+        ])
 
     # --- seeding --------------------------------------------------------------------------------
 
     def _seed_directory(self, records):
         for record in records:
             self.directory_groups[record["id"]] = record
+
+    # --- response shaping -----------------------------------------------------------------------
+
+    def _bootstrap(self):
+        payload = super()._bootstrap()
+        payload["features"]["enable_group_creation"] = self.enable_group_creation
+        return payload
+
+    @staticmethod
+    def _is_directory_route(path):
+        if path == "/api/groups/directory":
+            return True
+        return path.startswith("/api/groups/") and path.endswith("/join-request")
+
+    def _json(self, route, payload, status=200):
+        # Every native directory response -- success or error -- carries `Cache-Control: no-store`,
+        # as the server's `_no_store` wrapper and `group_directory_error_response` both do. Inherited
+        # bootstrap, context and picker responses keep their base handling, so only the directory
+        # family gains the header, exactly as production does.
+        path = urlsplit(route.request.url).path
+        if not self._is_directory_route(path):
+            super()._json(route, payload, status)
+            return
+        self.responses.append((route.request.url, copy.deepcopy(payload)))
+        if status >= 400:
+            self.expected_http_errors.add((route.request.url, status))
+        route.fulfill(status=status, json=payload, headers={"Cache-Control": "no-store"})
 
     def set_hints(self, *, can_create=None, can_request_to_join=None):
         if can_create is not None:

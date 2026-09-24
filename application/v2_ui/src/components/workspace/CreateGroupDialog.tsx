@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
+import { codePointLength } from '../../lib/groupDirectory';
 
 const NAME_MAX_LENGTH = 80;
 const DESCRIPTION_MAX_LENGTH = 500;
@@ -18,12 +19,22 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
 
 const INPUT_CLASS = 'w-full min-w-0 rounded-xl border border-edge bg-surface-solid px-3 py-2 text-sm text-text-1 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60';
 
+// Limits are counted in code points via `codePointLength`, as the server does (Python `len` after
+// `strip`), so an astral character such as an emoji counts once and a name the server would accept
+// is never cut short or wrongly refused. `String.length` counts UTF-16 units, which would
+// double-count astral characters, and a `maxLength` attribute would silently truncate them, so
+// neither is used for the limits here.
+//
+// Known divergence: JS `trim()` and Python `strip()` disagree on a few exotic characters
+// (`\x1c`-`\x1f` and `\x85` are Python-only whitespace; `\ufeff` is JS-only). A name relying on one
+// of those to pass the client but fail the server, or the reverse, keeps its draft on the server's
+// reviewed 400, so the divergence degrades to the same shown-message behaviour, never a lost draft.
 function validate(name: string, description: string): string | null {
     const trimmedName = name.trim();
     if (!trimmedName) return 'Enter a group name.';
-    if (trimmedName.length > NAME_MAX_LENGTH) return `Group names can be at most ${NAME_MAX_LENGTH} characters.`;
+    if (codePointLength(trimmedName) > NAME_MAX_LENGTH) return `Group names can be at most ${NAME_MAX_LENGTH} characters.`;
     if (CONTROL_CHARACTERS.test(trimmedName)) return 'Group names cannot contain control characters.';
-    if (description.trim().length > DESCRIPTION_MAX_LENGTH) {
+    if (codePointLength(description.trim()) > DESCRIPTION_MAX_LENGTH) {
         return `Group descriptions can be at most ${DESCRIPTION_MAX_LENGTH} characters.`;
     }
     return null;
@@ -67,13 +78,13 @@ export function CreateGroupDialog({
                 <label className="block space-y-1 text-xs text-text-2">
                     <span>Group name</span>
                     <input className={INPUT_CLASS} value={name} disabled={submitting} autoFocus
-                        maxLength={NAME_MAX_LENGTH} aria-label="Group name"
+                        aria-label="Group name"
                         onChange={(event) => { setName(event.target.value); setClientError(''); }} />
                 </label>
                 <label className="block space-y-1 text-xs text-text-2">
                     <span>Description <span className="text-text-3">(optional)</span></span>
                     <textarea className={`${INPUT_CLASS} min-h-20 resize-y`} value={description} disabled={submitting}
-                        maxLength={DESCRIPTION_MAX_LENGTH} aria-label="Group description"
+                        aria-label="Group description"
                         onChange={(event) => { setDescription(event.target.value); setClientError(''); }} />
                 </label>
                 {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}

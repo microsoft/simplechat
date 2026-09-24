@@ -67,6 +67,18 @@ export interface DirectoryAdapter {
 
 export const DIRECTORY_PAGE_SIZE = 20;
 
+// The server's search and page limits (`functions_group_directory`), mirrored here so the page
+// never sends a request the server would answer with a 400 whose Retry could only repeat it.
+export const DIRECTORY_SEARCH_MAX_LENGTH = 200;
+export const DIRECTORY_MAX_PAGE = 10000;
+
+// Count Unicode code points, matching the server's Python `len`, so an astral character such as an
+// emoji counts once rather than as its two UTF-16 units. Used for the client-side length checks the
+// server also enforces, so a value the server accepts is never wrongly refused or truncated.
+export function codePointLength(value: string): number {
+    return Array.from(value).length;
+}
+
 const MEMBERSHIPS: readonly DirectoryMembership[] = ['member', 'pending', 'none'];
 
 function isMembership(value: unknown): value is DirectoryMembership {

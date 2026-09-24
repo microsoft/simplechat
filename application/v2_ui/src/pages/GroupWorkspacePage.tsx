@@ -12,7 +12,7 @@ import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
-    GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupWorkspaceNavigationAvailability,
+    GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupRoleLabel, groupWorkspaceNavigationAvailability,
     groupWorkspacePath, classicGroupSectionLabel, readGroupDocumentTarget,
 } from '../lib/groupWorkspaceNavigation';
 import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
@@ -286,7 +286,13 @@ export function GroupWorkspacePage() {
 
     const header = (
         <>
-            <PageHeader title="Group workspaces" description="Shared knowledge and tools for your team" leading={<Users size={20} className="text-accent" />} />
+            <PageHeader title="Group workspaces" description="Shared knowledge and tools for your team"
+                leading={<Users size={20} className="text-accent" />}
+                actions={(
+                    <GlassButton size="sm" variant="subtle" onClick={() => navigate('/groups/directory')}>
+                        <Compass size={14} />Browse all groups
+                    </GlassButton>
+                )} />
             <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
                 <GroupWorkspacePicker key={viewerId} value={state.pendingGroupId ?? groupId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.groups?.find((group) => group.id === groupId)?.name}
@@ -302,7 +308,7 @@ export function GroupWorkspacePage() {
                         </div>
                         <div className="min-w-0 flex-1 basis-48">
                             <p className="break-words text-sm font-semibold text-text-1">{context.workspace.name}</p>
-                            <p className="text-xs text-text-3">Role: {context.role === 'DocumentManager' ? 'Document manager' : context.role === 'User' ? 'Member' : context.role}</p>
+                            <p className="text-xs text-text-3">Role: {groupRoleLabel(context.role)}</p>
                         </div>
                         <Pill tone={context.status === 'active' ? 'neutral' : 'warn'}>Status: {GROUP_STATUS_LABELS[context.status]}</Pill>
                         {context.can_manage_workspace ? <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed}
