@@ -16,6 +16,25 @@
 
 import type { WorkspaceIdentity } from './types';
 import type { IdentityWrite } from './identityWorkbench';
+import type { RebaseField } from './rebaseDraft';
+
+/**
+ * The editable fields the conflict rebase considers, over an {@link IdentityDraft}. `secretStored`
+ * reflects the server's stored-secret flag and is adopted from the reload; the secret itself is
+ * marked so a typed value is kept and a blank input adopts the reloaded stored state without the
+ * value ever being compared or named.
+ */
+export const IDENTITY_REBASE_FIELDS: RebaseField[] = [
+    { path: 'name', label: 'Name' },
+    { path: 'description', label: 'Description' },
+    { path: 'capabilities', label: 'Used for' },
+    { path: 'credentials.authType', label: 'Authentication method' },
+    { path: 'credentials.username', label: 'Username' },
+    { path: 'credentials.domain', label: 'Domain' },
+    { path: 'credentials.clientId', label: 'Client ID' },
+    { path: 'secretStored', label: 'Stored secret' },
+    { path: 'credentials.secret', label: 'Secret', secret: true },
+];
 
 export interface CapabilityConfig {
     value: string;

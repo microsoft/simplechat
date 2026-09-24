@@ -61,6 +61,7 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
         self.etag_counter = {}
         self.created_counter = 0
         self.prompts = {}
+        self.deleted_prompt_conflicts = set()
         # group-a: a manager workspace. p1 is fully editable; the withheld prompt keeps an
         # empty inline `prompt_actions` while the workspace still advertises the operations,
         # so its edit and delete affordances must stay hidden beside the editable control.
@@ -108,6 +109,11 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
 
     def record(self, group_id, identifier):
         return next(row for row in self.prompts[group_id] if row["id"] == identifier)
+
+    def drop_prompt_for_conflict(self, group_id, identifier):
+        """Remove a prompt while making the next stale save look like a conditional conflict."""
+        self.prompts[group_id] = [row for row in self.prompts[group_id] if row["id"] != identifier]
+        self.deleted_prompt_conflicts.add((group_id, identifier))
 
     def catalog_prompts(self):
         """Group prompts as the chat composer catalog carries them, with explicit scope."""
@@ -176,6 +182,9 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
         else:
             record = next((row for row in self.prompts.get(group_id, []) if row["id"] == identifier), None)
             if record is None:
+                if method == "PATCH" and (group_id, identifier) in self.deleted_prompt_conflicts:
+                    self._json(route, {"error": "prompt_changed"}, 409)
+                    return
                 self._json(route, {"error": "Prompt not found in this group."}, 404)
                 return
             if method == "PATCH":

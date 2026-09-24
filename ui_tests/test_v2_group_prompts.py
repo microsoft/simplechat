@@ -28,6 +28,11 @@ pytestmark = pytest.mark.ui
 SCREENSHOTS = Path(os.environ.get(
     "SIMPLECHAT_UI_SCREENSHOTS", str(Path(__file__).parent / "artifacts" / "group-prompts"),
 ))
+REBASE_NOTICE = (
+    "Someone else changed this while you were editing. Their changes are loaded; "
+    "your edits are kept. Review, then save."
+)
+REBASE_DELETED_NOTICE = "This item was deleted. Copy anything you need, then close."
 
 
 def search_box(ui):
@@ -226,6 +231,99 @@ def test_conditional_conflict_keeps_draft_open(group_prompts_ui):
         and isinstance(entry[1], dict) and entry[1].get("error") == "prompt_changed"
     ]
     assert conflicts, "The stale-etag edit should have produced a 409 prompt_changed."
+
+
+def test_conflict_refresh_rebases_concurrent_description_and_local_name(group_prompts_ui):
+    """Refreshing a stale prompt edit adopts untouched fields and keeps the local name."""
+    ui = group_prompts_ui
+    open_prompts(ui)
+    row(ui, "Weekly status").click()
+    details(ui).get_by_role("button", name="Edit", exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name="Edit prompt", exact=True)
+    record = ui.record("group-a", "weekly-status")
+    record["description"] = "Concurrent description from another manager."
+    ui.touch_prompt("group-a", "weekly-status")
+    ui.page.locator("#prompt-name").fill("Weekly status local draft")
+    with ui.page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/groups/group-a/prompts/weekly-status")
+    ) as conflict:
+        ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with ui.page.expect_response(
+        lambda response: response.request.method == "GET"
+        and "/api/groups/group-a/prompts" in response.url
+    ):
+        ui.page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(ui.page.locator("#prompt-description")).to_have_value("Concurrent description from another manager.")
+    expect(ui.page.locator("#prompt-name")).to_have_value("Weekly status local draft")
+    expect(ui.page.get_by_text(REBASE_NOTICE, exact=True)).to_be_visible()
+    with ui.page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/groups/group-a/prompts/weekly-status")
+    ) as saved:
+        ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    expect(dialog).to_have_count(0)
+    saved_record = ui.record("group-a", "weekly-status")
+    assert saved_record["description"] == "Concurrent description from another manager."
+    assert saved_record["name"] == "Weekly status local draft"
+
+
+def test_conflict_refresh_reports_name_conflict_and_keeps_local_name(group_prompts_ui):
+    """Refreshing reports a same-field prompt conflict and keeps the user's name."""
+    ui = group_prompts_ui
+    open_prompts(ui)
+    row(ui, "Weekly status").click()
+    details(ui).get_by_role("button", name="Edit", exact=True).click()
+    record = ui.record("group-a", "weekly-status")
+    record["name"] = "Weekly status concurrent rename"
+    ui.touch_prompt("group-a", "weekly-status")
+    ui.page.locator("#prompt-name").fill("Weekly status local rename")
+    with ui.page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/groups/group-a/prompts/weekly-status")
+    ) as conflict:
+        ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with ui.page.expect_response(
+        lambda response: response.request.method == "GET"
+        and "/api/groups/group-a/prompts" in response.url
+    ):
+        ui.page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(ui.page.get_by_text(f"{REBASE_NOTICE} You and someone else both changed: Name. Your values are shown.", exact=True)).to_be_visible()
+    expect(ui.page.locator("#prompt-name")).to_have_value("Weekly status local rename")
+    with ui.page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/groups/group-a/prompts/weekly-status")
+    ) as saved:
+        ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    assert ui.record("group-a", "weekly-status")["name"] == "Weekly status local rename"
+
+
+def test_conflict_refresh_reports_deleted_prompt_without_resaving(group_prompts_ui):
+    """Refreshing after a stale save shows that the prompt was deleted and does not save again."""
+    ui = group_prompts_ui
+    open_prompts(ui)
+    row(ui, "Weekly status").click()
+    details(ui).get_by_role("button", name="Edit", exact=True).click()
+    ui.drop_prompt_for_conflict("group-a", "weekly-status")
+    ui.page.locator("#prompt-name").fill("Weekly status deleted local")
+    with ui.page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/groups/group-a/prompts/weekly-status")
+    ) as conflict:
+        ui.page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with ui.page.expect_response(
+        lambda response: response.request.method == "GET"
+        and "/api/groups/group-a/prompts" in response.url
+    ):
+        ui.page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(ui.page.get_by_text(REBASE_DELETED_NOTICE, exact=True)).to_be_visible()
+    assert [entry for entry in ui.writes if entry.method == "PATCH" and entry.path == "/api/groups/group-a/prompts/weekly-status"]
+    assert not any(row["id"] == "weekly-status" for row in ui.prompts["group-a"])
 
 
 def test_scoped_prompt_link_attaches_in_chat(group_prompts_ui):

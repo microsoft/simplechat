@@ -49,6 +49,11 @@ LAYOUTS = [
     pytest.param("light", 390, 844, id="mobile-light"),
     pytest.param("dark", 390, 844, id="mobile-dark"),
 ]
+REBASE_NOTICE = (
+    "Someone else changed this while you were editing. Their changes are loaded; "
+    "your edits are kept. Review, then save."
+)
+ENDPOINT_DELETED_NOTICE = "This item was deleted. Copy anything you need, then close."
 
 
 def open_endpoints(ui, group="group-a", **options):
@@ -307,6 +312,103 @@ def test_group_write_conflict_keeps_draft_for_a_plain_retry(group_endpoints_ui):
         dialog.get_by_role("button", name="Save changes", exact=True).click()
     assert response.value.ok
     assert ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID)["name"] == "Retry after group write"
+
+
+def test_endpoint_conflict_reload_rebases_concurrent_endpoint_url_and_local_name(group_endpoints_ui):
+    """Reloading a stale endpoint edit adopts untouched connection fields and keeps the local name."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_ENDPOINT_NAME).get_by_role("button", name=f"Edit {EDITABLE_ENDPOINT_NAME}", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    record = ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID)
+    record["connection"]["endpoint"] = "https://concurrent.openai.azure.com"
+    ui.touch_endpoint("group-a", EDITABLE_ENDPOINT_ID)
+    dialog.get_by_label("Name", exact=True).fill("Research chat connection local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ) as conflict:
+        dialog.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/model-endpoints"
+    ):
+        dialog.get_by_role("button", name="Reload latest", exact=True).click()
+    expect(dialog.get_by_label("Endpoint URL", exact=True)).to_have_value("https://concurrent.openai.azure.com")
+    expect(dialog.get_by_label("Name", exact=True)).to_have_value("Research chat connection local")
+    expect(dialog.get_by_text(REBASE_NOTICE, exact=True)).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ) as saved:
+        dialog.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    saved_record = ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID)
+    assert saved_record["connection"]["endpoint"] == "https://concurrent.openai.azure.com"
+    assert saved_record["name"] == "Research chat connection local"
+
+
+def test_endpoint_conflict_reload_reports_name_conflict_and_keeps_local_name(group_endpoints_ui):
+    """Reloading reports a same-field endpoint conflict and keeps the user's name."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_ENDPOINT_NAME).get_by_role("button", name=f"Edit {EDITABLE_ENDPOINT_NAME}", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID)["name"] = "Research chat connection concurrent"
+    ui.touch_endpoint("group-a", EDITABLE_ENDPOINT_ID)
+    dialog.get_by_label("Name", exact=True).fill("Research chat connection local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ) as conflict:
+        dialog.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/model-endpoints"
+    ):
+        dialog.get_by_role("button", name="Reload latest", exact=True).click()
+    expect(dialog.get_by_text(
+        f"{REBASE_NOTICE} You and someone else both changed: Name. Your values are shown.",
+        exact=True,
+    )).to_be_visible()
+    expect(dialog.get_by_label("Name", exact=True)).to_have_value("Research chat connection local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ) as saved:
+        dialog.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    assert ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID)["name"] == "Research chat connection local conflict"
+
+
+def test_endpoint_conflict_reload_reports_deleted_endpoint_without_resaving(group_endpoints_ui):
+    """Reloading after a stale save shows that the endpoint was deleted and does not save again."""
+    ui, page = group_endpoints_ui, group_endpoints_ui.page
+    open_manager(ui)
+    row(ui, EDITABLE_ENDPOINT_NAME).get_by_role("button", name=f"Edit {EDITABLE_ENDPOINT_NAME}", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    ui.drop_endpoint_for_conflict("group-a", EDITABLE_ENDPOINT_ID)
+    dialog.get_by_label("Name", exact=True).fill("Research chat connection deleted local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ) as conflict:
+        dialog.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/model-endpoints"
+    ):
+        dialog.get_by_role("button", name="Reload latest", exact=True).click()
+    expect(dialog.get_by_text(ENDPOINT_DELETED_NOTICE, exact=True)).to_be_visible()
+    writes = [
+        entry for entry in ui.writes
+        if entry.method == "PATCH" and entry.path == f"/api/groups/group-a/model-endpoints/{EDITABLE_ENDPOINT_ID}"
+    ]
+    assert len(writes) == 1
+    assert ui.record_endpoint("group-a", EDITABLE_ENDPOINT_ID) is None
 
 
 def test_delete_in_use_names_the_references(group_endpoints_ui):

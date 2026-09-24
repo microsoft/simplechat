@@ -23,6 +23,7 @@ import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { parsePromptVariables } from '../../lib/promptVariables';
+import type { RebaseField } from '../../lib/rebaseDraft';
 import { VariableChip } from './promptPresentation';
 import { PromptVariablePicker, usePromptVariableInsertion } from './PromptVariablePicker';
 
@@ -39,6 +40,13 @@ export const EMPTY_PROMPT_DRAFT: PromptDraft = {
     description: '',
     content: '',
 };
+
+/** The editable fields the conflict rebase considers, over a {@link PromptDraft}. */
+export const PROMPT_REBASE_FIELDS: RebaseField[] = [
+    { path: 'name', label: 'Name' },
+    { path: 'description', label: 'Description' },
+    { path: 'content', label: 'Content' },
+];
 
 type EditorTab = 'write' | 'preview';
 

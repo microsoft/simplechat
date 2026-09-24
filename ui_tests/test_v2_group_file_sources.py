@@ -63,6 +63,11 @@ BUSY_MESSAGE = FILE_SOURCE_BUSY_ERROR
 SYNC_BUSY_MESSAGE = FILE_SOURCE_SYNC_BUSY_ERROR
 SYNC_LIMIT_MESSAGE = FILE_SOURCE_SYNC_LIMIT_ERROR
 CONFLICT_MESSAGE = FILE_SOURCE_CONFLICT_ERROR
+REBASE_NOTICE = (
+    "Someone else changed this while you were editing. Their changes are loaded; "
+    "your edits are kept. Review, then save."
+)
+REBASE_DELETED_NOTICE = "This item was deleted. Copy anything you need, then close."
 
 
 def open_sources(ui, group="group-a", **options):
@@ -279,6 +284,97 @@ def test_write_conflict_on_save_allows_a_plain_retry(group_file_sources_ui):
         page.get_by_role("button", name="Save changes", exact=True).click()
     assert retry.value.ok
     assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["name"] == "Retriable draft"
+
+
+def test_config_conflict_reload_rebases_concurrent_subfolder_scope_and_local_name(group_file_sources_ui):
+    """Reloading a config conflict adopts untouched source fields and keeps the local name."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    record = ui.record_file_source("group-a", EDITABLE_SOURCE_ID)
+    record["recursive"] = False
+    ui.touch_file_source("group-a", EDITABLE_SOURCE_ID)
+    page.get_by_label("Name", exact=True).fill("Quarterly reports share local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+    ):
+        page.get_by_role("button", name="Reload", exact=True).click()
+    expect(page.get_by_label("Include subfolders", exact=True)).not_to_be_checked()
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Quarterly reports share local")
+    expect(page.get_by_text(REBASE_NOTICE, exact=True)).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as saved:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    saved_record = ui.record_file_source("group-a", EDITABLE_SOURCE_ID)
+    assert saved_record["recursive"] is False
+    assert saved_record["name"] == "Quarterly reports share local"
+
+
+def test_config_conflict_reload_reports_name_conflict_and_keeps_local_name(group_file_sources_ui):
+    """Reloading reports a same-field source conflict and keeps the user's name."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["name"] = "Quarterly reports share concurrent"
+    ui.touch_file_source("group-a", EDITABLE_SOURCE_ID)
+    page.get_by_label("Name", exact=True).fill("Quarterly reports share local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+    ):
+        page.get_by_role("button", name="Reload", exact=True).click()
+    expect(page.get_by_text(f"{REBASE_NOTICE} You and someone else both changed: Name. Your values are shown.", exact=True)).to_be_visible()
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Quarterly reports share local conflict")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as saved:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert saved.value.ok
+    assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["name"] == "Quarterly reports share local conflict"
+
+
+def test_config_conflict_reload_reports_deleted_source_without_resaving(group_file_sources_ui):
+    """Reloading after a stale save shows that the source was deleted and does not save again."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    ui.drop_file_source_for_conflict("group-a", EDITABLE_SOURCE_ID)
+    page.get_by_label("Name", exact=True).fill("Quarterly reports share deleted local")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    with page.expect_response(
+        lambda response: response.request.method == "GET"
+        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+    ):
+        page.get_by_role("button", name="Reload", exact=True).click()
+    expect(page.get_by_text(REBASE_DELETED_NOTICE, exact=True)).to_be_visible()
+    writes = [
+        entry for entry in ui.writes
+        if entry.method == "PATCH" and entry.path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ]
+    assert len(writes) == 1
+    assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID) is None
 
 
 @pytest.mark.parametrize("defect", ["config_revision", "source_actions"])
