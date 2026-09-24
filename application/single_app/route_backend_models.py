@@ -6,6 +6,12 @@ from config import *
 from functions_authentication import *
 from functions_governance import ensure_governance_access
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
+from functions_group_endpoint_access import (
+    group_endpoint_error_response,
+    read_strict_json_object,
+    reject_query_parameters,
+    require_group_endpoint_discovery_context,
+)
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
@@ -21,7 +27,7 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
-from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
+from foundry_agent_runtime import FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE, FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
 from functions_image_api_route import is_image_capable_model_name
 from functions_ai_connections import AIConnectionError, describe_model_capabilities, supports_model_capability
@@ -191,7 +197,10 @@ def register_route_backend_models(bp):
             403,
         )
 
-    def resolve_scoped_model_endpoints(user_id, scope):
+    def resolve_scoped_model_endpoints(user_id, scope, group_id=None):
+        # ``group_id`` names the group for the immutable-target routes, which have
+        # already authorized it from the path. Only the legacy callers, which pass
+        # nothing, fall back to the account's active group.
         settings = get_settings()
         endpoints = []
 
@@ -223,7 +232,8 @@ def register_route_backend_models(bp):
 
         if scope == "group":
             if settings.get("allow_group_custom_endpoints", False):
-                group_id = require_active_group(user_id)
+                if group_id is None:
+                    group_id = require_active_group(user_id)
                 endpoints.extend(get_governed_endpoints(get_group_model_endpoints(group_id), "governance_group_endpoints", "group"))
         elif scope == "user":
             if settings.get("allow_user_custom_endpoints", False):
@@ -232,8 +242,8 @@ def register_route_backend_models(bp):
         endpoints.extend(get_governed_endpoints(settings.get("model_endpoints", []) or [], "governance_global_endpoints", "global"))
         return endpoints
 
-    def resolve_endpoint_by_id(user_id, scope, endpoint_id):
-        endpoints = resolve_scoped_model_endpoints(user_id, scope)
+    def resolve_endpoint_by_id(user_id, scope, endpoint_id, group_id=None):
+        endpoints = resolve_scoped_model_endpoints(user_id, scope, group_id=group_id)
         endpoint = next((endpoint for endpoint in endpoints if endpoint.get("id") == endpoint_id), None)
         if endpoint:
             endpoint = dict(endpoint)
@@ -255,10 +265,10 @@ def register_route_backend_models(bp):
             raise ValueError("Endpoint ID is required to resolve stored secrets.")
         return endpoint_id
 
-    def resolve_request_endpoint_payload(payload, scope="global", *, for_chat_test=False):
+    def resolve_request_endpoint_payload(payload, scope="global", *, for_chat_test=False, group_id=None):
         user_id = get_current_user_id()
         endpoint_id = str(payload.get("endpoint_id") or payload.get("id") or "").strip()
-        persisted_endpoint = resolve_endpoint_by_id(user_id, scope, endpoint_id) if endpoint_id else None
+        persisted_endpoint = resolve_endpoint_by_id(user_id, scope, endpoint_id, group_id=group_id) if endpoint_id else None
 
         if scope in ("user", "group") and endpoint_id:
             if not persisted_endpoint:
@@ -499,12 +509,12 @@ def register_route_backend_models(bp):
             return True
         return str(state).lower() == "succeeded"
 
-    def handle_fetch_model_list(scope="global"):
+    def handle_fetch_model_list(scope="global", group_id=None):
         try:
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
                 return jsonify({"error": "Model endpoint payload must be an object."}), 400
-            data = resolve_request_endpoint_payload(data, scope=scope)
+            data = resolve_request_endpoint_payload(data, scope=scope, group_id=group_id)
             provider = (data.get("provider") or "aoai").lower()
             if provider == "openai_compatible":
                 return jsonify({
@@ -637,12 +647,12 @@ def register_route_backend_models(bp):
                 400,
             )
 
-    def handle_test_model_connection(scope="global"):
+    def handle_test_model_connection(scope="global", group_id=None):
         try:
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
                 raise AIConnectionError("Model endpoint payload must be an object.", "invalid_model_selection")
-            data = resolve_request_endpoint_payload(data, scope=scope, for_chat_test=True)
+            data = resolve_request_endpoint_payload(data, scope=scope, for_chat_test=True, group_id=group_id)
             provider = (data.get("provider") or "aoai").lower()
             if provider == "openai_compatible":
                 return jsonify({
@@ -1516,37 +1526,13 @@ def register_route_backend_models(bp):
         })
 
 
-    @bp.route('/api/models/foundry/agents', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @user_required
-    def list_foundry_agents():
-        user_id = get_current_user_id()
-        data = request.get_json() or {}
-        endpoint_id = (data.get("endpoint_id") or "").strip()
-        scope = (data.get("scope") or "global").lower()
-        if scope not in ("global", "user", "group"):
-            scope = "global"
-        if not endpoint_id:
-            return jsonify({"error": "endpoint_id is required."}), 400
+    def list_foundry_resources_for_endpoint(endpoint_cfg, data, scope, endpoint_id):
+        """List the Foundry agents or workflows of one resolved, authorized endpoint.
 
-        if scope == "group":
-            try:
-                group_id = require_active_group(user_id)
-                assert_group_role(user_id, group_id)
-            except ValueError as exc:
-                return build_group_access_error_response(user_id, exc, "group Foundry agents")
-            except LookupError as exc:
-                return build_group_access_error_response(user_id, exc, "group Foundry agents")
-            except PermissionError as exc:
-                return build_group_access_error_response(user_id, exc, "group Foundry agents")
-
-        try:
-            endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
-        except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
-        if not endpoint_cfg:
-            return jsonify({"error": "Model endpoint not found."}), 404
+        Shared by the legacy ``/api/models/foundry/agents`` route and the named-group
+        route. The caller has already authorized the endpoint; its stored credentials
+        are hydrated here and reach only its stored Foundry project.
+        """
         endpoint_cfg = keyvault_model_endpoint_get_helper(
             endpoint_cfg,
             resolve_endpoint_scope_value(endpoint_cfg, endpoint_id),
@@ -1575,7 +1561,9 @@ def register_route_backend_models(bp):
             )
             auth_response = getattr(exc, "auth_response", {}) or {}
             payload = {
-                "error": str(exc),
+                # The exception is only ever raised with this message, so legacy
+                # callers see the same body while no exception text reaches a client.
+                "error": FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE,
                 "auth_required": True,
                 "scopes": auth_response.get("scopes") or [],
             }
@@ -1608,6 +1596,40 @@ def register_route_backend_models(bp):
             "provider": provider,
             "responses_api_version": responses_api_version,
         })
+
+
+    @bp.route('/api/models/foundry/agents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_foundry_agents():
+        user_id = get_current_user_id()
+        data = request.get_json() or {}
+        endpoint_id = (data.get("endpoint_id") or "").strip()
+        scope = (data.get("scope") or "global").lower()
+        if scope not in ("global", "user", "group"):
+            scope = "global"
+        if not endpoint_id:
+            return jsonify({"error": "endpoint_id is required."}), 400
+
+        if scope == "group":
+            try:
+                group_id = require_active_group(user_id)
+                assert_group_role(user_id, group_id)
+            except ValueError as exc:
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
+            except LookupError as exc:
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
+            except PermissionError as exc:
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
+
+        try:
+            endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        if not endpoint_cfg:
+            return jsonify({"error": "Model endpoint not found."}), 404
+        return list_foundry_resources_for_endpoint(endpoint_cfg, data, scope, endpoint_id)
 
 
     @bp.route('/api/models/test-model', methods=['POST'])
@@ -1675,3 +1697,73 @@ def register_route_backend_models(bp):
         except PermissionError as exc:
             return build_group_access_error_response(user_id, exc, "group model connection tests")
         return handle_test_model_connection(scope="group")
+
+
+    # Immutable-target discovery for the group named in the path (M5C). The legacy
+    # group routes above resolve the account's active group; these authorize the
+    # path group first (Owner or Admin in an active group, the one availability
+    # predicate) and then thread that ``group_id`` through the shared resolvers, so
+    # another tab changing the active group can never retarget them.
+    def authorize_named_group_discovery(group_id):
+        """Return a refusal response, or ``None`` once the path group is authorized."""
+        try:
+            reject_query_parameters()
+            read_strict_json_object()
+            require_group_endpoint_discovery_context(get_current_user_id(), group_id)
+        except Exception as exc:
+            return group_endpoint_error_response(exc)
+        return None
+
+
+    @bp.route('/api/groups/<group_id>/models/fetch', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    def fetch_model_list_named_group(group_id):
+        refusal = authorize_named_group_discovery(group_id)
+        if refusal:
+            return refusal
+        return handle_fetch_model_list(scope="group", group_id=group_id)
+
+
+    @bp.route('/api/groups/<group_id>/models/test-model', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    def test_model_connection_named_group(group_id):
+        refusal = authorize_named_group_discovery(group_id)
+        if refusal:
+            return refusal
+        return handle_test_model_connection(scope="group", group_id=group_id)
+
+
+    @bp.route('/api/groups/<group_id>/models/foundry/agents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    def list_foundry_agents_named_group(group_id):
+        refusal = authorize_named_group_discovery(group_id)
+        if refusal:
+            return refusal
+        user_id = get_current_user_id()
+        data = request.get_json(silent=True) or {}
+        endpoint_id = data.get("endpoint_id")
+        if not isinstance(endpoint_id, str) or not endpoint_id.strip():
+            return jsonify({"error": "endpoint_id is required."}), 400
+        endpoint_id = endpoint_id.strip()
+        try:
+            endpoint_cfg = resolve_endpoint_by_id(user_id, "group", endpoint_id, group_id=group_id)
+        except PermissionError as exc:
+            log_models_exception(
+                "Group Foundry discovery blocked by governance policy",
+                exc,
+                extra={"group_id": group_id, "endpoint_id": endpoint_id},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("You do not have access to this model connection.", 403)
+        if not endpoint_cfg:
+            return jsonify({"error": "Model endpoint not found."}), 404
+        return list_foundry_resources_for_endpoint(endpoint_cfg, data, "group", endpoint_id)

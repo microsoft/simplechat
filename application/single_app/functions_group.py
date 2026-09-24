@@ -1,5 +1,9 @@
 # functions_group.py
 
+import copy
+
+from azure.core import MatchConditions
+
 from config import *
 import functions_authentication
 import functions_settings
@@ -7,6 +11,15 @@ from typing import Iterable
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
+
+
+# How many times a conditional group-document write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+GROUP_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class GroupDocumentWriteConflict(RuntimeError):
+    """The group document kept changing while a write was being applied to it."""
 
 
 def create_group(name, description):
@@ -451,7 +464,16 @@ def get_group_model_endpoints(group_id: str):
 
 
 def update_group_model_endpoints(group_id: str, endpoints):
-    """Persist the model endpoints list onto the group document."""
+    """Persist the model endpoints list onto the group document.
+
+    This is the legacy collection writer behind ``POST /api/group/model-endpoints``
+    and it remains an unconditional ``upsert_item`` of the copy it just read, so a
+    write that races a membership or status change can restore the older fields, and
+    a group deleted between the read and the upsert is recreated. The immutable-target
+    ``/api/groups/<group_id>/model-endpoints`` routes do not use it: they write through
+    ``update_group_document_with_etag_guard``, which is where the other legacy
+    group-document writers are expected to move (M7B).
+    """
     group_doc = find_group_by_id(group_id)
     if not group_doc:
         raise ValueError("Group not found")
@@ -462,3 +484,58 @@ def update_group_model_endpoints(group_id: str, endpoints):
     cosmos_groups_container.upsert_item(group_doc)
     bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
     return group_doc
+
+
+def _stored_group_fields(document):
+    """A group document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reason, attempts=GROUP_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored group document and write it back conditionally.
+
+    The group document also carries membership, status and every other group-scoped
+    setting, so a writer that changes one part of it must never restore the rest from
+    an outdated copy. ``apply_changes`` receives a private copy of the document just
+    read and returns the document to write; the replace is conditional on that read's
+    ``_etag`` (``IfNotModified``). When another writer lands in between, the document
+    is read again and ``apply_changes`` is re-applied to the newer copy, up to
+    ``attempts`` writes, after which ``GroupDocumentWriteConflict`` is raised. Because
+    it can run more than once, ``apply_changes`` must derive its result only from the
+    copy it is given; raising from it abandons the write with nothing stored.
+
+    A group that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write bumps the global chat bootstrap cache with ``cache_reason`` and
+    returns the stored document.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_group_fields(current) == _stored_group_fields(attempted):
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_groups_container.replace_item(
+                item=group_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise GroupDocumentWriteConflict("The group document kept changing while it was being saved.")
