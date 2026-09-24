@@ -93,7 +93,11 @@ from functions_source_review import (
 )
 from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, read_workflow_task_result_page
-from functions_workflow_definitions import WorkflowDefinitionConflict, WorkflowDefinitionError
+from functions_workflow_definitions import (
+    WorkflowDefinitionConflict,
+    WorkflowDefinitionError,
+    WorkflowPublicValidationError,
+)
 from functions_workflow_editor import get_workflow_editor_options
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
@@ -1697,6 +1701,8 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
         except WorkflowDefinitionError as exc:
             return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
+        except WorkflowPublicValidationError as exc:
+            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_alerts'}), 400
         except PermissionError as exc:
             return jsonify({'error': 'Workflow settings or sources are not allowed for this account.'}), 403
         except ValueError as exc:
@@ -2103,6 +2109,8 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
         except WorkflowDefinitionError as exc:
             return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
+        except WorkflowPublicValidationError as exc:
+            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_alerts'}), 400
         except ValueError as exc:
             return jsonify({'error': 'Invalid workflow settings. Review the task, runner, trigger, and document inputs.'}), 400
         except LookupError as exc:

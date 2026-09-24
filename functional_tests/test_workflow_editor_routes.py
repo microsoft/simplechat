@@ -18,7 +18,11 @@ from flask import Flask, jsonify, request
 from azure.core.exceptions import AzureError
 
 from test_workflow_definition_store_integration import definition, load_group_store, load_personal_store
-from functions_workflow_definitions import WorkflowDefinitionConflict, WorkflowDefinitionError
+from functions_workflow_definitions import (
+    WorkflowDefinitionConflict,
+    WorkflowDefinitionError,
+    WorkflowPublicValidationError,
+)
 from functions_workflow_editor import build_workflow_editor_options
 
 
@@ -49,6 +53,7 @@ def editor_api():
         "request": request, "jsonify": jsonify, "logging": logging,
         "WorkflowDefinitionConflict": WorkflowDefinitionConflict,
         "WorkflowDefinitionError": WorkflowDefinitionError,
+        "WorkflowPublicValidationError": WorkflowPublicValidationError,
         "AzureError": AzureError,
         "get_current_user_id": lambda: state["actor"],
         "get_settings": lambda: {"allow_group_workflows": True, "private_secret": "never-return"},

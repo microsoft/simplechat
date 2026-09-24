@@ -48,6 +48,18 @@ class WorkflowDefinitionConflict(WorkflowDefinitionError):
     """The editor is stale or cannot preserve the stored definition."""
 
 
+class WorkflowPublicValidationError(ValueError):
+    """A reviewed, data-free workflow settings error which a save route may return as written.
+
+    Its message names only positions and fixed limits, never caller-supplied text. It remains a
+    ``ValueError`` so every existing caller that handles ``ValueError`` behaves as before.
+    """
+
+    def __init__(self, public_message):
+        self.public_message = public_message
+        super().__init__(public_message)
+
+
 def normalize_publication_completion_policy(value):
     if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_COMPLETION_POLICIES:
         raise WorkflowDefinitionError("Publication completion must be submitted, approved, or indexed_ready.")
