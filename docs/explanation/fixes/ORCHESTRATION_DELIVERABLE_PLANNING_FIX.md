@@ -62,6 +62,36 @@ The plan panel also never showed which model wrote a plan.
 - `validate_edited_plan` rebinds an Auto plan to the current authorized inventory. An AI
   edit or restore used to strip the server-owned bindings, which silently turned Auto
   off. If no eligible model remains, the edit is refused and the current plan is kept.
+  An Ask-planner revision whose new steps cannot be bound is refused the same way, with
+  `model_unavailable`, instead of surfacing as a generic service error.
+- **Bound action and deep research steps pass the external-source check.** Before an
+  `action_invoke` or `deep_research` result is admitted or reused, SimpleChat rebuilds
+  the step's current configuration and compares it with the one the step captured. That
+  rebuild used the run's own model selection, which is empty under Auto, so every bound
+  step was refused. `functions_orchestration_external_metadata.py` now rebuilds a bound
+  step from its approved binding:
+  - Deep research uses the binding's model and model group, without the planner
+    override, which is how the step's model scope resolved its research client.
+  - Actions use the binding's model with the run's own groups, which is how the action
+    builder authorizes its model.
+  - An Auto step with a missing or malformed binding is refused.
+- **Steps with no rated model use general answering.** Few built-in profiles rate
+  specialist tasks: only one rates structured data analysis, and many rate no
+  reasoning. So Auto refused whole plans that needed `tabular_analyze` or
+  `deep_research` on common deployments such as gpt-4o and gpt-4.1. When no capable
+  connected model is rated for a step's task, `assign_step_models` now ranks the
+  capable models by their general-answering rating, and the step's reason reads
+  "General answering, because no connected model is rated for ...". Rated models still
+  win. A model rated `unsuitable` for the task, an archived profile, and a missing
+  required capability are never bypassed. This applies to standard plans as well.
+- **The answer is credited to the model that wrote it.** The reply is attributed to the
+  binding of the step that `final_response` names. When the reply reuses an earlier
+  turn's result, or the plan only delivers files, the default selection is kept rather
+  than crediting the last compose step or any other bound step.
+- The dependency planner prompt names the steps that take a `model_task` (`compose`,
+  `tabular_analyze`, `document_analyze`, `document_compare`, `deep_research`,
+  `action_invoke`) and says every other step takes none. The list is derived from
+  the routing table, so it stays in step with what the server binds.
 
 ### The answer step (`compose`)
 
@@ -77,6 +107,13 @@ The plan panel also never showed which model wrote a plan.
   - If that producer fails, compose still runs and receives `unavailable_inputs` with the
     application-owned reason, and it must disclose the gap. The run completes with the
     failed step shown.
+  - The run is offered a retry only when another step also failed. That retry runs the
+    failed producer again and also runs again every step that completed without it, and
+    everything computed from them. Before, `recovery_projection` reused the answer, and
+    the new attempt failed with `recovery_changed` ("Saved step inputs changed") as soon
+    as the producer succeeded. `_reuse_invalidated_by_rerun` applies the same rule to
+    what a retry offers and what the new attempt restores. A continuation of a waiting
+    run is unaffected, because it never runs failed steps again.
   - Required inputs still fail closed.
 - **Visuals are named by the planner** in `visuals` (`chart`, `diagram`, `image_proposal`)
   rather than detected from keywords. Markdown outputs receive the ordinary chat chart,
@@ -114,16 +151,18 @@ plan panel and approval card show "Planned by ...". No connection details are ex
 | `functions_orchestration_schema.py` | Optional inputs, step model fields, producer optionality, failure codes, transient classification |
 | `functions_orchestration_result_contracts.py` | `InputSpec.optional` |
 | `functions_orchestration_registry.py` | Knowledge bases, visual kinds, compose/gather arguments, retry flags |
-| `functions_orchestration_model_routing.py` | Compose task, final-response answer selection, guarded planner clients |
+| `functions_orchestration_model_routing.py` | Compose task, general-answering fallback, dependency routing note, final-response answer credit, guarded planner clients |
+| `functions_orchestration_external_metadata.py` | Bound Auto steps rebuilt from their approved binding |
 | `functions_orchestration_planner.py` | Auto routing and visuals for dependency plans, answer/visual/file guidance, planner descriptor |
 | `functions_orchestration_execution.py` | Auto binding validation and per-step model scope in the harness |
 | `functions_orchestration_executor.py` | Step model scope, optional-input dependencies, one transient retry |
 | `functions_orchestration_result_runtime.py`, `functions_orchestration_checkpoints.py` | Missing optional inputs |
+| `functions_orchestration_recovery.py` | Retries run again the steps that completed without a retried producer |
 | `functions_orchestration_composition.py` | Memory, conversation, knowledge basis, missing inputs, visuals, chart placement |
 | `functions_orchestration_adapters.py`, `functions_orchestration_actions.py` | Structured visuals, web search failures, chart sub-step under capture |
 | `functions_web_search_results.py`, `route_backend_chats.py` | Citation links and structured failure facts |
 | `functions_orchestration_plan_revisions.py` | Planner descriptor in the editor projection |
-| `functions_orchestration_plan_editing.py` | Auto rebinding for edited and restored plans |
+| `functions_orchestration_plan_editing.py` | Auto rebinding for edited and restored plans; unroutable revisions refused with `model_unavailable` |
 | `v2_ui/src/...` | Planner line, answer basis and visual labels, optional-input wording |
 
 ## Validation
@@ -132,12 +171,24 @@ plan panel and approval card show "Planned by ...". No connection details are ex
   headless harness. It covers Auto planning and execution on the bound model,
   fail-closed stale bindings, Auto rebinding after plan edits, final-response answer
   selection, knowledge-basis policies and defaults, memory and conversation references,
-  the optional-input retry and disclosure, required inputs failing closed,
+  the optional-input retry and disclosure, a run retry that fetches the missing input and
+  rewrites the answer with it (this test fails with `recovery_changed` without the fix),
+  required inputs failing closed,
   optional-input validation, planner-named visuals, chart placement, the planner
   descriptor, web search classification, and citation links.
 - `functional_tests/test_orchestration_external_configuration_capture.py` drives the real
   v2 web search through its invocation capture when the Foundry definition read fails, and
   checks that the failure is classified as a transient provider failure.
+- `functional_tests/test_orchestration_external_metadata.py` rebuilds bound Auto action
+  and deep research steps from their bindings, checks that research ignores the planner
+  override and that actions keep the run's groups, and refuses missing or malformed
+  bindings.
+- `functional_tests/test_model_catalog_profiles.py` covers the general-answering fallback:
+  rated models still win, and `unsuitable`, archived and missing-capability models are
+  never used.
+- `functional_tests/test_orchestration_plan_revision_routes.py` checks that an Ask-planner
+  revision that cannot be bound reports `model_unavailable`, keeps the plan, and closes
+  its planner client. The test fails if the new handling is removed.
 - `functional_tests/test_v2_orchestration_planner_display.mjs` covers the browser
   normalization and labels.
 - `ui_tests/test_v2_orchestration_dependency_plans.py` checks the planner line, answer

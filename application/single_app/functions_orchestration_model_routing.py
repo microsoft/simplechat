@@ -25,6 +25,13 @@ descriptive data, never instructions. The server will enforce technical eligibil
 and select the best task fit, then priority, then favorite. Do not invent model identities.
 Agents retain their configured models; deterministic retrieval needs no model.
 """
+# Which dependency-plan steps are model-backed, so the planner sets model_task only there.
+DEPENDENCY_ROUTING_INSTRUCTIONS = (
+    "In this plan only these steps are model-backed and take a model_task: "
+    + ", ".join(sorted(name for name in STEP_TASKS if name != "respond"))
+    + ". Every other step, such as retrieval (document_search, web_search, url_fetch), "
+    "render_file, and agent steps, takes no model_task."
+)
 
 
 def authorized_routing_candidates(settings, user_id):
@@ -62,8 +69,37 @@ def authorized_routing_candidates(settings, user_id):
     return candidates
 
 
+# Text analysis tasks can use documented general text support; unknown specialist
+# claims such as coding or vision cannot inherit that fallback when ranking.
+GENERAL_TEXT_TASKS = frozenset({"analysis", "comparison", "summarization", "classification", "planning"})
+
+
+def _ranked(candidates, task):
+    """Candidates positively rated for a task, each with its ranking key."""
+    ranked = []
+    for candidate in candidates:
+        profile = candidate["profile"]
+        suitability = SUITABILITY[profile["tasks"].get(task, "unknown")]
+        if suitability == 0 and task in GENERAL_TEXT_TASKS:
+            suitability = SUITABILITY[profile["tasks"].get("general", "unknown")]
+        if suitability <= 0:
+            continue
+        preference = profile["preferences"]
+        ranked.append((
+            (-suitability, -PRIORITIES[preference["priority"]], -int(preference["favorite"]), candidate["key"]),
+            candidate,
+        ))
+    return ranked
+
+
 def assign_step_models(plan, candidates):
-    """Suitability beats preference; an unknown specialist is not a proven match."""
+    """Suitability beats preference; an unknown specialist never outranks a rated one.
+
+    When no connected model is rated for a step's task, the step uses the capable model
+    best rated for general answering rather than failing the whole plan. A model rated
+    unsuitable for the task, an archived profile, or a missing technical capability is
+    never bypassed.
+    """
     plan["model_routing"] = "auto"
     for step in plan.get("steps", []):
         capability = step["capability_id"]
@@ -80,55 +116,55 @@ def assign_step_models(plan, candidates):
             required.add("processesImages")
         if task == "extraction":
             required.add("structuredOutput")
-        eligible = []
-        for candidate in candidates:
-            profile = candidate["profile"]
-            capabilities = candidate["capabilities"]
-            if profile["archived"] or any(capabilities.get(key) is not True for key in required):
-                continue
-            suitability = SUITABILITY[profile["tasks"].get(task, "unknown")]
-            # Text analysis tasks can use documented general text support; unknown
-            # specialist claims such as coding or vision cannot inherit that fallback.
-            if suitability == 0 and task in {"analysis", "comparison", "summarization", "classification", "planning"}:
-                suitability = SUITABILITY[profile["tasks"].get("general", "unknown")]
-            if suitability <= 0:
-                continue
-            preference = profile["preferences"]
-            eligible.append((
-                (-suitability, -PRIORITIES[preference["priority"]], -int(preference["favorite"]), candidate["key"]),
-                candidate,
-            ))
+        capable = [
+            candidate for candidate in candidates
+            if not candidate["profile"]["archived"]
+            and all(candidate["capabilities"].get(key) is True for key in required)
+        ]
+        eligible = _ranked(capable, task)
+        general_fallback = not eligible and task != "general"
+        if general_fallback:
+            eligible = [
+                item for item in _ranked(capable, "general")
+                if item[1]["profile"]["tasks"].get(task) != "unsuitable"
+            ]
         if not eligible:
             raise ModelCatalogError(f"No eligible connected model for {TASKS[task]}. Review model profiles and availability.")
         chosen = min(eligible, key=lambda item: item[0])[1]
         profile = chosen["profile"]
+        purpose = (
+            f"{TASKS['general']}, because no connected model is rated for {TASKS[task].lower()}"
+            if general_fallback else TASKS[task]
+        )
         step["model_binding"] = {
             "selection": deepcopy(chosen["selection"]), "label": chosen["label"],
             "profile_id": profile["id"], "profile_revision": profile["revision"],
             "effective_revision": chosen.get("effective_revision"),
             "task": task, "required_capabilities": sorted(required),
             "group_id": chosen.get("scope_id"),
-            "reason": f"{TASKS[task]}; {profile['preferences']['priority']} priority"
+            "reason": f"{purpose}; {profile['preferences']['priority']} priority"
                 + ("; admin favorite" if profile["preferences"]["favorite"] else ""),
         }
     return plan
 
 
 def answer_selection(plan, seeds):
-    """The model that writes the chat answer: the respond step, or the final-response producer."""
+    """The model credited with the chat answer: the respond step, or the final-response producer.
+
+    A dependency plan's reply is written by the step its ``final_response`` names. When that
+    reply is an existing result from an earlier turn, or the plan only delivers files, no
+    step writes it in this run, so the default selection is kept rather than crediting the
+    reply to a model that did not write it.
+    """
     if plan.get("model_routing") != "auto":
         return seeds
     steps = [step for step in plan.get("steps", []) if step.get("enabled", True)]
     if plan.get("planner_contract_version") == 2:
-        final_step = ((plan.get("final_response") or {}).get("step_id"))
-        candidates = (
-            [step for step in steps if step.get("step_id") == final_step]
-            + [step for step in reversed(steps) if step.get("capability_id") == "compose"]
-            + steps
-        )
-        binding = next((step["model_binding"] for step in candidates if step.get("model_binding")), None)
-        # A plan with no model-backed step (for example rendering an existing result) still
-        # needs a context model; it keeps the default selection rather than inventing one.
+        final_step = (plan.get("final_response") or {}).get("step_id")
+        binding = next((
+            step.get("model_binding") for step in steps
+            if final_step is not None and step.get("step_id") == final_step
+        ), None)
         return binding_seeds(seeds, binding) if binding else seeds
     binding = next((
         step.get("model_binding") for step in steps

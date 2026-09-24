@@ -6,6 +6,7 @@ Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
 never replaces the original publication failure with a missing-reply read.
+A retry that runs a failed producer again also runs the steps that completed without it.
 """
 
 import logging
@@ -30,7 +31,8 @@ from functions_orchestration_plan_revisions import PlanRevisionError, read_revis
 from functions_orchestration_output_store import build_output_cleanup_intent
 from functions_orchestration_registry import admitted_export_pairs, get_capability
 from functions_orchestration_schema import (
-    build_failure, build_step_result, plan_contract_version, safe_failure, summarize_plan,
+    PlanValidationError, build_failure, build_step_result, plan_contract_version, safe_failure, step_input_specs,
+    summarize_plan,
 )
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import (
@@ -64,6 +66,34 @@ def _retained_producer_steps(record):
         if plan_contract_version(record.get('plan')) == 2
         or step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
     ]
+
+
+def _reuse_invalidated_by_rerun(record, retained):
+    """Retained dependency steps that must run again because something they consumed does.
+
+    A step can complete without an optional input whose producer failed. When a retry
+    runs that producer again, the saved result was computed without an input the new
+    attempt may now have, so the step and every step computed from it run again. Reusing
+    it would otherwise fail the attempt with ``recovery_changed`` as soon as the producer
+    succeeded, and the retry could never deliver what the first attempt missed.
+    """
+    if plan_contract_version(record.get('plan')) != 2:
+        return set()
+    steps = [step for step in record['plan'].get('steps') or [] if step.get('enabled', True)]
+    rerun = {step['step_id'] for step in steps} - set(retained)
+    consumed = {
+        step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
+        for step in steps if step['step_id'] in retained
+    }
+    invalidated = set()
+    while True:
+        added = {
+            step_id for step_id, producers in consumed.items()
+            if step_id not in invalidated and producers & (rerun | invalidated)
+        }
+        if not added:
+            return invalidated
+        invalidated |= added
 
 
 class RecoveryError(RuntimeError):
@@ -340,6 +370,11 @@ def recovery_projection(record):
         step['step_id'] for step in steps
         if step.get('status') in _retained_statuses(record) and step.get('capability_id') != 'respond'
     ]
+    try:
+        stale = _reuse_invalidated_by_rerun(record, reused)
+    except PlanValidationError:
+        stale, invalid = set(), True
+    reused = [step_id for step_id in reused if step_id not in stale]
     retry = [
         step['step_id'] for step in record.get('plan', {}).get('steps') or []
         if step.get('enabled', True) and (step['step_id'] not in reused or step.get('capability_id') == 'respond')
@@ -1031,6 +1066,11 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
     if source.get('execution_binding') != binding:
         raise CheckpointError('recovery_changed')
     source_steps = {step['step_id']: step for step in _execution_steps(source)}
+    # A continuation keeps failed steps terminal; any other resume runs them again, so a
+    # step that completed without one of their outputs cannot be reused.
+    stale = set() if allow_waiting else _reuse_invalidated_by_rerun(record, {
+        step_id for step_id, saved in source_steps.items() if saved.get('status') in _retained_statuses(source)
+    })
     payloads = {}
     state_fields = STATE_FIELDS + OPTIONAL_STATE_FIELDS + (DEPENDENCY_STATE_FIELDS if dependency_contract else ())
     initial_state = {key: deepcopy(getattr(context, key, None)) for key in state_fields}
@@ -1064,7 +1104,7 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                 continue
             if dependency_contract and saved.get('status') == 'running':
                 raise CheckpointError('result_commit_unconfirmed')
-            if saved.get('status') not in _retained_statuses(source):
+            if saved.get('status') not in _retained_statuses(source) or step['step_id'] in stale:
                 interrupted = True
                 continue
             # A later success consumed the old earlier_findings. Never repair that
