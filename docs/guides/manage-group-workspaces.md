@@ -50,8 +50,8 @@ link or the back button returns to the same list.
 
 - **Open** a group you belong to, to go to its workspace.
 - **Request to join** a group you don't belong to. An owner or admin approves
-  the request, currently on the classic manage page. **Cancel request** takes
-  it back.
+  the request in **Members** (from version **0.261.155**), or on the classic
+  manage page. **Cancel request** takes it back.
 - **Create group** appears when your organization lets you create groups. Give
   it a name of up to 80 characters, and optionally a description. The new
   group's workspace opens, with you as its owner.
@@ -69,7 +69,11 @@ Counts describe the whole visible workspace rather than the current page.
 
 Inspect a document for available metadata, its owning/shared-group relationship,
 processing or screening status, and **Version history**. Pending shares and held
-sources remain restricted and cannot be selected for chat. On narrow screens,
+sources remain restricted and cannot be selected for chat. From version
+**0.261.159**, a held document's details explain the hold and offer only the
+cleanup the group allows, such as **Delete** for a document your group owns
+whose scan was rejected or failed; chat, download, tagging, editing and sharing
+wait until a reviewer resolves the hold in Content review. On narrow screens,
 use **Filters** and the details toggle to open the same controls in dialogs.
 
 Select eligible documents and choose **Chat** to carry their group/document
@@ -218,7 +222,9 @@ settings there doesn't undo other changes either. Renaming the group, or
 changing its color, logo, download setting or retention periods, keeps a
 membership change made at the same moment. Retention can be set back to
 **Using organization default**. **Delete group** now asks the owner to remove
-the group's documents first when it has any; before, it counted none.
+the group's documents first when it has any; before, it counted none. From
+version **0.261.160**, creating, renaming or deleting a tag in the classic group
+workspace also keeps changes made to the group at the same moment.
 
 Save or cancel open changes before switching groups. Navigating away from an
 unfinished editor asks whether to discard it. Returning to the browser refreshes
