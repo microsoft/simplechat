@@ -1,12 +1,13 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.157
+Version: 0.261.160
 Implemented in: 0.261.128
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The API fixture never permits personal document requests or document writes, and
 views the groups as an ordinary member, whose server context offers no management.
+Tags are stored lowercase, as the server normalizes them.
 """
 
 import copy
@@ -111,20 +112,20 @@ def test_queries_use_whole_sets(group_documents_ui):
     expect(explorer(ui).get_by_text(f"1\u201350 of {total}", exact=True)).to_be_visible()
     assert last_list(ui).query["page_size"] == ["50"]
     counts = ui.facets("group-a")
-    finance = filters(ui).get_by_role("button", name=re.compile(r"^Finance"))
-    expect(finance).to_contain_text(str(counts["by_tag"]["Finance"]))
+    finance = filters(ui).get_by_role("button", name=re.compile(r"^finance"))
+    expect(finance).to_contain_text(str(counts["by_tag"]["finance"]))
     finance.click()
-    filters(ui).get_by_role("button", name=re.compile(r"^Team")).click(modifiers=["Control"])
+    filters(ui).get_by_role("button", name=re.compile(r"^team")).click(modifiers=["Control"])
     filters(ui).get_by_role("button", name=re.compile(r"^Internal")).click()
     search(ui, "Team research 57")
     expect(ui.page.get_by_role("button", name="Details for Team research 57", exact=True)).to_be_visible()
     expect(explorer(ui).get_by_text("1\u20131 of 1", exact=True)).to_be_visible()
     query = last_list(ui).query
     assert query["search"] == ["Team research 57"]
-    assert query["tags"] == ["Finance,Team"]
+    assert query["tags"] == ["finance,team"]
     assert query["classification"] == ["Internal"]
     assert query["page"] == ["1"]
-    expect(finance).to_contain_text(str(counts["by_tag"]["Finance"]))
+    expect(finance).to_contain_text(str(counts["by_tag"]["finance"]))
     expect(filters(ui).get_by_role("button", name=re.compile(r"^All documents"))).to_contain_text(str(total))
     assert all(
         entry.query == {"group_id": ["group-a"]}
@@ -195,7 +196,7 @@ def test_restricted_selection_and_writes(group_documents_ui):
     expect(row(ui, "Published report").get_by_role("checkbox")).to_be_checked()
     expect(row(ui, "pending-report.pdf").get_by_role("checkbox")).not_to_be_checked()
     assert_read_only(ui)
-    filters(ui).get_by_role("button", name=re.compile(r"^Finance")).evaluate("""element => {
+    filters(ui).get_by_role("button", name=re.compile(r"^finance")).evaluate("""element => {
         const dataTransfer = new DataTransfer();
         dataTransfer.setData('application/x-simplechat-documents', JSON.stringify(['same-document']));
         element.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer }));
@@ -468,20 +469,20 @@ def test_chat_rechecks_screening(group_documents_ui):
 def test_chat_handoff_keeps_source_identity(group_documents_ui):
     ui = group_documents_ui
     open_documents(ui)
-    filters(ui).get_by_role("button", name=re.compile(r"^Finance")).click()
+    filters(ui).get_by_role("button", name=re.compile(r"^finance")).click()
     row(ui, "Published report").get_by_role("checkbox").check()
     expect(ui.page.get_by_text("Approved metadata for Published report.", exact=True)).to_be_visible()
     ui.active_group = "group-b"
     explorer(ui).get_by_role("button", name="Chat", exact=True).first.click()
     expect(ui.page.get_by_role("button", name="Remove Published report", exact=True)).to_be_visible()
-    expect(ui.page.get_by_role("button", name="Remove Finance", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Remove finance", exact=True)).to_be_visible()
     ui.allow_chat_writes = True
     ui.page.locator("#composer-input").fill("Review the selected group report.")
     with ui.page.expect_request(lambda request: request.method == "POST" and urlsplit(request.url).path == "/api/chat/stream") as sent:
         ui.page.get_by_role("button", name="Send message", exact=True).click()
     body = sent.value.post_data_json
     assert body["selected_document_ids"] == ["shared-report"]
-    assert body["tags"] == ["Finance"]
+    assert body["tags"] == ["finance"]
     assert "group-a" in body["active_group_ids"]
     assert body["chat_type"] == "user" and body["doc_scope"] == "all"
     expect(ui.page.get_by_text("Workspace review response.", exact=True)).to_be_visible()

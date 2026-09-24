@@ -1,8 +1,11 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.157
+Version: 0.261.160
 Implemented in: 0.261.129
+Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
+pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
+malformed receipts each robustness scenario names.
 
 Only HTTP responses are scripted. Components, stores, navigation, downloads,
 selection and validation execute in the production SPA. No live service/model
@@ -27,11 +30,15 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.group_document_management import (
-    DOCUMENT_ACTIONS, OPERATIONS, connect_options, delete_result,  # noqa: F401
-    group_management_ui, metadata_result, operation_path, tag_result,  # noqa: F401
-    tag_vocabulary_conflict,
+    CONVERSATION_DELETE_MESSAGE, DOCUMENT_ACTIONS, DOCUMENT_CHANGED_ERROR, DOCUMENT_DELETED_MESSAGE,
+    DOCUMENT_OPERATION_FAILED_ERROR, GROUP_ARCHIVE_NAME, METADATA_UPDATED_MESSAGE, OPERATIONS,
+    PROPAGATION_INCOMPLETE_MESSAGE, SYNCED_DELETE_OPTIONS, TAG_CREATED_MESSAGE, TAG_REVISION_CHANGED_ERROR,
+    attachment, batch_error, bulk_tag_result, connect_options, conversation_delete_guard,  # noqa: F401
+    delete_result, group_management_ui, metadata_result, operation_path, propagation_incomplete,  # noqa: F401
+    queue_result, synced_delete_guard, tag_created, tag_result, tag_vocabulary_conflict, upload_refusal,
+    upload_result,
 )
-from ui_tests.fixtures.group_documents import document, restricted
+from ui_tests.fixtures.group_documents import ARTIFACT_AWAITING_APPROVAL_STATUS, document, pending_artifact, restricted
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID
 
 
@@ -258,7 +265,7 @@ def test_upload_disabled_document_manager_retains_cleanup_and_reprocess(group_ma
     reply = ui.queue_operation(
         "POST", "reprocess_extraction",
         body={"document_ids": ["same-document"], "extraction_mode": "layout"},
-        response={"queued": [{"document_id": "same-document"}], "errors": []}, status=202,
+        response=queue_result("same-document", extraction_mode="layout"), status=202,
     )
     perform(ui, reply, command(ui, "Switch to Enhanced").click)
     expect(explorer(ui).get_by_role("status").filter(has_text="1 of 1 confirmed")).to_be_visible()
@@ -304,11 +311,13 @@ def test_missing_fresh_and_mixed_document_actions_are_not_workspace_authorizatio
 def test_owned_pending_promotion_blocks_chat_actions_and_query_handoff(group_management_ui):
     ui = group_management_ui
     identifier = "pending-promotion"
-    pending = document(
-        "group-a", identifier, "Generated report awaiting approval", timestamp=ui.now - 7,
-        shared_approval_status="owner", tags=[], status="Pending approval",
-        generated_artifact_promotion_status="pending_approval", document_actions=[],
+    title = "Generated report awaiting approval"
+    pending = pending_artifact(
+        document("group-a", identifier, title, timestamp=ui.now - 7, tags=[]),
+        requested_by_user_id="publication-requester", requested_by_display_name="Publishing colleague",
+        requested_at="2026-09-22T10:00:00Z",
     )
+    pending["document_collaboration_actions"] = ["inspect", "approve_artifact", "reject_artifact"]
     assert "content_screening" not in pending
     ui.documents["group-a"].append(pending)
     open_documents(ui)
@@ -345,11 +354,11 @@ def test_owned_pending_promotion_blocks_chat_actions_and_query_handoff(group_man
     assert received["group_id"] == "group-a" and received["shared_approval_status"] == "owner"
     assert "content_screening" not in received
     assert received["generated_artifact_promotion_status"] == "pending_approval"
-    assert received["status"] == "Pending approval" and received["document_actions"] == []
+    assert received["status"] == ARTIFACT_AWAITING_APPROVAL_STATUS and received["document_actions"] == []
     refusal = "Could not load the selected context. Choose it again from Documents."
     expect(ui.page.get_by_text(refusal, exact=True)).to_be_visible()
     expect(ui.page.locator("#composer-input")).to_be_visible()
-    for name in (pending["title"], pending["file_name"], identifier):
+    for name in (title, pending["file_name"], identifier):
         expect(ui.page.get_by_role("button", name=f"Remove {name}", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name=re.compile(r"^(Approve|Reject)(?:\s|$)"))).to_have_count(0)
 
@@ -415,12 +424,10 @@ def test_upload_repeated_file_parts_partial_acceptance_and_real_polling(group_ma
         file_name="accepted.txt", tags=[], status="Processing", percentage_complete=25,
         document_actions=[],
     )
+    refusal = upload_refusal("refused.txt")
     reply = ui.queue_operation(
         "POST", "upload", files=files, status=207,
-        response={
-            "document_ids": ["uploaded-document"], "processed_filenames": ["accepted.txt"],
-            "errors": ["refused.txt: this file was not accepted."],
-        },
+        response=upload_result(["uploaded-document"], ["accepted.txt"], [refusal]),
         records=[uploaded],
     )
     ui.defer_next("POST", reply.path)
@@ -433,7 +440,7 @@ def test_upload_repeated_file_parts_partial_acceptance_and_real_polling(group_ma
     expect(ui.page.get_by_role("combobox", name="Group workspace", exact=True)).to_be_disabled()
     assert len(ui.pending_responses) == 1
     perform(ui, reply, ui.release_responses)
-    expect(ui.page.get_by_role("alert").filter(has_text="refused.txt: this file was not accepted.")).to_be_visible()
+    expect(ui.page.get_by_role("alert").filter(has_text=refusal)).to_be_visible()
     expect(ui.page.get_by_text(
         "Accepted 1 of 2 files. Processing is queued, not complete.", exact=True,
     ).first).to_be_visible()
@@ -466,12 +473,7 @@ def test_metadata_changed_field_patch_retains_failed_draft_and_immutable_group(g
     dialog.get_by_label("Keywords", exact=True).fill("baseline, reviewed")
     body = {"title": "Updated research brief", "keywords": ["baseline", "reviewed"]}
     failed = ui.queue_operation(
-        "PATCH", "same-document", body=body, status=503,
-        response={
-            "error": "document_propagation_incomplete",
-            "message": "Metadata propagation is incomplete. Keep this draft while document repair is required.",
-            "document_id": "same-document", "group_id": "group-a", "repair_required": True,
-        },
+        "PATCH", "same-document", body=body, status=500, response=propagation_incomplete("same-document"),
     )
     perform(ui, failed, dialog.get_by_role("button", name="Save", exact=True).click)
     expect(dialog.get_by_role("alert")).to_contain_text(re.compile(r"propagation|repair", re.IGNORECASE))
@@ -496,6 +498,25 @@ def test_metadata_changed_field_patch_retains_failed_draft_and_immutable_group(g
     assert not any(entry.path == "/api/groups/setActive" for entry in ui.writes)
     assert ui.record("same-document")["authors"] == original["authors"]
     assert ui.record("same-document")["abstract"] == original["abstract"]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Product finding (documents fixture parity): a coded failure carries its machine code in `error` and its "
+    "sentence in `message`, and apiClient's readErrorMessage prefers `error`, so the metadata dialog shows "
+    "'document_propagation_incomplete' instead of the server's sentence. The suite's propagation|repair "
+    "pattern matched the code."
+))
+def test_metadata_propagation_failure_shows_the_servers_sentence(group_management_ui):
+    ui = group_management_ui
+    open_documents(ui)
+    dialog = edit_metadata(ui)
+    dialog.get_by_label(re.compile(r"^Title")).fill("Updated research brief")
+    failed = ui.queue_operation(
+        "PATCH", "same-document", body={"title": "Updated research brief"}, status=500,
+        response=propagation_incomplete("same-document"),
+    )
+    perform(ui, failed, dialog.get_by_role("button", name="Save", exact=True).click)
+    expect(dialog.get_by_role("alert")).to_contain_text(PROPAGATION_INCOMPLETE_MESSAGE)
 
 
 def test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening(group_management_ui):
@@ -534,7 +555,7 @@ def test_malformed_metadata_success_never_discards_the_draft(group_management_ui
     body = {"title": "Unconfirmed metadata draft", "keywords": ["baseline", "unconfirmed"]}
     receipt = metadata_result("same-document", body)
     cases = (
-        ("message-only", {"response": {"message": "Metadata updated."}}),
+        ("message-only", {"response": {"message": METADATA_UPDATED_MESSAGE}}),
         ("raw-record", {"response": {**original, **body}}),
         ("wrong-document", {"response": {**receipt, "document_id": "notes-document"}}),
         ("wrong-group", {"response": {**receipt, "group_id": "group-b"}}),
@@ -586,16 +607,16 @@ def test_bulk_tag_partial_failure_keeps_failed_draft_and_rejects_wrong_scope_dro
         "POST", "bulk-tag",
         body={"document_ids": ["same-document", "notes-document"], "action": "add_tags", "tags": ["review"]},
         status=207,
-        response={
-            "success": [{"document_id": "same-document", "tags": tagged["tags"]}],
-            "errors": [{"document_id": "notes-document", "error": "tag_update_failed", "message": "Field notes could not be tagged."}],
-        },
+        response=bulk_tag_result(
+            [{"document_id": "same-document", "tags": tagged["tags"]}],
+            [batch_error("notes-document", DOCUMENT_CHANGED_ERROR)],
+        ),
         records=[tagged],
     )
     perform(ui, partial, dialog.get_by_role("button", name="Apply", exact=True).click)
     retry_dialog = ui.page.get_by_role("dialog", name="Tag Field notes", exact=True)
     expect(retry_dialog).to_be_visible()
-    expect(retry_dialog.get_by_role("alert")).to_contain_text("Field notes could not be tagged.")
+    expect(retry_dialog.get_by_role("alert")).to_contain_text(DOCUMENT_CHANGED_ERROR)
     expect(retry_dialog.get_by_role("checkbox", name=re.compile(r"^review\b"))).to_be_checked()
     expect(checkbox(ui, "same-document")).not_to_be_checked()
     expect(checkbox(ui, "notes-document")).to_be_checked()
@@ -604,7 +625,7 @@ def test_bulk_tag_partial_failure_keeps_failed_draft_and_rejects_wrong_scope_dro
     retry = ui.queue_operation(
         "POST", "bulk-tag",
         body={"document_ids": ["notes-document"], "action": "add_tags", "tags": ["review"]},
-        response={"success": [{"document_id": "notes-document", "tags": notes["tags"]}], "errors": []},
+        response=bulk_tag_result([{"document_id": "notes-document", "tags": notes["tags"]}]),
         records=[notes],
     )
     perform(ui, retry, retry_dialog.get_by_role("button", name="Apply", exact=True).click)
@@ -614,7 +635,7 @@ def test_bulk_tag_partial_failure_keeps_failed_draft_and_rejects_wrong_scope_dro
     remove = ui.queue_operation(
         "POST", "bulk-tag",
         body={"document_ids": ["notes-document"], "action": "remove_tags", "tags": ["review"]},
-        response={"success": [{"document_id": "notes-document", "tags": untagged["tags"]}], "errors": []},
+        response=bulk_tag_result([{"document_id": "notes-document", "tags": untagged["tags"]}]),
         records=[untagged],
     )
     perform(ui, remove, ui.page.get_by_role("button", name="Remove tag review", exact=True).click)
@@ -636,7 +657,7 @@ def test_bulk_tag_partial_failure_keeps_failed_draft_and_rejects_wrong_scope_dro
     drop = ui.queue_operation(
         "POST", "bulk-tag",
         body={"document_ids": ["notes-document"], "action": "add_tags", "tags": ["finance"]},
-        response={"success": [{"document_id": "notes-document", "tags": tagged_notes["tags"]}], "errors": []},
+        response=bulk_tag_result([{"document_id": "notes-document", "tags": tagged_notes["tags"]}]),
         records=[tagged_notes],
     )
     perform(ui, drop, lambda: drop_on_tag(ui, "finance", payload))
@@ -660,10 +681,7 @@ def test_malformed_bulk_tag_success_keeps_every_failed_item_selected(group_manag
         changed_record(ui, identifier, tags=[*ui.record(identifier)["tags"], "review"])
         for identifier in body["document_ids"]
     ]
-    receipt = {
-        "success": [{"document_id": record["id"], "tags": record["tags"]} for record in updated],
-        "errors": [],
-    }
+    receipt = bulk_tag_result([{"document_id": record["id"], "tags": record["tags"]} for record in updated])
     for name, outcome, error_text in (
         ("html", {
             "response": b"<html><body>No operation receipt.</body></html>", "content_type": "text/html",
@@ -738,8 +756,8 @@ def test_single_delete_rejects_message_only_and_incomplete_success_receipts(grou
         deleted_document_ids=["same-document", "previous-version"], promoted_document_id=None,
     )
     cases = (
-        ("message-only", {"response": {"message": "Document deleted."}}),
-        ("missing-revision-details", {"response": delete_result("same-document")}),
+        ("message-only", {"response": {"message": DOCUMENT_DELETED_MESSAGE}}),
+        ("missing-revision-details", {"response": {**delete_result("same-document"), "message": DOCUMENT_DELETED_MESSAGE}}),
         ("wrong-requested-id", {"response": {**receipt, "deleted": [{"document_id": "previous-version"}]}}),
         ("wrong-deleted-count", {"response": {**receipt, "deleted_count": 2}}),
         ("wrong-error-count", {"response": {**receipt, "error_count": 1}}),
@@ -775,19 +793,10 @@ def test_single_sync_guard_preserves_advertised_actions_without_force_aliases(gr
         dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
         guarded = ui.queue_operation(
             "DELETE", identifier, query={"delete_mode": ["all_versions"]}, status=409,
-            response={
-                "error": "synced_document_delete_requires_action",
-                "message": "Choose what should happen to the synced source.",
-                "file_sync": {
-                    "source_id": "source-1", "source_name": "Research library",
-                    "remote_path": "/library/teams/research.pdf", "relative_path": "teams/research.pdf",
-                },
-                "options": [
-                    {"action": "delete_only", "label": "Delete here; allow the source to sync again"},
-                    {"action": "ignore_remote", "label": "Delete here and ignore this remote file"},
-                ],
-                "needs_confirmation": True,
-            },
+            response=synced_delete_guard(identifier, {
+                "source_id": "source-1", "source_name": "Research library",
+                "remote_path": "/library/teams/research.pdf", "relative_path": "teams/research.pdf",
+            }),
         )
         perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
         confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
@@ -797,9 +806,7 @@ def test_single_sync_guard_preserves_advertised_actions_without_force_aliases(gr
         expect(retry_button).to_be_disabled()
         actions = confirmation.get_by_label("Synced-file action", exact=True)
         expect(actions.get_by_role("option")).to_have_text([
-            "Choose the advertised source action",
-            "Delete here; allow the source to sync again",
-            "Delete here and ignore this remote file",
+            "Choose the advertised source action", *(option["label"] for option in SYNCED_DELETE_OPTIONS),
         ])
         actions.select_option(action)
         revisions = ui.versions.get(("group-a", identifier), [ui.record(identifier)])
@@ -826,17 +833,9 @@ def test_partial_bulk_delete_retains_conversation_guard_and_retries_only_failed_
     dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
     expect(dialog).to_contain_text("Research brief")
     expect(dialog).to_contain_text("Field notes")
-    guard = {
-        "document_id": "notes-document",
-        "error": "conversation_linked_document_delete_requires_confirmation",
-        "message": "Field notes is linked to Planning review. Confirm before deleting.",
-        "conversation": {
-            "id": "existing-workspace-chat", "title": "Planning review",
-            "url": "/v2/chat?conversationId=existing-workspace-chat",
-        },
-        "document": {"id": "notes-document", "file_name": "notes-document.pdf"},
-        "needs_confirmation": True,
-    }
+    guard = conversation_delete_guard(
+        "notes-document", "existing-workspace-chat", title="Planning review", file_name="notes-document.pdf",
+    )
     partial = ui.queue_operation(
         "POST", "bulk-delete",
         body={
@@ -848,7 +847,8 @@ def test_partial_bulk_delete_retains_conversation_guard_and_retries_only_failed_
     )
     perform(ui, partial, dialog.get_by_role("button", name="Delete", exact=True).click)
     confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
-    expect(confirmation).to_contain_text("Planning review")
+    expect(confirmation).to_contain_text("Field notes")
+    expect(confirmation).to_contain_text(CONVERSATION_DELETE_MESSAGE)
     expect(confirmation).not_to_contain_text("Research brief")
     expect(checkbox(ui, "notes-document")).to_be_checked()
     expect(ui.page.get_by_role("button", name="Details for Research brief", exact=True)).to_have_count(0)
@@ -871,6 +871,30 @@ def test_partial_bulk_delete_retains_conversation_guard_and_retries_only_failed_
     assert not any("force" in entry.query or "keep_source" in str(entry.body) for entry in ui.operation_requests)
 
 
+@pytest.mark.xfail(strict=True, reason=(
+    "Product finding (documents fixture parity): the server sends the linked conversation (its title and url) "
+    "with the guard, but the confirmation shows only the document and the guard's generic message, so it "
+    "never says which conversation the file belongs to. The suite asserted the title only because the fixture "
+    "wrote it into an invented message."
+))
+def test_conversation_guard_names_the_linked_conversation(group_management_ui):
+    ui = group_management_ui
+    open_documents(ui)
+    select_documents(ui, "notes-document")
+    command(ui, "Delete").click()
+    dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
+    guarded = ui.queue_operation(
+        "DELETE", "notes-document", query={"delete_mode": ["all_versions"]}, status=409,
+        response=conversation_delete_guard(
+            "notes-document", "existing-workspace-chat", title="Planning review", file_name="notes-document.pdf",
+        ),
+    )
+    perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
+    confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
+    expect(confirmation).to_contain_text(CONVERSATION_DELETE_MESSAGE)
+    expect(confirmation).to_contain_text("Planning review")
+
+
 def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_management_ui, tmp_path):
     ui = group_management_ui
     ui.record("same-document")["file_name"] = "research.txt"
@@ -881,7 +905,7 @@ def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_ma
     select_documents(ui, "shared-report")
     single = ui.queue_operation(
         "GET", "shared-report/download", response=source_bytes, content_type="text/plain",
-        headers={"Content-Disposition": 'attachment; filename="published.txt"'},
+        headers=attachment("published.txt"),
     )
     with ui.page.expect_download() as download:
         perform(ui, single, command(ui, "Download").click)
@@ -899,12 +923,10 @@ def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_ma
     archive_bytes = stream.getvalue()
     batch = ui.queue_operation(
         "POST", "download", body={"document_ids": ["same-document", "shared-report"]},
-        response=archive_bytes, content_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="documents.zip"'},
+        response=archive_bytes, content_type="application/zip", headers=attachment(GROUP_ARCHIVE_NAME),
     )
     with ui.page.expect_download() as download:
         perform(ui, batch, command(ui, "Download").click)
-    assert download.value.suggested_filename == "documents.zip"
     saved_archive = tmp_path / "set.zip"
     download.value.save_as(saved_archive)
     actual_archive = saved_archive.read_bytes()
@@ -917,6 +939,27 @@ def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_ma
     assert owned_file == owned_bytes and shared_file == source_bytes
     assert ui.record("shared-report")["group_id"] == "origin"
     assert "origin" not in ui.groups
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Product finding (documents fixture parity): the explorer saves every multi-document download as "
+    "'documents.zip' (DocumentExplorer's saveBlob fallback) instead of the attachment name the server sends, "
+    "'group-documents.zip'. The fixture's invented Content-Disposition used the explorer's own name."
+))
+def test_batch_download_is_saved_under_the_servers_archive_name(group_management_ui):
+    ui = group_management_ui
+    open_documents(ui)
+    select_documents(ui, "same-document", "shared-report")
+    stream = io.BytesIO()
+    with ZipFile(stream, "w", compression=ZIP_STORED) as archive:
+        archive.writestr(ZipInfo("research.txt", date_time=(2026, 9, 1, 0, 0, 0)), b"Research source.\n")
+    batch = ui.queue_operation(
+        "POST", "download", body={"document_ids": ["same-document", "shared-report"]},
+        response=stream.getvalue(), content_type="application/zip", headers=attachment(GROUP_ARCHIVE_NAME),
+    )
+    with ui.page.expect_download() as download:
+        perform(ui, batch, command(ui, "Download").click)
+    assert download.value.suggested_filename == GROUP_ARCHIVE_NAME
 
 
 def test_final_html_json_and_error_download_bodies_never_become_files(group_management_ui):
@@ -971,13 +1014,13 @@ def test_metadata_and_reprocess_partial_queues_refresh_success_and_retry_failure
         partial = ui.queue_operation(
             "POST", resource, body={"document_ids": ["same-document", "notes-document"], **extra},
             status=207,
-            response={
-                "queued": [{"document_id": "same-document", "status": "queued"}],
-                "errors": [{"document_id": "notes-document", "error": "queue_unavailable", "message": "Field notes was not queued."}],
-            },
+            response=queue_result(
+                "same-document", errors=[batch_error("notes-document")],
+                extraction_mode=extra.get("extraction_mode"),
+            ),
         )
         perform(ui, partial, command(ui, label).click)
-        expect(explorer(ui).get_by_role("alert")).to_contain_text("Field notes was not queued.")
+        expect(explorer(ui).get_by_role("alert")).to_contain_text(DOCUMENT_OPERATION_FAILED_ERROR)
         expect(explorer(ui).get_by_role("alert")).to_contain_text("1 of 2 confirmed")
         expect(checkbox(ui, "same-document")).not_to_be_checked()
         expect(checkbox(ui, "notes-document")).to_be_checked()
@@ -986,7 +1029,7 @@ def test_metadata_and_reprocess_partial_queues_refresh_success_and_retry_failure
         assert refreshed_reads > initial_reads
         retry = ui.queue_operation(
             "POST", resource, body={"document_ids": ["notes-document"], **extra}, status=202,
-            response={"queued": [{"document_id": "notes-document", "status": "queued"}], "errors": []},
+            response=queue_result("notes-document", extraction_mode=extra.get("extraction_mode")),
         )
         perform(ui, retry, command(ui, label).click)
         expect(explorer(ui).get_by_role("status").filter(has_text="queued: 1 of 1 confirmed")).to_be_visible()
@@ -1005,7 +1048,7 @@ def test_native_tags_admin_create_normalizes_name_and_recolour_requires_save(gro
     vocabulary = {**ui.vocabulary["group-a"], "urgent": "#8b5cf6"}
     created = ui.queue_operation(
         "POST", "tags", body={"tag_name": "urgent", "color": "#8b5cf6"},
-        response={"message": "Tag created.", "tag": {"name": "urgent", "color": "#8b5cf6"}},
+        response=tag_created("urgent", "#8b5cf6"),
         status=201, vocabulary=vocabulary,
     )
     perform(ui, created, ui.page.get_by_role("button", name="Create", exact=True).click)
@@ -1021,7 +1064,7 @@ def test_native_tags_admin_create_normalizes_name_and_recolour_requires_save(gro
     assert len(ui.operation_requests) == 1
     recoloured = ui.queue_operation(
         "PATCH", "tags/urgent", body={"color": "#ef4444"},
-        response=tag_result(tag={"name": "urgent", "color": "#ef4444"}),
+        response=tag_result("update", tag={"name": "urgent", "color": "#ef4444"}),
         vocabulary={**vocabulary, "urgent": "#ef4444"},
     )
     perform(ui, recoloured, tag_row(ui, "urgent").get_by_role("button", name="Save colour", exact=True).click)
@@ -1035,12 +1078,12 @@ def test_tag_creation_requires_201_and_the_actual_name_and_colour(group_manageme
     ui = group_management_ui
     original = copy.deepcopy(ui.vocabulary["group-a"])
     body = {"tag_name": "urgent", "color": "#3b82f6"}
-    receipt = {"message": "Tag created.", "tag": {"name": "urgent", "color": "#3b82f6"}}
+    receipt = tag_created("urgent", "#3b82f6")
     cases = (
         ("wrong-status", {"response": receipt, "status": 200}),
-        ("message-only", {"response": {"message": "Tag created."}, "status": 201}),
-        ("missing-name", {"response": {"message": "Tag created.", "tag": {"color": "#3b82f6"}}, "status": 201}),
-        ("missing-colour", {"response": {"message": "Tag created.", "tag": {"name": "urgent"}}, "status": 201}),
+        ("message-only", {"response": {"message": TAG_CREATED_MESSAGE}, "status": 201}),
+        ("missing-name", {"response": {"message": TAG_CREATED_MESSAGE, "tag": {"color": "#3b82f6"}}, "status": 201}),
+        ("missing-colour", {"response": {"message": TAG_CREATED_MESSAGE, "tag": {"name": "urgent"}}, "status": 201}),
         ("wrong-name", {"response": {**receipt, "tag": {"name": "other-tag", "color": "#3b82f6"}}, "status": 201}),
     )
     open_tags(ui)
@@ -1073,7 +1116,7 @@ def test_native_tag_encoded_rename_merge_and_delete_consume_owned_current_outcom
     rename = ui.queue_operation(
         "PATCH", f"tags/{quote('legacy/review', safe='')}", body={"new_name": "archive"},
         response=tag_result(
-            tag={"name": "archive", "color": "#8b5cf6"},
+            "rename", tag={"name": "archive", "color": "#8b5cf6"},
             success=[{"document_id": "notes-document", "tags": renamed_notes["tags"]}],
         ),
         records=[renamed_notes], vocabulary=vocabulary,
@@ -1088,7 +1131,7 @@ def test_native_tag_encoded_rename_merge_and_delete_consume_owned_current_outcom
     merge = ui.queue_operation(
         "PATCH", "tags/archive", body={"new_name": "team"},
         response=tag_result(
-            tag={"name": "team", "color": vocabulary["team"]},
+            "rename", tag={"name": "team", "color": vocabulary["team"]},
             success=[{"document_id": "notes-document", "tags": ["team"]}],
         ),
         records=[merged_notes], vocabulary=vocabulary,
@@ -1106,7 +1149,7 @@ def test_native_tag_encoded_rename_merge_and_delete_consume_owned_current_outcom
     ]
     deleted = ui.queue_operation(
         "DELETE", "tags/team",
-        response=tag_result(success=[
+        response=tag_result("delete", success=[
             {"document_id": record["id"], "tags": record["tags"]} for record in updated
         ]),
         records=updated, vocabulary=vocabulary,
@@ -1143,18 +1186,14 @@ def test_partial_tag_vocabulary_retains_old_definition_and_failed_current_docume
         "PATCH" if operation == "rename" else "DELETE", "tags/finance",
         body={"new_name": "budget"} if operation == "rename" else None, status=207,
         response=tag_result(
-            tag={"name": "budget", "color": vocabulary["finance"]} if operation == "rename" else None,
+            operation, tag={"name": "budget", "color": vocabulary["finance"]} if operation == "rename" else None,
             success=[{"document_id": "same-document", "tags": target_tags}],
-            errors=[{
-                "document_id": "notes-document", "error": "tag_propagation_failed",
-                "message": "Field notes still uses finance; the old vocabulary was kept.",
-            }],
-            retained=True,
+            errors=[batch_error("notes-document", TAG_REVISION_CHANGED_ERROR)],
         ),
         records=[changed_record(ui, "same-document", tags=target_tags)], vocabulary=vocabulary,
     )
     perform(ui, partial, submit.click)
-    expect(ui.page.get_by_role("alert").filter(has_text="Field notes still uses finance")).to_be_visible()
+    expect(ui.page.get_by_role("alert").filter(has_text=TAG_REVISION_CHANGED_ERROR)).to_be_visible()
     expect(tag_row(ui, "finance")).to_contain_text("2 documents")
     if operation == "rename":
         expect(tag_row(ui, "budget")).to_contain_text("1 document")
@@ -1190,8 +1229,8 @@ def test_tag_vocabulary_cas_conflict_keeps_propagation_and_requires_retry(group_
     partial = ui.queue_operation(
         method, "tags/finance", body=body, status=207,
         response=tag_result(
-            tag=target, success=[{"document_id": "same-document", "tags": target_tags}],
-            errors=[conflict], retained=True,
+            operation, tag=target, success=[{"document_id": "same-document", "tags": target_tags}],
+            errors=[conflict],
         ),
         records=[changed_record(ui, "same-document", tags=target_tags)], vocabulary=vocabulary,
     )
@@ -1224,7 +1263,7 @@ def test_tag_vocabulary_cas_conflict_keeps_propagation_and_requires_retry(group_
     propagated_documents = copy.deepcopy(ui.documents)
     vocabulary.pop("finance")
     retry = ui.queue_operation(
-        method, "tags/finance", body=body, response=tag_result(tag=target), vocabulary=vocabulary,
+        method, "tags/finance", body=body, response=tag_result(operation, tag=target), vocabulary=vocabulary,
     )
     with ui.page.expect_response(response_for("GET", "/api/group_documents/tags")) as refreshed:
         perform(ui, retry, retry_button.click)

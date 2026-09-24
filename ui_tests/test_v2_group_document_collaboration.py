@@ -1,8 +1,11 @@
 # test_v2_group_document_collaboration.py
 """
 Production-SPA M2C sharing and publication browser scenarios.
-Version: 0.261.130
+Version: 0.261.160
 Implemented in: 0.261.130
+Every scripted refusal and partial outcome is the server's (fixtures/group_document_collaboration.py,
+pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately malformed
+receipts a robustness scenario names.
 
 Selectors use the real row, details and compact review actions and sharing/review dialog.
 Deep-link cases expect review, never a decision, to open for the exact requested
@@ -25,8 +28,9 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.group_document_collaboration import (
-    COLLABORATION_OPERATIONS, COLLABORATION_PATH, collaboration_path, collaboration_receipt,
-    connect_options, group_collaboration_ui, publication, recipient,  # noqa: F401
+    COLLABORATION_OPERATIONS, COLLABORATION_PATH, FAILED_HANDOFF_ERRORS, PUBLICATION_HANDOFF_ERROR, STATE_CONFLICT,
+    collaboration_path, collaboration_receipt, connect_options, effect_error,  # noqa: F401
+    group_collaboration_ui, publication, recipient,  # noqa: F401
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN
 
@@ -411,10 +415,11 @@ def test_owner_partial_unshare_repairs_missing_target_without_touching_a_new_gra
         ui, etag='"review:owner-cleanup-1"',
         recipients=[entry for entry in initial["recipients"] if entry["id"] != "target-01"],
     )
-    message = "Access was removed, but notification cleanup is still pending."
+    notice = effect_error("notifications")
+    message = notice["message"]
     receipt = collaboration_receipt(
         "same-document", "unshare", "removed", status="partial", target_group_id="target-01",
-        errors=[{"stage": "notification", "code": "cleanup_pending", "message": message}],
+        errors=[notice],
     )
     partial = ui.queue_decision(
         "same-document", "unshare", expected_etag=initial["etag"], target_group_id="target-01",
@@ -640,12 +645,12 @@ def test_approval_failed_is_recorded_approval_with_deliberate_resume(group_colla
         "pending-publication", "approve_artifact", expected_etag=initial["etag"], status=207,
         response=collaboration_receipt(
             "pending-publication", "approve_artifact", "approval_failed", status="partial",
-            errors=[{"stage": "queue", "code": "handoff_failed", "message": "Approval recorded; the processing handoff needs reconciliation."}],
+            errors=list(FAILED_HANDOFF_ERRORS),
         ),
         records=[failed_record], sharing_after=failed_state,
     )
     perform(ui, partial, dialog.get_by_role("button", name="Approve publication", exact=True).click)
-    expect(dialog.get_by_role("alert").filter(has_text="processing handoff needs reconciliation")).to_be_visible()
+    expect(dialog.get_by_role("alert").filter(has_text=PUBLICATION_HANDOFF_ERROR["message"])).to_be_visible()
     expect(dialog.get_by_text("Approval was recorded, but its processing handoff needs reconciliation.", exact=True)).to_be_visible()
     expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_have_count(0)
     expect(dialog.get_by_role("button", name="Resume approved publication", exact=True)).to_be_disabled()
@@ -694,7 +699,7 @@ def test_stale_etag_keeps_target_and_requires_explicit_refresh_before_retry(grou
     newer = changed_state(ui, etag='"review:concurrent-change"')
     rejected = ui.queue_decision(
         "same-document", "share", expected_etag=initial["etag"], target_group_id="target-05",
-        response={"error": "review_changed", "message": "Refresh the changed sharing state."},
+        response=STATE_CONFLICT,
         status=409, sharing_after=newer,
     )
     perform(ui, rejected, dialog.get_by_role("button", name="Share with group", exact=True).click)
@@ -731,12 +736,12 @@ def test_partial_share_preserves_notice_and_does_not_replay_notifications(group_
         "same-document", "share", expected_etag=initial["etag"], target_group_id="target-05", status=207,
         response=collaboration_receipt(
             "same-document", "share", "not_approved", target_group_id="target-05", status="partial",
-            errors=[{"stage": "notification", "code": "notice_pending", "message": "Access changed, but the recipient notice was not confirmed."}],
+            errors=[effect_error("notifications")],
         ),
         sharing_after=updated,
     )
     perform(ui, reply, dialog.get_by_role("button", name="Share with group", exact=True).click)
-    expect(dialog.get_by_role("alert").filter(has_text="recipient notice was not confirmed")).to_be_visible()
+    expect(dialog.get_by_role("alert").filter(has_text=effect_error("notifications")["message"])).to_be_visible()
     expect(dialog.get_by_role("button", name="Share with group", exact=True)).to_be_disabled()
     expect(dialog.get_by_role("radio", name="Select Destination 05", exact=True)).to_be_checked()
     ui.page.clock.fast_forward(10000)
