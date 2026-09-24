@@ -208,7 +208,7 @@ def test_legacy_step_with_unknown_phase_remains_visible_without_current_capabili
 
 @pytest.mark.parametrize("width", [1440, 390])
 def test_plan_panel_names_the_planner_answer_basis_visuals_and_optional_inputs(editor_ui, width):
-    """Version 0.261.133: who planned the work, what the answer may rely on, and optional inputs."""
+    """Version 0.261.134: who planned the work, what the answer may rely on, and optional inputs."""
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
     plan = dependency_plan()

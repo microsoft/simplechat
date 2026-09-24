@@ -6,7 +6,7 @@ read what it returned: they replace Foundry's citation placeholders with links t
 sources they annotate, and they describe a provider failure by its type and HTTP status
 without keeping any provider text. Both ordinary chat and orchestration use them.
 
-Version: 0.261.133
+Version: 0.261.134
 """
 
 import asyncio

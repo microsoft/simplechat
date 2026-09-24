@@ -1,6 +1,6 @@
 # Gather / Reason / Render orchestration harness
 
-**Version: 0.261.133**
+**Version: 0.261.134**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; harness integration implemented in
@@ -21,7 +21,7 @@ Chat content checks and model-catalog routing integrated in version:
 and Auto model routing remains on the standard orchestration contract. See
 [the integration fix](../fixes/ORCHESTRATION_HARNESS_CHAT_CHECKS_ROUTING_INTEGRATION_FIX.md).
 
-Answer parity implemented in version **0.261.133**:
+Answer parity implemented in version **0.261.134**:
 
 - Auto model routing now binds and enforces per-step models on harness plans, so Auto
   no longer selects the standard contract.

@@ -1,10 +1,10 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.133
+Version: 0.261.134
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
-Pre-acquisition provider failure classification updated in: 0.261.133
+Pre-acquisition provider failure classification updated in: 0.261.134
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed.
@@ -282,7 +282,7 @@ def run_gather(runtime, capability="web_search", *, cancel_requested=None, argum
 def test_provider_failure_before_acquisition_is_classified_not_reported_as_attestation(
     capture_runtime, monkeypatch, error, code,
 ):
-    """Version 0.261.133: a failure before any capture is still a provider failure, and transient."""
+    """Version 0.261.134: a failure before any capture is still a provider failure, and transient."""
     runtime = capture_runtime
     create_client = runtime.modules.foundry.AzureAIAgent.create_client
 

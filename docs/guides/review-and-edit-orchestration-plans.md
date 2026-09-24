@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.133"
+version: "0.261.134"
 ---
 
 ## Decide what should run
@@ -107,7 +107,7 @@ Restoring the producer clears that conflict; it does not discard any edges.
 
 ### Check who planned the work and what the answer may rely on
 
-Since **0.261.133**, the plan panel's first line under the summary names the model
+Since **0.261.134**, the plan panel's first line under the summary names the model
 that wrote the plan and how it was chosen: the model you selected, your
 administrator's planning model, or the default model. When the request used
 **Auto**, it also says that each step uses its own Auto-routed model. Each step still

@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.133** (tracked in `application/single_app/config.py`)
+**Version: 0.261.134** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -19,7 +19,7 @@
 **Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
 **Runtime boundary hardening implemented in version: 0.261.129**
 **Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
-**Gather / Reason / Render answer parity implemented in version: 0.261.133**
+**Gather / Reason / Render answer parity implemented in version: 0.261.134**
 
 ## Overview
 
@@ -1022,7 +1022,7 @@ functions. See the [visual outputs fix](../fixes/ORCHESTRATION_VISUAL_OUTPUTS_FI
 
 ### Gather / Reason / Render answer parity
 
-Since **0.261.133**, a Gather / Reason / Render plan answers with the same inputs the
+Since **0.261.134**, a Gather / Reason / Render plan answers with the same inputs the
 legacy answer step had, and the planner states what the answer may rely on. See the
 [deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
 
@@ -1339,7 +1339,7 @@ research-selection rate is not itself a quality improvement.
 - **Auto routing binds steps to connected models by task.** Planning uses the selected or
   default model unless a dedicated planner override is configured. With **Auto**, each
   model-backed step is bound to an authorized connected model chosen by task suitability,
-  then priority. Since **0.261.133** this applies to Gather / Reason / Render plans as well.
+  then priority. Since **0.261.134** this applies to Gather / Reason / Render plans as well.
   Configured agents retain their own model behavior.
 - **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
   gather knowledge directly, but the `output` phase remains empty. There are no dedicated
@@ -1351,7 +1351,7 @@ research-selection rate is not itself a quality improvement.
   agent creates with its chart tool travels in those citations and is placed in the answer,
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
-- **Images in generated files are not yet supported.** Since **0.261.133**, Gather /
+- **Images in generated files are not yet supported.** Since **0.261.134**, Gather /
   Reason / Render answers author charts, Mermaid diagrams, and image proposal cards when
   the planner names them. Proposal images are generated only after the user approves each
   card, so a file rendered during the run cannot contain them. A chart renders at most

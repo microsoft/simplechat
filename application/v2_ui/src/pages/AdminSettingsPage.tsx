@@ -85,6 +85,8 @@ import {
     type AdminField,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
+    type AdminUpdateStatusResponse,
+    type ApplicationUpdateStatus,
     type BrandingAssets,
     type BrandingUploadResponse,
 } from '../lib/adminFields';
@@ -217,6 +219,8 @@ export function AdminSettingsPage() {
     const [brandingAssets, setBrandingAssets] = useState<BrandingAssets>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [updateStatus, setUpdateStatus] = useState<ApplicationUpdateStatus | null>(null);
+    const [checkingForUpdates, setCheckingForUpdates] = useState(true);
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
     const [delegationDirty, setDelegationDirty] = useState(false);
@@ -254,6 +258,40 @@ export function AdminSettingsPage() {
                             : 'Failed to load settings.',
                     );
                     setLoading(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isAdmin]);
+
+    // The release check is requested beside the settings rather than inside them. On a
+    // cache miss the server fetches the GitHub releases page, and waiting on that would
+    // hold every setting behind the version banner.
+    useEffect(() => {
+        if (!isAdmin) {
+            setCheckingForUpdates(false);
+            return;
+        }
+
+        let cancelled = false;
+        setCheckingForUpdates(true);
+        void (async () => {
+            try {
+                const response = await api.get<AdminUpdateStatusResponse>(
+                    '/api/v2/admin/update-status',
+                );
+                if (!cancelled) {
+                    setUpdateStatus(response.update_status ?? null);
+                }
+            } catch {
+                // An empty status is reported as an unavailable check. The settings load
+                // separately, so they are unaffected.
+            } finally {
+                if (!cancelled) {
+                    setCheckingForUpdates(false);
                 }
             }
         })();
@@ -1027,14 +1065,14 @@ export function AdminSettingsPage() {
                 <span className="font-medium text-text-1">
                     Version: {data?.version || bootstrapVersion || 'Unavailable'}
                 </span>
-                {loading ? (
+                {checkingForUpdates ? (
                     <span className="text-text-3">Checking for updates...</span>
-                ) : data?.update_status ? (
+                ) : updateStatus ? (
                     <>
-                        {data.update_status.update_available && (
+                        {updateStatus.update_available && (
                             <span className="text-warn">
-                                {data.update_status.status === 'checked' ? 'New version available' : 'Last known newer release'}
-                                : v{data.update_status.latest_version}.{' '}
+                                {updateStatus.status === 'checked' ? 'New version available' : 'Last known newer release'}
+                                : v{updateStatus.latest_version}.{' '}
                                 <a
                                     href="https://github.com/microsoft/simplechat/releases"
                                     target="_blank"
@@ -1045,14 +1083,14 @@ export function AdminSettingsPage() {
                                 </a>
                             </span>
                         )}
-                        {data.update_status.status !== 'checked' ? (
+                        {updateStatus.status !== 'checked' ? (
                             <span className="text-warn">
-                                {data.update_status.error || 'Unable to check for application updates.'}
-                                {data.update_status.latest_version && (
-                                    <> Last known release: v{data.update_status.latest_version}; this result may be stale.</>
+                                {updateStatus.error || 'Unable to check for application updates.'}
+                                {updateStatus.latest_version && (
+                                    <> Last known release: v{updateStatus.latest_version}; this result may be stale.</>
                                 )}
                             </span>
-                        ) : !data.update_status.update_available && (
+                        ) : !updateStatus.update_available && (
                             <span className="text-text-3">No newer release found.</span>
                         )}
                     </>

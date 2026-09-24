@@ -1,8 +1,8 @@
 # test_orchestration_single_contract_parity.py
 """Gather/Reason/Render parity with the answer features legacy orchestration had.
 
-Version: 0.261.133
-Implemented in: 0.261.133
+Version: 0.261.134
+Implemented in: 0.261.134
 
 Uses the initialized headless harness (real bootstrap, model resolution, leases,
 checkpoints, retained results and renderer) with offline model replies. Covers:
@@ -90,7 +90,7 @@ def _mixed_compose(step_id="prepare", *, inputs=None, visuals=None, basis="sourc
 
 
 def test_version_includes_single_contract_parity():
-    assert_app_version_at_least("0.261.133")
+    assert_app_version_at_least("0.261.134")
 
 
 # ------------------------------------------------------------------------------------------

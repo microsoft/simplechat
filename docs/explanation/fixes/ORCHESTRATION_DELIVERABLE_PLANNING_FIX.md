@@ -1,6 +1,6 @@
 # Orchestration answers that miss what the user asked for
 
-Fixed in version: **0.261.133** (Gather / Reason / Render answer parity). The deliverables
+Fixed in version: **0.261.134** (Gather / Reason / Render answer parity). The deliverables
 contract and generated images in files follow in later layers of the same change.
 
 Version reference: `application/single_app/config.py`.
@@ -44,7 +44,7 @@ The plan panel also never showed which model wrote a plan.
    keyword detectors, and the planner was never told that web search cannot retrieve
    images.
 
-## Technical details (0.261.133)
+## Technical details (0.261.134)
 
 ### Auto model routing on Gather / Reason / Render plans
 

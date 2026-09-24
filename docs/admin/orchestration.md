@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.133"
+version: "0.261.134"
 ---
 
 
@@ -104,7 +104,7 @@ three conditions hold, enabled orchestration keeps the legacy **contract v1** pa
 When Enable Chat Orchestration is off, new orchestration remains unavailable.
 
 Since **0.261.131**, a request that selected **Auto - choose per step** stayed on
-contract v1 even when the preview was admitted. Since **0.261.133**, the harness
+contract v1 even when the preview was admitted. Since **0.261.134**, the harness
 executor enforces per-step model bindings too, so Auto requests use the harness once
 it is admitted. Each model-backed task, including content preparation, is bound to an
 authorized connected model, and every binding is checked again before the run starts.
@@ -328,7 +328,7 @@ image proposal cards, without an extra setting:
   Image control is usable in Orchestrate and asks for at least one card.
 
 Users' saved Instruction memories shape these visuals; for example, a saved "no charts"
-instruction stops charts they did not ask for. Since **0.261.133**, Gather/Reason/Render
+instruction stops charts they did not ask for. Since **0.261.134**, Gather/Reason/Render
 harness plans produce these visuals too: the planner names them on the task that
 authors them, and a charted action step works under the harness's invocation capture
 without calling the integration again.
