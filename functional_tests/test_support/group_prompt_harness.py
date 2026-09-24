@@ -1,7 +1,7 @@
 # group_prompt_harness.py
 """
 Extracted backend harness for the immutable-target group prompt API suite.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.136
 
 Moved verbatim out of ``test_group_prompt_apis.py`` so a second test -- the
@@ -11,7 +11,6 @@ same ETag-enforcing Cosmos stub. The extraction is byte-for-byte: the API suite
 imports every name from here and its assertions are unchanged.
 """
 
-import json
 import re
 import socket
 import sys
@@ -32,7 +31,6 @@ from test_support.agent_delegation import (
     execute_functions,
     module_stub,
 )
-from test_support.versioning import assert_app_version_at_least
 
 
 LIST_PATH = "/api/groups/group-a/prompts"

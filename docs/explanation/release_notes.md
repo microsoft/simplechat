@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.162)**
+
+#### Bug Fixes
+
+*   **Searching Your Groups Ignores Case And Matches Descriptions**
+    *   Searching your own groups was case-sensitive and matched names only, so "research" didn't find "Research Group" and a word from a group's description found nothing. It affected the V2 group picker, the V2 Settings **Groups** tab, the classic **My Groups** page and the profile page's **Groups** tab.
+    *   The search now ignores case and matches a group's name or description, as the group directory and the admin group search already did. An empty search still lists all your groups, and paging is unchanged.
+    *   (Ref: `functions_group.py` `search_groups`, `GET /api/groups`, [Group Picker Search Casefold Fix](fixes/GROUP_PICKER_SEARCH_CASEFOLD_FIX.md))
+
 ### **(v0.261.161)**
 
 #### Bug Fixes

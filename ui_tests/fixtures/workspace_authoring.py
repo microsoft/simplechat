@@ -1,8 +1,9 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.137
+Version: 0.261.161
 Implemented in: 0.261.096
+Action type auth lists as the real editor type builder answers them: 0.261.161
 
 The browser loads the real built application and CSS. Only HTTP responses and
 synthetic resource persistence are replaced; no components, stores, navigation,
@@ -140,6 +141,21 @@ def _schema(path):
     }
 
 
+def action_editor_auth_types(action_type):
+    """The auth types `build_action_editor_types` lists for a type, sorted: the type's definition's
+    `allowedAuthTypes` when it lists any, otherwise the shared `AuthType` enum of plugin.schema.json
+    (`get_allowed_auth_types_for_plugin_type`). The personal and group type routes share the builder."""
+    compact = re.sub(r"[^a-z0-9]", "", str(action_type or "").lower())
+    if compact in {"msgraph", "microsoftgraph", "msgraphplugin", "microsoftgraphplugin"}:
+        name = "msgraph"
+    else:
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", str(action_type or "")).lower()
+    allowed = _schema(SCHEMA_ROOT / f"{name}.definition.json").get("allowedAuthTypes")
+    if not (isinstance(allowed, list) and allowed):
+        allowed = _schema(SCHEMA_ROOT / "plugin.schema.json").get("definitions", {}).get("AuthType", {}).get("enum", [])
+    return sorted({str(item) for item in allowed})
+
+
 def action_types():
     """Offer shipped modules using their checked-in definitions and schemas."""
     types = []
@@ -147,7 +163,6 @@ def action_types():
         action_type = module_path.stem.removesuffix("_plugin")
         if action_type == "base":
             continue
-        definition = _schema(SCHEMA_ROOT / f"{action_type}.definition.json")
         types.append({
             "type": action_type,
             "display": {
@@ -158,7 +173,7 @@ def action_types():
                 "simplechat": "SimpleChat",
             }.get(action_type, action_type.replace("_", " ").title()),
             "description": f"Configure the {action_type.replace('_', ' ')} connector.",
-            "allowed_auth_types": definition.get("allowedAuthTypes", ["NoAuth"]),
+            "allowed_auth_types": action_editor_auth_types(action_type),
             "additional_fields_schema": _schema(
                 SCHEMA_ROOT / f"{action_type}_plugin.additional_settings.schema.json"
             ),
@@ -168,7 +183,8 @@ def action_types():
         "type": "fixture_custom",
         "display": "Custom governed connector",
         "description": "A server-discovered action that is not hardcoded in the browser.",
-        "allowed_auth_types": ["NoAuth"],
+        # A type with no definition file gets the shared enum, as the real builder answers.
+        "allowed_auth_types": action_editor_auth_types("fixture_custom"),
         "additional_fields_schema": {
             "type": "object",
             "properties": {
