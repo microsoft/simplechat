@@ -1,7 +1,7 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.147
+Version: 0.261.152
 Implemented in: 0.261.147
 
 Exercises the real file sources section and its editor dialog against closed synthetic

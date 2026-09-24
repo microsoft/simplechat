@@ -1,7 +1,7 @@
 # test_v2_group_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 group prompts workbench.
-Version: 0.261.136
+Version: 0.261.152
 Implemented in: 0.261.136
 
 Exercises the real workbench, adapter and chat resolution against closed synthetic

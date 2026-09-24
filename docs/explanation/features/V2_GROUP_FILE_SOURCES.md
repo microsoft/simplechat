@@ -79,8 +79,10 @@ the session.
 - Create sends the connection's fields. An edit sends them with the source's
   `expected_config_revision`.
 - **Changed elsewhere** (`config_conflict`): the dialog keeps your changes and
-  offers a reload of the list. Saving again applies your draft on top of the new
-  revision.
+  offers a reload. From version **0.261.152**, the reload merges the stored
+  source into your draft: the other person's changes fill the fields you didn't
+  touch, your edits stay, and a field you both changed is named. If the source
+  was deleted meanwhile, the dialog says so and saves nothing.
 - **Kept changing** (`write_conflict`): nothing your draft depends on changed,
   so the dialog keeps your changes and you can save again as they are.
 - **Invalid details:** the server's reviewed message is shown as returned, with
@@ -109,11 +111,10 @@ When a delete is refused, the section says what actually happened:
 
 ## Known limitations
 
-- **Saving after a conflict keeps your whole draft.** The reload refreshes the
-  revision but not your form, so saving again writes every field you see. That
-  includes fields you didn't touch, and can undo the other person's change to
-  them. Check the source's fields before saving again. A merge that keeps the
-  other person's untouched changes is planned before the group release.
+- **Saving after a conflict kept your whole draft until 0.261.152.** It re-sent
+  every field, which could undo the other person's changes. The reload now
+  merges instead; see the
+  [conflict rebase fix](../fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md).
 - **Personal file sources are unchanged.** My Workspace keeps its existing list
   and run history, without the native editor.
 

@@ -1,7 +1,7 @@
 # test_v2_group_endpoints.py
 """
 Production-SPA coverage for the native scope-aware V2 group model endpoints section.
-Version: 0.261.145
+Version: 0.261.152
 Implemented in: 0.261.145
 
 Exercises the real Endpoints section -- the admin ModelConnectionsManager driven by a

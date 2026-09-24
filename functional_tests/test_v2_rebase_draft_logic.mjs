@@ -1,8 +1,8 @@
 // test_v2_rebase_draft_logic.mjs
 //
 // Runtime test for the shared conflict-rebase helper the group editors use.
-// Version: 0.261.151
-// Implemented in: 0.261.151
+// Version: 0.261.152
+// Implemented in: 0.261.152
 //
 // After a save conflict every group editor reloaded only the write token and re-sent the whole
 // stale draft, silently overwriting the other writer's changes to fields the user never touched --

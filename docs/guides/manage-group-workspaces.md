@@ -137,8 +137,11 @@ made active.
   group.
 
 If two people edit the same prompt, action, or agent at once, the second save
-is refused and the editor keeps your changes, so you can reload and reapply
-them. When group agents are turned off for your organization, the Agents
+is refused and the editor keeps your changes. From version **0.261.152**, when
+you refresh a group prompt after that, the other person's changes are loaded
+into the fields you didn't touch and your edits are kept. A field you both
+changed is named. Identities, endpoints and file sources work the same way. When
+group agents are turned off for your organization, the Agents
 section is not offered. When only group actions are off, **Actions** keeps the
 **Call agent** manager.
 
@@ -169,8 +172,9 @@ offered when your organization allows group endpoints.
   names what uses it, so you can move those to another connection, or disable
   this one instead.
 - If someone else changed the connection since you opened it, the save is
-  refused and your changes stay in the editor. Choose **Reload latest**, review
-  your changes, and save again.
+  refused and your changes stay in the editor. Choose **Reload latest**: the
+  other person's changes fill the fields you didn't touch, your edits stay, and
+  any field you both changed is named. Review, then save again.
 
 ### File sources
 

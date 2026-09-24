@@ -44,7 +44,10 @@ When a save is refused:
 - **Invalid details:** the server's message is shown as returned, and the draft
   stays open.
 - **Changed elsewhere:** if another manager changed the identity since you
-  opened it, the draft stays open, so you can reload and reapply your change.
+  opened it, the draft stays open. Reloading merges their changes into the
+  fields you didn't touch and keeps your edits, from version **0.261.152**. A
+  field you both changed is named, and a secret you typed is kept. See the
+  [conflict rebase fix](../fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md).
 - **Still in use:** a delete refused because a File Sync source or action still
   uses the identity lists what uses it, so you can rebind those first.
 

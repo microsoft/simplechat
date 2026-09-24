@@ -82,9 +82,11 @@ That covers a response with no `endpoints` array, and a row without an `id`, a
 When a save is refused:
 
 - **Changed elsewhere** (`endpoint_conflict`): the editor keeps your changes and
-  offers **Reload latest**, which fetches the stored connection and its new
-  revision. Review, then save again. If the connection was deleted meanwhile,
-  the editor says so.
+  offers **Reload latest**. From version **0.261.152**, it merges the stored
+  connection into your draft: the other person's changes fill the fields you
+  didn't touch, your edits stay, and a field you both changed is named. Review,
+  then save again. If the connection was deleted meanwhile, the editor says so
+  and saves nothing.
 - **The group changed during the save** (`group_write_conflict`): the editor
   keeps your changes, and you can save again as they are.
 - **Still in use** (`endpoint_in_use`): a delete is refused while a group agent
@@ -107,11 +109,10 @@ read-only, so the button is disabled for them.
 
 ## Known limitations
 
-- **Reload latest keeps your whole draft.** After a conflict, the reload refreshes
-  the revision but not your form, so saving again writes every field you see.
-  That includes fields you didn't touch, and can undo the other person's change to
-  them. Check the connection's fields before saving again. A merge that keeps the
-  other person's untouched changes is planned before the group release.
+- **Reload latest kept your whole draft until 0.261.152.** Saving after a
+  conflict re-sent every field, which could undo the other person's changes. It
+  now merges instead; see the
+  [conflict rebase fix](../fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md).
 - **No tenant connection test in group scope.** The server offers no group
   connection test, so the section doesn't show one. Discover models and Test chat
   exercise the connection instead.

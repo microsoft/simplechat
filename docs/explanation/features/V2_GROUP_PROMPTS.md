@@ -62,6 +62,11 @@ Each save sends the version of the prompt the editor opened. If another manager
 changed it in the meantime, the save is refused, and the editor stays open with
 the draft intact and an option to refresh. Nothing typed is lost.
 
+From version **0.261.152**, refreshing merges the other manager's changes into
+the fields you didn't touch and keeps your edits. A field you both changed is
+named, with your value shown. Saving then writes the merge, not your stale
+draft. See the [conflict rebase fix](../fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md).
+
 ## Use in chat
 
 "Use in chat" on a group prompt opens a link that names the prompt **and** its

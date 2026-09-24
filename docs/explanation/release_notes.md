@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.152)**
+
+#### Bug Fixes
+
+*   **Group Editors Keep Other People's Changes After A Conflict**
+    *   Fixed the group prompt, identity, endpoint and file source editors re-sending your whole draft after a save conflict. That silently undid the other person's changes to fields you never touched.
+    *   Reloading now merges: their changes fill the fields you didn't touch, your edits are kept, and any field you both changed is named, never its value. Secrets are never compared or shown.
+    *   If the item was deleted meanwhile, the editor says so and saves nothing.
+    *   (Ref: `lib/rebaseDraft.ts`, `PromptWorkbench.tsx`, `GroupIdentitiesSection.tsx`, `ModelConnectionsManager.tsx`, `GroupFileSourcesSection.tsx`, [Group Editor Conflict Rebase Fix](fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md))
+
 ### **(v0.261.151)**
 
 #### New Features
