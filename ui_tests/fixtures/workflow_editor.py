@@ -1,15 +1,21 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.141
+Version: 0.261.144
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
+Real alert normalizer on both save routes added in: 0.261.144
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
 `_normalize_schedule` and the Monitor File Sync trigger rules of `save_group_workflow` validate a
 group save, with the save route's status mapping. Only the source store, group File Sync
 enablement and the viewer's group role are fixture state.
+
+Both save routes also run the real `normalize_workflow_alert_settings`, compiled from
+`functions_workflow_alerts.py`, in the server's order. A refusal returns the route's reviewed 400
+(`{"error": <message>, "code": "invalid_workflow_alerts"}`), and a save stores the normalized alert
+fields, as the server does.
 
 Every request made while the page is a group page (`/v2/groups...`) is checked with the general
 `personal_scope_leak` trap, in `_route`, so every workflow fixture subclass enforces it.
@@ -18,8 +24,10 @@ Every request made while the page is a group page (`/v2/groups...`) is checked w
 import ast
 import copy
 import json
+import logging
 import re
 import sys
+import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -43,8 +51,10 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 # Validate the browser's actual data-flow payload with production helpers.
-from functions_workflow_definitions import (
+import functions_workflow_alert_safety  # noqa: E402  (pure module, no application imports)
+from functions_workflow_definitions import (  # noqa: E402
     WorkflowDefinitionError,
+    WorkflowPublicValidationError,
     normalize_workflow_definition,
     workflow_definition_revision,
 )
@@ -96,6 +106,28 @@ FILE_SYNC_CODE = (
     _production_code("functions_group_workflows.py", ("_normalize_file_sync_config",)),
     _production_code("route_backend_workflows.py", ("_serialize_workflow_file_sync_source",)),
 )
+# The real alert module. Its only application imports are the logger, the pure alert-safety
+# constants and the reviewed error, so every definition compiles against those without Azure.
+ALERT_SAVE_CODE = compile(
+    ast.Module(body=[
+        node for node in ast.parse((APP_ROOT / "functions_workflow_alerts.py").read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.FunctionDef, ast.Assign))
+    ], type_ignores=[]),
+    str(APP_ROOT / "functions_workflow_alerts.py"), "exec",
+)
+ALERT_RULES = {
+    "json": json, "logging": logging, "re": re, "uuid": uuid,
+    "log_event": lambda *args, **kwargs: None,
+    "WorkflowPublicValidationError": WorkflowPublicValidationError,
+    **{
+        name: getattr(functions_workflow_alert_safety, name) for name in (
+            "WORKFLOW_ALERT_EVALUATION_ERROR_CODE", "WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE",
+            "WORKFLOW_ALERT_EVALUATOR_UNAVAILABLE_MESSAGE",
+        )
+    },
+}
+exec(ALERT_SAVE_CODE, ALERT_RULES)
+normalize_workflow_alert_settings = ALERT_RULES["normalize_workflow_alert_settings"]
 
 
 def group_file_sync_source(group_id, source_id, name, **fields):
@@ -379,6 +411,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         }
         self.file_sync_source_reads = []
         self.classic_visits = []
+        self.alert_refusals = []
         self.file_sync_rules = self._bind_file_sync_rules()
 
     def _group_role(self):
@@ -440,12 +473,19 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             if source.get("id")
         ]})
 
-    def _group_save_refusal(self, body, existing, group_id):
-        """Apply the server's File Sync, trigger and schedule rules to a group save; return the stored file_sync."""
-        file_sync = self.file_sync_rules["_normalize_file_sync_config"](
+    def _group_save_error(self, route, exc):
+        """Answer a refused group save with the route's status mapping (`save_group_workflow_route`)."""
+        status, message = next(mapped for error_type, mapped in GROUP_SAVE_ERRORS.items() if isinstance(exc, error_type))
+        self._json(route, {"error": message}, status)
+
+    def _group_file_sync_config(self, body, existing, group_id):
+        """The server's first group save step: normalize and authorize File Sync (`_normalize_file_sync_config`)."""
+        return self.file_sync_rules["_normalize_file_sync_config"](
             OWNER_ID, group_id, body, existing_workflow=existing, user_info={"roles": ["User"]},
         )
-        # The Monitor File Sync trigger and schedule rules inline in `save_group_workflow`.
+
+    def _group_trigger_refusal(self, body, file_sync):
+        """The Monitor File Sync trigger and schedule rules, which `save_group_workflow` applies after alerts."""
         trigger_type = str(body.get("trigger_type") or "").strip().lower()
         if trigger_type == "file_sync":
             if not file_sync.get("enabled"):
@@ -456,7 +496,6 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 raise ValueError("Monitor File Sync Changes workflows must continue only when changes are found.")
         if trigger_type in {"interval", "file_sync"}:
             self.file_sync_rules["_normalize_schedule"](body.get("schedule"))
-        return file_sync
 
     def runtime_projection(self, state="running", version=1, gate=None, can_resume=False):
         runtime = {
@@ -686,12 +725,9 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 self._json(route, {"error": GROUP_SAVE_ERRORS[PermissionError][1]}, 403)
                 return
             try:
-                file_sync = self._group_save_refusal(entry.body, existing, group_id)
+                file_sync = self._group_file_sync_config(entry.body, existing, group_id)
             except (ValueError, LookupError, PermissionError) as exc:
-                status, message = next(
-                    mapped for error_type, mapped in GROUP_SAVE_ERRORS.items() if isinstance(exc, error_type)
-                )
-                self._json(route, {"error": message}, status)
+                self._group_save_error(route, exc)
                 return
         validation_payload = copy.deepcopy(entry.body)
         if existing:
@@ -706,7 +742,23 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         except WorkflowDefinitionError as exc:
             self._json(route, {"error": str(exc)}, 400)
             return
-        saved = {**copy.deepcopy(entry.body), **definition}
+        try:
+            # Both stores normalize alerts after the definition, against its tasks.
+            alerts = normalize_workflow_alert_settings(
+                entry.body, existing_workflow=existing,
+                task_ids=[task.get("id") for task in definition["tasks"]],
+            )
+        except WorkflowPublicValidationError as exc:
+            self.alert_refusals.append(exc.public_message)
+            self._json(route, {"error": exc.public_message, "code": "invalid_workflow_alerts"}, 400)
+            return
+        if scope_type == "group":
+            try:
+                self._group_trigger_refusal(entry.body, file_sync)
+            except ValueError as exc:
+                self._group_save_error(route, exc)
+                return
+        saved = {**copy.deepcopy(entry.body), **definition, **alerts}
         if file_sync is not None:
             # The server stores its own normalization, including each source's current name and type.
             saved["file_sync"] = file_sync

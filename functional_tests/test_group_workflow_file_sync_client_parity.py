@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the seam between the V2 group workflow editor and the group workflow server.
-Version: 0.261.141
+Version: 0.261.144
 Implemented in: 0.261.141
 
 This test ensures that the V2 editor's client-side File Sync, trigger, schedule and Analyze rules
@@ -19,13 +19,14 @@ the same way the server does.
   The one deliberate difference, more than 10 sources, is asserted as such: the server silently
   keeps the first 10, so the editor refuses instead of dropping a selection.
 * `workflowAlertSummary` is compared with the real `resolve_workflow_alert_config`.
-* `workflowAlertsEditableInClassic` is compared with the classic editor's own
-  `workflowNeedsNativeEditor`, extracted from `workspace_workflows.js`.
+
+The M6 classic alerts link, and its `workflowAlertsEditableInClassic` predicate, were removed in
+0.261.144 when native alert editing replaced them; `test_workflow_alert_client_parity.py` covers
+the alert editor.
 """
 
 import copy
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +44,6 @@ from test_group_workflow_round_trip_preservation import (  # noqa: E402  (shared
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CLASSIC_WORKFLOWS_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / "workspace" / "workspace_workflows.js"
 FINANCE = {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"}
 LISTED_SOURCES = [{
     "scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share", "name": "Finance share",
@@ -59,7 +59,6 @@ const root = process.argv[1];
 const input = JSON.parse(readFileSync(0, 'utf8'));
 await import(pathToFileURL(path.join(root, 'functional_tests', 'test_support', 'tsResolve.mjs')));
 const editor = await import(pathToFileURL(path.join(root, 'application', 'v2_ui', 'src', 'lib', 'workflowEditor.ts')));
-const classicNeedsNative = new Function(`${input.classic_function}; return workflowNeedsNativeEditor;`)();
 const group = { type: 'group', groupId: input.group_id };
 const options = {
     definition_version: 2, supported_definition_versions: [1, 2, 3], can_manage: true, max_tasks: 50,
@@ -67,7 +66,7 @@ const options = {
     scope: { type: 'group', id: input.group_id },
 };
 const personalOptions = { ...options, scope: { type: 'personal', id: 'owner-1' } };
-const output = { cases: {}, personal: {}, alerts: {}, classic: {} };
+const output = { cases: {}, personal: {}, alerts: {} };
 for (const [name, testCase] of Object.entries(input.cases)) {
     const draft = editor.normalizeWorkflowDefinition(testCase.payload, group);
     const errors = [
@@ -81,12 +80,6 @@ for (const [name, testCase] of Object.entries(input.cases)) {
 }
 for (const [name, record] of Object.entries(input.alerts)) {
     output.alerts[name] = editor.workflowAlertSummary(record);
-}
-for (const [name, record] of Object.entries(input.classic)) {
-    output.classic[name] = {
-        v2: editor.workflowAlertsEditableInClassic(editor.normalizeWorkflowDefinition(record, group)),
-        classic: !classicNeedsNative(record),
-    };
 }
 console.log(JSON.stringify(output));
 """
@@ -178,22 +171,6 @@ ALERT_RECORDS = {
     "off_with_rules_kept": {"alert_mode": "off", "alert_priority": "low", "alert_rules": [{"id": "a"}]},
 }
 
-CLASSIC_RECORDS = {
-    "version_one": {"definition_version": 1, "name": "Classic"},
-    "version_two": {"definition_version": 2, "name": "V2"},
-    "version_three": {"definition_version": 3, "name": "Structured", "flow": {"id": "root", "nodes": []}},
-    "version_one_with_flow": {"definition_version": 1, "name": "Odd", "flow": {"id": "root", "nodes": []}},
-    # Records saved before definition_version existed: V2 normalizes them to version 2 on load.
-    "unversioned": {"name": "Predates versions"},
-}
-
-
-def _classic_function():
-    source = CLASSIC_WORKFLOWS_JS.read_text(encoding="utf-8")
-    match = re.search(r"function workflowNeedsNativeEditor\(workflow\) \{.*?\n\}", source, re.DOTALL)
-    assert match, "Classic workflowNeedsNativeEditor was not found."
-    return match.group(0)
-
 
 @pytest.fixture(scope="module")
 def client():
@@ -202,8 +179,6 @@ def client():
         "sources": LISTED_SOURCES,
         "cases": {name: {"payload": draft} for name, (draft, _) in CASES.items()},
         "alerts": ALERT_RECORDS,
-        "classic": CLASSIC_RECORDS,
-        "classic_function": _classic_function(),
     }
     payload["cases"]["eleven_sources"] = {"payload": _draft(file_sync=_file_sync(sources=[
         {"scope_type": "group", "scope_id": GROUP_ID, "source_id": f"share-{index}"} for index in range(11)
@@ -271,15 +246,3 @@ def test_the_alert_summary_resolves_stored_alerts_like_the_server(client):
         assert summary == {
             "mode": server["alert_mode"], "priority": server["alert_priority"], "ruleCount": len(server["alert_rules"]),
         }, name
-
-
-def test_the_classic_link_follows_the_classic_editors_own_predicate(client):
-    """Every versioned record agrees with classic; unversioned records get no link, which is conservative."""
-    for name, outcome in client["classic"].items():
-        if name != "unversioned":
-            assert outcome["v2"] == outcome["classic"], name
-    assert client["classic"]["version_one"] == {"v2": True, "classic": True}
-    assert client["classic"]["version_two"] == {"v2": False, "classic": False}
-    # Classic can still open a record that predates definition_version, but V2 normalizes it to
-    # version 2 on load and cannot tell the two apart, so it conservatively withholds the link.
-    assert client["classic"]["unversioned"] == {"v2": False, "classic": True}

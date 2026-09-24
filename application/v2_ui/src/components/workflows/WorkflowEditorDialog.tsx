@@ -16,6 +16,7 @@ import { WorkflowMicrosoft365RunAs } from './WorkflowMicrosoft365RunAs';
 import { WorkflowFlowAuthoring } from './WorkflowFlowAuthoring';
 import { WorkflowFlowLimitFields } from './WorkflowStructuredFields';
 import { WorkflowFileSyncFields, useWorkflowFileSyncSources } from './WorkflowFileSyncFields';
+import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
 import { ApiError } from '../../lib/apiClient';
@@ -88,7 +89,6 @@ export function WorkflowEditorDialog({
     onSaved,
     onDirtyChange,
     onBusyChange,
-    onOpenClassic,
     interactionDisabled = false,
 }: {
     scope: WorkflowScope;
@@ -98,8 +98,6 @@ export function WorkflowEditorDialog({
     onSaved: (workflow: WorkflowDefinition) => void;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
-    /** Group pages hand off to the classic group workspace with this group selected first. */
-    onOpenClassic?: () => void;
     interactionDisabled?: boolean;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
@@ -137,9 +135,9 @@ export function WorkflowEditorDialog({
         fileSyncSources.status === 'ready' && fileSyncSources.sources.length > 0);
     const scheduled = draft.trigger_type === 'interval' || groupScope && draft.trigger_type === 'file_sync';
     const validationErrors = useMemo(() => [
-        ...workflowValidationErrors(draft, options),
+        ...workflowValidationErrors(draft, options, original),
         ...(groupScope && fileSyncSources.status === 'ready' ? workflowFileSyncAvailabilityErrors(draft, fileSyncSources.sources) : []),
-    ], [draft, options, groupScope, fileSyncSources.status, fileSyncSources.sources]);
+    ], [draft, options, original, groupScope, fileSyncSources.status, fileSyncSources.sources]);
     const schemaErrors = useMemo(() => draft.tasks.flatMap((task, index) => {
         if (!task.output_contract?.schema) {
             return [];
@@ -278,7 +276,7 @@ export function WorkflowEditorDialog({
         }
         const savingDraft = history.session.draft;
         const currentErrors = [
-            ...workflowValidationErrors(savingDraft, options),
+            ...workflowValidationErrors(savingDraft, options, original),
             ...(groupScope && fileSyncSources.status === 'ready'
                 ? workflowFileSyncAvailabilityErrors(savingDraft, fileSyncSources.sources) : []),
             ...history.session.fields.summary(workflowDraftOwners(savingDraft)).taskSchemaErrors.values(),
@@ -622,14 +620,6 @@ export function WorkflowEditorDialog({
                                 }))}
                             />
                         ) : null}
-                        {scope.type === 'group' ? (
-                            <WorkflowAlertSummary
-                                workflow={draft}
-                                original={original}
-                                canEdit={options.can_manage && !readOnly}
-                                onOpenClassic={onOpenClassic}
-                            />
-                        ) : null}
                         <section className="rounded-2xl border border-edge p-4" aria-label="Workflow shared references">
                             <WorkflowDocumentPicker
                                 scope={scope}
@@ -705,6 +695,12 @@ export function WorkflowEditorDialog({
                                 />
                             ))}
                         </section>
+                        {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
+                        {options.can_manage && !readOnly ? (
+                            <WorkflowAlertEditor workflow={draft} onChange={(update) => setWorkflow((current) => update(current))} />
+                        ) : (
+                            <WorkflowAlertSummary workflow={draft} />
+                        )}
                     </fieldset>
                     {authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
                     {history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
