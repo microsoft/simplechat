@@ -7,6 +7,7 @@ Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
 Group context held to the server's builder, field by field: 0.261.157
 Group agent responses held to the real routes, route by route: 0.261.157
+Group action responses held to the real routes, route by route: 0.261.157
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -24,14 +25,15 @@ answers these routes with one implementation.
 
 import copy
 import hashlib
+import re
 from datetime import datetime, timezone
 from urllib.parse import unquote, urlsplit
 
 import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
-    MISSING, OWNER_ID, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
-    _editor_candidate, _get_pointer, _set_pointer, _walk_values, action_record, agent_record,
+    MISSING, OWNER_ID, SCHEMA_ROOT, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
+    _editor_candidate, _get_pointer, _schema, _set_pointer, _walk_values, action_record, agent_record,
     connect_options,  # noqa: F401
     editor_options, personal_scope_leak,
 )
@@ -87,6 +89,21 @@ def action_management(role, status):
     if role in WRITER_ROLES and status == "active":
         return {"schema_version": 1, "operations": list(ACTION_OPERATIONS)}
     return {"schema_version": 1, "operations": []}
+
+
+def action_editor_auth_types(action_type):
+    """The auth types `build_action_editor_types` lists for a type, sorted: the type's definition's
+    `allowedAuthTypes` when it lists any, otherwise the shared `AuthType` enum of plugin.schema.json
+    (`get_allowed_auth_types_for_plugin_type`)."""
+    compact = re.sub(r"[^a-z0-9]", "", str(action_type or "").lower())
+    if compact in {"msgraph", "microsoftgraph", "msgraphplugin", "microsoftgraphplugin"}:
+        name = "msgraph"
+    else:
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", str(action_type or "")).lower()
+    allowed = _schema(SCHEMA_ROOT / f"{name}.definition.json").get("allowedAuthTypes")
+    if not (isinstance(allowed, list) and allowed):
+        allowed = _schema(SCHEMA_ROOT / "plugin.schema.json").get("definitions", {}).get("AuthType", {}).get("enum", [])
+    return sorted({str(item) for item in allowed})
 
 
 # The native group agent model, mirrored from the M4C backend so both the shell fixture and the
@@ -1256,10 +1273,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         group_id = parts[3]
         assert group_id in self.groups, f"Unknown group action-options scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's actions."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         assert entry.method == "GET", entry
         self._json(route, {"secret_reminders": copy.deepcopy(GROUP_SECRET_REMINDERS)})
@@ -1272,7 +1289,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         method = entry.method
         assert group_id in self.groups, f"Unknown group action scope: {entry}"
         if group_id in self.denied_groups:
-            self._json(route, {"error": "You do not have access to this group's actions."}, 403)
+            self._json(route, {"error": EDITOR_GROUP_DENIED_ERROR}, 403)
             return
         management = self.groups[group_id].get("action_management", {})
         operations = set(management.get("operations", []))
@@ -1280,13 +1297,17 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         # the server's _reject_query_parameters(); the frontend therefore sends none. Answering 400
         # here means a regression to ?view=editor fails a test instead of silently passing.
         if entry.query:
-            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            self._json(route, {"error": EDITOR_QUERY_REFUSED_ERROR}, 400)
             return
         if tail == "types":
             # The enriched editor catalogue is a read capability served to every member role, in a
-            # {"types": [...]} envelope, exactly as the personal ?view=editor branch returns it.
+            # {"types": [...]} envelope, exactly as the personal ?view=editor branch returns it, with
+            # each type's auth types resolved and sorted as `build_action_editor_types` does.
             assert method == "GET", entry
-            self._json(route, {"types": copy.deepcopy(self.types)})
+            self._json(route, {"types": [
+                {**item, "allowed_auth_types": action_editor_auth_types(item["type"])}
+                for item in copy.deepcopy(self.types)
+            ]})
             return
         if tail is None:
             if method == "GET":
@@ -1301,7 +1322,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             record = self.record(group_id, tail)
             if record is None:
-                self._json(route, {"error": "Action not found in this group."}, 404)
+                self._json(route, {"error": EDITOR_RESOURCE_UNAVAILABLE_ERROR}, 404)
                 return
             if method == "GET":
                 self._json(route, self._action_envelope(group_id, record))
@@ -1340,7 +1361,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         try:
             record = _editor_candidate(base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"])
         except EditorSecretError:
-            self._json(route, {"error": "Stored credentials must be kept, replaced, or explicitly cleared."}, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                base, updates, [], entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         paths = []
         if record.get("auth", {}).get("key"):
@@ -1364,7 +1387,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         assert "action_actions" not in updates, "action_actions is projection-only; it must not be sent in updates."
         assert "/action_actions" not in entry.body["removed_paths"], "action_actions must not appear in removed_paths."
         if entry.body["expected_revision"] != self._action_revision(group_id, identifier):
-            self._json(route, {"error": "This action changed in another session. Reload before saving."}, 409)
+            self._json(route, {"error": EDITOR_REVISION_CONFLICT_ERROR}, 409)
             return
         paths = self.native_secret_paths.get((group_id, identifier), [])
         try:
@@ -1372,9 +1395,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
             )
         except EditorSecretError:
-            self._json(route, {
-                "error": "Stored credentials must be kept at their original paths, replaced, or explicitly cleared.",
-            }, 400)
+            self._json(route, {"error": editor_secret_refusal(
+                record, updates, paths, entry.body["clear_secret_paths"], entry.body["removed_paths"],
+            )}, 400)
             return
         self.native_secret_paths[(group_id, identifier)] = [
             pointer for pointer in paths if pointer not in entry.body["clear_secret_paths"]

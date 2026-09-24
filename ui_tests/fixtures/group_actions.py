@@ -3,6 +3,7 @@
 Closed M4 group action HTTP fixtures for the real production V2 SPA.
 Version: 0.261.157
 Implemented in: 0.261.137
+Seeds held to the real routes (test_group_action_fixture_parity.py): 0.261.157
 
 The fixture serves the immutable `/api/groups/<group_id>/actions[...]` family and
 the `/actions/types` catalogue, and injects the `action_management` context hint
@@ -49,11 +50,12 @@ class GroupActionsFixture(GroupWorkspaceFixture):
         # its edit, delete and test affordances stay hidden beside the editable control.
         self.set_action_policy("group-a", role="Owner", status="active")
         # A provided (global) action merged into the group list read-only. It carries is_global with
-        # an empty inline action_actions and no owning group_id, so no edit, delete or test is offered
-        # and the group read route still answers for it.
+        # an empty inline action_actions and, like every action in the global container, no
+        # group_id, so no edit, delete or test is offered and the group read route still answers
+        # for it.
         provided_action = group_action("group-a", PROVIDED_ACTION_ID, "Shared platform API",
                                        actions=(), is_global=True, is_group=False)
-        provided_action["group_id"] = None
+        provided_action.pop("group_id")
         self._seed("group-a", [
             group_action("group-a", EDITABLE_ACTION_ID, "Weekly report API"),
             group_action("group-a", WITHHELD_ACTION_ID, "Withheld API", actions=()),
