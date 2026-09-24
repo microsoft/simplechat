@@ -34,6 +34,7 @@ the native Members section must never call them. The fixture-parity functional t
 shape, status, code, message and header here to the real routes.
 """
 
+import ast
 import copy
 import importlib.util
 import re
@@ -58,6 +59,21 @@ def _load_policy():
     return module
 
 
+def _app_constant(file_name, name):
+    """A literal module-level constant of an application module, read from its source.
+
+    ``functions_group`` builds Cosmos clients through ``config`` when it's imported, so its
+    constants are read here rather than imported.
+    """
+    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise LookupError(f"{file_name} defines no literal {name}")
+
+
 POLICY = _load_policy()
 SETTINGS = {"enable_group_workspaces": True}
 
@@ -73,7 +89,8 @@ NO_PENDING_REQUEST_MESSAGE = "That person doesn't have a pending request to join
 OWNER_ROLE_MESSAGE = "Transfer ownership to change the owner's role."
 OWNER_REMOVAL_MESSAGE = "Transfer ownership before removing the owner."
 OWNER_LEAVE_MESSAGE = "Transfer ownership before leaving the group."
-WRITE_CONFLICT_MESSAGE = "The group changed while this change was being saved. Try again."
+# The one group write conflict sentence, read from functions_group itself.
+WRITE_CONFLICT_MESSAGE = _app_constant("functions_group.py", "GROUP_WRITE_CONFLICT_MESSAGE")
 USER_NOT_FOUND_MESSAGE = "That user wasn't found in the directory."
 # functions_group_directory's strict-request messages, which the membership routes reuse.
 NO_QUERY_MESSAGE = "This request does not accept query parameters."

@@ -232,6 +232,12 @@ def test_the_fixture_messages_are_the_server_messages(env, name):
     assert getattr(fixture_module, name) == getattr(env.modules.membership, name)
 
 
+def test_the_fixture_write_conflict_text_is_the_one_group_constant(env):
+    """The fixture reads functions_group's own sentence, the one every group route answers with."""
+    assert fixture_module.WRITE_CONFLICT_MESSAGE == env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE
+    assert env.modules.membership.WRITE_CONFLICT_MESSAGE is env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE
+
+
 # --------------------------------------------------------------------------
 # Reads.
 # --------------------------------------------------------------------------

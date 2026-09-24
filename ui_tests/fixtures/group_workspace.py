@@ -314,7 +314,7 @@ ENDPOINT_MANAGE_ROLES = ("Owner", "Admin")
 
 # The strict write body the native endpoint routes accept; `expected_revision` rides the PATCH.
 ENDPOINT_CONFLICT_ERROR = "This model endpoint changed. Reload it before saving."
-GROUP_WRITE_CONFLICT_ERROR = "The group changed while this model endpoint was being saved. Try again."
+GROUP_WRITE_CONFLICT_ERROR = "The group changed while your request was being saved. Try again."
 # The server's exact in-use and no-change texts (functions_group_endpoint_access.py), shown verbatim
 # by the editor so a test proves the server's own wording renders (§11 F3.5).
 ENDPOINT_IN_USE_ERROR = (

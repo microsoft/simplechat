@@ -70,6 +70,8 @@ from config import cosmos_group_agents_container, cosmos_group_workflows_contain
 from functions_ai_connections import AIConnectionError
 from functions_appinsights import log_event
 from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     assert_group_role,
     check_group_status_allows_operation,
@@ -128,7 +130,8 @@ GROUP_ENDPOINT_FOUNDRY_AGENT_SETTINGS = {
 GROUP_ENDPOINT_CACHE_REASON = "group_model_endpoints_updated"
 GROUP_ENDPOINT_NOT_FOUND_MESSAGE = "Model endpoint not found."
 GROUP_ENDPOINT_CONFLICT_MESSAGE = "This model endpoint changed. Reload it before saving."
-GROUP_ENDPOINT_WRITE_CONFLICT_MESSAGE = "The group changed while this model endpoint was being saved. Try again."
+# The one group write conflict sentence, functions_group's (GROUP_WRITE_CONFLICT_MESSAGE).
+GROUP_ENDPOINT_WRITE_CONFLICT_MESSAGE = GROUP_WRITE_CONFLICT_MESSAGE
 GROUP_ENDPOINT_IN_USE_MESSAGE = (
     "This model endpoint is used by group agents or workflows. "
     "Change them to another endpoint, or disable this endpoint instead."
@@ -643,7 +646,7 @@ def _write_endpoint_change(user_id, group_id, settings, change):
         _discard_staged_credentials(group_id, staged)
         if isinstance(exc, GroupDocumentWriteConflict):
             raise GroupEndpointError(
-                GROUP_ENDPOINT_WRITE_CONFLICT_MESSAGE, 409, error_code="group_write_conflict",
+                GROUP_ENDPOINT_WRITE_CONFLICT_MESSAGE, 409, error_code=GROUP_WRITE_CONFLICT_CODE,
             ) from exc
         raise
     except Exception:

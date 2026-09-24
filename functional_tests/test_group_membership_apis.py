@@ -850,7 +850,7 @@ def test_a_group_that_keeps_changing_is_a_write_conflict(env, write):
     for _ in range(env.modules.group.GROUP_DOCUMENT_WRITE_ATTEMPTS):
         env.groups.before_replace.append(land(env, lambda record: record.update(description=record["description"] + ".")))
     assert_refused(
-        WRITES[write](env), 409, "The group changed while this change was being saved. Try again.", "group_write_conflict",
+        WRITES[write](env), 409, "The group changed while your request was being saved. Try again.", "group_write_conflict",
     )
     assert env.bumps == [] and env.notifications == [] and env.activity_records() == []
 

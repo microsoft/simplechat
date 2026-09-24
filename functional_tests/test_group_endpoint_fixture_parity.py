@@ -321,6 +321,7 @@ def test_group_write_conflict_shape_parity(env):
     assert_no_invented_keys("group_write_conflict", payload, real_payload)
     assert_shared_keys("group_write_conflict", payload, real_payload, {"error", "error_code"})
     assert payload["error_code"] == real_payload["error_code"] == "group_write_conflict"
+    assert payload["error"] == real_payload["error"] == env.modules.group.GROUP_WRITE_CONFLICT_MESSAGE
 
 
 def test_endpoint_in_use_shape_parity(env):

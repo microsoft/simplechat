@@ -38,7 +38,7 @@ from test_support.group_directory_harness import group_directory_environment, pe
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 LATE_USER = {"userId": "late-member", "email": "late.member@example.test", "displayName": "Late Member"}
 CONFLICT = {
-    "error": "The group changed while this change was being saved. Try again.",
+    "error": "The group changed while your request was being saved. Try again.",
     "error_code": "group_write_conflict",
 }
 

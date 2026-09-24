@@ -81,6 +81,8 @@ from werkzeug.exceptions import HTTPException
 
 from functions_appinsights import log_event
 from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     find_group_by_id,
     get_user_role_in_group,
@@ -89,7 +91,6 @@ from functions_group import (
 from functions_group_directory import (
     GROUP_DIRECTORY_REQUEST_MESSAGE,
     GROUP_NOT_FOUND_MESSAGE,
-    GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDirectoryError,
     _require_group_id,
     _require_user_id,
@@ -388,7 +389,7 @@ def _write(group_id, apply_changes, *, cache_reason):
     try:
         committed = update_group_document_with_etag_guard(group_id, apply_changes, cache_reason=cache_reason)
     except GroupDocumentWriteConflict as error:
-        raise GroupSettingsError(GROUP_WRITE_CONFLICT_MESSAGE, 409, error_code="group_write_conflict") from error
+        raise GroupSettingsError(GROUP_WRITE_CONFLICT_MESSAGE, 409, error_code=GROUP_WRITE_CONFLICT_CODE) from error
     if committed is None:
         raise _group_not_found()
     return committed

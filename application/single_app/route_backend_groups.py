@@ -89,8 +89,8 @@ def build_group_details_payload(group_doc, role, app_settings):
 # concurrent change is kept and a group deleted mid-write is not recreated. A group
 # that keeps changing is the one response those routes did not have before.
 GROUP_WRITE_CONFLICT_RESPONSE = {
-    "error": "The group changed while this change was being saved. Try again.",
-    "error_code": "group_write_conflict",
+    "error": GROUP_WRITE_CONFLICT_MESSAGE,
+    "error_code": GROUP_WRITE_CONFLICT_CODE,
 }
 
 
@@ -342,8 +342,6 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             group_doc = update_group_document_with_etag_guard(
                 group_id, apply_download_settings, cache_reason="group_updated",
@@ -351,7 +349,7 @@ def register_route_backend_groups(bp):
         except PermissionError:
             return jsonify({"error": "Only group owners and admins can update download settings"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic download settings save failed.",
@@ -433,8 +431,6 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             updated = update_group_document_with_etag_guard(
                 group_id, apply_group_update, cache_reason="group_updated",
@@ -442,7 +438,7 @@ def register_route_backend_groups(bp):
         except PermissionError:
             return jsonify({"error": "Only the owner can rename/edit the group"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic group update failed.",
@@ -531,14 +527,12 @@ def register_route_backend_groups(bp):
             fresh["modifiedDate"] = datetime.utcnow().isoformat()
             return fresh
 
-        # Imported beside its use, like this module's other function-level imports.
-        from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
         try:
             updated = update_group_document_with_etag_guard(group_id, apply_logo, cache_reason=None)
         except PermissionError:
             return jsonify({"error": "Only the owner can update the group logo"}), 403
         except GroupDocumentWriteConflict:
-            return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
             log_event(
                 "[GROUP_SETTINGS] Classic group logo save failed.",

@@ -518,12 +518,13 @@ def register_route_backend_retention_policy(bp):
             
             # Get group and verify permissions
             from functions_group import (
+                GROUP_WRITE_CONFLICT_CODE,
+                GROUP_WRITE_CONFLICT_MESSAGE,
                 GroupDocumentWriteConflict,
                 find_group_by_id,
                 get_user_role_in_group,
                 update_group_document_with_etag_guard,
             )
-            from functions_group_directory import GROUP_WRITE_CONFLICT_MESSAGE
             group = find_group_by_id(group_id)
             
             if not group:
@@ -633,7 +634,7 @@ def register_route_backend_retention_policy(bp):
                 return jsonify({
                     'success': False,
                     'error': GROUP_WRITE_CONFLICT_MESSAGE,
-                    'error_code': 'group_write_conflict'
+                    'error_code': GROUP_WRITE_CONFLICT_CODE
                 }), 409
             if updated is None:
                 return jsonify({

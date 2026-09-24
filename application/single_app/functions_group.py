@@ -22,6 +22,12 @@ class GroupDocumentWriteConflict(RuntimeError):
     """The group document kept changing while a write was being applied to it."""
 
 
+# Every group route answers GroupDocumentWriteConflict the same way: 409 with this
+# code and this reviewed sentence. Other modules import these rather than copy them.
+GROUP_WRITE_CONFLICT_CODE = "group_write_conflict"
+GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
+
+
 def create_group(name, description):
     """Creates a new group. The creator is the Owner by default."""
     user_info = functions_authentication.get_current_user_info()

@@ -645,7 +645,7 @@ def test_a_writer_that_keeps_losing_gets_a_409_and_every_staged_key_is_removed(s
     response = patch(seeded, "ep-a", {"expected_revision": revision, "auth": {"api_key": "sk-busy"}})
     assert response.status_code == 409
     assert response.get_json() == {
-        "error": "The group changed while this model endpoint was being saved. Try again.",
+        "error": "The group changed while your request was being saved. Try again.",
         "error_code": "group_write_conflict",
     }
     staged = seeded.vault.written_names()
