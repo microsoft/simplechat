@@ -1,9 +1,9 @@
 # public_document_management.py
 """
 Closed M3B public document management responses for the real production V2 SPA.
-Version: 0.261.163
+Version: 0.261.164
 Implemented in: 0.261.133
-Server-verbatim propagation failure (`propagation_incomplete`): 0.261.163
+Server-verbatim propagation failure (`propagation_incomplete`): 0.261.164
 
 Reuse M3A public reads, local production assets, request recording, response gates
 and Azure Playwright connection options. Reads and operations share the immutable

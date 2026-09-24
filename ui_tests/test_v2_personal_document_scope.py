@@ -2,11 +2,11 @@
 """
 Protect personal document behavior while the shared explorer gains group scope.
 
-Version: 0.261.163
+Version: 0.261.164
 Implemented in: 0.261.128
 Management baseline expanded in: 0.261.129
 Personal sharing baseline expanded in: 0.261.130
-Downloads keep their names whatever the personal routes send: 0.261.163
+Downloads keep their names whatever the personal routes send: 0.261.164
 
 The real SPA runs against closed synthetic personal APIs. A saved active group
 must not retarget personal reads, filtering, selection, or metadata writes.

@@ -1,9 +1,9 @@
 # test_group_agent_fixture_parity.py
 """
 Per-route shape parity between the M4C group agent UI fixture and the real routes.
-Version: 0.261.163
+Version: 0.261.164
 Implemented in: 0.261.161
-Group agents keep group knowledge only (agentWorkbench.ts knowledgeScopes): 0.261.163
+Group agents keep group knowledge only (agentWorkbench.ts knowledgeScopes): 0.261.164
 
 The V2 group Agents workbench and its editor mock the network with the closed HTTP fixture
 ``ui_tests/fixtures/group_agents.py``, whose dispatch lives in the shared
@@ -39,7 +39,7 @@ The fixture handlers are the production browser-test code, exercised through the
 capture the fulfilled status and JSON. The named-group Foundry discovery route the editor also
 calls is pinned by ``test_group_endpoint_fixture_parity.py``.
 
-One product finding the backfill pinned is now fixed (0.261.163): the group editor offered public
+One product finding the backfill pinned is now fixed (0.261.164): the group editor offered public
 knowledge, which the server neither lists for a group nor stores on a group agent. Each workbench's
 knowledge scopes are pinned to the server's scope policy.
 """

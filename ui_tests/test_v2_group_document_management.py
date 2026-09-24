@@ -1,10 +1,10 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.163
+Version: 0.261.164
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
-the server's name: 0.261.163
+the server's name: 0.261.164
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
