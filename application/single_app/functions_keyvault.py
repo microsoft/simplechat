@@ -1534,13 +1534,13 @@ def keyvault_identity_delete_helper(auth_dict, scope_value, scope="group"):
         return auth_dict
 
     auth = auth_dict if isinstance(auth_dict, dict) else {}
-    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-    client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
     for auth_field in WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS:
         secret_name = auth.get(auth_field)
         if not secret_name or not validate_secret_name_dynamic(secret_name):
             continue
         try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
             client.begin_delete_secret(secret_name)
             log_event(
                 f"Deleting workspace identity secret '{auth_field}' for '{scope}' '{scope_value}'",
@@ -1583,6 +1583,56 @@ def keyvault_identity_cleanup_helper(previous_auth, current_auth, scope_value, s
         keyvault_identity_delete_helper(obsolete_auth, scope_value, scope=scope)
 
     return current_auth
+
+
+def keyvault_identity_discard_staged_helper(secret_names, scope_value, scope="group"):
+    """Best-effort delete of freshly staged workspace identity secrets.
+
+    A native conditional create or update stages each new secret value under a
+    fresh name before the Cosmos write, so that a refused write (an etag conflict
+    or a record deleted mid-flight) never changes the credential the stored
+    reference still points at. When the write is refused the staged names are
+    orphans, so delete them. Like the delete/cleanup helpers this is best effort:
+    every delete, and even building the client, is logged and swallowed so cleanup
+    can never turn a refusal into a 500.
+
+    Args:
+        secret_names (Iterable[str]): Full Key Vault names staged this call.
+        scope_value (str): The scope value the secrets were stored under.
+        scope (str): The Key Vault scope (e.g. ``group``).
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return
+
+    for secret_name in secret_names or []:
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Discarding a staged workspace identity secret for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to discard a staged workspace identity secret.",
+                extra={
+                    "scope": scope,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
 
 
 # Helper to delete plugin secrets from Key Vault

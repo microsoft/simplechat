@@ -769,10 +769,15 @@ def test_auth_type_change_removes_the_superseded_secret(environment):
         },
     )
     assert response.status_code == 200
+    # The switched-away password secret is removed.
     assert password_name in environment.state.secret_deletes
     assert password_name not in environment.state.vault
-    secret_name = f"group-a--identity--group--workspace-identity-{identity['id']}-secret"
-    assert secret_name in environment.state.vault
+    # The new secret is staged under a fresh, non-conventional name (B1), so a
+    # refused CAS can never overwrite the live credential's conventional name.
+    stored = environment.identities.get_workspace_identity("group", "group-a", identity["id"])
+    fresh_name = stored["auth"]["secret_secret_name"]
+    assert fresh_name.startswith("group-a--identity--group--identity-")
+    assert fresh_name in environment.state.vault
 
 
 def test_delete_removes_the_identity_secrets(environment):
@@ -787,6 +792,195 @@ def test_delete_removes_the_identity_secrets(environment):
     assert response.status_code == 200
     assert password_name in environment.state.secret_deletes
     assert password_name not in environment.state.vault
+
+
+# --------------------------------------------------------------------------
+# B1: fresh-name staging isolates a refused conditional write
+# --------------------------------------------------------------------------
+
+def test_a_write_landing_mid_flight_refuses_and_keeps_the_live_secret(environment):
+    _enable_key_vault(environment)
+    as_user(environment, "owner")
+    identity = environment.client.post(LIST_PATH, json=_create_body()).get_json()["identity"]
+    password_name = f"group-a--identity--group--workspace-identity-{identity['id']}-password"
+    assert environment.state.vault[password_name] == "p@ss"
+    etag = read_etag(environment, identity["id"])
+
+    def land_concurrent_write(records, key):
+        # Bump the stored etag so the conditional replace fails its precondition.
+        records[key]["_etag"] = '"etag-conflict"'
+    environment.group_container.before_replace = land_concurrent_write
+
+    writes_before = len(environment.state.secret_writes)
+    response = environment.client.patch(
+        f"{LIST_PATH}/{identity['id']}",
+        json={
+            "credentials": {"auth_type": "username_password", "username": "svc", "password": "attacker"},
+            "expected_etag": etag,
+        },
+    )
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "etag_conflict"
+    # The refused value never becomes the current version of the stored reference.
+    assert environment.state.vault[password_name] == "p@ss"
+    # The fresh staged secret was written, then discarded, leaving no orphan.
+    staged = [name for (name, _value) in environment.state.secret_writes[writes_before:]]
+    assert staged, "the refused write should have staged a fresh secret"
+    for name in staged:
+        assert name.startswith("group-a--identity--group--identity-")
+        assert name in environment.state.secret_deletes
+        assert name not in environment.state.vault
+    # The stored reference still points at the untouched conventional name.
+    stored = environment.identities.get_workspace_identity("group", "group-a", identity["id"])
+    assert stored["auth"]["password_secret_name"] == password_name
+
+
+def test_a_successful_password_change_stages_fresh_and_deletes_the_superseded(environment):
+    _enable_key_vault(environment)
+    as_user(environment, "owner")
+    identity = environment.client.post(LIST_PATH, json=_create_body()).get_json()["identity"]
+    original_name = f"group-a--identity--group--workspace-identity-{identity['id']}-password"
+    assert original_name in environment.state.vault
+
+    etag = read_etag(environment, identity["id"])
+    response = environment.client.patch(
+        f"{LIST_PATH}/{identity['id']}",
+        json={
+            "credentials": {"auth_type": "username_password", "username": "svc", "password": "n3wp@ss"},
+            "expected_etag": etag,
+        },
+    )
+    assert response.status_code == 200
+    stored = environment.identities.get_workspace_identity("group", "group-a", identity["id"])
+    fresh_name = stored["auth"]["password_secret_name"]
+    assert fresh_name != original_name
+    assert fresh_name.startswith("group-a--identity--group--identity-")
+    assert (fresh_name, "n3wp@ss") in environment.state.secret_writes
+    assert environment.state.vault[fresh_name] == "n3wp@ss"
+    # The superseded conventional secret is removed only after the write commits.
+    assert original_name in environment.state.secret_deletes
+    assert original_name not in environment.state.vault
+
+
+def test_a_failed_create_discards_the_stored_secret(environment):
+    _enable_key_vault(environment)
+    as_user(environment, "owner")
+
+    def explode(body):
+        raise CosmosHttpResponseError(500)
+    environment.group_container.create_item = explode
+
+    response = environment.client.post(LIST_PATH, json=_create_body())
+    assert response.status_code == 500
+    assert environment.state.secret_writes, "the create should have stored a secret first"
+    for name, _value in environment.state.secret_writes:
+        assert name in environment.state.secret_deletes
+        assert name not in environment.state.vault
+
+
+def test_fresh_and_conventional_secret_names_stay_within_the_key_vault_limit(environment):
+    _enable_key_vault(environment)
+    group_id = "g" * 36
+    payload = {
+        "name": "Long ids",
+        "provider": "generic",
+        "credentials": {"auth_type": "username_password", "username": "svc", "password": "p@ss"},
+    }
+    created = environment.identities.create_workspace_identity("group", group_id, payload, "owner")
+    # The deterministic create name is the longest conventional case.
+    create_name = next(name for name, _ in environment.state.secret_writes)
+    assert create_name.startswith(f"{group_id}--identity--group--workspace-identity-")
+    assert len(create_name) <= 127
+
+    stored = environment.identities.get_workspace_identity("group", group_id, created["identity_id"])
+    updated = environment.identities.update_workspace_identity_conditional(
+        "group", group_id, created["identity_id"],
+        {"credentials": {"auth_type": "username_password", "username": "svc", "password": "rotated"}},
+        "owner", stored["_etag"],
+    )
+    fresh_name = updated["auth"]["password_secret_name"]
+    assert fresh_name.startswith(f"{group_id}--identity--group--identity-")
+    assert len(fresh_name) <= 127
+
+
+# --------------------------------------------------------------------------
+# B3: reviewed validation messages surface; every other ValueError stays generic
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("credentials,message", [
+    ({"auth_type": "telepathy"}, "Unsupported workspace identity authentication type"),
+    ({"auth_type": "username_password", "username": "svc"},
+     "Username/password identities require a password"),
+    ({"auth_type": "connection_string"}, "This identity type requires a secret value"),
+])
+def test_reviewed_validation_messages_reach_the_client(environment, credentials, message):
+    as_user(environment, "owner")
+    response = environment.client.post(
+        LIST_PATH, json={"name": "Bad", "provider": "generic", "credentials": credentials}
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == message
+
+
+def test_auth_type_not_available_for_usage_reaches_the_client(environment):
+    as_user(environment, "owner")
+    response = environment.client.post(
+        LIST_PATH,
+        json={
+            "name": "SMB with api key",
+            "provider": "smb",
+            "usage_contexts": ["file_sync"],
+            "credentials": {"auth_type": "api_key", "key": "abc"},
+        },
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Selected authentication type is not available for the selected identity uses"
+
+
+def test_a_public_validation_error_maps_to_its_own_400(environment):
+    error = environment.identities.WorkspaceIdentityValidationError("A reviewed, data-free message.")
+    with environment.app.test_request_context():
+        response, status = environment.access.group_identity_error_response(error)
+        assert status == 400
+        assert response.get_json()["error"] == "A reviewed, data-free message."
+
+
+def test_an_unexpected_value_error_stays_generic(environment):
+    with environment.app.test_request_context():
+        response, status = environment.access.group_identity_error_response(ValueError("secret=hunter2"))
+        assert status == 400
+        assert response.get_json()["error"] == "The workspace identity details are not valid."
+        assert "hunter2" not in json.dumps(response.get_json())
+
+
+# --------------------------------------------------------------------------
+# B5: supported_source_types has one normalizer shared by gate and projection
+# --------------------------------------------------------------------------
+
+def test_supported_source_types_defaults_to_the_provider(environment):
+    assert environment.identities.normalize_identity_supported_source_types({"provider": "smb"}) == ["smb"]
+
+
+def test_supported_source_types_without_a_provider_defaults_to_generic(environment):
+    assert environment.identities.normalize_identity_supported_source_types({}) == ["generic"]
+
+
+def test_generic_supported_source_type_matches_any_requested_source(environment):
+    identity = {"usage_contexts": ["file_sync"], "supported_source_types": ["generic"]}
+    assert environment.identities.identity_supports_usage(identity, "file_sync", source_type="azure_files")
+    assert environment.identities.identity_supports_usage(identity, "file_sync", source_type="smb")
+    specific = {"usage_contexts": ["file_sync"], "supported_source_types": ["smb"]}
+    assert environment.identities.identity_supports_usage(specific, "file_sync", source_type="smb")
+    assert not environment.identities.identity_supports_usage(specific, "file_sync", source_type="azure_files")
+
+
+def test_projection_backfills_supported_source_types_for_older_records(environment):
+    identity = seed_identity(environment, provider="smb", usage_contexts=["file_sync"])
+    # Simulate a record written before supported_source_types existed.
+    environment.group_container.records[("group-a", identity["id"])].pop("supported_source_types", None)
+    as_user(environment, "owner")
+    item = environment.client.get(f"{LIST_PATH}/{identity['id']}").get_json()["identity"]
+    assert item["supported_source_types"] == ["smb"]
 
 
 # --------------------------------------------------------------------------

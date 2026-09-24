@@ -305,6 +305,54 @@ def test_native_delegation_respects_agent_governance_and_group_status(environmen
     assert body["native_delegation"]["can_manage"] is False
 
 
+@pytest.mark.parametrize("actor,status,expected", [
+    ("owner", "active", ["create", "edit", "delete"]),
+    ("admin", "active", ["create", "edit", "delete"]),
+    ("manager", "active", ["create", "edit", "delete"]),
+    ("reader", "active", []),
+    ("admin", "locked", []),
+    ("owner", "inactive", []),
+    ("owner", "unknown", []),
+])
+def test_identity_management_matches_role_and_status(environment, actor, status, expected):
+    # B2: identity_management joins action/agent management in the selected-group
+    # context, so the frontend reads one workspace-level handshake, and it agrees
+    # with the immutable identity list envelope for every role and status.
+    environment.records["group-a"]["status"] = status
+    response = read_as(environment, actor)
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["identity_management"] == {"schema_version": 1, "operations": expected}
+
+
+def test_identity_management_is_built_by_the_shared_policy_with_context_availability(environment):
+    # The context must advertise exactly what the routes enforce: one availability
+    # predicate resolved once and fed to the shared operations helper.
+    helper = environment.helper
+    for actor, role in (("owner", "Owner"), ("admin", "Admin"),
+                        ("manager", "DocumentManager"), ("reader", "User")):
+        available, _reason = helper.group_identities_available(
+            environment.settings, "group-a",
+            user_info={"userId": actor, "roles": ["User"]},
+            file_sync_enabled=True,
+        )
+        expected = helper.group_identity_management_operations(
+            role, deepcopy(environment.records["group-a"]),
+            environment.settings, available=available,
+        )
+        body = read_as(environment, actor).get_json()
+        assert body["identity_management"]["operations"] == expected
+
+
+def test_identity_management_unavailable_when_semantic_kernel_and_file_sync_off(environment):
+    environment.settings["enable_semantic_kernel"] = False
+    environment.sync.return_value = False
+    response = read_as(environment)
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["identity_management"]["operations"] == []
+
+
 @pytest.mark.parametrize("key,sections", [
     ("per_user_semantic_kernel", ("agents", "actions", "endpoints")),
     ("enable_semantic_kernel", ("agents", "actions", "endpoints")),

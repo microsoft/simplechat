@@ -38,12 +38,14 @@ from functions_settings import get_settings
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GROUP,
     WorkspaceIdentityConflict,
+    WorkspaceIdentityValidationError,
     create_workspace_identity,
     delete_workspace_identity_conditional,
     get_action_identity_reference_id,
     get_workspace_identity,
     list_workspace_identities,
     log_workspace_identity_reference_block,
+    normalize_identity_supported_source_types,
     normalize_identity_usage_contexts,
     sanitize_workspace_identity,
     update_workspace_identity_conditional,
@@ -136,15 +138,17 @@ def require_group_identity_write_context(user_id, group_id, operation, *, user_i
 def _project_identity(identity, role, group, settings, *, available):
     """Sanitize one stored identity and attach the fresh etag and per-item actions.
 
-    ``usage_contexts`` is re-normalized through the shared
-    :func:`normalize_identity_usage_contexts` so every response advertises exactly
-    what the save-time gate (``identity_supports_usage``) would accept: an older
-    record that omits the field or holds an alias still reports its canonical
-    contexts, so a client filtering on ``action`` never hides an identity the
-    server honours.
+    ``usage_contexts`` and ``supported_source_types`` are both re-normalized
+    through their shared helpers (:func:`normalize_identity_usage_contexts` and
+    :func:`normalize_identity_supported_source_types`) so every response advertises
+    exactly what the save-time gate (``identity_supports_usage``) would accept: an
+    older record that omits a field or holds an alias still reports its canonical
+    contexts and source types, so a client filtering on ``action`` or a source type
+    never hides an identity the server honours.
     """
     projected = sanitize_workspace_identity(identity)
     projected["usage_contexts"] = normalize_identity_usage_contexts(identity)
+    projected["supported_source_types"] = normalize_identity_supported_source_types(identity)
     projected["etag"] = identity.get("_etag", "")
     projected["identity_actions"] = group_identity_actions(role, group, settings, available=available)
     return projected
@@ -227,6 +231,8 @@ def group_identity_error_response(exc):
         return _json({"error": "The workspace identity was not found."}, 404)
     if isinstance(exc, PermissionError):
         return _json({"error": "You do not have access to this workspace identity."}, 403)
+    if isinstance(exc, WorkspaceIdentityValidationError):
+        return _json({"error": exc.public_message}, 400)
     if isinstance(exc, ValueError):
         return _json({"error": "The workspace identity details are not valid."}, 400)
     return _json({"error": "Unable to complete the workspace identity request."}, 500)
@@ -263,7 +269,9 @@ def create_group_identity(user_id, group_id, body, *, user_info=None):
         user_id, group_id, "create", user_info=user_info
     )
     payload = _validate_write_body(body)
-    created = create_workspace_identity(WORKSPACE_IDENTITY_SCOPE_GROUP, group_id, payload, user_id)
+    created = create_workspace_identity(
+        WORKSPACE_IDENTITY_SCOPE_GROUP, group_id, payload, user_id, stage_secrets=True
+    )
     # create_workspace_identity returns the local document without a Cosmos etag;
     # re-read so the response carries the etag the client needs for conditional edits.
     stored = get_workspace_identity(WORKSPACE_IDENTITY_SCOPE_GROUP, group_id, created["identity_id"])

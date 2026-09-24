@@ -30,7 +30,10 @@ from functions_group_agent_policy import (
     group_agent_management_operations,
     group_agents_available,
 )
-from functions_group_identity_policy import group_identities_available
+from functions_group_identity_policy import (
+    group_identities_available,
+    group_identity_management_operations,
+)
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -246,6 +249,12 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "schema_version": 1,
             "operations": group_agent_management_operations(
                 user_id, group, role, settings, available=agents_available,
+            ),
+        },
+        "identity_management": {
+            "schema_version": 1,
+            "operations": group_identity_management_operations(
+                role, group, settings, available=identities_available,
             ),
         },
     }
