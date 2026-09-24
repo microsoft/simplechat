@@ -30,7 +30,8 @@ Only services outside the application are replaced:
   from projections and excluded from ``ORDER BY``), and refuses any other query. The
   model holds its own copy of each query text, so a change to a module's query fails
   these tests until the model is reviewed with it. The group documents container
-  models only the classic file count query;
+  refuses every query, as both document counts go through
+  ``count_current_group_documents``;
 - ``count_current_group_documents`` is a recorder returning ``file_count``: its
   predicate is pinned against the group document list by
   ``test_group_document_count_predicate.py``;
@@ -44,6 +45,7 @@ import base64
 import copy
 import json
 import logging
+import math
 import re
 import socket
 import sys
@@ -133,7 +135,6 @@ STATS_QUERIES = {
                 f"{_WINDOW} AND a.activity_type = 'token_usage'"): ("token_series", ("timestamp", "created_at", "usage"),
                                                                  "token_usage"),
 }
-LEGACY_FILE_COUNT_QUERY = _normalized("SELECT VALUE COUNT(1) FROM f WHERE f.groupId = @groupId")
 
 
 def _path(document, *keys):
@@ -232,7 +233,8 @@ class ActivityLogsContainer(FakeContainer):
 
 
 class GroupDocumentsContainer(FakeContainer):
-    """The group documents container, modelling only the classic file count query."""
+    """The group documents container. Both document counts go through
+    ``count_current_group_documents``, so any query sent here fails the test."""
 
     def __init__(self):
         super().__init__("cosmos_group_documents_container", "id")
@@ -241,10 +243,7 @@ class GroupDocumentsContainer(FakeContainer):
     def query_items(self, query, parameters=None, partition_key=None, enable_cross_partition_query=None, **kwargs):
         normalized = _normalized(query)
         self.queries.append(normalized)
-        if normalized != LEGACY_FILE_COUNT_QUERY:
-            raise AssertionError(f"The code under test sent a documents query this fixture does not model: {normalized}")
-        values = {parameter["name"]: parameter["value"] for parameter in parameters or []}
-        return [sum(1 for record in self.records.values() if _cosmos_equal(_path(record, "groupId"), values["@groupId"]))]
+        raise AssertionError(f"The code under test queried group documents directly: {normalized}")
 
 
 def png_bytes(width=4, height=4, color=(0, 120, 212)):
@@ -397,11 +396,13 @@ def group_settings_environment():
 
         config = module_stub(
             "config",
-            json=json, re=re, uuid=uuid, logging=logging, base64=base64, BytesIO=BytesIO, Image=Image,
+            json=json, re=re, uuid=uuid, logging=logging, math=math, base64=base64, BytesIO=BytesIO, Image=Image,
             datetime=datetime, timezone=timezone,
             exceptions=cosmos_exceptions,
             request=request, session=session, jsonify=jsonify, send_file=send_file,
             redirect=redirect, url_for=url_for,
+            # The application's config re-exports log_event, which the classic routes use.
+            log_event=env.log_event,
             ALLOWED_EXTENSIONS_IMG={"png", "jpg", "jpeg"},
             cosmos_groups_container=env.groups,
             cosmos_activity_logs_container=env.activity_logs,

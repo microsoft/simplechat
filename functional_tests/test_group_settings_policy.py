@@ -17,15 +17,14 @@ native routes built on it, to the classic routes' real outcomes, run for real in
 - downloads against ``PATCH /api/groups/<group_id>/download-settings``: the owner or
   an admin, with the administrator's download capability;
 - retention against ``POST /api/retention-policy/group/<group_id>``: the owner or an
-  admin;
+  admin, with group workspaces and group retention policies on;
 - the activity, statistics and file count reads against ``/activity``, ``/stats`` and
   ``/fileCount``.
 
 In every cell an allowed operation succeeds on the native route, and a refused one is a
-403 carrying the decision's reason. The native rules that are stricter than the classic
-routes are the only differences, and each is pinned: profile and logo writes while the
-group is ``locked`` or ``inactive`` (the classic manage page makes those read-only), and
-retention writes while group retention policies are off.
+403 carrying the decision's reason. The one rule stricter than the classic routes is
+pinned as the only difference: profile and logo writes while the group is ``locked`` or
+``inactive``, which the classic manage page makes read-only but the classic routes accept.
 """
 
 import ast
@@ -233,11 +232,23 @@ def test_retention_writes_follow_the_classic_retention_route(env, caller, retent
         "revision": env.revision("retention", GROUP), "conversation_retention_days": 30,
     })
 
-    # The classic route checks neither switch yet, so with retention off only the native route refuses.
-    assert_seam(allowed(classic), reason, caller, native_only="group_retention_disabled")
-    if not retention_on and allowed(classic):
-        assert reason == "group_retention_disabled"
+    # Both routes refuse while group retention policies are off, the classic one first of all.
+    assert_seam(allowed(classic), reason, caller)
+    if not retention_on:
+        assert classic.status_code == 403
+        assert classic.get_json()["error_code"] == "group_retention_disabled"
     assert_native_follows(env, native, caller, reason)
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_retention_needs_group_workspaces_on_both_routes(env, caller):
+    prepare(env, caller, "user", enable_group_workspaces=False)
+    classic = env.call("POST", f"/api/retention-policy/group/{GROUP}", {"conversation_retention_days": 30})
+    native = env.call("PATCH", f"/api/groups/{GROUP}/settings/retention", {"conversation_retention_days": 30})
+    for response in (classic, native):
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "Enable Group Workspaces is disabled."}
+    assert env.write_calls() == []
 
 
 # ---------------------------------------------------------------------------

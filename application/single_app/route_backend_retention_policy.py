@@ -491,16 +491,28 @@ def register_route_backend_retention_policy(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @enabled_required('enable_group_workspaces')
     def update_group_retention_settings(group_id):
         """
         Update retention policy settings for a group workspace.
-        User must be owner or admin of the group.
+        User must be owner or admin of the group, and group retention policies must be on.
+        Only the values sent change; the stored policy keeps the other one.
         
         Body:
-            conversation_retention_days (str|int): Number of days or 'none'
-            document_retention_days (str|int): Number of days or 'none'
+            conversation_retention_days (str|int): Number of days, 'none' or 'default'
+            document_retention_days (str|int): Number of days, 'none' or 'default'
         """
         try:
+            # The same switch the native group settings routes check.
+            from functions_group_settings import REFUSAL_MESSAGES
+            from functions_group_settings_policy import GROUP_RETENTION_DISABLED, group_retention_enabled
+            if not group_retention_enabled(get_settings()):
+                return jsonify({
+                    'success': False,
+                    'error': REFUSAL_MESSAGES[GROUP_RETENTION_DISABLED],
+                    'error_code': GROUP_RETENTION_DISABLED
+                }), 403
+
             user_id = get_current_user_id()
             data = request.get_json()
             
@@ -534,8 +546,15 @@ def register_route_backend_retention_policy(bp):
                 conv_retention = data['conversation_retention_days']
                 if conv_retention == 'none' or conv_retention is None:
                     retention_settings['conversation_retention_days'] = 'none'
+                elif conv_retention == 'default':
+                    retention_settings['conversation_retention_days'] = 'default'
                 else:
                     try:
+                        # Only text and finite numbers can be a number of days.
+                        if isinstance(conv_retention, (bool, list, dict)) or (
+                            isinstance(conv_retention, float) and not math.isfinite(conv_retention)
+                        ):
+                            raise ValueError('Invalid conversation retention value')
                         days = int(conv_retention)
                         settings = get_settings()
                         min_days = settings.get('retention_conversation_min_days', 1)
@@ -559,8 +578,15 @@ def register_route_backend_retention_policy(bp):
                 doc_retention = data['document_retention_days']
                 if doc_retention == 'none' or doc_retention is None:
                     retention_settings['document_retention_days'] = 'none'
+                elif doc_retention == 'default':
+                    retention_settings['document_retention_days'] = 'default'
                 else:
                     try:
+                        # Only text and finite numbers can be a number of days.
+                        if isinstance(doc_retention, (bool, list, dict)) or (
+                            isinstance(doc_retention, float) and not math.isfinite(doc_retention)
+                        ):
+                            raise ValueError('Invalid document retention value')
                         days = int(doc_retention)
                         settings = get_settings()
                         min_days = settings.get('retention_document_min_days', 1)
@@ -590,7 +616,10 @@ def register_route_backend_retention_policy(bp):
             def apply_retention(fresh):
                 if get_user_role_in_group(fresh, user_id) not in ['Owner', 'Admin']:
                     raise PermissionError('Insufficient permissions. Must be group owner or admin.')
-                fresh['retention_policy'] = retention_settings
+                stored_policy = fresh.get('retention_policy')
+                retention_policy = dict(stored_policy) if isinstance(stored_policy, dict) else {}
+                retention_policy.update(retention_settings)
+                fresh['retention_policy'] = retention_policy
                 return fresh
 
             try:

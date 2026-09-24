@@ -211,6 +211,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_settings.py", "api_group_insights_activity"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_settings.py", "api_group_insights_stats"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_settings.py", "api_group_insights_file_count"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_retention_policy.py", "update_group_retention_settings"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_documents"): ("login_required", "user_required", "enabled_required"),

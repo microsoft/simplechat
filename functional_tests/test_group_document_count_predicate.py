@@ -108,6 +108,7 @@ def _calls(function):
     ("functions_group_document_reads.py", "count_current_group_documents", "current_group_document_records"),
     ("functions_group_document_reads.py", "count_current_group_documents", "_query_group_document_records"),
     ("functions_group_insights.py", "read_group_file_count", "count_current_group_documents"),
+    ("route_backend_groups.py", "get_group_file_count", "count_current_group_documents"),
 ])
 def test_the_list_and_the_count_share_one_predicate(file_name, function_name, callee):
     assert callee in _calls(_function(file_name, function_name))

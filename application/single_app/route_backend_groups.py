@@ -304,7 +304,13 @@ def register_route_backend_groups(bp):
         except GroupDocumentWriteConflict:
             return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic download settings save failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The download settings could not be saved. Try again."}), 400
         if group_doc is None:
             return jsonify({"error": "Group not found"}), 404
 
@@ -389,7 +395,13 @@ def register_route_backend_groups(bp):
         except GroupDocumentWriteConflict:
             return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic group update failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The group could not be saved. Try again."}), 400
         if updated is None:
             return jsonify({"error": "Group not found"}), 404
 
@@ -455,8 +467,8 @@ def register_route_backend_groups(bp):
                 logo_file.read(),
                 logo_file.filename,
             )
-        except (ValueError, OSError) as ex:
-            return jsonify({"error": str(ex)}), 400
+        except (ValueError, OSError):
+            return jsonify({"error": "The logo image could not be read. Upload a PNG or JPEG image."}), 400
 
         stored_logo = processed_logo["base64_str"]
 
@@ -479,7 +491,13 @@ def register_route_backend_groups(bp):
         except GroupDocumentWriteConflict:
             return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": "group_write_conflict"}), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic group logo save failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The logo could not be saved. Try again."}), 400
         if updated is None:
             return jsonify({"error": "Group not found"}), 404
 
@@ -1037,23 +1055,9 @@ def register_route_backend_groups(bp):
         if group_doc["owner"]["id"] != user_id:
             return jsonify({"error": "Only the owner can check file count"}), 403
         
-        query = """
-        SELECT VALUE COUNT(1)
-        FROM f
-        WHERE f.groupId = @groupId
-        """
-        params = [{ "name": "@groupId", "value": group_id }]
-
-        result_iter = cosmos_group_documents_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        )
-        file_count = 0
-        for item in result_iter:
-            file_count = item
-
-        return jsonify({ "fileCount": file_count }), 200
+        # The group's own current documents, counted as the group document list shows them.
+        from functions_group_document_reads import count_current_group_documents
+        return jsonify({ "fileCount": count_current_group_documents(group_id) }), 200
 
     @bp.route("/api/groups/<group_id>/activity", methods=["GET"])
     @swagger_route(security=get_auth_security())
