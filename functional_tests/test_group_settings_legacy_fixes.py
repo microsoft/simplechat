@@ -14,7 +14,8 @@ Run for real in ``test_support/group_settings_harness.py``:
   as the native ``/insights/file-count`` does;
 - the classic rename, download settings and logo routes put exception text (Pillow and
   Cosmos messages) in their errors. They now answer reviewed, data-free text, and log
-  only the error type and status;
+  only the error type and status. Every decoding failure of an uploaded logo is the same
+  400, including a decompression bomb, which answered 500;
 - ``POST /api/retention-policy/group/<group_id>`` replaced the whole policy with the
   values sent, refused ``"default"`` (which the classic page offers, posts on every
   save, and new groups are seeded with), stored ``true`` as 1 day, answered a list, an
@@ -32,7 +33,7 @@ import pytest
 from azure.cosmos import exceptions as cosmos_exceptions
 from PIL import Image
 
-from test_support.group_settings_harness import group_settings_environment, png_bytes
+from test_support.group_settings_harness import decompression_bomb_png, group_settings_environment, png_bytes
 
 
 GROUP = "group-1"
@@ -143,15 +144,19 @@ def gif_bytes():
     return output.getvalue()
 
 
-@pytest.mark.parametrize("content", [b"not an image", png_bytes(64, 64)[:60], gif_bytes()],
-                         ids=["text", "truncated_png", "gif"])
+@pytest.mark.parametrize("content", [b"not an image", png_bytes(64, 64)[:60], gif_bytes(), decompression_bomb_png()],
+                         ids=["text", "truncated_png", "gif", "bomb"])
 def test_an_unreadable_logo_answers_reviewed_text(env, content):
+    # The bomb is refused with DecompressionBombError, which is neither a ValueError nor
+    # an OSError: every decoding failure of the untrusted image is the same 400.
     response = env.call("POST", f"/api/groups/{GROUP}/logo", data=logo_upload(content))
     assert outcome(response) == (400, {"error": "The logo image could not be read. Upload a PNG or JPEG image."})
     text = response.get_data(as_text=True).lower()
-    for detail in ("cannot identify", "truncated", "brandmark", "pil"):
-        assert detail not in text
+    for detail in ("cannot identify", "truncated", "brandmark", "pil", "decompression", "bomb", "pixels", "exceeds",
+                   "900000000"):
+        assert detail not in text, detail
     assert env.write_calls() == []
+    assert [entry for entry in env.logs if entry[1] == logging.ERROR] == []
 
 
 # ---------------------------------------------------------------------------

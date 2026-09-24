@@ -24,8 +24,6 @@ with the real group, branding and directory helpers. This test pins:
 
 import base64
 import copy
-import struct
-import zlib
 from io import BytesIO
 
 import pytest
@@ -34,7 +32,12 @@ from PIL import Image
 
 from test_support.agent_delegation import execute_functions
 from test_support.group_directory_harness import person
-from test_support.group_settings_harness import group_settings_environment, jpeg_bytes, png_bytes
+from test_support.group_settings_harness import (
+    decompression_bomb_png,
+    group_settings_environment,
+    jpeg_bytes,
+    png_bytes,
+)
 
 
 GROUP = "group-1"
@@ -152,17 +155,6 @@ def concurrently(env, change):
         change(stored)
         env.groups.seed(stored)
     env.groups.before_replace.append(land)
-
-
-def chunk(kind, data):
-    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-
-
-def decompression_bomb_png(side=30000):
-    """A tiny PNG whose header claims ``side`` x ``side`` pixels."""
-    header = struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"\x00"))
-            + chunk(b"IEND", b""))
 
 
 def gif_bytes():

@@ -48,8 +48,10 @@ import logging
 import math
 import re
 import socket
+import struct
 import sys
 import uuid
+import zlib
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from functools import wraps
@@ -257,6 +259,21 @@ def jpeg_bytes(width=4, height=4, color=(200, 30, 30)):
     output = BytesIO()
     Image.new("RGB", (width, height), color).save(output, format="JPEG")
     return output.getvalue()
+
+
+def _png_chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+
+def decompression_bomb_png(side=30000):
+    """A tiny PNG whose header claims ``side`` x ``side`` pixels.
+
+    Pillow refuses it with ``DecompressionBombError``, which is neither a ``ValueError``
+    nor an ``OSError``.
+    """
+    header = struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", header) + _png_chunk(b"IDAT", zlib.compress(b"\x00"))
+            + _png_chunk(b"IEND", b""))
 
 
 class GroupSettingsEnvironment:

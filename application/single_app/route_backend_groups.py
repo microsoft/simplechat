@@ -467,7 +467,7 @@ def register_route_backend_groups(bp):
                 logo_file.read(),
                 logo_file.filename,
             )
-        except (ValueError, OSError):
+        except Exception:  # noqa: BLE001 - any decoding failure of an untrusted image is the same 400
             return jsonify({"error": "The logo image could not be read. Upload a PNG or JPEG image."}), 400
 
         stored_logo = processed_logo["base64_str"]

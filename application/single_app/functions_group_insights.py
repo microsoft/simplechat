@@ -35,7 +35,9 @@ The statistics answer with the classic ``/stats`` figures, computed by the same
 queries over the same window, apart from two changes: the invented ``storageLimit``
 is gone, and a query that fails makes the whole response a 503 rather than a figure
 of zero. The window is ``days`` (7, 30 or 90, 30 when neither form is given) or a
-custom ``start_date`` and ``end_date`` of at most 366 days.
+custom ``start_date`` and ``end_date`` of at most 366 days, between 2000-01-01 and
+9998-12-31. A window that can't be used is a 400 before the group is read, so the 503
+only ever means that storage failed.
 
 The document count is the group's own current documents, counted as the group
 document list shows them.
@@ -44,7 +46,7 @@ document list shows them.
 import logging
 import math
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from flask import request
 
@@ -71,6 +73,13 @@ from functions_stats_windows import (
 GROUP_ACTIVITY_LIMITS = (10, 20, 50)
 GROUP_ACTIVITY_DEFAULT_LIMIT = 50
 GROUP_STATS_MAX_CUSTOM_DAYS = 366
+# Custom windows stay well inside the calendar, so neither a date's UTC offset nor the
+# day-by-day series built from the window can step past its first or last day.
+GROUP_STATS_EARLIEST_DATE = date(2000, 1, 1)
+GROUP_STATS_LATEST_DATE = date(9998, 12, 31)
+GROUP_STATS_DATE_RANGE_MESSAGE = (
+    f"Choose dates between {GROUP_STATS_EARLIEST_DATE.isoformat()} and {GROUP_STATS_LATEST_DATE.isoformat()}."
+)
 GROUP_STATS_UNAVAILABLE_MESSAGE = "Group statistics are unavailable right now. Try again."
 GROUP_ACTIVITY_UNAVAILABLE_MESSAGE = "Group activity is unavailable right now. Try again."
 WHOLE_NUMBER = re.compile(r"[1-9][0-9]{0,5}")
@@ -170,7 +179,10 @@ def read_activity_limit():
 
 
 def read_stats_window():
-    """The window from ``days`` or ``start_date``/``end_date``, refused when malformed or too long."""
+    """The window from ``days`` or ``start_date``/``end_date``, refused when malformed, out of range or too long.
+
+    Every refusal is a reviewed 400 raised before the group is read.
+    """
     arguments = _single_arguments(
         ("days", "start_date", "end_date"), "Use only the days, start_date and end_date query parameters.",
     )
@@ -188,11 +200,18 @@ def read_stats_window():
             raise _invalid("The days must be 7, 30 or 90.")
     try:
         window = resolve_stats_time_window(arguments)
+    except OverflowError as error:
+        # A date whose UTC offset moves it past the calendar's first or last day.
+        raise _invalid(GROUP_STATS_DATE_RANGE_MESSAGE) from error
     except ValueError as error:
         # The window helper's messages name only its own fields and formats.
         raise _invalid(str(error)) from error
-    if window["type"] == "custom" and window["days"] > GROUP_STATS_MAX_CUSTOM_DAYS:
-        raise _invalid(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.")
+    if window["type"] == "custom":
+        if (window["start_date"].date() < GROUP_STATS_EARLIEST_DATE
+                or window["end_date"].date() > GROUP_STATS_LATEST_DATE):
+            raise _invalid(GROUP_STATS_DATE_RANGE_MESSAGE)
+        if window["days"] > GROUP_STATS_MAX_CUSTOM_DAYS:
+            raise _invalid(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.")
     return window
 
 
@@ -320,41 +339,68 @@ def _stored_figure(metrics, key):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
-def build_group_stats(group, window):
-    """The classic figures for ``group`` over ``window``; any query failure propagates."""
-    group_id = group.get("id")
-    metrics = group.get("metrics") if isinstance(group.get("metrics"), dict) else {}
-    document_metrics = metrics.get("document_metrics") if isinstance(metrics.get("document_metrics"), dict) else {}
+def _stats_date_key(timestamp):
+    """A stored timestamp's day, or ``None`` when it can't be read.
+
+    A timestamp whose UTC offset moves it past the calendar's first or last day can't
+    be read either, and is left out of the series as any other unreadable timestamp is.
+    """
+    try:
+        return timestamp_to_stats_date_key(timestamp)
+    except (OverflowError, ValueError):
+        return None
+
+
+# The classic statistics queries, in the order the classic route sends them.
+GROUP_STATS_QUERIES = (
+    ("token_total", GROUP_STATS_TOKEN_TOTAL_QUERY),
+    ("uploads", GROUP_STATS_UPLOAD_QUERY),
+    ("deletes", GROUP_STATS_DELETE_QUERY),
+    ("token_series", GROUP_STATS_TOKEN_SERIES_QUERY),
+)
+
+
+def read_group_stats_rows(group, window):
+    """The rows each classic statistics query returns for ``group`` over ``window``.
+
+    This is the only storage read behind the statistics, so any exception it raises is
+    a storage failure.
+    """
     parameters = [
-        {"name": "@groupId", "value": group_id},
+        {"name": "@groupId", "value": group.get("id")},
         {"name": "@startDate", "value": window["start_date_iso"]},
         {"name": "@endDate", "value": window["end_date_iso"]},
     ]
-
-    def query(text):
-        return list(cosmos_activity_logs_container.query_items(
+    return {
+        name: list(cosmos_activity_logs_container.query_items(
             query=text, parameters=[dict(parameter) for parameter in parameters], enable_cross_partition_query=True,
         ))
+        for name, text in GROUP_STATS_QUERIES
+    }
 
-    date_series = build_stats_date_series(window["start_date"], window["end_date"])
+
+def build_group_stats(group, window, date_series, rows):
+    """The classic figures for ``group`` from its statistics rows, without reading storage."""
+    metrics = group.get("metrics") if isinstance(group.get("metrics"), dict) else {}
+    document_metrics = metrics.get("document_metrics") if isinstance(metrics.get("document_metrics"), dict) else {}
     index_by_date = {day["date"]: index for index, day in enumerate(date_series)}
     labels = [day["label"] for day in date_series]
     uploads, deletes, tokens = [0] * len(date_series), [0] * len(date_series), [0] * len(date_series)
 
     def bucket(item):
         timestamp = item.get("timestamp") or item.get("created_at") if isinstance(item, dict) else None
-        return index_by_date.get(timestamp_to_stats_date_key(timestamp)) if timestamp else None
+        return index_by_date.get(_stats_date_key(timestamp)) if timestamp else None
 
-    total_tokens = sum(_usage_tokens(item) for item in query(GROUP_STATS_TOKEN_TOTAL_QUERY))
-    for item in query(GROUP_STATS_UPLOAD_QUERY):
+    total_tokens = sum(_usage_tokens(item) for item in rows["token_total"])
+    for item in rows["uploads"]:
         index = bucket(item)
         if index is not None:
             uploads[index] += 1
-    for item in query(GROUP_STATS_DELETE_QUERY):
+    for item in rows["deletes"]:
         index = bucket(item)
         if index is not None:
             deletes[index] += 1
-    for item in query(GROUP_STATS_TOKEN_SERIES_QUERY):
+    for item in rows["token_series"]:
         index = bucket(item)
         if index is not None:
             tokens[index] += _usage_tokens(item)
@@ -380,11 +426,14 @@ def build_group_stats(group, window):
 def read_group_stats(user_id, group_id):
     """Return ``({"stats": ...}, 200)`` for the owner or an admin."""
     user_id = _require_user_id(user_id)
+    # Everything derived from the request is settled before the group is read, so a
+    # window that can't be used is a 400 and never reaches the storage 503 below.
     window = read_stats_window()
+    date_series = build_stats_date_series(window["start_date"], window["end_date"])
     group, role = load_group_for_member(user_id, group_id)
     require_operation(group, role, get_settings(), current_session_roles(), "view_stats")
     try:
-        stats = build_group_stats(group, window)
+        rows = read_group_stats_rows(group, window)
     except Exception as error:  # noqa: BLE001 - every storage failure is the same data-free 503
         log_event(
             "[WORKSPACE_ROUTE] Group statistics read failed.",
@@ -392,7 +441,7 @@ def read_group_stats(user_id, group_id):
             level=logging.ERROR,
         )
         raise _refuse_unavailable(GROUP_STATS_UNAVAILABLE_MESSAGE, "group_stats_unavailable") from error
-    return {"stats": stats}, 200
+    return {"stats": build_group_stats(group, window, date_series, rows)}, 200
 
 
 def read_group_file_count(user_id, group_id):

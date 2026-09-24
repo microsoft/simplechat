@@ -15,12 +15,14 @@ the classic routes run beside the native ones over the same records. This test p
   summary, and nothing identifying beyond a current member's display name, although
   the stored records carry file names, titles, emails, errors and conversation ids;
 - the statistics: the classic figures over the same window, without the invented
-  ``storageLimit``; strict window parameters with a 366-day cap on custom ranges; and
-  a 503 rather than a zero figure when any query fails;
+  ``storageLimit``; strict window parameters with a 366-day cap on custom ranges and
+  dates between 2000-01-01 and 9998-12-31, every refusal a reviewed 400 before the
+  group is read; and a 503 rather than a zero figure when a query fails, and only then;
 - the document count: the owner only, from ``count_current_group_documents``;
 - access in every group status, and the session, role and feature gates.
 """
 
+import logging
 from datetime import datetime, timedelta
 
 import pytest
@@ -460,6 +462,84 @@ def test_a_custom_range_is_at_most_366_days(env):
 def test_each_window_parameter_is_given_once(env):
     assert_error(env.call("GET", f"{STATS_PATH}?days=7&days=30"), 400, "invalid_request",
                  "Give each query parameter only once.")
+
+
+DATE_RANGE = "Choose dates between 2000-01-01 and 9998-12-31."
+OUT_OF_RANGE_WINDOWS = {
+    # A UTC offset moves the first day before 0001-01-01, which the shared parser can't represent.
+    "offset_before_the_calendar": {"start_date": "0001-01-01T00:00:00+01:00", "end_date": "0001-01-02"},
+    # ... or the last day after 9999-12-31.
+    "offset_after_the_calendar": {"start_date": "9998-12-01", "end_date": "9999-12-31T23:59:59-23:59"},
+    # A short range whose day-by-day series would step past 9999-12-31.
+    "series_past_the_calendar": {"start_date": "9999-12-01", "end_date": "9999-12-31"},
+    "before_the_earliest_date": {"start_date": "1999-12-31", "end_date": "2000-01-01"},
+    "after_the_latest_date": {"start_date": "9998-12-31", "end_date": "9999-01-01"},
+    "offset_moves_the_start_before_it": {"start_date": "2000-01-01T00:30:00+01:00", "end_date": "2000-01-02"},
+    "offset_moves_the_end_after_it": {"start_date": "9998-12-30", "end_date": "9998-12-31T23:00:00-05:00"},
+    # Out of range is reported before the length.
+    "outside_and_too_long": {"start_date": "0001-01-01", "end_date": "9999-12-30"},
+}
+
+
+def error_logs(env):
+    return [entry for entry in env.logs if entry[1] == logging.ERROR]
+
+
+def group_reads(env):
+    return [call for call in env.groups.calls if call[0] == "read_item"]
+
+
+@pytest.mark.parametrize("caller", ["owner-1", "outsider-1"])
+@pytest.mark.parametrize("window", OUT_OF_RANGE_WINDOWS)
+def test_dates_outside_the_supported_range_are_a_reviewed_400(env, window, caller):
+    env.as_user(caller)
+    response = env.call("GET", STATS_PATH, query_string=OUT_OF_RANGE_WINDOWS[window])
+    assert_error(response, 400, "invalid_request", DATE_RANGE)
+    assert error_logs(env) == []
+    assert env.activity_logs.queries == []
+    # Refused before the group is read, as every other window refusal is.
+    assert group_reads(env) == []
+
+
+@pytest.mark.parametrize("query", [
+    # Was a 500: the shared parser overflowed converting the offset to UTC.
+    "start_date=0001-01-01T00:00:00%2B01:00&end_date=0001-01-02",
+    # Was a 503: the window passed the length cap, then its series overflowed inside the storage try.
+    "start_date=9999-12-01&end_date=9999-12-31",
+])
+def test_the_reported_extreme_dates_are_a_reviewed_400(env, query):
+    response = env.call("GET", f"{STATS_PATH}?{query}")
+    assert_error(response, 400, "invalid_request", DATE_RANGE)
+    assert error_logs(env) == [] and env.activity_logs.queries == [] and group_reads(env) == []
+
+
+@pytest.mark.parametrize("query,first,last,days", [
+    ({"start_date": "2000-01-01", "end_date": "2000-01-31"}, "2000-01-01", "2000-01-31", 31),
+    ({"start_date": "9998-12-01", "end_date": "9998-12-31"}, "9998-12-01", "9998-12-31", 31),
+    ({"start_date": "9998-01-01", "end_date": "9998-12-31"}, "9998-01-01", "9998-12-31", 365),
+    ({"start_date": "2000-01-01T00:00:00Z", "end_date": "2000-01-01T23:59:59Z"}, "2000-01-01", "2000-01-01", 1),
+])
+def test_windows_at_the_edges_of_the_supported_range_are_read(env, query, first, last, days):
+    native = stats(env, **query)
+    assert (native["window"]["type"], native["window"]["days"]) == ("custom", days)
+    assert (native["dateRange"][0], native["dateRange"][-1], len(native["dateRange"])) == (first, last, days)
+    assert len(env.activity_logs.queries) == 4
+    assert error_logs(env) == []
+    classic = env.call("GET", f"/api/groups/{GROUP}/stats", query_string=query).get_json()
+    assert classic.pop("storageLimit") == 10737418240
+    assert native == classic
+
+
+def test_a_stored_timestamp_that_cannot_be_read_is_left_out_rather_than_failing(env):
+    # Only the storage reads can be the 503, and building the figures never fails: a
+    # stored timestamp whose offset moves it past the calendar's start is left out, as
+    # any other unreadable timestamp is.
+    seed(env,
+         record("u-edge", "document_creation", "0001-01-01T00:30:00+01:00", created_at=iso(1)),
+         record("u-ok", "document_creation", iso(1)))
+    result = stats(env)
+    assert sum(result["documentActivity"]["uploads"]) == 1
+    assert error_logs(env) == []
 
 
 @pytest.mark.parametrize("failing_query", [1, 2, 3, 4])
