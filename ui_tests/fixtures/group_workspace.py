@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.138
+Version: 0.261.146
 Implemented in: 0.261.127
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
@@ -325,7 +325,14 @@ FILE_SOURCE_AUTH_TYPES = {
 
 FILE_SOURCE_GENERIC_ERROR = "The file source details are not valid."
 FILE_SOURCE_CONFLICT_ERROR = "This file source was modified. Reload and try again."
-FILE_SOURCE_BUSY_ERROR = "A sync is already queued or running for this file source."
+# A delete refused while a run is active: the delete-specific reviewed message.
+FILE_SOURCE_BUSY_ERROR = "Wait for the running sync to finish, then delete the source."
+# Sync now refusals are distinct from the delete refusal: one for an already-running sync and one
+# for the concurrent-run limit, both shown verbatim as the real server returns them.
+FILE_SOURCE_SYNC_BUSY_ERROR = "This source already has a queued or running sync."
+FILE_SOURCE_SYNC_LIMIT_ERROR = "The File Sync concurrent run limit has been reached. Try again later."
+# The reviewed statuses a file source read is allowed in; anything else denies the read with 403.
+FILE_SOURCE_READ_STATUSES = ("active", "locked", "upload_disabled")
 
 
 def file_source_management(role, status):
@@ -529,6 +536,15 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.file_source_runs = {}
         self.file_source_active_runs = set()
         self.file_source_delete_plan = {}
+        # A test can script a connection-test failure (a message shown verbatim as an HTTP 400) and a
+        # Sync now that is refused because the concurrent-run limit is reached.
+        self.file_source_test_failure = None
+        self.file_source_sync_limit_reached = set()
+        # A test can force the next PATCH or DELETE conditional write to conflict (write_conflict for
+        # a bare etag race with an unchanged revision, or config_conflict for a moved revision), and
+        # drop a required field from every served list row to prove the strict envelope.
+        self.file_source_forced_write_conflict = None
+        self.file_source_list_item_defect = None
         self.file_source_type_visibility = {"smb": True, "azure_files": True, "azure_blob": True}
         for group_id in self.groups:
             self.group_agents[group_id] = [{
@@ -1187,19 +1203,50 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
 
     # --- Native group file source serving, shared with GroupFileSourcesFixture ------------------
 
+    def _file_source_run(self, group_id, record, *, run_index, status, started_at, completed_at,
+                         trigger="manual"):
+        """One run as the engine's `_create_run` returns it: id, run_id, type, the scope, the trigger
+        and a full `counts` block, so the run shape the section reads matches the real server."""
+        identifier = record["id"]
+        completed = status in ("completed", "failed", "cancelled")
+        counts = {
+            "scanned": 12 if completed else 0,
+            "queued": 4 if completed else 0,
+            "created": 3 if completed else 0,
+            "updated": 1 if completed else 0,
+            "unchanged": 7 if completed else 0,
+            "skipped": 1 if completed else 0,
+            "deleted": 0,
+            "failed": 0,
+            "bytes_queued": 204800 if completed else 0,
+        }
+        return {
+            "id": f"{identifier}-run-{run_index}",
+            "run_id": f"{identifier}-run-{run_index}",
+            "type": "file_sync_run",
+            "source_id": identifier,
+            "source_name": record.get("name", ""),
+            "scope_type": "group",
+            "trigger": trigger,
+            "triggered_by": OWNER_ID,
+            "status": status,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "counts": counts,
+            "changed_documents": [],
+        }
+
     def _seed_file_sources(self, group_id, records):
         rows = []
         for record in records:
             rows.append(record)
             self.native_file_source_revisions[(group_id, record["id"])] = 1
-            self.file_source_runs.setdefault((group_id, record["id"]), [{
-                "id": f"{record['id']}-run-1",
-                "source_id": record["id"],
-                "status": record.get("last_run_status", "completed"),
-                "started_at": "2024-01-02T00:00:00+00:00",
-                "completed_at": "2024-01-02T00:05:00+00:00",
-                "triggered_by": OWNER_ID,
-            }])
+            self.file_source_runs.setdefault((group_id, record["id"]), [self._file_source_run(
+                group_id, record, run_index=1,
+                status=record.get("last_run_status", "completed"),
+                started_at="2024-01-02T00:00:00+00:00",
+                completed_at="2024-01-02T00:05:00+00:00",
+            )])
         self.native_file_sources[group_id] = rows
 
     def record_file_source(self, group_id, identifier):
@@ -1221,12 +1268,26 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             self.file_source_active_runs.discard(key)
 
+    def _file_source_operations(self, group_id):
+        """The management operations the group's current context advertises, from the same policy the
+        list envelope and workspace context carry."""
+        return set(self.groups.get(group_id, {}).get("file_source_management", {}).get("operations", []))
+
+    def _file_source_actions(self, group_id, record):
+        """The per-row `source_actions`, computed exactly as the real projector does: the group's
+        advertised management operations intersected with the item-level operation set, then with the
+        row's own seeded override. A withheld row (empty override) keeps none; a locked or member
+        workspace advertises none, so every row loses its actions."""
+        operations = self._file_source_operations(group_id)
+        override = set(record.get("source_actions", FILE_SOURCE_ITEM_ACTIONS))
+        return [op for op in FILE_SOURCE_ITEM_ACTIONS if op in operations and op in override]
+
     def _file_source_payload(self, group_id, record):
         """The sanitized source plus the two fields the native routes add: `config_revision` and the
         `source_actions` projection."""
         payload = _sanitize_file_source(record)
         payload["config_revision"] = self._file_source_config_revision(group_id, record["id"])
-        payload["source_actions"] = list(record.get("source_actions", []))
+        payload["source_actions"] = self._file_source_actions(group_id, record)
         return payload
 
     def set_file_source_policy(self, group_id, *, role=None, status="active"):
@@ -1282,6 +1343,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return False
         if self.groups[group_id].get("role") not in FILE_SOURCE_MANAGER_ROLES:
             self._json(route, {"error": "You do not have access to this group's file sources."}, 403)
+            return False
+        if self.groups[group_id].get("status") not in FILE_SOURCE_READ_STATUSES:
+            # Reads are refused outside the reviewed statuses, exactly as the read context is. A
+            # locked or upload-disabled workspace stays readable but, being inactive, advertises no
+            # management operations, so its rows carry no actions.
+            self._json(route, {"error": "This group's file sources are not available right now."}, 403)
             return False
         if entry.query:
             self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
@@ -1371,11 +1438,17 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 if getattr(self, "malformed_file_source_list", False):
                     self._json(route, {"file_sources": None})
                     return
+                rows = [
+                    self._file_source_payload(group_id, row)
+                    for row in self.native_file_sources.get(group_id, [])
+                ]
+                # A test may drop a required per-item field (config_revision or source_actions) to
+                # prove the strict envelope treats it as a hard load error, not a usable row.
+                if self.file_source_list_item_defect:
+                    for payload in rows:
+                        payload.pop(self.file_source_list_item_defect, None)
                 self._json(route, {
-                    "file_sources": [
-                        self._file_source_payload(group_id, row)
-                        for row in self.native_file_sources.get(group_id, [])
-                    ],
+                    "file_sources": rows,
                     "file_source_management": {
                         "schema_version": 1,
                         "operations": list(operations),
@@ -1445,6 +1518,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if set(body) - FILE_SOURCE_WRITE_FIELDS - {"expected_config_revision"}:
             self._json(route, {"error": FILE_SOURCE_GENERIC_ERROR}, 400)
             return
+        # A test may force the conditional write to conflict. `write_conflict` models a bare etag
+        # race whose config revision is unchanged (a plain retry is safe); `config_conflict` models a
+        # revision that moved (the draft must be reloaded).
+        forced = self.file_source_forced_write_conflict
+        if forced:
+            self.file_source_forced_write_conflict = None
+            self._json(route, {"error": FILE_SOURCE_CONFLICT_ERROR, "error_code": forced}, 409)
+            return
         if body["expected_config_revision"] != self._file_source_config_revision(group_id, identifier):
             self._json(route, {"error": FILE_SOURCE_CONFLICT_ERROR, "error_code": "config_conflict"}, 409)
             return
@@ -1492,56 +1573,111 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             f"Sync reached a source without the action: {entry}"
         )
         if (group_id, identifier) in self.file_source_active_runs:
-            # The reviewed Sync now refusal shown verbatim.
-            self._json(route, {"error": FILE_SOURCE_BUSY_ERROR}, 400)
+            # The reviewed "already queued or running" Sync now refusal, shown verbatim (400).
+            self._json(route, {"error": FILE_SOURCE_SYNC_BUSY_ERROR}, 400)
             return
-        run = {
-            "id": f"{identifier}-run-{len(self.file_source_runs.get((group_id, identifier), [])) + 1}",
-            "source_id": identifier,
-            "status": "queued",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "completed_at": None,
-            "triggered_by": OWNER_ID,
-        }
+        if (group_id, identifier) in self.file_source_sync_limit_reached:
+            # The reviewed concurrent-run-limit refusal, also shown verbatim (400).
+            self._json(route, {"error": FILE_SOURCE_SYNC_LIMIT_ERROR}, 400)
+            return
+        run = self._file_source_run(
+            group_id, record,
+            run_index=len(self.file_source_runs.get((group_id, identifier), [])) + 1,
+            status="queued",
+            started_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=None,
+        )
         self.file_source_runs.setdefault((group_id, identifier), []).insert(0, run)
         self._json(route, {"run": run}, 202)
 
     def _file_source_unsaved(self, route, entry, group_id, action):
         # /api/groups/<group_id>/file-sources/{test-connection|browse}
+        # Both draft tools require the workspace-level `test` operation; a request that arrives
+        # without it means the section leaked past its gate, so it is recorded and refused.
+        if "test" not in self._file_source_operations(group_id):
+            self.unexpected_requests.append(f"{entry.method} {entry.path}")
+            self._json(route, {"error": "Testing a file source is not available in this group."}, 403)
+            return
         body = entry.body if isinstance(entry.body, dict) else {}
         extra = set(body) - FILE_SOURCE_WRITE_FIELDS - {"browse_path"}
         if extra:
             self._json(route, {"error": FILE_SOURCE_GENERIC_ERROR}, 400)
             return
         if action == "test-connection":
-            self._json(route, {"connection": {"ok": True, "message": "Connected to the file source."}})
+            self._file_source_test_response(route, body)
         else:
             self._json(route, self._browse_payload(body.get("browse_path", "")))
 
+    def _file_source_test_response(self, route, body):
+        """A connection test result. A scripted failure is an HTTP 400 with a message shown verbatim,
+        exactly as `test_file_sync_source_connection` raises; otherwise the real success shape with
+        the counts the server saw, under `connection`."""
+        if self.file_source_test_failure is not None:
+            self._json(route, {"error": self.file_source_test_failure}, 400)
+            return
+        source_type = str(body.get("source_type") or "smb")
+        recursive = bool(body.get("recursive", True))
+        self._json(route, {"connection": {
+            "success": True,
+            "source_type": source_type,
+            "recursive": recursive,
+            "entries_checked": 12,
+            "files_seen": 9,
+            "folders_seen": 3,
+        }})
+
     def _file_source_saved_tool(self, route, entry, group_id, identifier, action):
+        # A saved source's test/browse require the workspace `test` operation and the row's own
+        # `test` action; a request without either means the section leaked past its gate.
+        record = self.record_file_source(group_id, identifier)
+        actions = self._file_source_actions(group_id, record) if record else []
+        if "test" not in self._file_source_operations(group_id) or "test" not in actions:
+            self.unexpected_requests.append(f"{entry.method} {entry.path}")
+            self._json(route, {"error": "Testing this file source is not available."}, 403)
+            return
         body = entry.body if isinstance(entry.body, dict) else {}
         if action == "test-connection":
-            self._json(route, {"connection": {"ok": True, "message": "Connected to the file source."}})
+            self._file_source_test_response(route, body)
         else:
             self._json(route, self._browse_payload(body.get("browse_path", "")))
 
     def _browse_payload(self, browse_path):
+        """A browse result in the real engine shape: each entry carries `type` ("folder" or "file"),
+        never `is_dir`, and no ignore state, since browse cannot report one."""
         base = str(browse_path or "")
         prefix = f"{base}/" if base else ""
-        return {"browse": {"path": base, "entries": [
-            {"name": "reports", "path": f"{prefix}reports", "is_dir": True, "ignored": False},
-            {"name": "budget.xlsx", "path": f"{prefix}budget.xlsx", "is_dir": False, "ignored": False},
+        return {"browse": {"path": base, "source_type": "smb", "entries": [
+            {"name": "reports", "path": f"{prefix}reports", "type": "folder", "size": 0,
+             "modified_at": "2024-01-02T00:00:00+00:00"},
+            {"name": "budget.xlsx", "path": f"{prefix}budget.xlsx", "type": "file", "size": 20480,
+             "modified_at": "2024-01-02T00:00:00+00:00"},
         ]}}
 
     def _file_source_ignore(self, route, entry, group_id, identifier):
+        # Ignore requires the workspace `edit` operation and the row's own `edit` action.
+        record = self.record_file_source(group_id, identifier)
+        actions = self._file_source_actions(group_id, record) if record else []
+        if "edit" not in self._file_source_operations(group_id) or "edit" not in actions:
+            self.unexpected_requests.append(f"{entry.method} {entry.path}")
+            self._json(route, {"error": "Editing this file source is not available."}, 403)
+            return
         body = entry.body if isinstance(entry.body, dict) else {}
         remote_path = str(body.get("remote_path") or "")
         ignored = bool(body.get("ignored"))
+        # The File Sync item record the ignore route returns under `item`, whose `ignored` flag is the
+        # authoritative per-path state the editor tracks.
         self._json(route, {"item": {
-            "name": remote_path.rsplit("/", 1)[-1] or remote_path,
-            "path": remote_path,
-            "is_dir": False,
+            "id": f"{identifier}-item-{abs(hash(remote_path)) % 10000}",
+            "type": "file_sync_item",
+            "source_id": identifier,
+            "scope_type": "group",
+            "group_id": group_id,
+            "remote_path": remote_path,
+            "status": "active",
             "ignored": ignored,
+            "updated_by": OWNER_ID,
+            "updated_at": "2024-01-02T00:00:00+00:00",
+            "created_at": "2024-01-01T00:00:00+00:00",
         }})
 
     # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------

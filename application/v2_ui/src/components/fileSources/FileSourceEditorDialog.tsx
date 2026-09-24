@@ -40,6 +40,17 @@ import type {
 const FIELD_CLASS =
     'w-full rounded-lg border border-edge bg-surface-1 px-2.5 py-1.5 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 
+/**
+ * A one-line summary of a successful connection test. A failed test is an HTTP 400 shown verbatim
+ * elsewhere, so this only ever describes success, reporting the counts the server actually saw.
+ */
+function connectionSummary(result: FileSourceConnectionResult): string {
+    const checked = Number(result.entries_checked ?? 0);
+    const folders = Number(result.folders_seen ?? 0);
+    const files = Number(result.files_seen ?? 0);
+    return `Connected. Checked ${checked} ${checked === 1 ? 'entry' : 'entries'}: ${folders} ${folders === 1 ? 'folder' : 'folders'}, ${files} ${files === 1 ? 'file' : 'files'}.`;
+}
+
 export function FileSourceEditorDialog({
     draft,
     options,
@@ -66,8 +77,12 @@ export function FileSourceEditorDialog({
     onRefresh?: () => void;
     onTest: () => Promise<FileSourceConnectionResult>;
     onBrowse: (browsePath: string) => Promise<FileSourceBrowseResult>;
-    /** Present only for a saved source; ignoring a browsed path skips it on the next run. */
-    onIgnore?: (remotePath: string, ignored: boolean) => Promise<void>;
+    /**
+     * Present only for a saved source; ignoring a browsed path skips it on the next run. Browse
+     * cannot report ignore state, so this returns the item's resulting `ignored` flag and the dialog
+     * tracks it per path for the session.
+     */
+    onIgnore?: (remotePath: string, ignored: boolean) => Promise<boolean>;
 }) {
     const nameRef = useRef<HTMLInputElement>(null);
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -80,6 +95,10 @@ export function FileSourceEditorDialog({
     const [browsing, setBrowsing] = useState(false);
     const [browseResult, setBrowseResult] = useState<FileSourceBrowseResult | null>(null);
     const [browseError, setBrowseError] = useState<string | null>(null);
+    // Browse carries no ignore state, so each ignored/restored path is tracked for the session from
+    // the ignore response's returned item, defaulting an unseen path to not-ignored.
+    const [ignoredPaths, setIgnoredPaths] = useState<Record<string, boolean>>({});
+    const [ignoreError, setIgnoreError] = useState<string | null>(null);
 
     const descriptor = useMemo(() => connectionDescriptor(draft.sourceType), [draft.sourceType]);
     const typeOptions = useMemo(() => visibleSourceTypes(options), [options]);
@@ -151,7 +170,7 @@ export function FileSourceEditorDialog({
         if (field) {
             setConnection({ [field.key]: path } as Partial<FileSourceDraft['connection']>);
         }
-        if (entry.is_dir) {
+        if (entry.type === 'folder') {
             void runBrowse(path);
         }
     };
@@ -161,8 +180,16 @@ export function FileSourceEditorDialog({
             return;
         }
         const path = String(entry.path ?? entry.name ?? '');
-        await onIgnore(path, !entry.ignored);
-        await runBrowse(browseResult?.path ?? '');
+        const next = !ignoredPaths[path];
+        setIgnoreError(null);
+        try {
+            // The server's returned item is authoritative; browse can't reflect the change, so the
+            // per-path map is updated from the response rather than by re-browsing.
+            const applied = await onIgnore(path, next);
+            setIgnoredPaths((current) => ({ ...current, [path]: applied }));
+        } catch (cause) {
+            setIgnoreError(cause instanceof Error ? cause.message : 'Could not update the ignore list.');
+        }
     };
 
     const authType = draft.credentials.authType;
@@ -266,6 +293,7 @@ export function FileSourceEditorDialog({
                     ))}
 
                     {browseError ? <p className="text-xs text-danger">{browseError}</p> : null}
+                    {ignoreError ? <p className="text-xs text-danger">{ignoreError}</p> : null}
                     {browseResult ? (
                         <div className="rounded-lg border border-edge bg-surface-1 p-2">
                             <p className="mb-1 text-xs text-text-3">
@@ -275,30 +303,35 @@ export function FileSourceEditorDialog({
                                 <p className="text-xs text-text-3">No items here.</p>
                             ) : (
                                 <ul className="max-h-40 space-y-0.5 overflow-y-auto text-sm">
-                                    {browseResult.entries.map((entry, index) => (
-                                        <li
-                                            key={String(entry.path ?? entry.name ?? index)}
-                                            className="flex items-center justify-between gap-2"
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => chooseEntry(entry)}
-                                                className="flex-1 truncate text-left text-text-1 hover:text-accent"
+                                    {browseResult.entries.map((entry, index) => {
+                                        const entryPath = String(entry.path ?? entry.name ?? index);
+                                        const isFolder = entry.type === 'folder';
+                                        const isIgnored = Boolean(ignoredPaths[entryPath]);
+                                        return (
+                                            <li
+                                                key={entryPath}
+                                                className="flex items-center justify-between gap-2"
                                             >
-                                                {entry.is_dir ? 'Folder: ' : 'File: '}
-                                                {String(entry.name ?? entry.path ?? 'item')}
-                                            </button>
-                                            {onIgnore ? (
                                                 <button
                                                     type="button"
-                                                    onClick={() => void toggleIgnore(entry)}
-                                                    className="text-xs text-text-3 hover:text-text-1"
+                                                    onClick={() => chooseEntry(entry)}
+                                                    className="flex-1 truncate text-left text-text-1 hover:text-accent"
                                                 >
-                                                    {entry.ignored ? 'Restore' : 'Ignore'}
+                                                    {isFolder ? 'Folder: ' : 'File: '}
+                                                    {String(entry.name ?? entry.path ?? 'item')}
                                                 </button>
-                                            ) : null}
-                                        </li>
-                                    ))}
+                                                {onIgnore ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void toggleIgnore(entry)}
+                                                        className="text-xs text-text-3 hover:text-text-1"
+                                                    >
+                                                        {isIgnored ? 'Restore' : 'Ignore'}
+                                                    </button>
+                                                ) : null}
+                                            </li>
+                                        );
+                                    })}
                                 </ul>
                             )}
                         </div>
@@ -463,10 +496,7 @@ export function FileSourceEditorDialog({
                         </GlassButton>
                         {testError ? <p className="mt-1 text-xs text-danger">{testError}</p> : null}
                         {testResult ? (
-                            <p className={`mt-1 text-xs ${testResult.ok ? 'text-ok' : 'text-danger'}`}>
-                                {testResult.ok ? 'Connection succeeded.' : 'Connection failed.'}
-                                {testResult.message ? ` ${testResult.message}` : ''}
-                            </p>
+                            <p className="mt-1 text-xs text-ok">{connectionSummary(testResult)}</p>
                         ) : null}
                     </div>
                 </fieldset>

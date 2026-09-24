@@ -1,7 +1,7 @@
 // test_v2_group_file_sources.ts
 //
 // Runtime pin for the scope seam in fileSourceWorkbench.ts.
-// Version: 0.261.145
+// Version: 0.261.146
 // Implemented in: 0.261.145
 //
 // The browser suite proves the group editor, gating, conflict and delete behaviour against a
@@ -97,7 +97,7 @@ async function testGroupTransportNeverTouchesPersonal(): Promise<void> {
         { schema_version: 1, operations: ['create', 'edit', 'delete', 'sync', 'test'] },
     );
 
-    stub({ file_sources: [{ id: 's1' }], file_source_management: { schema_version: 1, operations: [] } });
+    stub({ file_sources: [{ id: 's1', config_revision: 'r1', source_actions: [] }], file_source_management: { schema_version: 1, operations: [] } });
     await adapter.list();
     assert.deepEqual(calls, [{ method: 'GET', path: '/api/groups/group-a/file-sources' }],
         'The group list must hit the immutable group route.');

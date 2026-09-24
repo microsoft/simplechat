@@ -33,6 +33,7 @@ import {
     FileSourceConflictError,
     FileSourceDeleteIncompleteError,
     FileSourcePartialDeleteError,
+    FileSourceWriteConflictError,
     type FileSourceDeleteOutcome,
     type FileSourceWorkbenchAdapter,
 } from '../../lib/fileSourceWorkbench';
@@ -212,9 +213,14 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
             toast.success(editingId ? 'File source saved' : 'File source created');
         } catch (writeError) {
             if (writeError instanceof FileSourceConflictError) {
-                // Keep the draft open. Reload brings the new config_revision, and saving again
-                // applies the edit on top of it.
+                // The config revision moved. Keep the draft open. Reload brings the new
+                // config_revision, and saving again applies the edit on top of it.
                 setSaveConflict(true);
+                setSaveError(writeError.message);
+            } else if (writeError instanceof FileSourceWriteConflictError) {
+                // A bare etag race whose config revision is unchanged. Nothing the draft depends on
+                // moved, so keep it and let a plain retry through -- no reload is offered.
+                setSaveConflict(false);
                 setSaveError(writeError.message);
             } else {
                 // Any other failure, including the server's reviewed 400 validation messages, is
@@ -252,7 +258,8 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
 
     const onIgnore = editingId
         ? async (remotePath: string, ignored: boolean) => {
-              await adapter.ignorePath(editingId, remotePath, ignored);
+              const item = await adapter.ignorePath(editingId, remotePath, ignored);
+              return Boolean(item.ignored);
           }
         : undefined;
 
@@ -311,6 +318,10 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
                 );
                 await refresh();
             } else if (deleteError instanceof FileSourceBusyError) {
+                setDeleteState({ source: target, busy: false, error: deleteError.message, conflict: false, result: null });
+            } else if (deleteError instanceof FileSourceWriteConflictError) {
+                // A bare etag race with an unchanged config revision: a plain retry is enough, so
+                // keep the modal without offering a reload.
                 setDeleteState({ source: target, busy: false, error: deleteError.message, conflict: false, result: null });
             } else if (deleteError instanceof FileSourceConflictError) {
                 setDeleteState({ source: target, busy: false, error: deleteError.message, conflict: true, result: null });

@@ -33,6 +33,7 @@ import {
 } from './workspaceApi';
 import type {
     FileSourceBrowseEntry,
+    FileSourceIgnoreItem,
     FileSourceOptions,
     WorkspaceIdentity,
     WorkspaceSyncRun,
@@ -68,9 +69,18 @@ export interface FileSourceDeleteOutcome {
     documents_failed: number;
 }
 
+/**
+ * A successful connection test. The server returns `success: true` plus the counts it saw; a failed
+ * test is not `{success: false}` but an HTTP 400 the caller catches and shows verbatim, so this type
+ * models only the success payload the routes return under `connection`.
+ */
 export interface FileSourceConnectionResult {
-    ok: boolean;
-    message?: string;
+    success: boolean;
+    source_type?: string;
+    recursive?: boolean;
+    entries_checked?: number;
+    files_seen?: number;
+    folders_seen?: number;
     [key: string]: unknown;
 }
 
@@ -80,14 +90,26 @@ export interface FileSourceBrowseResult {
 }
 
 /**
- * A conditional-write conflict (409 config_conflict or write_conflict, with no documents removed).
- * The section catches this specifically: a stale config revision must keep the editor and its draft
- * open and offer a reload, not discard the edit.
+ * A conditional-write conflict where the config revision moved (409 config_conflict, no documents
+ * removed). The section catches this specifically: a stale config revision must keep the editor and
+ * its draft open and offer a reload, not discard the edit.
  */
 export class FileSourceConflictError extends Error {
     constructor(message = 'This file source changed while it was being saved. Reload it and try again.') {
         super(message);
         this.name = 'FileSourceConflictError';
+    }
+}
+
+/**
+ * A bare etag conflict where the config revision is unchanged (409 write_conflict). Nothing about
+ * the source the editor is looking at moved, so the draft stays and a plain retry is enough -- no
+ * reload is offered, unlike {@link FileSourceConflictError}.
+ */
+export class FileSourceWriteConflictError extends Error {
+    constructor(message = 'This file source was just updated elsewhere. Try saving again.') {
+        super(message);
+        this.name = 'FileSourceWriteConflictError';
     }
 }
 
@@ -145,7 +167,7 @@ export interface FileSourceWorkbenchAdapter {
     sync: (sourceId: string) => Promise<WorkspaceSyncRun | null>;
     testConnection: (source: WorkspaceSyncSource | null, write: FileSourceWrite | null) => Promise<FileSourceConnectionResult>;
     browse: (source: WorkspaceSyncSource | null, write: FileSourceWrite | null, browsePath: string) => Promise<FileSourceBrowseResult>;
-    ignorePath: (sourceId: string, remotePath: string, ignored: boolean) => Promise<FileSourceBrowseEntry>;
+    ignorePath: (sourceId: string, remotePath: string, ignored: boolean) => Promise<FileSourceIgnoreItem>;
     /** Where "adding one is still done in the classic workspace" points, for personal scope. */
     classicPath: string;
 }
@@ -244,13 +266,23 @@ function groupFileSourcesUrl(groupId: string, sourceId?: string, suffix?: string
     return suffix ? `${path}/${suffix}` : path;
 }
 
-/** The list route wraps the collection under `file_sources`; a malformed envelope throws (§9). */
+/**
+ * The list route wraps the collection under `file_sources`; a malformed envelope throws (§9). Each
+ * item must carry the conditional-write token `config_revision` (a string) and its `source_actions`
+ * array; a row missing either is malformed, so the strict envelope catches a server or fixture that
+ * drifted from the real projection.
+ */
 function sourcesFromResponse(value: unknown): WorkspaceSyncSource[] {
     if (!isRecord(value) || !Array.isArray(value.file_sources)) {
         throw new Error('The file sources response was malformed. Refresh and try again.');
     }
     const sources = value.file_sources;
-    if (!sources.every((source) => isRecord(source) && typeof source.id === 'string' && source.id)) {
+    const valid = sources.every((source) =>
+        isRecord(source)
+        && typeof source.id === 'string' && source.id
+        && typeof source.config_revision === 'string' && source.config_revision
+        && Array.isArray(source.source_actions));
+    if (!valid) {
         throw new Error('The file sources response was malformed. Refresh and try again.');
     }
     return sources as WorkspaceSyncSource[];
@@ -305,9 +337,9 @@ function browseFromResponse(value: unknown): FileSourceBrowseResult {
     throw new Error('The browse response was malformed. Try again.');
 }
 
-function ignoreItemFromResponse(value: unknown): FileSourceBrowseEntry {
+function ignoreItemFromResponse(value: unknown): FileSourceIgnoreItem {
     if (isRecord(value) && isRecord(value.item)) {
-        return value.item as FileSourceBrowseEntry;
+        return value.item as FileSourceIgnoreItem;
     }
     throw new Error('The ignore-path response was malformed. Try again.');
 }
@@ -354,7 +386,13 @@ async function conditionalGroupUpdate(url: string, body: Record<string, unknown>
     } catch (cause) {
         if (cause instanceof ApiError && cause.status === 409) {
             const payload = cause.payload;
+            const errorCode = isRecord(payload) ? String(payload.error_code ?? '') : '';
             const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : undefined;
+            // A bare etag race whose config revision is unchanged is a plain retry; a moved config
+            // revision must keep the draft and offer a reload.
+            if (errorCode === 'write_conflict') {
+                throw new FileSourceWriteConflictError(message);
+            }
             throw new FileSourceConflictError(message);
         }
         throw cause;
@@ -383,7 +421,10 @@ async function deleteGroupSource(url: string, body: Record<string, unknown>): Pr
             if (errorCode === 'source_busy') {
                 throw new FileSourceBusyError(message);
             }
-            if (errorCode === 'config_conflict' || errorCode === 'write_conflict') {
+            if (errorCode === 'write_conflict') {
+                throw new FileSourceWriteConflictError(message);
+            }
+            if (errorCode === 'config_conflict') {
                 throw new FileSourceConflictError(message);
             }
         }

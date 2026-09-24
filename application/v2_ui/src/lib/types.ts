@@ -461,11 +461,32 @@ export interface FileSourceOptions {
     recursive_allowed: boolean;
 }
 
-/** One entry returned by a browse of a source's remote location. */
+/**
+ * One entry returned by a browse of a source's remote location.
+ *
+ * Every real browse implementation (`_browse_smb_path`, `_browse_azure_files_path`,
+ * `_browse_azure_blob_path`, `_browse_onedrive_path`) returns this shape: a folder is
+ * `type === "folder"`. Browse carries no ignore state, so the editor tracks that separately from the
+ * ignore-path response.
+ */
 export interface FileSourceBrowseEntry {
     name?: string;
     path?: string;
-    is_dir?: boolean;
+    type?: string;
+    size?: number;
+    modified_at?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * The File Sync item record the ignore-path route returns under `item`. Its `ignored` flag is the
+ * authoritative per-path ignore state, since a browse cannot report it.
+ */
+export interface FileSourceIgnoreItem {
+    id?: string;
+    source_id?: string;
+    remote_path?: string;
+    status?: string;
     ignored?: boolean;
     [key: string]: unknown;
 }

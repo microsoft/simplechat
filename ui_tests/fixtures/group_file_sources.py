@@ -1,7 +1,7 @@
 # group_file_sources.py
 """
 Closed M5B group file source HTTP fixtures for the real production V2 SPA.
-Version: 0.261.145
+Version: 0.261.146
 Implemented in: 0.261.145
 
 The fixture serves the immutable `/api/groups/<group_id>/file-sources[...]` family

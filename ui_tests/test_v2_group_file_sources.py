@@ -1,7 +1,7 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.145
+Version: 0.261.146
 Implemented in: 0.261.145
 
 Exercises the real file sources section and its editor dialog against closed synthetic
@@ -21,10 +21,9 @@ check pins the personal adapter's transport byte-identical and the group seam ne
 reaching a personal URL.
 """
 
-import os
 import re
 import subprocess
-import sys
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -32,6 +31,10 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
+from ui_tests.fixtures.group_workspace import (  # noqa: F401
+    FILE_SOURCE_BUSY_ERROR, FILE_SOURCE_SYNC_BUSY_ERROR, FILE_SOURCE_SYNC_LIMIT_ERROR,
+    FILE_SOURCE_CONFLICT_ERROR,
+)
 from ui_tests.fixtures.group_file_sources import (  # noqa: F401
     GroupFileSourcesFixture, group_file_sources_ui,
     EDITABLE_SOURCE_ID, WITHHELD_SOURCE_ID, IDENTITY_SOURCE_ID, FILE_SYNC_IDENTITY_ID,
@@ -56,8 +59,10 @@ WITHHELD_NAME = "Locked archive share"
 IDENTITY_NAME = "Shared drive via identity"
 IDENTITY_LABEL = "Archive file share account"
 
-BUSY_MESSAGE = "A sync is already queued or running for this file source."
-CONFLICT_MESSAGE = "This file source was modified. Reload and try again."
+BUSY_MESSAGE = FILE_SOURCE_BUSY_ERROR
+SYNC_BUSY_MESSAGE = FILE_SOURCE_SYNC_BUSY_ERROR
+SYNC_LIMIT_MESSAGE = FILE_SOURCE_SYNC_LIMIT_ERROR
+CONFLICT_MESSAGE = FILE_SOURCE_CONFLICT_ERROR
 
 
 def open_sources(ui, group="group-a", **options):
@@ -234,6 +239,44 @@ def test_config_conflict_keeps_the_draft_and_offers_a_reload(group_file_sources_
     expect(page.get_by_text(CONFLICT_MESSAGE, exact=True)).to_be_visible()
 
 
+def test_write_conflict_on_save_allows_a_plain_retry(group_file_sources_ui):
+    """A bare etag race (write_conflict, unchanged revision) keeps the draft but offers no reload:
+    the same Save can simply be retried and then succeeds."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    page.get_by_label("Name", exact=True).fill("Retriable draft")
+    ui.file_source_forced_write_conflict = "write_conflict"
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as response:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert response.value.status == 409
+    # The draft survives, but a write_conflict is a plain retry, so no Reload is offered.
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Retriable draft")
+    expect(page.get_by_role("button", name="Reload", exact=True)).to_have_count(0)
+    # Retrying the same Save now succeeds because the one-shot conflict has cleared.
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as retry:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert retry.value.ok
+    assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["name"] == "Retriable draft"
+
+
+@pytest.mark.parametrize("defect", ["config_revision", "source_actions"])
+def test_list_item_missing_a_required_field_is_a_hard_load_error(group_file_sources_ui, defect):
+    """Every list item must carry a string config_revision and an array source_actions; a row missing
+    either is a hard load error, never a silently usable source."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui.file_source_list_item_defect = defect
+    open_sources(ui)
+    expect(page.get_by_text(re.compile("file sources response was malformed"))).to_be_visible()
+    expect(row(ui, EDITABLE_NAME)).to_have_count(0)
+
+
 def test_delete_keep_documents_removes_only_the_source(group_file_sources_ui):
     """Deleting and keeping documents sends the version marker and the false choice, and removes the row."""
     ui, page = group_file_sources_ui, group_file_sources_ui.page
@@ -363,7 +406,21 @@ def test_sync_now_refusal_is_shown_verbatim(group_file_sources_ui):
     ) as response:
         row(ui, EDITABLE_NAME).get_by_role("button", name=f"Sync {EDITABLE_NAME} now", exact=True).click()
     assert response.value.status == 400
-    expect(page.get_by_text(BUSY_MESSAGE, exact=True)).to_be_visible()
+    expect(page.get_by_text(SYNC_BUSY_MESSAGE, exact=True)).to_be_visible()
+
+
+def test_sync_now_concurrent_limit_is_shown_verbatim(group_file_sources_ui):
+    """A Sync now refused by the concurrent-run limit shows the reviewed limit message verbatim."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui.file_source_sync_limit_reached.add(("group-a", EDITABLE_SOURCE_ID))
+    open_manager(ui)
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/sync"
+    ) as response:
+        row(ui, EDITABLE_NAME).get_by_role("button", name=f"Sync {EDITABLE_NAME} now", exact=True).click()
+    assert response.value.status == 400
+    expect(page.get_by_text(SYNC_LIMIT_MESSAGE, exact=True)).to_be_visible()
 
 
 def test_run_history_expands_from_the_group_route(group_file_sources_ui):
@@ -389,7 +446,8 @@ def test_test_connection_and_browse_run_against_the_draft(group_file_sources_ui)
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/test-connection"
     ):
         page.get_by_role("button", name="Test connection", exact=True).click()
-    expect(page.get_by_text(re.compile("Connection succeeded"))).to_be_visible()
+    # The success shape reports the counts the server saw, never a bare "succeeded".
+    expect(page.get_by_text(re.compile(r"Connected\. Checked 12 entries: 3 folders, 9 files\."))).to_be_visible()
 
     with page.expect_response(
         lambda response: response.request.method == "POST"
@@ -397,6 +455,104 @@ def test_test_connection_and_browse_run_against_the_draft(group_file_sources_ui)
     ):
         page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
     expect(page.get_by_text(re.compile("budget.xlsx"))).to_be_visible()
+    assert_no_personal_reads(ui)
+
+
+def test_failed_test_connection_shows_the_server_message_verbatim(group_file_sources_ui):
+    """A failed connection test is an HTTP 400 whose message is shown verbatim, not a success shape."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui.file_source_test_failure = "The network share refused the connection: access denied."
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/test-connection"
+    ) as response:
+        page.get_by_role("button", name="Test connection", exact=True).click()
+    assert response.value.status == 400
+    expect(page.get_by_text(
+        "The network share refused the connection: access denied.", exact=True)).to_be_visible()
+    # A failed test never renders as a connected summary.
+    expect(page.get_by_text(re.compile("Connected. Checked"))).to_have_count(0)
+
+
+def test_browse_opens_a_folder_by_type(group_file_sources_ui):
+    """Clicking a browsed folder browses into it; the entry is a folder by `type`, not `is_dir`."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
+    ) as first:
+        page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
+    first_path = (first.value.request.post_data_json or {}).get("browse_path")
+    # The folder is labelled as a folder and the file as a file, from the real `type` field.
+    expect(page.get_by_role("button", name=re.compile(r"^Folder: reports"))).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile(r"^File: budget.xlsx"))).to_be_visible()
+    # Opening the folder browses into its path, which the engine returns as a child of the current path.
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
+        and (response.request.post_data_json or {}).get("browse_path") == f"{first_path}/reports"
+    ):
+        page.get_by_role("button", name=re.compile(r"^Folder: reports")).click()
+    expect(page.get_by_text(re.compile(r"Browsing .*reports/reports"))).to_be_visible()
+    assert_no_personal_reads(ui)
+
+
+def test_ignore_then_restore_tracks_the_returned_item(group_file_sources_ui):
+    """Ignoring a browsed path flips its control from the item's `ignored` flag, and restore flips back."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
+    ):
+        page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
+    file_entry = page.get_by_role("listitem").filter(
+        has=page.get_by_role("button", name=re.compile(r"^File: budget.xlsx")))
+    # Browse cannot report ignore state, so every entry defaults to "Ignore".
+    ignore_button = file_entry.get_by_role("button", name="Ignore", exact=True)
+    expect(ignore_button).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/ignore-path"
+        and (response.request.post_data_json or {}).get("ignored") is True
+    ):
+        ignore_button.click()
+    # The returned item's `ignored: true` flips the control to Restore without a re-browse.
+    restore_button = file_entry.get_by_role("button", name="Restore", exact=True)
+    expect(restore_button).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/ignore-path"
+        and (response.request.post_data_json or {}).get("ignored") is False
+    ):
+        restore_button.click()
+    expect(file_entry.get_by_role("button", name="Ignore", exact=True)).to_be_visible()
+    assert_no_personal_reads(ui)
+
+
+def test_locked_group_manager_gets_a_read_only_section(group_file_sources_ui):
+    """A locked group is readable but advertises no operations, so a manager sees no write tools and
+    never issues a test, browse or ignore request."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui.set_file_source_policy("group-a", role="Owner", status="locked")
+    open_sources(ui)
+    expect(page.get_by_role("heading", name="File sources", exact=True)).to_be_visible()
+    # The list still loads, but every write control is gone: no create, edit, sync or delete.
+    expect(row(ui, EDITABLE_NAME)).to_be_visible()
+    expect(page.get_by_role("button", name="New file source", exact=True)).to_have_count(0)
+    expect(row(ui, EDITABLE_NAME).get_by_role("button", name=f"Edit {EDITABLE_NAME}", exact=True)).to_have_count(0)
+    expect(row(ui, EDITABLE_NAME).get_by_role("button", name=f"Sync {EDITABLE_NAME} now", exact=True)).to_have_count(0)
+    # No draft-tool request is ever made from a read-only section.
+    assert not [
+        entry for entry in ui.requests
+        if "/test-connection" in entry.path or "/browse" in entry.path or "/ignore-path" in entry.path
+    ], "A locked read-only section must not test, browse or ignore."
+    assert not ui.unexpected_requests, ui.unexpected_requests
     assert_no_personal_reads(ui)
 
 
@@ -452,19 +608,24 @@ def test_file_source_scope_seam_holds():
         "application/v2_ui/node_modules is missing; restore the frontend dependencies first"
     )
     assert SEAM_LOGIC_TS.exists(), "The scope-seam runtime check is missing."
-    bundle = V2_DIR / "node_modules" / ".cache-group-file-source-seam.mjs"
+    # Call the local esbuild binary directly. A bare `npx` can download a package, and `node_modules`
+    # is a shared junction here, so the bundle carries a unique name and is removed afterwards.
+    esbuild = V2_DIR / "node_modules" / "esbuild" / "bin" / "esbuild"
+    assert esbuild.exists(), (
+        "application/v2_ui/node_modules/esbuild is missing; restore the frontend dependencies first"
+    )
+    bundle = V2_DIR / "node_modules" / f".cache-group-file-source-seam-{uuid.uuid4().hex}.mjs"
     try:
         subprocess.run(
             [
-                "npx", "esbuild", str(SEAM_LOGIC_TS), "--bundle", "--platform=node",
+                "node", str(esbuild), str(SEAM_LOGIC_TS), "--bundle", "--platform=node",
                 "--format=esm", "--packages=external", "--define:import.meta.env={}",
                 f"--outfile={bundle}", "--log-level=error",
             ],
-            cwd=str(V2_DIR), check=True, shell=(sys.platform == "win32"),
+            cwd=str(V2_DIR), check=True, capture_output=True, text=True,
         )
         result = subprocess.run(
             ["node", str(bundle)], cwd=str(V2_DIR), capture_output=True, text=True,
-            shell=(sys.platform == "win32"),
         )
     finally:
         if bundle.exists():
