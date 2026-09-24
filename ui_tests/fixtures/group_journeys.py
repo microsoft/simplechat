@@ -1,7 +1,7 @@
 # group_journeys.py
 """One composite group store for the M8 end-to-end journeys.
 
-Version: 0.261.162
+Version: 0.261.163
 Implemented in: 0.261.161
 
 The M8 journeys drive the real built SPA across every group section in a single
@@ -65,6 +65,10 @@ class GroupJourneyFixture(
         # cooperative chain and leaves `active_group` at None. The journeys always open with
         # group-a selected, so the members store (group-a Owner, group-b User) is authoritative.
         self.active_group = "group-a"
+        # J9 sweeps the Settings editor, which drafts both the profile name and a retention period
+        # (S1/S5). Retention is off in the modelled deployment default, so turn it on for group-a
+        # here; the call rebuilds the context so its `settings_management` matches the served read.
+        self.apply_group_settings_flags("group-a", retention_enabled=True)
 
     # --- bootstrap ------------------------------------------------------------------------------
 

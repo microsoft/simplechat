@@ -1,7 +1,7 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.157
+Version: 0.261.163
 Implemented in: 0.261.154
 Unrecognized statuses fail closed for the profile and logo: 0.261.157
 
@@ -20,11 +20,19 @@ from copy import deepcopy
 
 import pytest
 
-from test_v2_group_workspace_context import CONTEXT_PATH, environment  # noqa: F401 - the shared fixture
+from test_v2_group_workspace_context import CONTEXT_PATH, environment as environment  # noqa: F401 - the shared fixture
+
+_PYTEST_FIXTURES = (environment,)
 
 
 ROLES = {"owner": "Owner", "admin": "Admin", "manager": "DocumentManager", "reader": "User"}
 STATUSES = ("active", "upload_disabled", "locked", "inactive", "unknown")
+VIEWABLE_STATUSES = ("active", "upload_disabled", "locked")
+STATUS_REASONS = {
+    "inactive": "This group is inactive. Access is restricted to administrators.",
+    "unknown": "This group's status is not recognized. Contact an administrator.",
+}
+GROUP_MANAGER_REQUIRED_TEXT = "Only the group owner or an admin can do this."
 SESSION_ROLES = {"user": ["User"], "creator": ["User", "CreateGroups"], "app_admin": ["Admin"]}
 SETTINGS = {
     "plain": {},
@@ -138,3 +146,27 @@ def test_downloads_and_retention_follow_their_switches(environment):
     management = read_with_roles(environment, "owner", ["User"]).get_json()["settings_management"]
     assert "edit_downloads" in management["operations"]
     assert "edit_retention" in management["operations"]
+
+
+@pytest.mark.parametrize("actor", list(ROLES))
+@pytest.mark.parametrize("status", STATUSES)
+def test_manage_sections_follow_the_settings_decisions_and_refusal_text(environment, actor, status):
+    environment.records["group-a"]["status"] = status
+    payload = read_with_roles(environment, actor, ["User"]).get_json()
+    management = payload["settings_management"]
+    sections = payload["sections"]
+    manager = ROLES[actor] in ("Owner", "Admin")
+    viewable = status in VIEWABLE_STATUSES
+
+    assert sections["settings"]["enabled"] is (viewable and manager)
+    assert sections["activity"]["enabled"] is (viewable and "view_activity" in management["operations"])
+    assert sections["statistics"]["enabled"] is (viewable and "view_stats" in management["operations"])
+
+    for section_id in ("settings", "activity", "statistics"):
+        entry = sections[section_id]
+        if not viewable:
+            assert entry["reason"] == STATUS_REASONS[status]
+        elif manager:
+            assert entry["reason"] is None
+        else:
+            assert entry["reason"] == GROUP_MANAGER_REQUIRED_TEXT

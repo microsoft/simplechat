@@ -2,7 +2,7 @@
 """
 Test-arrangement fixture for the native V2 group Settings, Activity and Statistics sections (M7C).
 
-Version: 0.261.157
+Version: 0.261.163
 Implemented in: 0.261.157
 
 The HTTP serving for the native `/api/groups/<g>/settings[/logo]` and `/api/groups/<g>/insights/*`
@@ -18,13 +18,38 @@ would fail the run rather than pass, exactly as it does for the other section fi
 import pytest
 
 from ui_tests.fixtures.group_workspace import (  # noqa: F401
-    GROUP_ACTIVITY_LIMITS, GROUP_ACTIVITY_DEFAULT_LIMIT, ALLOWED_STATS_WINDOW_DAYS,
-    DEFAULT_STATS_WINDOW_DAYS, GROUP_OWNER_REQUIRED, GROUP_MANAGER_REQUIRED,
-    GROUP_SETTINGS_CHANGED_MESSAGE, GROUP_WRITE_CONFLICT_MESSAGE, NO_GROUP_LOGO_MESSAGE,
-    GROUP_ACTIVITY_UNAVAILABLE_MESSAGE, GROUP_STATS_UNAVAILABLE_MESSAGE,
-    GROUP_SETTINGS_REFUSAL_MESSAGES, GroupWorkspaceFixture, _settings_kwargs, group_context,
+    ALLOWED_STATS_WINDOW_DAYS as ALLOWED_STATS_WINDOW_DAYS,
+    DEFAULT_STATS_WINDOW_DAYS as DEFAULT_STATS_WINDOW_DAYS,
+    GROUP_ACTIVITY_DEFAULT_LIMIT as GROUP_ACTIVITY_DEFAULT_LIMIT,
+    GROUP_ACTIVITY_LIMITS as GROUP_ACTIVITY_LIMITS,
+    GROUP_ACTIVITY_UNAVAILABLE_MESSAGE as GROUP_ACTIVITY_UNAVAILABLE_MESSAGE,
+    GROUP_MANAGER_REQUIRED as GROUP_MANAGER_REQUIRED,
+    GROUP_OWNER_REQUIRED as GROUP_OWNER_REQUIRED,
+    GROUP_SETTINGS_CHANGED_MESSAGE as GROUP_SETTINGS_CHANGED_MESSAGE,
+    GROUP_SETTINGS_REFUSAL_MESSAGES as GROUP_SETTINGS_REFUSAL_MESSAGES,
+    GROUP_STATS_UNAVAILABLE_MESSAGE as GROUP_STATS_UNAVAILABLE_MESSAGE,
+    GROUP_WRITE_CONFLICT_MESSAGE as GROUP_WRITE_CONFLICT_MESSAGE,
+    NO_GROUP_LOGO_MESSAGE as NO_GROUP_LOGO_MESSAGE,
+    GroupWorkspaceFixture, _settings_kwargs, group_context,
 )
-from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID  # noqa: F401
+from ui_tests.fixtures.workspace_authoring import ORIGIN as ORIGIN, OWNER_ID as OWNER_ID  # noqa: F401
+
+_EXPORTED_FIXTURE_CONSTANTS = (
+    ALLOWED_STATS_WINDOW_DAYS,
+    DEFAULT_STATS_WINDOW_DAYS,
+    GROUP_ACTIVITY_DEFAULT_LIMIT,
+    GROUP_ACTIVITY_LIMITS,
+    GROUP_ACTIVITY_UNAVAILABLE_MESSAGE,
+    GROUP_MANAGER_REQUIRED,
+    GROUP_OWNER_REQUIRED,
+    GROUP_SETTINGS_CHANGED_MESSAGE,
+    GROUP_SETTINGS_REFUSAL_MESSAGES,
+    GROUP_STATS_UNAVAILABLE_MESSAGE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    NO_GROUP_LOGO_MESSAGE,
+    ORIGIN,
+    OWNER_ID,
+)
 
 
 class GroupSettingsFixture(GroupWorkspaceFixture):
@@ -64,7 +89,8 @@ class GroupSettingsFixture(GroupWorkspaceFixture):
         """Give a group a logo before the page loads, so Replace and Remove are exercised."""
         store = self.native_group_settings[group_id]
         store["has_logo"] = True
-        store["logo_version"] = version
+        store["logo_version"] = max(1, version)
+        self._sync_profile_context(group_id)
 
     def set_activity(self, group_id, items):
         self.group_activity[group_id] = items

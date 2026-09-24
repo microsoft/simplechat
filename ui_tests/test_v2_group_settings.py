@@ -1,7 +1,7 @@
 # test_v2_group_settings.py
 """
 Production-SPA coverage for the native V2 group Settings, Activity and Statistics sections.
-Version: 0.261.157
+Version: 0.261.163
 Implemented in: 0.261.157
 
 Exercises the real Settings, Activity and Statistics sections -- the M7C sections of the group
@@ -14,12 +14,16 @@ draft would fail the run rather than pass.
 
 It pins the three sections' reads and gating for the owner, an admin and a member; the profile edit
 with its live preview and success notice; the logo upload and removal, a write-guard conflict that
-keeps the chosen file for an explicit retry, and a stale-revision conflict that rebases; the download
-and retention cards' presence, absence and edits; every refusal the sections handle; the danger zone
-as owner-only with its file count and classic handoff; the header's classic button surviving only for
-an inactive or unknown group; the activity feed with its limits, empty and unavailable states; the
-statistics windows, custom range, CSV export and unavailable state; and both themes at both
-breakpoints.
+keeps the chosen file for an explicit retry, a stale-revision conflict that rebases, and the server's
+image-bytes check that refuses a non-image and keeps the file; the download and retention cards'
+presence, absence and edits, retention offered as the classic day choices with only the changed
+period sent; every refusal the sections handle, including the CreateGroups-role refusal's explanation;
+the way a refocus preserves the open drafts and their leave guard (S1); a 400, 500 or network write
+failure that keeps every field (S2); a mid-session lock that re-gates the controls read-only (S3); the
+danger zone as owner-only with its file count and classic handoff; the header's classic button
+surviving only for an inactive or unknown group; the activity feed with its limits, empty and
+unavailable states; the statistics windows, custom range, CSV export and unavailable state; and both
+themes at both breakpoints.
 """
 
 import os
@@ -49,10 +53,19 @@ SCREENSHOTS = Path(os.environ.get(
     "SIMPLECHAT_UI_SCREENSHOTS", str(Path(__file__).parent / "artifacts" / "group-settings"),
 ))
 
-# The server (and this fixture) validate the logo only by its filename extension, never its bytes, so
-# an ASCII placeholder body exercises the full multipart path without a binary request body that the
-# base fixture's request recorder (which reads post_data as text) cannot decode.
-LOGO_PNG = {"name": "logo.png", "mimeType": "image/png", "buffer": b"fake-logo-bytes"}
+# A real, minimal 1x1 PNG. The server (and this fixture) now read the logo's bytes with PIL and refuse
+# anything that is not a PNG or JPEG, so the upload path needs a genuine image body -- an ASCII
+# placeholder no longer passes the magic-byte check. Playwright records a binary multipart body from
+# its bytes, so the fixture reads the real image from request.post_data_buffer.
+LOGO_PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    b"\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x05\x02\x00\x84\xd0"
+    b"\x8f\xdd\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+LOGO_PNG = {"name": "logo.png", "mimeType": "image/png", "buffer": LOGO_PNG_BYTES}
+# A body with the right extension and MIME type but bytes that are not a PNG or JPEG: the server reads
+# the image and refuses it, so it exercises the bad-image path the extension check alone would miss.
+LOGO_NOT_AN_IMAGE = {"name": "logo.png", "mimeType": "image/png", "buffer": b"this is not an image"}
 
 
 # --------------------------------------------------------------------------
@@ -86,6 +99,11 @@ def settings_calls(ui, method, section=None):
 
 def insight_calls(ui, name):
     return [entry for entry in ui.requests if f"/insights/{name}" in entry.path and entry.method == "GET"]
+
+
+def context_calls(ui, group="group-a"):
+    return [entry for entry in ui.requests
+            if entry.method == "GET" and entry.path == f"/api/v2/workspaces/group/{group}"]
 
 
 # --------------------------------------------------------------------------
@@ -183,6 +201,133 @@ def test_profile_write_conflict_allows_plain_retry(group_settings_ui):
 
 
 # --------------------------------------------------------------------------
+# S1: a refocus preserves the open drafts, their leave guard and the switch freeze.
+# --------------------------------------------------------------------------
+
+def test_refocus_preserves_open_drafts_and_leave_guard(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    by_testid(ui, "group-settings-name").fill("Draft that must survive a refocus")
+    by_testid(ui, "group-settings-retention-conversation").select_option("30")
+    # While an editor is dirty the immediate-save downloads switch is frozen: its own half of the guard.
+    expect(by_testid(ui, "group-settings-downloads-toggle")).to_be_disabled()
+    settings_reads_before = len(settings_calls(ui, "GET"))
+    # A refocus revalidates the workspace context, which reparses it into a fresh object. The adapter is
+    # keyed on the group id alone, so it is not rebuilt and the section keeps -- never reloads -- its
+    # open drafts. (S1) Wait for the context re-read to land before asserting nothing was discarded.
+    with ui.page.expect_response(
+        lambda response: response.url.endswith("/api/v2/workspaces/group/group-a")
+        and response.request.method == "GET"
+    ):
+        ui.page.evaluate("window.dispatchEvent(new Event('focus'))")
+    ui.page.wait_for_timeout(150)
+    # The drafts, the frozen switch and the leave guard all survive; the settings are never re-read
+    # (a reload is what the old adapter churn caused), so no second settings GET fires.
+    expect(by_testid(ui, "group-settings-name")).to_have_value("Draft that must survive a refocus")
+    expect(by_testid(ui, "group-settings-retention-conversation")).to_have_value("30")
+    expect(by_testid(ui, "group-settings-downloads-toggle")).to_be_disabled()
+    assert len(settings_calls(ui, "GET")) == settings_reads_before
+    assert len(context_calls(ui)) >= 1
+
+
+# --------------------------------------------------------------------------
+# S2: a 400, a 5xx or a network failure keeps every field; only the message is shown.
+# --------------------------------------------------------------------------
+
+def test_profile_validation_error_keeps_draft(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    ui.next_write_error("A group name can't be only spaces.")
+    by_testid(ui, "group-settings-name").fill("Kept through a 400")
+    by_testid(ui, "group-settings-save-profile").click()
+    # The server's 400 text is shown verbatim and the draft is kept for a fix-and-retry. (S2)
+    expect(ui.page.get_by_text("A group name can't be only spaces.", exact=True)).to_be_visible()
+    expect(by_testid(ui, "group-settings-name")).to_have_value("Kept through a 400")
+    expect(by_testid(ui, "group-settings-name")).to_be_enabled()
+    assert len(settings_calls(ui, "PATCH", "profile")) == 1
+
+
+def test_profile_server_error_keeps_draft(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    ui.reject_next("PATCH", "/api/groups/group-a/settings/profile",
+                   status=500, error="Group settings are briefly unavailable.")
+    by_testid(ui, "group-settings-name").fill("Kept through a 500")
+    by_testid(ui, "group-settings-save-profile").click()
+    # A 5xx is not a refusal: the draft and the surface are kept, only the message is shown. (S2)
+    expect(ui.page.get_by_text("Group settings are briefly unavailable.", exact=True)).to_be_visible()
+    expect(by_testid(ui, "group-settings-name")).to_have_value("Kept through a 500")
+    expect(by_testid(ui, "group-settings-name")).to_be_enabled()
+    assert len(settings_calls(ui, "PATCH", "profile")) == 1
+
+
+def test_profile_network_failure_keeps_draft(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    target = "**/api/groups/group-a/settings/profile"
+
+    def _abort(route):
+        try:
+            route.abort()
+        except Exception:
+            pass
+
+    ui.page.route(target, _abort)
+    by_testid(ui, "group-settings-name").fill("Kept through a dropped connection")
+    by_testid(ui, "group-settings-save-profile").click()
+    # A dropped connection is not a refusal either: the draft stays and the profile stays editable. (S2)
+    expect(by_testid(ui, "group-settings-name")).to_have_value("Kept through a dropped connection")
+    expect(by_testid(ui, "group-settings-name")).to_be_enabled()
+    # The aborted request never reaches the fixture, so drop its transport console error to keep the
+    # shared teardown's console gate meaningful for every other request.
+    ui.console_errors[:] = [
+        (text, url) for text, url in ui.console_errors if "/settings/profile" not in url
+    ]
+
+
+# --------------------------------------------------------------------------
+# S3: after the server refuses a write, the controls re-gate from the fresher context.
+# --------------------------------------------------------------------------
+
+def test_lock_after_load_regates_controls_read_only(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    by_testid(ui, "group-settings-name").fill("Edited just before the lock")
+    # The group is locked server-side after the page loaded. The next write is refused with the status
+    # refusal, and the section re-reads the context and re-gates its controls read-only. (S3)
+    ui.configure("group-a", role="Owner", status="locked")
+    by_testid(ui, "group-settings-save-profile").click()
+    locked_reason = ("This group is locked or inactive, so its name, description, color and "
+                     "logo can't be changed.")
+    expect(ui.page.get_by_text(locked_reason, exact=True).first).to_be_visible()
+    # The controls re-gate read-only and the header follows the fresher status.
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-save-profile")).to_have_count(0)
+    expect(ui.page.get_by_text("Locked - read only", exact=False).first).to_be_visible()
+    # The draft is kept even as the controls freeze, and no further write is attempted.
+    expect(by_testid(ui, "group-settings-name")).to_have_value("Edited just before the lock")
+    assert len(settings_calls(ui, "PATCH", "profile")) == 1
+
+
+# --------------------------------------------------------------------------
+# S4: the CreateGroups-role refusal carries its explanation.
+# --------------------------------------------------------------------------
+
+def test_create_groups_role_refusal_explains_itself(group_settings_ui):
+    ui = group_settings_ui
+    # The deployment requires the CreateGroups app role to edit a group's profile, and this owner does
+    # not hold it. The profile is read-only and carries the server's own reason, keyed on the plural
+    # create_groups_role_required code the server actually sends. (S4)
+    ui.configure("group-a", role="Owner", status="active",
+                 create_role_required=True, has_create_role=False)
+    open_settings(ui)
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(ui.page.get_by_text(
+        "You need the CreateGroups role to change this group's name, description or color.",
+        exact=False).first).to_be_visible()
+
+
+# --------------------------------------------------------------------------
 # Logo.
 # --------------------------------------------------------------------------
 
@@ -215,6 +360,21 @@ def test_logo_conflict_keeps_file_for_explicit_retry(group_settings_ui):
     assert len(settings_calls(ui, "PUT", "logo")) == 2
 
 
+def test_logo_bad_image_shows_error_and_keeps_file(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    # The server reads the image bytes and refuses anything that is not a PNG or JPEG (S6). The right
+    # extension and MIME type are not enough; the file is kept for an explicit retry, never discarded.
+    by_testid(ui, "group-settings-logo-input").set_input_files(files=[LOGO_NOT_AN_IMAGE])
+    expect(ui.page.get_by_text(
+        "The logo image could not be read. Upload a PNG or JPEG image.", exact=True)).to_be_visible()
+    expect(by_testid(ui, "group-settings-logo-retry")).to_be_visible()
+    assert len(settings_calls(ui, "PUT", "logo")) == 1
+    # A real image then replaces the chosen file and succeeds on the explicit retry.
+    by_testid(ui, "group-settings-logo-input").set_input_files(files=[LOGO_PNG])
+    expect(ui.page.get_by_text("Group logo updated.", exact=True)).to_be_visible()
+
+
 # --------------------------------------------------------------------------
 # Downloads and retention: present, absent, and edited.
 # --------------------------------------------------------------------------
@@ -239,11 +399,28 @@ def test_downloads_absent_when_capability_off(group_settings_ui):
 def test_retention_edit_saves(group_settings_ui):
     ui = group_settings_ui
     open_settings(ui)
+    # Retention is offered as the classic day choices, not free text, so the period is selected.
     conversation = by_testid(ui, "group-settings-retention-conversation")
-    conversation.fill("30")
+    conversation.select_option("30")
     by_testid(ui, "group-settings-save-retention").click()
     expect(ui.page.get_by_text("Retention policy saved.", exact=True)).to_be_visible()
-    assert len(settings_calls(ui, "PATCH", "retention")) == 1
+    calls = settings_calls(ui, "PATCH", "retention")
+    assert len(calls) == 1
+    # Only the changed period is sent; the untouched document period is never echoed back, so a stored
+    # value now outside the bounds can't fail a save that changed only the conversation period. (S5)
+    body = calls[-1].body or {}
+    assert body.get("conversation_retention_days") == 30
+    assert "document_retention_days" not in body
+
+
+def test_retention_offers_classic_choices_within_bounds(group_settings_ui):
+    ui = group_settings_ui
+    open_settings(ui)
+    conversation = by_testid(ui, "group-settings-retention-conversation")
+    # The two policy words plus the classic day options the server's bounds allow, and nothing else.
+    values = conversation.evaluate(
+        "select => Array.from(select.options).map(option => option.value)")
+    assert values == ["default", "none", "7", "14", "30", "60", "90", "180", "365", "730", "1095", "3650"]
 
 
 def test_retention_absent_when_disabled(group_settings_ui):
@@ -312,7 +489,7 @@ def test_classic_manage_button_shown_when_inactive(group_settings_ui):
 def test_activity_feed_and_limits(group_settings_ui):
     ui = group_settings_ui
     open_activity(ui)
-    expect(ui.page.get_by_text("A document was added.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Uploaded a document", exact=True)).to_be_visible()
     by_testid(ui, "group-activity-limit-10").click()
     expect(by_testid(ui, "group-activity-limit-10")).to_have_attribute("aria-pressed", "true")
     latest = insight_calls(ui, "activity")[-1]

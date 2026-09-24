@@ -135,10 +135,16 @@ export class GroupSettingsChangedError extends Error {
     }
 }
 
+/**
+ * The shared write-conflict sentence, kept byte-identical to the server's
+ * `functions_group.GROUP_WRITE_CONFLICT_MESSAGE` so a plain-retry 409 reads the same everywhere.
+ */
+export const GROUP_WRITE_CONFLICT_MESSAGE = 'The group changed while your request was being saved. Try again.';
+
 /** A write-guard exhaustion (409 `group_write_conflict`): a plain retry resolves it. */
 export class GroupSettingsWriteConflictError extends Error {
     constructor(message?: string) {
-        super(message || 'The group was being changed at the same time. Try again.');
+        super(message || GROUP_WRITE_CONFLICT_MESSAGE);
         this.name = 'GroupSettingsWriteConflictError';
     }
 }
@@ -155,11 +161,16 @@ function errorCode(payload: unknown): string | undefined {
     return isRecord(payload) && typeof payload.error_code === 'string' ? payload.error_code : undefined;
 }
 
-/** The server's reviewed refusal messages, keyed by the reason code its `reasons` map reports. */
+/**
+ * The server's reviewed refusal messages, keyed by the reason code its `reasons` map reports. The
+ * keys and texts are pinned against `functions_group_settings.REFUSAL_MESSAGES` by a functional test
+ * so the client can never drift from the codes the server actually sends (for example the plural
+ * `create_groups_role_required`).
+ */
 const REFUSAL_TEXT: Record<string, string> = {
     group_owner_required: 'Only the group owner can do this.',
     group_manager_required: 'Only the group owner or an admin can do this.',
-    create_group_role_required:
+    create_groups_role_required:
         "You need the CreateGroups role to change this group's name, description or color.",
     group_status_unavailable:
         "This group is locked or inactive, so its name, description, color and logo can't be changed.",

@@ -12,16 +12,18 @@
 // their block, so an unavailable capability is absent rather than shown disabled.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Image as ImageIcon, Loader2, Trash2, Upload } from 'lucide-react';
+import { ArrowUpRight, Image as ImageIcon, Loader2, Trash2, Upload, Users } from 'lucide-react';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../../components/ui/primitives';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { SectionIntro } from '../../components/workspace/primitives';
 import { codePointLength } from '../../lib/groupDirectory';
 import { rebaseDraft, rebaseNotice, type RebaseField } from '../../lib/rebaseDraft';
+import { ApiError } from '../../lib/apiClient';
 import {
     GroupLogoMissingError, GroupSettingsChangedError, GroupSettingsWriteConflictError,
     groupSettingsReasonText,
-    type GroupProfileChanges, type GroupRetentionValue, type GroupSettings, type GroupSettingsAdapter,
+    type GroupProfileChanges, type GroupRetentionBounds, type GroupRetentionValue,
+    type GroupSettings, type GroupSettingsAdapter, type GroupSettingsManagement,
 } from '../../lib/groupSettings';
 
 const NAME_MAX = 80;
@@ -59,7 +61,7 @@ function profileDraftOf(settings: GroupSettings): ProfileDraft {
     };
 }
 
-/** A retention value shown in a text field: a number of days, or the words the server accepts. */
+/** A retention value shown in a select: a number of days, or the words the server accepts. */
 function retentionToInput(value: GroupRetentionValue): string {
     if (value === 'none' || value === 'default') {
         return value;
@@ -75,39 +77,92 @@ function retentionDraftOf(settings: GroupSettings): { conversation: string; docu
     } : null;
 }
 
-/** Read a retention field back: blank keeps the stored value out of the request entirely. */
-function retentionFromInput(raw: string): GroupRetentionValue | undefined {
-    const trimmed = raw.trim().toLowerCase();
-    if (!trimmed) {
-        return undefined;
+/** Turn a chosen select value back into the value the server stores. */
+function retentionFromSelect(raw: string): GroupRetentionValue {
+    if (raw === 'none' || raw === 'default') {
+        return raw;
     }
-    if (trimmed === 'none' || trimmed === 'default') {
-        return trimmed;
+    return Number(raw);
+}
+
+// The classic day choices (group_workspaces.html), so the native control offers exactly the same
+// periods rather than a free-text field the server would then reject.
+const RETENTION_DAY_OPTIONS = [7, 14, 30, 60, 90, 180, 365, 730, 1095, 3650] as const;
+const RETENTION_DAY_LABELS: Record<number, string> = {
+    7: '7 days (1 week)',
+    14: '14 days (2 weeks)',
+    30: '30 days (1 month)',
+    60: '60 days (2 months)',
+    90: '90 days (3 months)',
+    180: '180 days (6 months)',
+    365: '365 days (1 year)',
+    730: '730 days (2 years)',
+    1095: '1095 days (3 years)',
+    3650: '3650 days (10 years)',
+};
+
+/** The label for one day choice, reusing the classic wording where it exists. */
+function retentionDayLabel(days: number): string {
+    return RETENTION_DAY_LABELS[days] || `${days} days`;
+}
+
+/** The label for an organization default, which the server reports as days or "none". */
+function orgDefaultLabel(value: number | 'none'): string {
+    return value === 'none' ? 'no automatic deletion' : retentionDayLabel(value);
+}
+
+/**
+ * The choices one retention select offers: the two policy words, then the classic day options that
+ * fall within the server's bounds. The currently stored value is always kept selectable, even when
+ * it now sits outside the bounds, so opening the editor never silently rewrites it.
+ */
+function retentionChoices(current: string, bounds: GroupRetentionBounds): { value: string; label: string }[] {
+    const choices = [
+        { value: 'default', label: 'Using organization default' },
+        { value: 'none', label: 'No automatic deletion' },
+    ];
+    const days = RETENTION_DAY_OPTIONS.filter((option) => option >= bounds.min_days && option <= bounds.max_days) as number[];
+    const currentDays = Number(current);
+    if (current !== 'default' && current !== 'none' && Number.isInteger(currentDays) && !days.includes(currentDays)) {
+        days.push(currentDays);
     }
-    const days = Number(trimmed);
-    if (!Number.isInteger(days) || days < 0) {
-        return undefined;
+    days.sort((left, right) => left - right);
+    for (const option of days) {
+        choices.push({ value: String(option), label: retentionDayLabel(option) });
     }
-    return days;
+    return choices;
 }
 
 const FIELD_CLASS =
     'mt-1 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60';
 
 export function GroupSettingsSection({
-    adapter, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onOpenClassic,
+    adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onOpenClassic,
 }: {
     adapter: GroupSettingsAdapter;
+    /**
+     * The latest `settings_management` hint from the workspace context. The section gates its controls
+     * from the freshest hint it holds -- the last read or write when one has landed, otherwise this --
+     * so a refused or re-read context re-gates without the adapter (kept stable per group) rebuilding
+     * and discarding the open drafts.
+     */
+    management: GroupSettingsManagement | undefined;
     /** True while the workspace context is being re-confirmed; every write waits for it. */
     interactionDisabled: boolean;
     onBusyChange: (busy: boolean) => void;
     onDirtyChange: (dirty: boolean) => void;
     /** Re-read the workspace context after a refusal that means the caller's own standing changed. */
     onAccessChanged: () => void;
+    /** Re-read the workspace context after a successful profile or logo save, so the header follows. */
+    onSaved: () => void;
     /** Open the classic group page for the delete flow classic still owns. */
     onOpenClassic: () => void;
 }) {
     const [settings, setSettings] = useState<GroupSettings | null>(null);
+    // The freshest settings_management hint the section holds: the last read or write when one has
+    // landed, otherwise the context's, adopted whenever the context revalidates. Gating reads this,
+    // never the adapter (which stays stable per group), so a re-read re-gates without touching drafts.
+    const [gate, setGate] = useState<GroupSettingsManagement | undefined>(management);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState('');
     const [reloadToken, setReloadToken] = useState(0);
@@ -142,6 +197,23 @@ export function GroupSettingsSection({
     onDirtyChangeRef.current = onDirtyChange;
     const onAccessChangedRef = useRef(onAccessChanged);
     onAccessChangedRef.current = onAccessChanged;
+    const onSavedRef = useRef(onSaved);
+    onSavedRef.current = onSaved;
+
+    // Adopt the context's hint whenever it revalidates. On a plain refocus the new hint is content-equal
+    // and this is a no-op for the controls; after a refused write re-reads the context it carries the
+    // caller's changed standing, which re-gates the controls read-only. Either way the drafts are untouched.
+    useEffect(() => { if (management) setGate(management); }, [management]);
+
+    // Replace the section's settings and adopt the fresher hint that every read and write carries.
+    const applySettings = useCallback((next: GroupSettings) => {
+        setSettings(next);
+        setGate(next.settings_management);
+    }, []);
+
+    const gateOperations = useMemo(() => new Set(gate?.operations ?? []), [gate]);
+    const allows = useCallback((operation: string) => gateOperations.has(operation), [gateOperations]);
+    const reason = useCallback((operation: string) => (gate?.reasons ?? {})[operation], [gate]);
 
     const busy = profileBusy || logoBusy || downloadsBusy || retentionBusy;
     useEffect(() => { onBusyChangeRef.current(busy); }, [busy]);
@@ -155,11 +227,9 @@ export function GroupSettingsSection({
             .then((next) => {
                 if (controller.signal.aborted) return;
                 setSettings(next);
+                setGate(next.settings_management);
                 setDraft(profileDraftOf(next));
-                setRetentionDraft(next.retention ? {
-                    conversation: retentionToInput(next.retention.conversation_retention_days),
-                    document: retentionToInput(next.retention.document_retention_days),
-                } : null);
+                setRetentionDraft(retentionDraftOf(next));
             })
             .catch((cause: unknown) => {
                 if (controller.signal.aborted) return;
@@ -173,7 +243,7 @@ export function GroupSettingsSection({
     // The document count for the danger zone is read on its own so a slow or unavailable count never
     // blocks the settings from rendering. It is offered only when the viewer may see it.
     useEffect(() => {
-        if (!settings || !adapter.allows('view_file_count')) {
+        if (!settings || !allows('view_file_count')) {
             setFileCount(null);
             setFileCountError('');
             return undefined;
@@ -188,48 +258,63 @@ export function GroupSettingsSection({
                 setFileCountError(cause instanceof Error ? cause.message : 'The document count could not be loaded.');
             });
         return () => controller.abort();
-    }, [adapter, settings]);
+    }, [adapter, settings, allows]);
 
     const profileDirty = useMemo(() => {
         if (!settings || !draft) return false;
         const base = profileDraftOf(settings);
         return draft.name !== base.name || draft.description !== base.description || draft.hero_color !== base.hero_color;
     }, [settings, draft]);
-    useEffect(() => { onDirtyChangeRef.current(profileDirty); }, [profileDirty]);
+    const retentionDirty = useMemo(() => {
+        if (!settings || !retentionDraft) return false;
+        const base = retentionDraftOf(settings);
+        return !!base && (retentionDraft.conversation !== base.conversation || retentionDraft.document !== base.document);
+    }, [settings, retentionDraft]);
+    // Both editors count toward the leave guard, and while either is dirty the immediate-save
+    // downloads switch is frozen so a stray toggle can't discard the unsaved profile or retention edit.
+    const editorDirty = profileDirty || retentionDirty;
+    useEffect(() => { onDirtyChangeRef.current(editorDirty); }, [editorDirty]);
 
     const reload = useCallback(() => setReloadToken((value) => value + 1), []);
 
-    const canEditName = adapter.allows('edit_name');
-    const canEditDescription = adapter.allows('edit_description');
-    const canEditColor = adapter.allows('edit_color');
-    const canEditLogo = adapter.allows('edit_logo');
+    const canEditName = allows('edit_name');
+    const canEditDescription = allows('edit_description');
+    const canEditColor = allows('edit_color');
+    const canEditLogo = allows('edit_logo');
     const canEditProfile = canEditName || canEditDescription || canEditColor;
-    const canEditDownloads = adapter.allows('edit_downloads');
-    const canEditRetention = adapter.allows('edit_retention');
+    const canEditDownloads = allows('edit_downloads');
+    const canEditRetention = allows('edit_retention');
 
     const profileReason = groupSettingsReasonText(
-        adapter.reason('edit_name') || adapter.reason('edit_description') || adapter.reason('edit_color'),
+        reason('edit_name') || reason('edit_description') || reason('edit_color'),
     );
-    const logoReason = groupSettingsReasonText(adapter.reason('edit_logo'));
-    const downloadsReason = groupSettingsReasonText(adapter.reason('edit_downloads'));
-    const retentionReason = groupSettingsReasonText(adapter.reason('edit_retention'));
+    const logoReason = groupSettingsReasonText(reason('edit_logo'));
+    const downloadsReason = groupSettingsReasonText(reason('edit_downloads'));
+    const retentionReason = groupSettingsReasonText(reason('edit_retention'));
 
-    /** Bring a refusal or conflict to the state the server holds, per the code it carries. */
+    /**
+     * Bring a refusal or conflict to the state the server holds, per the code it carries, and report
+     * whether the caller must re-read the workspace context. A write-guard exhaustion keeps the draft
+     * for a plain retry; a stale section revision rebases the draft over a fresh read; a 400 validation
+     * error, a 5xx or a network failure keeps every field and just shows the message; only a 403 (the
+     * caller's standing changed) or a 404 (the group is gone) asks for a context re-read, and even then
+     * the open section's drafts are kept so a re-gate disables the controls without discarding edits.
+     */
     const settleWrite = useCallback(async (
         cause: unknown, setError: (message: string) => void, baseline: GroupSettings,
-    ): Promise<void> => {
+    ): Promise<boolean> => {
         const message = cause instanceof Error ? cause.message : 'The change could not be saved. Please retry.';
         setError(message);
         if (cause instanceof GroupSettingsWriteConflictError) {
             // Nothing changed: the state is kept so the same action can simply be retried.
-            return;
+            return false;
         }
         if (cause instanceof GroupSettingsChangedError) {
             // A stale section revision: reload the settings and rebase the drafts over the fresh copy,
             // so a concurrent change to another field never discards the user's in-progress edits.
             try {
                 const fresh = await adapter.readSettings();
-                setSettings(fresh);
+                applySettings(fresh);
                 setRetentionDraft((current) => {
                     const freshDraft = retentionDraftOf(fresh);
                     if (!current || !freshDraft) return freshDraft;
@@ -246,43 +331,56 @@ export function GroupSettingsSection({
             } catch {
                 reload();
             }
-            return;
+            return false;
         }
-        if (cause instanceof GroupLogoMissingError) {
-            reload();
-            return;
-        }
-        // A 403 refusal that changed the caller's standing re-reads the whole context.
-        reload();
-        onAccessChangedRef.current();
-    }, [adapter, reload]);
+        // A 403 (standing changed) or 404 (group gone) re-reads the context; every other failure --
+        // a 400 validation error, a 5xx, or a network error -- keeps all state and only shows the message.
+        const status = cause instanceof ApiError ? cause.status : 0;
+        return status === 403 || status === 404;
+    }, [adapter, applySettings, reload]);
 
     /**
-     * Settle a logo write, which is never auto-retried. A stale-revision or already-gone conflict
-     * reloads the settings so the fresh logo shows, and a write-guard exhaustion keeps the state as
-     * it is; either way the chosen file is kept so the user can retry explicitly. The profile draft
-     * is untouched, because a logo write carries none of its fields.
+     * Settle a logo write, which is never auto-retried, and report whether the context must be re-read.
+     * A stale-revision or already-gone conflict reloads the settings so the fresh logo shows, and a
+     * write-guard exhaustion keeps the state as it is; a 400, 5xx or network error keeps everything and
+     * shows the message; only a 403 or 404 asks for a context re-read. The chosen file is kept for an
+     * explicit retry except when access is refused. The profile draft is untouched throughout, because
+     * a logo write carries none of its fields.
      */
-    const settleLogoWrite = useCallback(async (cause: unknown, file: File | null): Promise<void> => {
+    const settleLogoWrite = useCallback(async (cause: unknown, file: File | null): Promise<boolean> => {
         const message = cause instanceof Error ? cause.message : 'The logo could not be saved. Please retry.';
         setLogoError(message);
         if (cause instanceof GroupSettingsWriteConflictError) {
             setPendingLogo(file);
-            return;
+            return false;
         }
         if (cause instanceof GroupSettingsChangedError || cause instanceof GroupLogoMissingError) {
             setPendingLogo(file);
             try {
-                setSettings(await adapter.readSettings());
+                applySettings(await adapter.readSettings());
             } catch {
                 reload();
             }
-            return;
+            return false;
         }
-        setPendingLogo(null);
-        reload();
+        const status = cause instanceof ApiError ? cause.status : 0;
+        if (status === 403 || status === 404) {
+            setPendingLogo(null);
+            return true;
+        }
+        // A 400, 5xx or network error: keep the chosen file so the upload can be retried explicitly.
+        setPendingLogo(file);
+        return false;
+    }, [adapter, applySettings, reload]);
+
+    // Re-read the workspace context after a refusal, clearing the page-facing busy flag first. The
+    // busy state only reaches the page through an effect a render later, and the page gates its
+    // revalidate on that flag; clearing it synchronously here (as the Members section does before it
+    // refuses) is what lets the re-read actually run so the controls re-gate.
+    const reReadContext = useCallback(() => {
+        onBusyChangeRef.current(false);
         onAccessChangedRef.current();
-    }, [adapter, reload]);
+    }, []);
 
     const saveProfile = async () => {
         if (!settings || !draft) return;
@@ -303,16 +401,19 @@ export function GroupSettingsSection({
         setProfileBusy(true);
         setProfileError('');
         setNotice(null);
+        let refused = false;
         try {
             const next = await adapter.updateProfile(changes, settings.profile.revision);
-            setSettings(next);
+            applySettings(next);
             setDraft(profileDraftOf(next));
             setNotice({ tone: 'status', text: 'Group profile saved.' });
+            onSavedRef.current();
         } catch (cause) {
-            await settleWrite(cause, setProfileError, settings);
+            refused = await settleWrite(cause, setProfileError, settings);
         } finally {
             setProfileBusy(false);
         }
+        if (refused) reReadContext();
     };
 
     const uploadLogo = async (file: File) => {
@@ -324,16 +425,19 @@ export function GroupSettingsSection({
         setLogoBusy(true);
         setLogoError('');
         setNotice(null);
+        let refused = false;
         try {
             const next = await adapter.replaceLogo(file, settings.logo.revision);
-            setSettings(next);
+            applySettings(next);
             setPendingLogo(null);
             setNotice({ tone: 'status', text: 'Group logo updated.' });
+            onSavedRef.current();
         } catch (cause) {
-            await settleLogoWrite(cause, file);
+            refused = await settleLogoWrite(cause, file);
         } finally {
             setLogoBusy(false);
         }
+        if (refused) reReadContext();
     };
 
     const removeLogo = async () => {
@@ -341,16 +445,19 @@ export function GroupSettingsSection({
         setLogoBusy(true);
         setLogoError('');
         setNotice(null);
+        let refused = false;
         try {
             const next = await adapter.removeLogo(settings.logo.revision);
-            setSettings(next);
+            applySettings(next);
             setPendingLogo(null);
             setNotice({ tone: 'status', text: 'Group logo removed.' });
+            onSavedRef.current();
         } catch (cause) {
-            await settleLogoWrite(cause, null);
+            refused = await settleLogoWrite(cause, null);
         } finally {
             setLogoBusy(false);
         }
+        if (refused) reReadContext();
     };
 
     const saveDownloads = async (disable: boolean) => {
@@ -358,49 +465,48 @@ export function GroupSettingsSection({
         setDownloadsBusy(true);
         setDownloadsError('');
         setNotice(null);
+        let refused = false;
         try {
             const next = await adapter.updateDownloads(disable, settings.downloads.revision);
-            setSettings(next);
+            applySettings(next);
             setNotice({ tone: 'status', text: 'File download policy saved.' });
         } catch (cause) {
-            await settleWrite(cause, setDownloadsError, settings);
+            refused = await settleWrite(cause, setDownloadsError, settings);
         } finally {
             setDownloadsBusy(false);
         }
+        if (refused) reReadContext();
     };
 
     const saveRetention = async () => {
         if (!settings?.retention || !retentionDraft) return;
+        const base = retentionDraftOf(settings);
+        if (!base) return;
+        // Only the changed period is sent: the other field may hold a stored value now outside the
+        // bounds, which the server would reject if it were echoed back on an unrelated save.
         const changes: { conversation_retention_days?: GroupRetentionValue; document_retention_days?: GroupRetentionValue } = {};
-        const conversation = retentionFromInput(retentionDraft.conversation);
-        const document = retentionFromInput(retentionDraft.document);
-        if (retentionDraft.conversation.trim() && conversation === undefined) {
-            setRetentionError('Enter a whole number of days, or "none" or "default".');
-            return;
+        if (retentionDraft.conversation !== base.conversation) {
+            changes.conversation_retention_days = retentionFromSelect(retentionDraft.conversation);
         }
-        if (retentionDraft.document.trim() && document === undefined) {
-            setRetentionError('Enter a whole number of days, or "none" or "default".');
-            return;
+        if (retentionDraft.document !== base.document) {
+            changes.document_retention_days = retentionFromSelect(retentionDraft.document);
         }
-        if (conversation !== undefined) changes.conversation_retention_days = conversation;
-        if (document !== undefined) changes.document_retention_days = document;
         if (Object.keys(changes).length === 0) return;
         setRetentionBusy(true);
         setRetentionError('');
         setNotice(null);
+        let refused = false;
         try {
             const next = await adapter.updateRetention(changes, settings.retention.revision);
-            setSettings(next);
-            setRetentionDraft(next.retention ? {
-                conversation: retentionToInput(next.retention.conversation_retention_days),
-                document: retentionToInput(next.retention.document_retention_days),
-            } : null);
+            applySettings(next);
+            setRetentionDraft(retentionDraftOf(next));
             setNotice({ tone: 'status', text: 'Retention policy saved.' });
         } catch (cause) {
-            await settleWrite(cause, setRetentionError, settings);
+            refused = await settleWrite(cause, setRetentionError, settings);
         } finally {
             setRetentionBusy(false);
         }
+        if (refused) reReadContext();
     };
 
     if (loading) {
@@ -462,11 +568,26 @@ export function GroupSettingsSection({
                                 data-testid="group-settings-color"
                                 onChange={(event) => { setProfileError(''); setDraft((current) => current && { ...current, hero_color: event.target.value }); }} />
                         </label>
-                        <span className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-text-2"
-                            data-testid="group-settings-preview">
-                            <span aria-hidden="true" className="h-4 w-4 rounded-full" style={{ backgroundColor: draft.hero_color }} />
-                            <span className="min-w-0 break-words">{draft.name || 'Group name'}</span>
-                        </span>
+                    </div>
+                    <div className="rounded-lg border border-edge bg-surface-1 p-3" data-testid="group-settings-preview"
+                        aria-label="Group header preview">
+                        <p className="mb-2 text-[0.65rem] font-medium uppercase tracking-wide text-text-3">Header preview</p>
+                        <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-surface-1"
+                                style={{ borderColor: draft.hero_color }}>
+                                {logo.has_logo && logo.logo_url ? (
+                                    <img src={logo.logo_url} alt="" className="h-full w-full object-contain" />
+                                ) : <Users size={18} className="text-text-2" />}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                                <p className="break-words text-sm font-semibold text-text-1" data-testid="group-settings-preview-name">
+                                    {draft.name || 'Group name'}
+                                </p>
+                                {draft.description.trim()
+                                    ? <p className="mt-0.5 line-clamp-2 break-words text-xs text-text-3">{draft.description}</p>
+                                    : null}
+                            </div>
+                        </div>
                     </div>
                     {profileError ? <p role="alert" className="text-xs text-danger">{profileError}</p> : null}
                     {canEditProfile ? (
@@ -531,7 +652,7 @@ export function GroupSettingsSection({
                     <h3 className="text-sm font-semibold text-text-1">File downloads</h3>
                     <label className="flex items-start gap-2.5">
                         <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-                            checked={settings.downloads.disable_file_downloads} disabled={disabled || !canEditDownloads}
+                            checked={settings.downloads.disable_file_downloads} disabled={disabled || !canEditDownloads || editorDirty}
                             data-testid="group-settings-downloads-toggle"
                             onChange={(event) => void saveDownloads(event.target.checked)} />
                         <span className="min-w-0">
@@ -554,22 +675,31 @@ export function GroupSettingsSection({
                         {!canEditRetention && retentionReason ? <span className="text-xs text-text-3">{retentionReason}</span> : null}
                     </div>
                     <p className="text-xs text-text-3">
-                        Days to keep conversations and documents. Use "none" to keep them indefinitely, or "default" to
-                        follow the organization policy ({settings.retention.organization_defaults.conversation_retention_days} /
-                        {' '}{settings.retention.organization_defaults.document_retention_days} days).
+                        Choose how long conversations and documents are kept. "Using organization default" follows the
+                        organization policy ({orgDefaultLabel(settings.retention.organization_defaults.conversation_retention_days)} /
+                        {' '}{orgDefaultLabel(settings.retention.organization_defaults.document_retention_days)}); "No automatic
+                        deletion" keeps them indefinitely.
                     </p>
                     <fieldset disabled={disabled || !canEditRetention} className="min-w-0 grid gap-3 sm:grid-cols-2">
                         <label className="block text-xs font-medium text-text-2">
                             Conversations
-                            <input type="text" value={retentionDraft.conversation} className={FIELD_CLASS}
+                            <select value={retentionDraft.conversation} className={FIELD_CLASS}
                                 data-testid="group-settings-retention-conversation"
-                                onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, conversation: event.target.value }); }} />
+                                onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, conversation: event.target.value }); }}>
+                                {retentionChoices(retentionDraft.conversation, settings.retention.bounds.conversation).map((choice) => (
+                                    <option key={choice.value} value={choice.value}>{choice.label}</option>
+                                ))}
+                            </select>
                         </label>
                         <label className="block text-xs font-medium text-text-2">
                             Documents
-                            <input type="text" value={retentionDraft.document} className={FIELD_CLASS}
+                            <select value={retentionDraft.document} className={FIELD_CLASS}
                                 data-testid="group-settings-retention-document"
-                                onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, document: event.target.value }); }} />
+                                onChange={(event) => { setRetentionError(''); setRetentionDraft((current) => current && { ...current, document: event.target.value }); }}>
+                                {retentionChoices(retentionDraft.document, settings.retention.bounds.document).map((choice) => (
+                                    <option key={choice.value} value={choice.value}>{choice.label}</option>
+                                ))}
+                            </select>
                         </label>
                     </fieldset>
                     {retentionError ? <p role="alert" className="text-xs text-danger">{retentionError}</p> : null}
@@ -585,7 +715,7 @@ export function GroupSettingsSection({
                 </GlassPanel>
             ) : null}
 
-            {adapter.allows('view_file_count') ? (
+            {allows('view_file_count') ? (
                 <GlassPanel elevation="flat" className="space-y-3 border border-danger/30 p-4" data-testid="group-settings-danger">
                     <h3 className="text-sm font-semibold text-danger">Delete this group</h3>
                     <p className="text-xs text-text-3">

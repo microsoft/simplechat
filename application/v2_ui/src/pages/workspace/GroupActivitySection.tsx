@@ -31,17 +31,26 @@ function actorLabel(record: GroupActivityRecord): string {
         return record.actor.display_name || 'A group member';
     }
     if (record.actor.kind === 'former_member') {
-        return 'A former member';
+        return 'Former member';
     }
     return 'System';
 }
 
-function occurredLabel(record: GroupActivityRecord): string {
-    if (!record.occurred_at) {
+/** The absolute local date and time an event happened, the primary timestamp the feed shows. */
+function absoluteLabel(occurredAt: string | null): string {
+    if (!occurredAt) {
         return 'Time unknown';
     }
-    const label = formatRelativeTime(record.occurred_at);
-    return label || 'Time unknown';
+    const when = new Date(occurredAt);
+    return Number.isNaN(when.getTime()) ? 'Time unknown' : when.toLocaleString();
+}
+
+/** The relative time, shown alongside the absolute one, or empty when it can't be resolved. */
+function relativeLabel(record: GroupActivityRecord): string {
+    if (!record.occurred_at) {
+        return '';
+    }
+    return formatRelativeTime(record.occurred_at) || '';
 }
 
 export function GroupActivitySection({ adapter }: { adapter: GroupSettingsAdapter }) {
@@ -111,7 +120,7 @@ export function GroupActivitySection({ adapter }: { adapter: GroupSettingsAdapte
                 </div>
             ) : records && records.length === 0 ? (
                 <EmptyState icon={<History size={28} />} title="No recent activity"
-                    description="Changes to this group's members, documents and settings will appear here." />
+                    description="Uploads, conversations, agents and File Sync runs in this group will appear here." />
             ) : (
                 <>
                     <p ref={liveRef} role="status" className="text-xs text-text-3">{summary}</p>
@@ -126,7 +135,8 @@ export function GroupActivitySection({ adapter }: { adapter: GroupSettingsAdapte
                                     <div className="min-w-0 flex-1">
                                         <p className="min-w-0 break-words text-sm text-text-1">{record.summary}</p>
                                         <p className="mt-0.5 text-xs text-text-3">
-                                            {actorLabel(record)} &middot; {occurredLabel(record)}
+                                            {actorLabel(record)} &middot; {absoluteLabel(record.occurred_at)}
+                                            {relativeLabel(record) ? <span className="text-text-4"> &middot; {relativeLabel(record)}</span> : null}
                                         </p>
                                     </div>
                                 </GlassPanel>

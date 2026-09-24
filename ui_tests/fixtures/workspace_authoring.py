@@ -1,9 +1,10 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.161
+Version: 0.261.163
 Implemented in: 0.261.096
 Action type auth lists as the real editor type builder answers them: 0.261.161
+Binary-safe request recorder so logo image uploads never crash the base route: 0.261.163
 
 The browser loads the real built application and CSS. Only HTTP responses and
 synthetic resource persistence are replaced; no components, stores, navigation,
@@ -725,11 +726,19 @@ class WorkspaceAuthoringFixture:
             route.fulfill(status=404, body="Fixture asset not found.")
             return
         body = None
-        if request.post_data:
-            if "application/json" in request.headers.get("content-type", ""):
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if request.post_data:
                 body = request.post_data_json
-            else:
+        elif request.post_data_buffer:
+            # A text body (including a document upload's multipart form) is recorded as a string so the
+            # handlers can inspect it. A binary body (a logo upload's PNG or JPEG) is not UTF-8, so
+            # request.post_data would raise decoding it; the handler reads those bytes from
+            # request.post_data_buffer instead, and here the undecodable body is simply left as None.
+            try:
                 body = request.post_data
+            except UnicodeDecodeError:
+                body = None
         entry = ApiRequest(request.method, path, parse_qs(parsed.query), copy.deepcopy(body))
         self.requests.append(entry)
         if request.method != "GET":

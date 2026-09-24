@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.161
+Version: 0.261.163
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -40,9 +40,11 @@ import pytest
 from ui_tests.fixtures.workspace_authoring import (
     MISSING, OWNER_ID, SCHEMA_ROOT, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
     _editor_candidate, _get_pointer, _schema, _set_pointer, _walk_values, action_record, agent_record,
-    connect_options,  # noqa: F401
+    connect_options as connect_options,
     editor_options, personal_scope_leak,
 )
+
+_CONNECT_OPTIONS_EXPORT = connect_options
 
 
 # The application package, so a handful of reviewed constants are read from the server itself by AST
@@ -51,13 +53,54 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
 
 
 def _app_constant(file_name, name):
-    """Return the module-level literal ``name`` assigned in ``application/single_app/<file_name>``."""
+    """Return a reviewed module-level constant from ``application/single_app/<file_name>``.
+
+    The constants mirrored by this fixture are intentionally tiny: literals, ``date(...)``
+    calls and f-strings built from earlier constants. Evaluating that subset keeps the
+    fixture tied to server truth without importing the application package into Playwright.
+    """
     tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    values = {}
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Tuple):
+            return tuple(evaluate(item) for item in node.elts)
+        if isinstance(node, ast.List):
+            return [evaluate(item) for item in node.elts]
+        if isinstance(node, ast.Dict):
+            return {evaluate(key): evaluate(value) for key, value in zip(node.keys, node.values)}
+        if isinstance(node, ast.Name) and node.id in values:
+            return values[node.id]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "date":
+            return date(*(evaluate(argument) for argument in node.args))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            value = evaluate(node.func.value)
+            if node.func.attr == "isoformat" and not node.args and not node.keywords:
+                return value.isoformat()
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for part in node.values:
+                if isinstance(part, ast.Constant):
+                    parts.append(str(part.value))
+                elif isinstance(part, ast.FormattedValue):
+                    parts.append(str(evaluate(part.value)))
+                else:
+                    raise ValueError(f"Unsupported f-string node: {ast.dump(part)}")
+            return "".join(parts)
+        return ast.literal_eval(node)
+
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == name for target in node.targets
         ):
-            return ast.literal_eval(node.value)
+            return evaluate(node.value)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                values[node.targets[0].id] = evaluate(node.value)
+            except (ValueError, SyntaxError):
+                pass
     raise LookupError(f"{file_name} defines no literal {name}")
 
 
@@ -790,6 +833,7 @@ GROUP_STATUS_UNRECOGNIZED_MESSAGE = (
 # The navigation reason the real builder's section() default gives a viewable but disabled manage
 # section, verbatim from functions_workspace_context.section().
 GROUP_SECTION_DISABLED_REASON = "This section is not enabled for this group."
+GROUP_SETTINGS_MANAGER_REASON = GROUP_SETTINGS_REFUSAL_MESSAGES[GROUP_MANAGER_REQUIRED]
 
 # The reviewed 409/400 texts, verbatim from functions_group_settings and functions_group_insights.
 GROUP_SETTINGS_CHANGED_MESSAGE = "These settings changed since you opened them. Reload them before saving."
@@ -804,12 +848,10 @@ GROUP_NOT_FOUND_MESSAGE = "Group not found."
 GROUP_SETTINGS_QUERY_MESSAGE = "This request does not accept query parameters."
 GROUP_ACTIVITY_UNAVAILABLE_MESSAGE = "Group activity is unavailable right now. Try again."
 GROUP_STATS_UNAVAILABLE_MESSAGE = "Group statistics are unavailable right now. Try again."
-GROUP_STATS_EARLIEST_DATE = date(2000, 1, 1)
-GROUP_STATS_LATEST_DATE = date(9998, 12, 31)
+GROUP_STATS_EARLIEST_DATE = _app_constant("functions_stats_windows.py", "STATS_EARLIEST_CUSTOM_DATE")
+GROUP_STATS_LATEST_DATE = _app_constant("functions_stats_windows.py", "STATS_LATEST_CUSTOM_DATE")
 GROUP_STATS_MAX_CUSTOM_DAYS = 366
-GROUP_STATS_DATE_RANGE_MESSAGE = (
-    f"Choose dates between {GROUP_STATS_EARLIEST_DATE.isoformat()} and {GROUP_STATS_LATEST_DATE.isoformat()}."
-)
+GROUP_STATS_DATE_RANGE_MESSAGE = _app_constant("functions_stats_windows.py", "STATS_DATE_RANGE_MESSAGE")
 
 GROUP_ACTIVITY_LIMITS = (10, 20, 50)
 GROUP_ACTIVITY_DEFAULT_LIMIT = 50
@@ -937,7 +979,8 @@ class _GroupSettingsRefusal(Exception):
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID,
                   enable_extract_meta_data=False, allow_group_agents=True, allow_group_plugins=True,
                   allow_group_workspace_file_downloads=True, enable_retention_policy_group=False,
-                  require_member_of_create_group=False, holds_create_groups_role=True):
+                  require_member_of_create_group=False, holds_create_groups_role=True,
+                  disable_file_downloads=False):
     """The selected-group context the server builds, as a fresh copy on every call.
 
     `enable_extract_meta_data` turns metadata extraction on, as the document fixtures' deployment does.
@@ -966,6 +1009,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "create_role_required": require_member_of_create_group,
         "has_create_role": holds_create_groups_role,
     }
+    downloads_enabled = settings_flags["downloads_admin"] and not disable_file_downloads
 
     def section(group, enabled, can_manage, reason):
         available = viewable and enabled
@@ -998,12 +1042,12 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     # come from settings_management, never from these navigation entries.
     manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
     manage_decisions = settings_decisions(role, status, **settings_flags)
-    sections["settings"] = section("manage", manage_manager, manage_manager, GROUP_SECTION_DISABLED_REASON)
+    sections["settings"] = section("manage", manage_manager, manage_manager, GROUP_SETTINGS_MANAGER_REASON)
     sections["activity"] = section(
-        "manage", manage_decisions["view_activity"] is None, False, GROUP_SECTION_DISABLED_REASON,
+        "manage", manage_decisions["view_activity"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
     )
     sections["statistics"] = section(
-        "manage", manage_decisions["view_stats"] is None, False, GROUP_SECTION_DISABLED_REASON,
+        "manage", manage_decisions["view_stats"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
     )
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
@@ -1024,7 +1068,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             "can_view": viewable, "can_chat": viewable,
             "can_upload": manager and active, "can_edit": manager and active,
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and viewable and settings_flags["downloads_admin"],
+            "can_download": manager and viewable and downloads_enabled,
         },
         "document_queries": {
             "sort_fields": [
@@ -1035,7 +1079,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         },
         "document_management": document_management(
             role, status, extract_metadata=enable_extract_meta_data,
-            download_enabled=settings_flags["downloads_admin"],
+            download_enabled=downloads_enabled,
         ),
         "document_collaboration": document_collaboration(role, status),
         "prompt_management": prompt_management(role, status),
@@ -1223,7 +1267,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "description": profile["description"],
             "hero_color": profile["hero_color"],
             "has_logo": bool(profile.get("logo_url")),
-            "logo_version": 0,
+            "logo_version": 1 if profile.get("logo_url") else 0,
             "disable_file_downloads": False,
             "retention": {"conversation_retention_days": "default", "document_retention_days": "default"},
         }
@@ -1234,10 +1278,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         # content without a live app. A test overrides these to prove limits, windows and empties.
         self.group_activity[group_id] = [
             {"id": f"{group_id}-activity-1", "occurred_at": "2024-05-02T09:00:00Z",
-             "type": "document_creation", "summary": "A document was added.",
+             "type": "document_creation", "summary": "Uploaded a document",
              "actor": {"kind": "member", "display_name": "Group owner"}},
             {"id": f"{group_id}-activity-2", "occurred_at": "2024-05-01T09:00:00Z",
-             "type": "token_usage", "summary": "3 prompt and 5 completion tokens were used.",
+             "type": "token_usage", "summary": "Used 8 tokens in chat",
              "actor": {"kind": "system"}},
         ]
         self.group_stats[group_id] = {
@@ -1255,10 +1299,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         """
         self.group_settings_flags_by_id[group_id] = dict(flags)
         context = self.groups[group_id]
+        store = self.native_group_settings.get(group_id, {})
         self.groups[group_id] = group_context(
             group_id, context["workspace"]["name"], role=context["role"], status=context["status"],
-            viewer=self.viewer_id, **_settings_kwargs(flags),
+            viewer=self.viewer_id, disable_file_downloads=bool(store.get("disable_file_downloads")),
+            **_settings_kwargs(flags),
         )
+        self.groups[group_id]["workspace"].update(context["workspace"])
+        self._sync_download_context(group_id)
 
     def _bootstrap(self):
         payload = super()._bootstrap()
@@ -1605,6 +1653,39 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         route.fulfill(status=200, body=_GROUP_LOGO_PNG, content_type="image/png",
                       headers={"Cache-Control": "no-store"})
 
+    def _sync_download_context(self, group_id):
+        """Keep the served selected-group context aligned with the group's download switch."""
+        context = self.groups.get(group_id)
+        store = self.native_group_settings.get(group_id)
+        if not context or not store:
+            return
+        flags = self._settings_flags(group_id)
+        enabled = bool(flags["downloads_admin"] and not store["disable_file_downloads"])
+        context["document_permissions"]["can_download"] = bool(
+            context["role"] in GROUP_CONTENT_MANAGER_ROLES
+            and context["status"] in GROUP_VIEWABLE_STATUSES
+            and enabled
+        )
+        context["document_management"] = document_management(
+            context["role"], context["status"],
+            extract_metadata="extract_metadata" in context["document_management"].get("operations", []),
+            download_enabled=enabled,
+        )
+
+    def _sync_profile_context(self, group_id):
+        """Keep the served workspace header aligned with profile/logo settings writes."""
+        context = self.groups.get(group_id)
+        store = self.native_group_settings.get(group_id)
+        if not context or not store:
+            return
+        context["workspace"]["name"] = store["name"]
+        context["workspace"]["description"] = store["description"]
+        context["workspace"]["hero_color"] = store["hero_color"]
+        context["workspace"]["logo_url"] = (
+            f"/api/groups/{quote(group_id, safe='')}/logo?v={store['logo_version']}"
+            if store["has_logo"] else None
+        )
+
     def _group_settings(self, route, entry):
         try:
             payload, status = self._resolve_group_settings(route, entry)
@@ -1704,6 +1785,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self._check_settings_write(group_id, "profile", revision)
         store.update(changes)
         self._advance_revision(group_id, "profile")
+        self._sync_profile_context(group_id)
         return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
 
     def _parse_logo_upload(self, route):
@@ -1723,7 +1805,10 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         for part in message.iter_parts():
             name = part.get_param("name", header="content-disposition")
             if part.get_filename():
-                files.setdefault(name, []).append(part.get_filename())
+                files.setdefault(name, []).append({
+                    "filename": part.get_filename(),
+                    "content": part.get_payload(decode=True) or b"",
+                })
             else:
                 form.setdefault(name, []).append(part.get_content())
         if set(form) - {"revision"} or set(files) - {"logo_file"}:
@@ -1733,11 +1818,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         revision = (form.get("revision") or [None])[0]
         if not isinstance(revision, str) or not revision:
             self._refuse("Include the revision of the settings you loaded.", 400, "invalid_request")
-        filename = (files.get("logo_file") or [""])[0]
+        upload = (files.get("logo_file") or [{"filename": "", "content": b""}])[0]
+        filename = upload["filename"]
         if not filename:
             self._refuse("Choose a PNG or JPEG image for the logo.", 400, "invalid_request")
         if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
             self._refuse("The logo must be a PNG or JPEG image.", 400, "invalid_request")
+        content = upload["content"]
+        if not (content.startswith(b"\x89PNG\r\n\x1a\n") or content.startswith(b"\xff\xd8\xff")):
+            self._refuse(
+                "The logo image could not be read. Upload a PNG or JPEG image.",
+                400, "invalid_request",
+            )
         return revision
 
     def _replace_group_logo(self, route, group_id, role, status, flags, decisions):
@@ -1746,8 +1838,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self._check_settings_write(group_id, "logo", revision)
         store = self.native_group_settings[group_id]
         store["has_logo"] = True
-        store["logo_version"] += 1
+        store["logo_version"] = max(1, store["logo_version"] + 1)
         self._advance_revision(group_id, "logo")
+        self._sync_profile_context(group_id)
         return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
 
     def _remove_group_logo(self, group_id, role, status, flags, decisions, entry):
@@ -1760,8 +1853,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if not store["has_logo"]:
             self._refuse(NO_GROUP_LOGO_MESSAGE, 409, "no_group_logo")
         store["has_logo"] = False
-        store["logo_version"] += 1
+        store["logo_version"] = max(1, store["logo_version"] + 1)
         self._advance_revision(group_id, "logo")
+        self._sync_profile_context(group_id)
         return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
 
     def _write_group_downloads(self, group_id, role, status, flags, decisions, entry):
@@ -1775,6 +1869,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self._check_settings_write(group_id, "downloads", revision)
         self.native_group_settings[group_id]["disable_file_downloads"] = disabled
         self._advance_revision(group_id, "downloads")
+        self._sync_download_context(group_id)
         return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
 
     def _validate_retention_value(self, field, value):
@@ -1878,9 +1973,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                     self._refuse(f"{field} is required.", 400, "invalid_request")
             try:
                 start = date.fromisoformat(start_raw)
+            except ValueError:
+                self._refuse("start_date must use YYYY-MM-DD format.", 400, "invalid_request")
+            try:
                 end = date.fromisoformat(end_raw)
             except ValueError:
-                self._refuse(GROUP_STATS_DATE_RANGE_MESSAGE, 400, "invalid_request")
+                self._refuse("end_date must use YYYY-MM-DD format.", 400, "invalid_request")
             if start > end:
                 self._refuse("start_date must be before or equal to end_date.", 400, "invalid_request")
             if start < GROUP_STATS_EARLIEST_DATE or end > GROUP_STATS_LATEST_DATE:
@@ -1888,7 +1986,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             days = (end - start).days + 1
             if days > GROUP_STATS_MAX_CUSTOM_DAYS:
                 self._refuse(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.", 400, "invalid_request")
-            label = f"{start.isoformat()} - {end.isoformat()}"
+            label = f"{start.month}/{start.day}/{start.year} - {end.month}/{end.day}/{end.year}"
             return {"type": "custom", "days": days, "label": label, "start": start, "end": end}
         if "days" in query:
             raw = query.get("days", [None])[0]

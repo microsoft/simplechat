@@ -1,7 +1,7 @@
 # test_group_settings_fixture_parity.py
 """
 Per-route shape parity between the M7C group settings UI fixture and the real routes.
-Version: 0.261.157
+Version: 0.261.163
 Implemented in: 0.261.157
 
 M7C contract Section 8, F5. The V2 group Settings, Activity and Statistics browser suite mocks the
@@ -26,29 +26,69 @@ capture the fulfilled status and JSON. The logo upload is driven with a real mul
 fixture's own multipart parser runs, exactly as it does behind the browser.
 """
 
+import ast
 import sys
 from io import BytesIO
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = ROOT / "application" / "single_app"
 for candidate in (ROOT, ROOT / "ui_tests", ROOT / "ui_tests" / "fixtures"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
 from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN
-from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture
+from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, _settings_kwargs, group_context
 
 from test_support.group_settings_harness import group_settings_environment, png_bytes
+
+
+def _app_constant(file_name, name):
+    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    values = {}
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "date":
+            return date(*(evaluate(argument) for argument in node.args))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            value = evaluate(node.func.value)
+            if node.func.attr == "isoformat" and not node.args and not node.keywords:
+                return value.isoformat()
+        if isinstance(node, ast.Name) and node.id in values:
+            return values[node.id]
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for part in node.values:
+                if isinstance(part, ast.Constant):
+                    parts.append(str(part.value))
+                elif isinstance(part, ast.FormattedValue):
+                    parts.append(str(evaluate(part.value)))
+            return "".join(parts)
+        return ast.literal_eval(node)
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            value = evaluate(node.value)
+            values[node.targets[0].id] = value
+            if node.targets[0].id == name:
+                return value
+    raise LookupError(f"{file_name} defines no constant {name}")
 
 
 # The group the fixture seeds as an Owner in an active group, matching the harness's owner-1 group.
 FIXTURE_GROUP = "group-a"
 REAL_GROUP = "group-1"
 REAL_OWNER = "owner-1"
+STATS_EARLIEST_CUSTOM_DATE = _app_constant("functions_stats_windows.py", "STATS_EARLIEST_CUSTOM_DATE")
+STATS_LATEST_CUSTOM_DATE = _app_constant("functions_stats_windows.py", "STATS_LATEST_CUSTOM_DATE")
+STATS_DATE_RANGE_MESSAGE = _app_constant("functions_stats_windows.py", "STATS_DATE_RANGE_MESSAGE")
 
-SETTINGS_PATH = f"/api/groups/{{group}}/settings"
+SETTINGS_PATH = "/api/groups/{group}/settings"
 
 # The keys the native Settings view reads off the settings envelope and each of its sections. The
 # fixture may carry fewer keys than the server (a subset is fine), but it must never drop one the
@@ -129,7 +169,15 @@ def fixture_revision(fixture, section):
     return fixture._settings_revision(FIXTURE_GROUP, section)
 
 
-def multipart_logo(revision, filename="logo.png"):
+def configure_fixture_status(fixture, status, role="Owner"):
+    current = fixture.groups[FIXTURE_GROUP]
+    fixture.groups[FIXTURE_GROUP] = group_context(
+        FIXTURE_GROUP, current["workspace"]["name"], role=role, status=status, viewer=fixture.viewer_id,
+        **_settings_kwargs(fixture.group_settings_flags_by_id.get(FIXTURE_GROUP, {})),
+    )
+
+
+def multipart_logo(revision, filename="logo.png", content=None):
     """A real multipart/form-data body carrying a logo_file and the revision, for the fixture's own
     parser to read, plus the content-type header its boundary lives in."""
     boundary = "----parity-logo-boundary"
@@ -141,7 +189,7 @@ def multipart_logo(revision, filename="logo.png"):
         f'Content-Disposition: form-data; name="logo_file"; filename="{filename}"\r\n'
         f"Content-Type: image/png\r\n\r\n"
     ).encode("ascii")
-    body = prefix + png_bytes() + f"\r\n--{boundary}--\r\n".encode("ascii")
+    body = prefix + (png_bytes() if content is None else content) + f"\r\n--{boundary}--\r\n".encode("ascii")
     headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
     return body, headers
 
@@ -312,6 +360,28 @@ def test_logo_put_shape_parity(env):
 
     assert (status, real.status_code) == (200, 200)
     assert_settings_parity("logo", payload, real.get_json())
+    assert payload["settings"]["logo"]["logo_version"] >= 1
+
+
+def test_unreadable_logo_upload_value_parity(env):
+    """A .png name with non-image bytes is the same reviewed 400 as the server."""
+    real = env.call("PUT", real_settings_path("logo"), data={
+        "revision": real_revision(env, "logo"),
+        "logo_file": (BytesIO(b"not image bytes"), "logo.png"),
+    }, content_type="multipart/form-data")
+
+    fixture = new_fixture()
+    fixture_body, fixture_headers = multipart_logo(
+        fixture_revision(fixture, "logo"), content=b"not image bytes",
+    )
+    status, payload = drive_fixture(fixture, "PUT", fixture_settings_path("logo"),
+                                    headers=fixture_headers, post_data_buffer=fixture_body)
+
+    record("unreadable_logo_upload", payload)
+    real_payload = assert_error_parity("unreadable_logo_upload", status, real, 400, "invalid_request")
+    assert payload["error"] == real_payload["error"] == (
+        "The logo image could not be read. Upload a PNG or JPEG image."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -350,6 +420,62 @@ def test_stats_shape_parity(env):
     assert_shared_keys("stats.stats", payload["stats"], real_payload["stats"], STATS_KEYS)
     assert_no_invented_keys("stats.window", payload["stats"]["window"], real_payload["stats"]["window"])
     assert_shared_keys("stats.window", payload["stats"]["window"], real_payload["stats"]["window"], WINDOW_KEYS)
+
+
+def test_custom_stats_window_value_parity(env):
+    """A custom window reports the same values, including the classic short-date label."""
+    query = {"start_date": ["2024-01-01"], "end_date": ["2024-01-31"]}
+    real = env.call("GET", f"/api/groups/{REAL_GROUP}/insights/stats",
+                    query_string={"start_date": "2024-01-01", "end_date": "2024-01-31"})
+    fixture = new_fixture()
+    status, payload = drive_fixture(fixture, "GET", f"/api/groups/{FIXTURE_GROUP}/insights/stats", query=query)
+
+    assert (status, real.status_code) == (200, 200)
+    real_window = real.get_json()["stats"]["window"]
+    fixture_window = payload["stats"]["window"]
+    assert fixture_window == real_window
+    assert fixture_window["label"] == "1/1/2024 - 1/31/2024"
+
+
+@pytest.mark.parametrize("scenario,query,expected_message", [
+    (
+        "range_over_366_days",
+        {"start_date": "2024-01-01", "end_date": "2025-01-01"},
+        "Choose a date range of 366 days or fewer.",
+    ),
+    (
+        "out_of_bounds_range",
+        {
+            "start_date": (STATS_EARLIEST_CUSTOM_DATE - timedelta(days=1)).isoformat(),
+            "end_date": STATS_EARLIEST_CUSTOM_DATE.isoformat(),
+        },
+        STATS_DATE_RANGE_MESSAGE,
+    ),
+    (
+        "after_latest_range",
+        {
+            "start_date": STATS_LATEST_CUSTOM_DATE.isoformat(),
+            "end_date": (STATS_LATEST_CUSTOM_DATE + timedelta(days=1)).isoformat(),
+        },
+        STATS_DATE_RANGE_MESSAGE,
+    ),
+    (
+        "malformed_date",
+        {"start_date": "not-a-date", "end_date": "2024-01-31"},
+        "start_date must use YYYY-MM-DD format.",
+    ),
+])
+def test_stats_window_refusal_value_parity(env, scenario, query, expected_message):
+    real = env.call("GET", f"/api/groups/{REAL_GROUP}/insights/stats", query_string=query)
+    fixture = new_fixture()
+    fixture_query = {key: [value] for key, value in query.items()}
+    status, payload = drive_fixture(
+        fixture, "GET", f"/api/groups/{FIXTURE_GROUP}/insights/stats", query=fixture_query,
+    )
+
+    record(scenario, payload)
+    real_payload = assert_error_parity(scenario, status, real, 400, "invalid_request")
+    assert payload["error"] == real_payload["error"] == expected_message
 
 
 def test_file_count_shape_parity(env):
@@ -402,7 +528,8 @@ def test_write_conflict_shape_parity(env):
                                     body={"revision": fixture_revision(fixture, "profile"), "name": "Busy"})
 
     record("group_write_conflict", payload)
-    assert_error_parity("group_write_conflict", status, real, 409, "group_write_conflict")
+    real_payload = assert_error_parity("group_write_conflict", status, real, 409, "group_write_conflict")
+    assert payload["error"] == real_payload["error"] == "The group changed while your request was being saved. Try again."
 
 
 def test_no_group_logo_shape_parity(env):
@@ -432,6 +559,29 @@ def test_reviewed_400_shape_parity(env):
     real_payload = assert_error_parity("reviewed_400", status, real, 400)
     # The editor renders the server's own text; a drift in the fixture's copy would mislead a user.
     assert payload["error"] == real_payload["error"]
+
+
+@pytest.mark.parametrize("stored_status,expected_text", [
+    ("locked", "This group is locked or inactive, so its name, description, color and logo can't be changed."),
+    ("archived", "This group's status isn't recognized, so its name, description, color and logo can't be changed."),
+])
+def test_status_refusal_text_value_parity(env, stored_status, expected_text):
+    """Profile writes carry the same reviewed locked/unknown status text as the real route."""
+    env.groups.records.clear()
+    env.seed_group(REAL_GROUP, status=stored_status)
+    env.as_user(REAL_OWNER, roles=("User",))
+    real = env.call("PATCH", real_settings_path("profile"),
+                    {"revision": real_revision(env, "profile"), "name": "Blocked"})
+
+    fixture = new_fixture()
+    configure_fixture_status(fixture, stored_status)
+    status, payload = drive_fixture(fixture, "PATCH", fixture_settings_path("profile"),
+                                    body={"revision": fixture_revision(fixture, "profile"), "name": "Blocked"})
+
+    scenario = f"{stored_status}_status_refusal"
+    record(scenario, payload)
+    real_payload = assert_error_parity(scenario, status, real, 403, "group_status_unavailable")
+    assert payload["error"] == real_payload["error"] == expected_text
 
 
 def test_activity_unavailable_shape_parity(env):
