@@ -333,14 +333,28 @@ export interface AdminSettingsResponse {
      */
     suppressed_capabilities: string[];
     version: string;
-    update_status?: {
-        latest_version: string | null;
-        update_available: boolean;
-        status: 'checked' | 'stale' | 'unavailable';
-        checked_at: string | null;
-        attempted_at: string | null;
-        error: string | null;
-    };
+}
+
+/** Release status for the running server version, as the shared release check reports it. */
+export interface ApplicationUpdateStatus {
+    latest_version: string | null;
+    update_available: boolean;
+    status: 'checked' | 'stale' | 'unavailable';
+    checked_at: string | null;
+    attempted_at: string | null;
+    error: string | null;
+}
+
+/**
+ * `GET /api/v2/admin/update-status`.
+ *
+ * Served apart from the settings because a release check may contact GitHub. Requested
+ * alongside them, a slow or unreachable release page holds up only the version banner.
+ */
+export interface AdminUpdateStatusResponse {
+    /** The running server version `update_available` was compared against. */
+    version: string;
+    update_status: ApplicationUpdateStatus;
 }
 
 export interface AdminSettingsPatchResponse {

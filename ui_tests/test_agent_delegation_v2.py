@@ -1,7 +1,7 @@
 # test_agent_delegation_v2.py
 """
 Real V2 Call agent create/edit/attach workflows for group and global scopes.
-Version: 0.261.096
+Version: 0.261.133
 Implemented in: 0.261.093
 
 Deterministic local Playwright coverage using the existing orchestration harness pattern.
@@ -148,6 +148,11 @@ class ApiFixture:
                     {"id": "agents-actions", "label": "Agents & Actions", "tabs": []},
                 ],
             })
+        elif path == "/api/v2/admin/update-status":
+            respond({"version": "0.261.133", "update_status": {
+                "latest_version": "0.261.133", "update_available": False, "status": "checked",
+                "checked_at": None, "attempted_at": None, "error": None,
+            }})
         elif path == "/api/agents/generate_id":
             respond({"id": "new-agent"})
         elif path.endswith("/plugins") or path.endswith("/agents"):
