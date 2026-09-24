@@ -1,8 +1,8 @@
 # test_v2_stats_export_contracts.py
 """
 Functional test for V2 statistics export CSV contracts.
-Version: 0.261.163
-Implemented in: 0.261.163
+Version: 0.261.165
+Implemented in: 0.261.165
 
 This test pins the personal Statistics export's sections, columns and UTF-8 BOM
 path, and the group Statistics CSV column format with its classic no-BOM adapter.

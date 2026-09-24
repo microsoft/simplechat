@@ -1,7 +1,7 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.161
 
 These ride one composite group store (`group_journeys_ui`) that answers the

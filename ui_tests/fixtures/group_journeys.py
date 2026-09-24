@@ -1,7 +1,7 @@
 # group_journeys.py
 """One composite group store for the M8 end-to-end journeys.
 
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.161
 
 The M8 journeys drive the real built SPA across every group section in a single

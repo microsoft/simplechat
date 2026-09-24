@@ -1,8 +1,8 @@
 # test_group_settings_refusal_text_parity.py
 """
 Functional test for V2 group settings refusal text parity.
-Version: 0.261.163
-Implemented in: 0.261.163
+Version: 0.261.165
+Implemented in: 0.261.165
 
 This test ensures the browser's REFUSAL_TEXT table stays byte-for-byte aligned
 with functions_group_settings.REFUSAL_MESSAGES, including the plural

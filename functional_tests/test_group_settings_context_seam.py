@@ -1,7 +1,7 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.154
 Unrecognized statuses fail closed for the profile and logo: 0.261.157
 

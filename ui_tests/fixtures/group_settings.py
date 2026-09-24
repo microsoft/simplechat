@@ -2,7 +2,7 @@
 """
 Test-arrangement fixture for the native V2 group Settings, Activity and Statistics sections (M7C).
 
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.157
 
 The HTTP serving for the native `/api/groups/<g>/settings[/logo]` and `/api/groups/<g>/insights/*`

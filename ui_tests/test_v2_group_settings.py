@@ -1,7 +1,7 @@
 # test_v2_group_settings.py
 """
 Production-SPA coverage for the native V2 group Settings, Activity and Statistics sections.
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.157
 
 Exercises the real Settings, Activity and Statistics sections -- the M7C sections of the group

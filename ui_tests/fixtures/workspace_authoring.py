@@ -1,7 +1,7 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.096
 Action type auth lists as the real editor type builder answers them: 0.261.161
 Binary-safe request recorder so logo image uploads never crash the base route: 0.261.163

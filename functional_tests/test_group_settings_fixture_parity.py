@@ -1,7 +1,7 @@
 # test_group_settings_fixture_parity.py
 """
 Per-route shape parity between the M7C group settings UI fixture and the real routes.
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.157
 
 M7C contract Section 8, F5. The V2 group Settings, Activity and Statistics browser suite mocks the

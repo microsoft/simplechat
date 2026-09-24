@@ -1,7 +1,7 @@
 # test_group_context_fixture_parity.py
 """
 Parity between the group workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.163
+Version: 0.261.165
 Implemented in: 0.261.157
 
 Every group browser suite builds its selected-group context from
