@@ -141,6 +141,9 @@ GROUP_ACCESS_DENIED_MESSAGE = "You do not have access to the selected group."
 GROUP_SETTINGS_CHANGED_MESSAGE = "These settings changed since you opened them. Reload them before saving."
 GROUP_SETTINGS_UNAVAILABLE_MESSAGE = "The group settings request could not be completed. Try again."
 NO_GROUP_LOGO_MESSAGE = "This group has no logo to remove."
+GROUP_STATUS_UNRECOGNIZED_MESSAGE = (
+    "This group's status isn't recognized, so its name, description, color and logo can't be changed."
+)
 REFUSAL_MESSAGES = {
     GROUP_OWNER_REQUIRED: "Only the group owner can do this.",
     GROUP_MANAGER_REQUIRED: "Only the group owner or an admin can do this.",
@@ -168,9 +171,16 @@ def _group_not_found():
     return GroupSettingsError(GROUP_NOT_FOUND_MESSAGE, 404, error_code="group_not_found")
 
 
-def refusal(reason):
-    """The 403 for a ``group_settings_decisions`` reason."""
-    return GroupSettingsError(REFUSAL_MESSAGES[reason], 403, error_code=reason)
+def refusal(reason, group=None):
+    """The 403 for a ``group_settings_decisions`` reason.
+
+    A status refusal names the status that caused it: a locked or inactive group, or one
+    whose status isn't recognized.
+    """
+    message = REFUSAL_MESSAGES[reason]
+    if reason == GROUP_STATUS_UNAVAILABLE and group is not None and _status(group) == "unknown":
+        message = GROUP_STATUS_UNRECOGNIZED_MESSAGE
+    return GroupSettingsError(message, 403, error_code=reason)
 
 
 def group_settings_error_response(error):
@@ -229,7 +239,7 @@ def require_operation(group, role, settings, roles, operation):
     """Refuse unless ``group_settings_decisions`` allows ``operation``."""
     reason = group_settings_decisions(role, group, settings, roles)[operation]
     if reason is not None:
-        raise refusal(reason)
+        raise refusal(reason, group)
 
 
 def require_manager(role):

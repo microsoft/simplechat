@@ -114,7 +114,7 @@ def test_an_admin_of_a_locked_group_keeps_downloads_retention_and_the_reads(envi
     assert management["reasons"]["view_file_count"] == "group_owner_required"
 
 
-@pytest.mark.parametrize("status", ["locked", "inactive"])
+@pytest.mark.parametrize("status", ["locked", "inactive", "archived"])
 def test_a_read_only_status_holds_the_owner_profile_and_logo(environment, status):
     environment.records["group-a"]["status"] = status
     management = read_with_roles(environment, "owner", ["User"]).get_json()["settings_management"]
