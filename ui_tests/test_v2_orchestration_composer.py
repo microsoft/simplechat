@@ -1,8 +1,8 @@
 # test_v2_orchestration_composer.py
 """
 UI test for the V2 Composer's orchestration mode: the toggle, the manual-controls disclosure.
-Version: 0.261.104
-Implemented in: 0.261.085
+Version: 0.261.132
+Implemented in: 0.261.085; Image requests orchestration image proposals since 0.261.132
 
 Orchestration inverts the composer. The Orchestrate toggle appears only where the deployment ships
 the feature, is on by default wherever the deployment offers it, and -- while on -- folds the
@@ -223,25 +223,42 @@ def test_disclosure_restores_the_manual_controls():
         return False
 
 
-def test_orchestration_controls_do_not_advertise_image_generation():
-    """Unsupported image generation is disabled without blocking available Deep Research."""
+def test_orchestration_image_control_requests_image_proposals():
+    """Image stays usable in Orchestrate, where it asks for proposal cards, without blocking Deep Research."""
+    print("Testing Image in Orchestrate requests image proposals...")
     page = _PAGE
-    page.evaluate(_SEED_COMPOSER, {
-        "features": _features(
-            enable_source_review=True, enable_deep_source_review=True,
-            enable_image_generation=True, enable_web_search=True,
-        ),
-        "orchestration": _orchestration(),
-    })
-    page.click('#mount-a [title="Manual controls"]')
-    image = page.get_by_title("Image unavailable in Orchestrate", exact=True)
-    assert image.is_disabled()
-    assert page.get_by_title("Deep research", exact=True).is_enabled()
-    page.get_by_title("Deep research", exact=True).click()
-    assert page.get_by_title("Web", exact=True).get_attribute("aria-pressed") == "false"
-    page.get_by_title("Orchestrate", exact=True).click()
-    assert page.get_by_title("Image", exact=True).is_enabled()
-    return True
+    try:
+        page.evaluate(_SEED_COMPOSER, {
+            "features": _features(
+                enable_source_review=True, enable_deep_source_review=True,
+                enable_image_generation=True, enable_web_search=True,
+            ),
+            "orchestration": _orchestration(),
+        })
+        page.click('#mount-a [title="Manual controls"]')
+        image = page.get_by_title("Image", exact=True)
+        assert image.is_enabled(), "Image must stay usable in Orchestrate"
+        assert image.get_attribute("aria-pressed") == "false"
+        image.click()
+        assert image.get_attribute("aria-pressed") == "true"
+        status = page.get_by_role("status").filter(
+            has_text="Orchestrate will include image proposals for you to approve.",
+        )
+        status.wait_for(state="visible")
+        assert page.get_by_title("Deep research", exact=True).is_enabled()
+        page.get_by_title("Deep research", exact=True).click()
+        assert page.get_by_title("Web", exact=True).get_attribute("aria-pressed") == "false"
+        page.get_by_title("Orchestrate", exact=True).click()
+        assert page.get_by_title("Image", exact=True).is_enabled()
+        status.wait_for(state="detached")
+        print("  ok  Image requests proposals in Orchestrate and leaves the other controls usable")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"Test failed: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        return False
 
 
 PAGE_TESTS = [
@@ -249,7 +266,7 @@ PAGE_TESTS = [
     test_toggle_is_on_by_default_with_controls_collapsed,
     test_turning_off_restores_the_classic_composer,
     test_disclosure_restores_the_manual_controls,
-    test_orchestration_controls_do_not_advertise_image_generation,
+    test_orchestration_image_control_requests_image_proposals,
 ]
 
 
