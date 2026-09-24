@@ -1,5 +1,7 @@
 # route_backend_public_workspaces.py
 
+from urllib.parse import quote
+
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
@@ -692,7 +694,7 @@ def register_route_backend_public_workspaces(bp):
                 notification_type='public_workspace_membership_change',
                 title='Added to Public Workspace',
                 message=f"You have been added to the public workspace '{ws.get('name', 'Unknown')}' as Document Manager.",
-                link_url=f"/manage_public_workspace?workspace_id={ws_id}",
+                link_url=f"/public_workspaces/{quote(str(ws_id), safe='')}",
                 metadata={
                     'workspace_id': ws_id,
                     'workspace_name': ws.get('name', 'Unknown'),
@@ -845,7 +847,7 @@ def register_route_backend_public_workspaces(bp):
                 notification_type='public_workspace_membership_change',
                 title='Workspace Role Changed',
                 message=f"Your role in the public workspace '{ws.get('name', 'Unknown')}' has been changed to {new_role}.",
-                link_url=f"/manage_public_workspace?workspace_id={ws_id}",
+                link_url=f"/public_workspaces/{quote(str(ws_id), safe='')}",
                 metadata={
                     'workspace_id': ws_id,
                     'workspace_name': ws.get('name', 'Unknown'),
