@@ -16,7 +16,7 @@ from functions_simplechat_operations import (
 )
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -331,8 +331,12 @@ def register_route_backend_groups(bp):
                 "error": "File downloads have not been enabled for this group by an administrator"
             }), 403
 
-        data = request.get_json(silent=True) or {}
-        disable_file_downloads = bool(data.get("disable_file_downloads", False))
+        # The classic page always sends the checkbox's boolean. Anything else, or a body
+        # that isn't a JSON object, changes nothing rather than turning downloads on.
+        data = request.get_json(silent=True)
+        disable_file_downloads = data.get("disable_file_downloads") if isinstance(data, dict) else None
+        if not isinstance(disable_file_downloads, bool):
+            return jsonify({"error": "Set disable_file_downloads to true or false."}), 400
 
         def apply_download_settings(fresh):
             # The caller's role is checked again on the copy being written.
@@ -1161,7 +1165,10 @@ def register_route_backend_groups(bp):
             return jsonify({"error": "Forbidden"}), 403
 
         try:
-            stats_window = resolve_stats_time_window(request.args)
+            # A custom date outside 2000-01-01 to 9998-12-31, or one whose UTC offset
+            # carries it past the calendar's edge, is refused here, so the day-by-day
+            # series below can't overflow. Classic windows keep no length cap.
+            stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400
 

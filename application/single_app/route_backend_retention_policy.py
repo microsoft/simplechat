@@ -514,7 +514,8 @@ def register_route_backend_retention_policy(bp):
                 }), 403
 
             user_id = get_current_user_id()
-            data = request.get_json()
+            # Read quietly: a body that isn't JSON is answered below, after the role check.
+            data = request.get_json(silent=True)
             
             # Get group and verify permissions
             from functions_group import (
@@ -539,6 +540,12 @@ def register_route_backend_retention_policy(bp):
                     'success': False,
                     'error': 'Insufficient permissions. Must be group owner or admin.'
                 }), 403
+
+            if not isinstance(data, dict):
+                return jsonify({
+                    'success': False,
+                    'error': 'A JSON object is required for this request.'
+                }), 400
             
             retention_settings = {}
             
