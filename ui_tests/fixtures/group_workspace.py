@@ -290,6 +290,139 @@ def _sanitize_identity(record):
     return result
 
 
+# The native group file source model, mirrored from the M5B backend so both the shell fixture and
+# the dedicated file source fixture answer list, read, create, edit, sync, test, browse and delete
+# identically. File source manager roles match identities -- Owner, Admin and DocumentManager -- and
+# reads use the same roles, so an ordinary member cannot list file sources. `source_actions` is the
+# read-only per-source projection (`edit`/`delete`/`sync`/`test`) the policy computes; the write body
+# is the strict classic field set, plus `expected_config_revision` for the conditional PATCH and the
+# DELETE. Secrets are a `password_stored`/`secret_stored` boolean pair and a `ui_trigger_word`
+# placeholder, exactly as `sanitize_file_sync_source` returns them.
+FILE_SOURCE_OPERATIONS = ("create", "edit", "delete", "sync", "test")
+FILE_SOURCE_ITEM_ACTIONS = ("edit", "delete", "sync", "test")
+FILE_SOURCE_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+FILE_SOURCE_TRIGGER_WORD = "Stored_In_KeyVault"
+
+# The strict top-level fields the native file source write accepts; anything else is a 400.
+FILE_SOURCE_WRITE_FIELDS = frozenset({
+    "name", "source_type", "enabled", "recursive", "connection", "filters",
+    "schedule", "remote_delete_policy", "identity_id", "credentials",
+})
+
+FILE_SOURCE_CONNECTION_KEYS = {
+    "smb": ("unc_path",),
+    "azure_files": ("account_url", "share_name", "directory_path"),
+    "azure_blob": ("account_url", "container_name", "blob_prefix"),
+}
+
+# The auth methods each source type accepts for inline credentials, mirroring
+# FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE.
+FILE_SOURCE_AUTH_TYPES = {
+    "smb": ("username_password", "anonymous"),
+    "azure_files": ("managed_identity", "client_secret", "connection_string"),
+    "azure_blob": ("managed_identity", "client_secret", "connection_string"),
+}
+
+FILE_SOURCE_GENERIC_ERROR = "The file source details are not valid."
+FILE_SOURCE_CONFLICT_ERROR = "This file source was modified. Reload and try again."
+FILE_SOURCE_BUSY_ERROR = "A sync is already queued or running for this file source."
+
+
+def file_source_management(role, status):
+    """The file source management hint, computed from policy exactly like `identity_management`."""
+    if role in FILE_SOURCE_MANAGER_ROLES and status == "active":
+        return {"schema_version": 1, "operations": list(FILE_SOURCE_OPERATIONS)}
+    return {"schema_version": 1, "operations": []}
+
+
+def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=True,
+                      recursive=True, connection=None, filters=None, identity_id="",
+                      identity_name="", auth_type="username_password", secret_stored=True,
+                      username="", domain="", client_identity="", schedule_enabled=False,
+                      interval_minutes=60, actions=FILE_SOURCE_ITEM_ACTIONS,
+                      last_run_status="completed", last_run_at="2024-01-02T00:00:00+00:00"):
+    """One group file source as the native projector returns it, before config_revision and masking.
+
+    The stored credential is a boolean plus a placeholder, never a plaintext secret, so a blank
+    secret on save keeps it and a fresh value replaces it. An identity binding stores the id and a
+    display name the list row shows; inline auth stores the fields the sanitized credentials expose.
+    """
+    conn = dict(connection or {})
+    for key in FILE_SOURCE_CONNECTION_KEYS.get(source_type, ()):  # ensure every key is present
+        conn.setdefault(key, "")
+    if source_type == "smb" and not conn.get("unc_path"):
+        conn["unc_path"] = "\\\\files.example.test\\reports"
+    resolved_filters = {
+        "include_patterns": list((filters or {}).get("include_patterns", [])),
+        "exclude_patterns": list((filters or {}).get("exclude_patterns", [])),
+        "allowed_extensions": list((filters or {}).get("allowed_extensions", [])),
+        "fixed_tags": list((filters or {}).get("fixed_tags", [])),
+        "folder_tag_mode": (filters or {}).get("folder_tag_mode", "none"),
+    }
+    return {
+        "id": identifier,
+        "name": name,
+        "source_type": source_type,
+        "enabled": enabled,
+        "recursive": recursive,
+        "connection": conn,
+        "filters": resolved_filters,
+        "schedule": {
+            "enabled": schedule_enabled,
+            "interval_minutes": interval_minutes,
+            "next_run_at": None,
+        },
+        "remote_delete_policy": "ignore",
+        "identity_id": identity_id or "",
+        "last_run_status": last_run_status,
+        "last_run_at": last_run_at,
+        "created_by": OWNER_ID,
+        "updated_by": OWNER_ID,
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-02T00:00:00+00:00",
+        "source_actions": list(actions),
+        "_auth_type": auth_type,
+        "_username": username,
+        "_domain": domain,
+        "_client_identity": client_identity,
+        "_secret": bool(secret_stored),
+        "_identity_name": identity_name,
+        "_supported_source_types": [source_type],
+    }
+
+
+def _file_source_credentials(record):
+    """The sanitized `credentials` block: no plaintext, a placeholder when a secret is stored."""
+    auth_type = record["_auth_type"]
+    uses_password = auth_type == "username_password"
+    stored = bool(record["_secret"]) and auth_type not in ("anonymous", "managed_identity")
+    placeholder = FILE_SOURCE_TRIGGER_WORD if stored else ""
+    return {
+        "auth_type": auth_type,
+        "username": record.get("_username", ""),
+        "domain": record.get("_domain", ""),
+        "identity": record.get("_client_identity", ""),
+        "tenant_id": "",
+        "password_stored": stored and uses_password,
+        "secret_stored": stored and not uses_password,
+        "password": placeholder if uses_password else "",
+        "secret": "" if uses_password else placeholder,
+    }
+
+
+def _sanitize_file_source(record):
+    """Project a stored source to its sanitized response: drop `_*` keys and the actions projection,
+    add `credentials` and the bound identity name. The native routes then add `config_revision` and
+    `source_actions` in `_file_source_payload`.
+    """
+    result = {key: copy.deepcopy(value) for key, value in record.items()
+              if not key.startswith("_") and key != "source_actions"}
+    result["credentials"] = _file_source_credentials(record)
+    if record.get("identity_id") and record.get("_identity_name"):
+        result["identity_name"] = record["_identity_name"]
+    return result
+
+
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID):
     manager = role in ("Owner", "Admin", "DocumentManager")
     automation = role in ("Owner", "Admin")
@@ -319,6 +452,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "action_management": action_management(role, status),
         "agent_management": agent_management(role, status),
         "identity_management": identity_management(role, status),
+        "file_source_management": file_source_management(role, status),
         "native_delegation": {
             "group": "automation", "enabled": readable,
             "reason": None if readable else "This group is inactive.",
@@ -384,6 +518,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.native_identities = {}
         self.native_identity_revisions = {}
         self.identity_references = {}
+        # Native group file source state. Sources carry a config_revision string rather than an etag,
+        # so a per-(group, id) revision counter backs it and `touch_file_source` advances it to model
+        # a concurrent edit. `file_source_active_runs` records a source mid-run so a delete or sync is
+        # refused with `source_busy`, and `file_source_delete_plan` lets a test script a delete that
+        # is refused after the associated documents were removed (partial / delete_incomplete).
+        self.created_file_source_counter = 0
+        self.native_file_sources = {}
+        self.native_file_source_revisions = {}
+        self.file_source_runs = {}
+        self.file_source_active_runs = set()
+        self.file_source_delete_plan = {}
+        self.file_source_type_visibility = {"smb": True, "azure_files": True, "azure_blob": True}
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -423,6 +569,14 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self._seed_identities(group_id, [
                 group_identity(group_id, f"{group_id}-report-identity", "Report API identity",
                                usage=("action",), auth_type="api_key"),
+            ])
+            # One native file source per group so the production Sync (File sources) page renders a
+            # real collection. It carries a bound file-sync identity so the list row shows the
+            # identity name, and stays enabled with a completed run so the row and its history render.
+            self._seed_file_sources(group_id, [
+                group_file_source(group_id, f"{group_id}-share", "Group reports share",
+                                  source_type="smb", auth_type="username_password",
+                                  username="svc-reports", domain="CORP"),
             ])
 
     def _bootstrap(self):
@@ -475,6 +629,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         if path.startswith("/api/groups/") and "/actions" in path:
             self._actions(route, entry)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/file-source-options"):
+            self._file_source_options(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/file-sources" in path:
+            self._file_sources(route, entry)
             return
         if path.startswith("/api/groups/") and "/identities" in path:
             self._identities(route, entry)
@@ -1024,6 +1184,365 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             row for row in self.native_identities[group_id] if row["id"] != identifier
         ]
         self._json(route, {"success": True})
+
+    # --- Native group file source serving, shared with GroupFileSourcesFixture ------------------
+
+    def _seed_file_sources(self, group_id, records):
+        rows = []
+        for record in records:
+            rows.append(record)
+            self.native_file_source_revisions[(group_id, record["id"])] = 1
+            self.file_source_runs.setdefault((group_id, record["id"]), [{
+                "id": f"{record['id']}-run-1",
+                "source_id": record["id"],
+                "status": record.get("last_run_status", "completed"),
+                "started_at": "2024-01-02T00:00:00+00:00",
+                "completed_at": "2024-01-02T00:05:00+00:00",
+                "triggered_by": OWNER_ID,
+            }])
+        self.native_file_sources[group_id] = rows
+
+    def record_file_source(self, group_id, identifier):
+        return next((row for row in self.native_file_sources.get(group_id, []) if row["id"] == identifier), None)
+
+    def _file_source_config_revision(self, group_id, identifier):
+        return f"group-source-rev:{group_id}:{identifier}:{self.native_file_source_revisions[(group_id, identifier)]}"
+
+    def touch_file_source(self, group_id, identifier):
+        """Simulate a concurrent edit by another manager: the stored config_revision moves on."""
+        self.native_file_source_revisions[(group_id, identifier)] += 1
+        return self._file_source_config_revision(group_id, identifier)
+
+    def mark_file_source_running(self, group_id, identifier, running=True):
+        """Model a run in flight so a sync or delete is refused with `source_busy`."""
+        key = (group_id, identifier)
+        if running:
+            self.file_source_active_runs.add(key)
+        else:
+            self.file_source_active_runs.discard(key)
+
+    def _file_source_payload(self, group_id, record):
+        """The sanitized source plus the two fields the native routes add: `config_revision` and the
+        `source_actions` projection."""
+        payload = _sanitize_file_source(record)
+        payload["config_revision"] = self._file_source_config_revision(group_id, record["id"])
+        payload["source_actions"] = list(record.get("source_actions", []))
+        return payload
+
+    def set_file_source_policy(self, group_id, *, role=None, status="active"):
+        """Recompute a group's context for a file source role and status.
+
+        `group_context` computes the `file_source_management` hint from the same role and status, so
+        recomputing the whole context carries the new hint, exactly like `set_identity_policy`.
+        """
+        current = self.groups.get(group_id)
+        name = current["workspace"]["name"] if current else f"{group_id} workspace"
+        role = role or (current["role"] if current else "Owner")
+        context = group_context(group_id, name, role=role, status=status)
+        self.groups[group_id] = context
+        return context
+
+    def _file_source_eligible_identity_ids(self, group_id):
+        """Per-source-type identity eligibility, mirroring save-time validation: an identity is
+        offered for a source type when it carries `file_sync` usage and supports that source type
+        (or the wildcard `generic`)."""
+        eligible = {source_type: [] for source_type in FILE_SOURCE_CONNECTION_KEYS}
+        for row in self.native_identities.get(group_id, []):
+            usage = row.get("usage_contexts", [])
+            if "file_sync" not in usage:
+                continue
+            supported = row.get("supported_source_types", [])
+            for source_type in eligible:
+                if source_type in supported or "generic" in supported:
+                    eligible[source_type].append(row["id"])
+        return eligible
+
+    def _file_source_options_payload(self, group_id):
+        labels = {"smb": "Network share", "azure_files": "Azure Files", "azure_blob": "Azure Blob Storage"}
+        return {
+            "source_types": [
+                {"value": source_type, "label": labels[source_type],
+                 "visible": bool(self.file_source_type_visibility.get(source_type, True))}
+                for source_type in ("smb", "azure_files", "azure_blob")
+            ],
+            "eligible_identity_ids": self._file_source_eligible_identity_ids(group_id),
+            "schedule": {"min_interval_minutes": 5, "max_interval_minutes": 10080},
+            "limits": {"max_sources": 25},
+            "recursive_allowed": True,
+        }
+
+    def _file_source_guard(self, route, entry, group_id):
+        """The shared access guard for every file source route: unknown group, member 403, and the
+        strict no-query-parameters contract. Returns True when the request may proceed."""
+        if group_id not in self.groups:
+            self._json(route, {"error": "Group not found."}, 404)
+            return False
+        if group_id in self.denied_groups:
+            self._json(route, {"error": "You do not have access to this group's file sources."}, 403)
+            return False
+        if self.groups[group_id].get("role") not in FILE_SOURCE_MANAGER_ROLES:
+            self._json(route, {"error": "You do not have access to this group's file sources."}, 403)
+            return False
+        if entry.query:
+            self._json(route, {"error": "This endpoint does not accept query parameters."}, 400)
+            return False
+        return True
+
+    def _file_source_options(self, route, entry):
+        parts = entry.path.split("/")
+        group_id = parts[3]
+        assert group_id in self.groups, f"Unknown group file source scope: {entry}"
+        if not self._file_source_guard(route, entry, group_id):
+            return
+        self._json(route, self._file_source_options_payload(group_id))
+
+    def _file_source_from_write(self, group_id, identifier, body, prior):
+        """Fold a strict write body onto a new or existing source. A blank secret (or the
+        round-tripped placeholder) keeps whatever is stored; a fresh value replaces it. Identity mode
+        binds the identity and clears inline auth; inline mode stores the auth fields."""
+        credentials = body.get("credentials") if isinstance(body.get("credentials"), dict) else {}
+        identity_id = str(body.get("identity_id") or "")
+        source_type = str(body.get("source_type") or (prior["source_type"] if prior else "smb"))
+        auth_type = str(credentials.get("auth_type") or (prior["_auth_type"] if prior else "username_password"))
+        uses_password = auth_type == "username_password"
+        incoming = str((credentials.get("password") if uses_password else credentials.get("secret")) or "")
+        if identity_id:
+            secret_stored = False
+        elif incoming and incoming != FILE_SOURCE_TRIGGER_WORD:
+            secret_stored = True
+        elif prior is not None:
+            secret_stored = bool(prior["_secret"])
+        else:
+            secret_stored = False
+        connection = body.get("connection")
+        filters = body.get("filters")
+        schedule = body.get("schedule") if isinstance(body.get("schedule"), dict) else {}
+        identity_name = ""
+        if identity_id:
+            match = self.record_identity(group_id, identity_id)
+            identity_name = match["name"] if match else identity_id
+        now = datetime.now(timezone.utc).isoformat()
+        record = group_file_source(
+            group_id, identifier,
+            str(body["name"]) if "name" in body else (prior["name"] if prior else ""),
+            source_type=source_type,
+            enabled=bool(body["enabled"]) if "enabled" in body else (prior["enabled"] if prior else True),
+            recursive=bool(body["recursive"]) if "recursive" in body else (prior["recursive"] if prior else True),
+            connection=connection if isinstance(connection, dict) else (prior["connection"] if prior else None),
+            filters=filters if isinstance(filters, dict) else (prior["filters"] if prior else None),
+            identity_id=identity_id,
+            identity_name=identity_name,
+            auth_type=auth_type,
+            secret_stored=secret_stored,
+            username=str(credentials.get("username", prior["_username"] if prior else "")),
+            domain=str(credentials.get("domain", prior["_domain"] if prior else "")),
+            client_identity=str(
+                credentials.get("managed_identity_client_id")
+                or credentials.get("identity")
+                or (prior["_client_identity"] if prior else "")
+            ),
+            schedule_enabled=bool(schedule.get("enabled")) if schedule else (prior["schedule"]["enabled"] if prior else False),
+            interval_minutes=int(schedule.get("interval_minutes") or (prior["schedule"]["interval_minutes"] if prior else 60)),
+            actions=list(prior["source_actions"]) if prior else list(FILE_SOURCE_ITEM_ACTIONS),
+            last_run_status=prior["last_run_status"] if prior else None,
+            last_run_at=prior["last_run_at"] if prior else None,
+        )
+        record["created_at"] = prior["created_at"] if prior else now
+        record["updated_at"] = now
+        return record
+
+    def _file_sources(self, route, entry):
+        parts = entry.path.split("/")
+        # /api/groups/<group_id>/file-sources[/<source_id>[/<suffix>]]
+        group_id = parts[3]
+        source_id = parts[5] if len(parts) > 5 else None
+        suffix = parts[6] if len(parts) > 6 else None
+        method = entry.method
+        assert group_id in self.groups, f"Unknown group file source scope: {entry}"
+        # test-connection and browse on the collection carry a body, not a query, so the guard's
+        # no-query rule holds for them too.
+        if not self._file_source_guard(route, entry, group_id):
+            return
+        operations = set(self.groups[group_id].get("file_source_management", {}).get("operations", []))
+        if source_id is None:
+            if method == "GET":
+                # A test may force a malformed list envelope (no file_sources array) to prove the
+                # section treats it as a hard load error rather than an empty successful load.
+                if getattr(self, "malformed_file_source_list", False):
+                    self._json(route, {"file_sources": None})
+                    return
+                self._json(route, {
+                    "file_sources": [
+                        self._file_source_payload(group_id, row)
+                        for row in self.native_file_sources.get(group_id, [])
+                    ],
+                    "file_source_management": {
+                        "schema_version": 1,
+                        "operations": list(operations),
+                    },
+                })
+                return
+            if method == "POST":
+                assert "create" in operations, f"Create reached a workspace without the hint: {entry}"
+                self._create_file_source(route, entry, group_id)
+                return
+        if source_id in ("test-connection", "browse"):
+            self._file_source_unsaved(route, entry, group_id, source_id)
+            return
+        record = self.record_file_source(group_id, source_id) if source_id else None
+        if source_id is not None and record is None:
+            self._json(route, {"error": "File source not found in this group."}, 404)
+            return
+        if suffix is None:
+            if method == "GET":
+                self._json(route, {"file_source": self._file_source_payload(group_id, record)})
+                return
+            if method == "PATCH":
+                self._patch_file_source(route, entry, group_id, source_id, record, operations)
+                return
+            if method == "DELETE":
+                self._delete_file_source(route, entry, group_id, source_id, record, operations)
+                return
+        elif suffix == "runs" and method == "GET":
+            self._json(route, {"runs": copy.deepcopy(self.file_source_runs.get((group_id, source_id), []))})
+            return
+        elif suffix == "sync" and method == "POST":
+            self._file_source_sync(route, entry, group_id, source_id, record, operations)
+            return
+        elif suffix in ("test-connection", "browse") and method == "POST":
+            self._file_source_saved_tool(route, entry, group_id, source_id, suffix)
+            return
+        elif suffix == "ignore-path" and method == "POST":
+            self._file_source_ignore(route, entry, group_id, source_id)
+            return
+        self.unexpected_requests.append(f"{method} {entry.path}")
+        self._json(route, {"error": "Unexpected group file source request."}, 500)
+
+    def _create_file_source(self, route, entry, group_id):
+        body = entry.body
+        if not isinstance(body, dict) or set(body) - FILE_SOURCE_WRITE_FIELDS:
+            self._json(route, {"error": FILE_SOURCE_GENERIC_ERROR}, 400)
+            return
+        if not str(body.get("name") or "").strip():
+            self._json(route, {"error": "A file source needs a name."}, 400)
+            return
+        self.created_file_source_counter += 1
+        identifier = f"group-source-created-{self.created_file_source_counter}"
+        record = self._file_source_from_write(group_id, identifier, body, prior=None)
+        self.native_file_sources.setdefault(group_id, []).insert(0, record)
+        self.native_file_source_revisions[(group_id, identifier)] = 1
+        self.file_source_runs[(group_id, identifier)] = []
+        self._json(route, {"file_source": self._file_source_payload(group_id, record)}, 201)
+
+    def _patch_file_source(self, route, entry, group_id, identifier, record, operations):
+        assert "edit" in operations and "edit" in (record.get("source_actions") or []), (
+            f"Edit reached a read-only file source: {entry}"
+        )
+        body = entry.body
+        if not isinstance(body, dict) or "expected_config_revision" not in body:
+            self._json(route, {"error": "This file source is missing its version marker."}, 400)
+            return
+        if set(body) - FILE_SOURCE_WRITE_FIELDS - {"expected_config_revision"}:
+            self._json(route, {"error": FILE_SOURCE_GENERIC_ERROR}, 400)
+            return
+        if body["expected_config_revision"] != self._file_source_config_revision(group_id, identifier):
+            self._json(route, {"error": FILE_SOURCE_CONFLICT_ERROR, "error_code": "config_conflict"}, 409)
+            return
+        updated = self._file_source_from_write(group_id, identifier, body, prior=record)
+        index = next(i for i, row in enumerate(self.native_file_sources[group_id]) if row["id"] == identifier)
+        self.native_file_sources[group_id][index] = updated
+        self.native_file_source_revisions[(group_id, identifier)] += 1
+        self._json(route, {"file_source": self._file_source_payload(group_id, updated)})
+
+    def _delete_file_source(self, route, entry, group_id, identifier, record, operations):
+        assert "delete" in operations and "delete" in (record.get("source_actions") or []), (
+            f"Delete reached a read-only file source: {entry}"
+        )
+        body = entry.body
+        if not isinstance(body, dict) or set(body) != {"expected_config_revision", "delete_associated_files"}:
+            self._json(route, {
+                "error": "A file source delete carries its version marker and the documents choice.",
+            }, 400)
+            return
+        if body["expected_config_revision"] != self._file_source_config_revision(group_id, identifier):
+            self._json(route, {"error": FILE_SOURCE_CONFLICT_ERROR, "error_code": "config_conflict"}, 409)
+            return
+        if (group_id, identifier) in self.file_source_active_runs:
+            self._json(route, {"error": FILE_SOURCE_BUSY_ERROR, "error_code": "source_busy"}, 409)
+            return
+        delete_associated = bool(body["delete_associated_files"])
+        plan = self.file_source_delete_plan.get((group_id, identifier))
+        if plan is not None:
+            # A scripted refusal after the associated documents were removed: partial / incomplete.
+            self._json(route, plan["payload"], plan["status"])
+            return
+        result = {
+            "associated_files_requested": delete_associated,
+            "documents_deleted": 3 if delete_associated else 0,
+            "documents_skipped": 1 if delete_associated else 0,
+            "documents_failed": 0,
+        }
+        self.native_file_sources[group_id] = [
+            row for row in self.native_file_sources[group_id] if row["id"] != identifier
+        ]
+        self._json(route, {"success": True, "delete_result": result})
+
+    def _file_source_sync(self, route, entry, group_id, identifier, record, operations):
+        assert "sync" in operations and "sync" in (record.get("source_actions") or []), (
+            f"Sync reached a source without the action: {entry}"
+        )
+        if (group_id, identifier) in self.file_source_active_runs:
+            # The reviewed Sync now refusal shown verbatim.
+            self._json(route, {"error": FILE_SOURCE_BUSY_ERROR}, 400)
+            return
+        run = {
+            "id": f"{identifier}-run-{len(self.file_source_runs.get((group_id, identifier), [])) + 1}",
+            "source_id": identifier,
+            "status": "queued",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "triggered_by": OWNER_ID,
+        }
+        self.file_source_runs.setdefault((group_id, identifier), []).insert(0, run)
+        self._json(route, {"run": run}, 202)
+
+    def _file_source_unsaved(self, route, entry, group_id, action):
+        # /api/groups/<group_id>/file-sources/{test-connection|browse}
+        body = entry.body if isinstance(entry.body, dict) else {}
+        extra = set(body) - FILE_SOURCE_WRITE_FIELDS - {"browse_path"}
+        if extra:
+            self._json(route, {"error": FILE_SOURCE_GENERIC_ERROR}, 400)
+            return
+        if action == "test-connection":
+            self._json(route, {"connection": {"ok": True, "message": "Connected to the file source."}})
+        else:
+            self._json(route, self._browse_payload(body.get("browse_path", "")))
+
+    def _file_source_saved_tool(self, route, entry, group_id, identifier, action):
+        body = entry.body if isinstance(entry.body, dict) else {}
+        if action == "test-connection":
+            self._json(route, {"connection": {"ok": True, "message": "Connected to the file source."}})
+        else:
+            self._json(route, self._browse_payload(body.get("browse_path", "")))
+
+    def _browse_payload(self, browse_path):
+        base = str(browse_path or "")
+        prefix = f"{base}/" if base else ""
+        return {"browse": {"path": base, "entries": [
+            {"name": "reports", "path": f"{prefix}reports", "is_dir": True, "ignored": False},
+            {"name": "budget.xlsx", "path": f"{prefix}budget.xlsx", "is_dir": False, "ignored": False},
+        ]}}
+
+    def _file_source_ignore(self, route, entry, group_id, identifier):
+        body = entry.body if isinstance(entry.body, dict) else {}
+        remote_path = str(body.get("remote_path") or "")
+        ignored = bool(body.get("ignored"))
+        self._json(route, {"item": {
+            "name": remote_path.rsplit("/", 1)[-1] or remote_path,
+            "path": remote_path,
+            "is_dir": False,
+            "ignored": ignored,
+        }})
 
     # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------
 

@@ -420,13 +420,56 @@ export interface WorkspaceSyncSource {
     name?: string;
     source_type?: string;
     identity_id?: string;
+    /** Present on a bound source: the display name of the group identity it uses. */
+    identity_name?: string;
     remote_path?: string;
     enabled?: boolean;
+    recursive?: boolean;
     sync_interval_minutes?: number;
+    /** The per-type connection object (unc_path, account_url, share_name, blob_prefix, ...). */
+    connection?: Record<string, unknown>;
+    filters?: Record<string, unknown>;
+    schedule?: { enabled?: boolean; interval_minutes?: number; next_run_at?: string | null };
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    remote_delete_policy?: string;
+    last_run_status?: string | null;
+    last_run_at?: string | null;
+    /** Conditional-write token on native group sources (config hash, not an etag). */
+    config_revision?: string;
+    /** The operations policy permits on this source, a subset of ["edit", "delete", "sync", "test"]. */
+    source_actions?: string[];
     created_at?: string;
     updated_at?: string;
     [key: string]: unknown;
 }
+
+/** One selectable source type from GET /api/groups/G/file-source-options. */
+export interface FileSourceTypeOption {
+    value: string;
+    label: string;
+    visible: boolean;
+}
+
+/** The server-decided options envelope for the group file source editor. */
+export interface FileSourceOptions {
+    source_types: FileSourceTypeOption[];
+    /** Identity ids eligible per source type; the picker filters against this. */
+    eligible_identity_ids: Record<string, string[]>;
+    schedule: { min_interval_minutes: number; max_interval_minutes: number };
+    limits: { max_sources: number };
+    recursive_allowed: boolean;
+}
+
+/** One entry returned by a browse of a source's remote location. */
+export interface FileSourceBrowseEntry {
+    name?: string;
+    path?: string;
+    is_dir?: boolean;
+    ignored?: boolean;
+    [key: string]: unknown;
+}
+
 
 export interface WorkspaceSyncRun {
     id: string;

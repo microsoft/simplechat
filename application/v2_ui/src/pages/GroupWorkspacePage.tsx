@@ -25,6 +25,7 @@ import { GroupDocumentsSection } from './workspace/DocumentsSection';
 import { GroupTagsSection } from './workspace/TagsSection';
 import { GroupPromptsSection } from './workspace/PromptsSection';
 import { GroupIdentitiesSection } from './workspace/GroupIdentitiesSection';
+import { GroupFileSourcesSection } from './workspace/GroupFileSourcesSection';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
 import { AgentsSection } from './workspace/AgentsSection';
@@ -32,6 +33,7 @@ import { AgentEditorPage } from './workspace/AgentEditorPage';
 import { createGroupActionWorkbench } from '../lib/actionWorkbench';
 import { createGroupAgentWorkbench } from '../lib/agentWorkbench';
 import { createGroupIdentityWorkbench } from '../lib/identityWorkbench';
+import { createGroupFileSourceWorkbench } from '../lib/fileSourceWorkbench';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -197,6 +199,19 @@ export function GroupWorkspacePage() {
             ? createGroupIdentityWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.identity_management)
             : null,
         [context?.scope.id, context?.workspace.name, context?.sections.identities.enabled, context?.identity_management],
+    );
+
+    // Native group file sources render only when the workspace advertises the Sync section as
+    // available (context.sections.sync.enabled), which requires the caller to be a manager. A
+    // member's section is unavailable and falls through to Classic. Create is gated on the
+    // file_source_management hint; edit, sync and delete are gated per row via each source's
+    // source_actions -- never a personal file-sync fallback. Writing happens in a dialog, so it
+    // keeps the personal SectionList layout and needs no full-bleed flag of its own.
+    const groupFileSourceAdapter = useMemo(
+        () => context?.sections.sync.enabled
+            ? createGroupFileSourceWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.file_source_management)
+            : null,
+        [context?.scope.id, context?.workspace.name, context?.sections.sync.enabled, context?.file_source_management],
     );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
@@ -402,6 +417,8 @@ export function GroupWorkspacePage() {
                                     <GroupIdentitiesSection adapter={groupIdentityAdapter}
                                         syncEnabled={context.sections.sync.enabled}
                                         actionsEnabled={context.sections.actions.enabled} />
+                                ) : section === 'sync' && !resourceId && groupFileSourceAdapter ? (
+                                    <GroupFileSourcesSection adapter={groupFileSourceAdapter} />
                                 ) : (
                                     <GlassPanel elevation="flat" className="space-y-4 p-5">
                                         <SectionIntro title={selected.section.label} description={selected.section.blurb} />
