@@ -235,7 +235,6 @@ interface TagsSectionProps {
     interactionDisabled?: boolean;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
-    onOpenClassic?: () => void;
 }
 
 export function GroupTagsSection({
@@ -267,7 +266,7 @@ export function TagsSection({
 
 function ScopedTagsSection({
     documentsEnabled, reader, operations, canChat = true, interactionDisabled = false,
-    onDirtyChange, onBusyChange, onOpenClassic,
+    onDirtyChange, onBusyChange,
 }: TagsSectionProps & { reader: DocumentReadAdapter; operations: DocumentOperationAdapter }) {
     const navigate = useNavigate();
     const [tags, setTags] = useState<WorkspaceTag[]>([]);
@@ -449,8 +448,6 @@ function ScopedTagsSection({
                     ? 'Group vocabulary changes affect only current documents owned by this group. Tags on incoming shares and older revisions remain unchanged.'
                     : 'The vocabulary your documents are filed under. Tags are flat, so a document can carry as many as it needs and appear under each of them.'}
             />
-            {isGroup && onOpenClassic ? <GlassButton size="sm" disabled={busy || interactionDisabled}
-                onClick={onOpenClassic}>Open classic group workspace</GlassButton> : null}
             {!canManage ? <p className="text-sm text-text-3">Tag management is not available with this workspace's current permissions. You can still browse its vocabulary.</p> : null}
 
             {documentsEnabled ? (

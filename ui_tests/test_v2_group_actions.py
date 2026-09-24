@@ -367,7 +367,8 @@ def test_group_without_the_actions_capability_shows_call_agent(group_actions_ui)
     open_actions(ui, group="group-c")
     # The native workbench never mounts, so there is no create control and no group actions read.
     expect(page.get_by_role("button", name="New action", exact=True)).to_have_count(0)
-    expect(page.get_by_role("button", name="Open classic group workspace", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Open classic group workspace", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Group actions are turned off for this group. You can still choose which agents this group can call and which local actions may trigger them.", exact=True)).to_be_visible()
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/group-c/actions")], (
         "The actions route must not be read when the group action capability is off."
     )
