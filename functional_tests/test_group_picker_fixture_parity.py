@@ -1,7 +1,7 @@
 # test_group_picker_fixture_parity.py
 """
 Per-route shape parity between the M8 group picker UI fixture and the real classic routes.
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.157
 
 The M8 group journeys reach every group through the workspace picker: J1 activates a group and
@@ -235,6 +235,17 @@ def test_list_page_size_and_no_cap_parity(env):
     # The total is the full store on both sides -- the fixture must not cap it below the server.
     assert payload["total_count"] == total, f"fixture capped the total at {payload['total_count']}"
     assert real_payload["total_count"] == total, f"server total drifted to {real_payload['total_count']}"
+    # The page-1 and page-2 id lists agree between fixture and server, not merely their counts: J2's
+    # "off-page" claim rests on the same group landing on the same page, so a paging-order drift in
+    # the fixture (a different sort, or a reversed store) must fail here.
+    assert [row["id"] for row in payload["groups"]] == [row["id"] for row in real_payload["groups"]], (
+        "fixture page 1 ids drifted from the server's"
+    )
+    assert [row["id"] for row in payload_two["groups"]] == [row["id"] for row in real_payload_two["groups"]], (
+        "fixture page 2 ids drifted from the server's"
+    )
+    # And the two pages are disjoint, so paging really advances rather than repeating page 1.
+    assert not (set(row["id"] for row in payload["groups"]) & set(row["id"] for row in payload_two["groups"]))
 
 
 # --------------------------------------------------------------------------
@@ -257,11 +268,51 @@ def test_list_search_shape_parity(env):
     real_payload = real.get_json()
     assert_no_invented_keys("list-search", payload, real_payload)
     assert_shared_keys("list-search", payload, real_payload, LIST_ENVELOPE_KEYS)
-    # `Alpha` is a case-exact substring of one name only, so the case-sensitive server filter and the
-    # fixture's name-and-description filter agree on the single match and its count.
+    # `Alpha` is a case-exact substring of one name only, so the case-sensitive, name-only server
+    # filter (`CONTAINS(c.name, @search)`) and the fixture agree on the single match and its count.
     assert payload["total_count"] == 1 and real_payload["total_count"] == 1
     assert [row["id"] for row in payload["groups"]] == ["group-alpha"]
     assert [row["id"] for row in real_payload["groups"]] == ["group-alpha"]
+
+
+def _search(fixture, env, term):
+    """Both sides' rows for one search term, as (fixture_ids, server_ids)."""
+    real = env.call("GET", LIST_PATH, query_string={"search": term, "page": "1", "page_size": "25"})
+    _, payload = drive_fixture(fixture, "GET", LIST_PATH, query={"search": [term], "page": ["1"], "page_size": ["25"]})
+    return [row["id"] for row in payload["groups"]], [row["id"] for row in real.get_json()["groups"]]
+
+
+def test_list_search_is_case_sensitive_and_name_only_like_the_server(env):
+    """The fixture's search must model the server exactly: case-sensitive and over the name only.
+
+    The server searches through `functions_group.search_groups`, whose Cosmos filter is
+    `CONTAINS(c.name, @search)` -- a case-sensitive substring over the group name, never the
+    description. A fixture that casefolded the term, or matched the description too (as the shared
+    base handler still does), would let a browser journey pass on a search the server answers with
+    nothing. These terms fail on that looser fixture and agree only when it models the server.
+    """
+    env.seed_group("group-research", "Research Group", members=(CALLER,))
+    fixture = new_fixture()
+    # group_context gives every group the description "Shared knowledge for <name>.", so `knowledge`
+    # is a description-only term, and `research` is a lowercase fragment of the name.
+    seed_fixture_groups(fixture, [("group-research", "Research Group", "User")])
+
+    # A lowercase fragment of the name: the case-sensitive server matches nothing, and a fixture that
+    # lowercased the term would have matched -- so both sides must be empty.
+    fixture_lower, server_lower = _search(fixture, env, "research")
+    assert fixture_lower == server_lower == [], (
+        f"case-sensitive drift: fixture {fixture_lower}, server {server_lower}"
+    )
+    # A description-only term: the name-only server matches nothing, and a fixture that searched the
+    # description would have matched -- so both sides must be empty.
+    fixture_desc, server_desc = _search(fixture, env, "knowledge")
+    assert fixture_desc == server_desc == [], (
+        f"name-only drift: fixture {fixture_desc}, server {server_desc}"
+    )
+    # The case-exact name fragment still matches on both, so the fixture is not simply refusing all
+    # searches.
+    fixture_exact, server_exact = _search(fixture, env, "Research")
+    assert fixture_exact == server_exact == ["group-research"]
 
 
 # --------------------------------------------------------------------------

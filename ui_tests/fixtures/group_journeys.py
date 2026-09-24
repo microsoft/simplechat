@@ -1,7 +1,7 @@
 # group_journeys.py
 """One composite group store for the M8 end-to-end journeys.
 
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.157
 
 The M8 journeys drive the real built SPA across every group section in a single
@@ -31,7 +31,7 @@ from ui_tests.fixtures.group_document_collaboration import GroupDocumentCollabor
 # One coherent bootstrap version for the whole store; the individual family fixtures each
 # report their own implemented-in version, and a composite that inherited them would report
 # whichever ran last. The journeys serve a single running app, so it reports the app VERSION.
-JOURNEY_VERSION = "0.261.157"
+JOURNEY_VERSION = "0.261.160"
 
 _DOCUMENT_OPERATION = re.compile(r"/api/groups/[^/]+/documents/.+")
 _CLASSIC_MEMBERSHIP = re.compile(r"/api/groups/[^/]+/(members|requests|transferOwnership)(/.*)?")
@@ -53,6 +53,19 @@ class GroupJourneyFixture(
         self.active_group = "group-a"
 
     # --- bootstrap ------------------------------------------------------------------------------
+
+    def _whole_number(self, values, *, default, maximum, message=None):
+        # Two families define an incompatible `_whole_number`. The members family's staticmethod
+        # raises `_invalid(message)` and returns an int; the directory family's instance method
+        # returns a `(number, error)` tuple and takes no `message`. The composite MRO puts the
+        # directory variant first, so a members list-query (which the J3/J5 journeys reach by
+        # opening the Members section) would hit an unexpected-keyword TypeError. Route by the
+        # `message` kwarg, which only the members family passes.
+        if message is not None:
+            return GroupMembersFixture._whole_number(
+                values, default=default, maximum=maximum, message=message
+            )
+        return GroupDirectoryFixture._whole_number(self, values, default=default, maximum=maximum)
 
     def _bootstrap(self):
         payload = super()._bootstrap()
@@ -98,6 +111,16 @@ class GroupJourneyFixture(
         if path == "/api/v2/orchestration/runs" and method == "GET":
             self._journey_orchestration_runs(route, entry)
             return
+        # The picker's paged, searchable list, modelled on `route_backend_groups` exactly so the
+        # picker parity pin holds. The base fixture's own handler lowercases the term and matches
+        # name-and-description; the real route searches through `functions_group.search_groups`,
+        # whose Cosmos filter is `CONTAINS(c.name, @search)` -- a case-sensitive substring over the
+        # name only -- and pages the natural (insertion) order with `total_count = len(all)`. Modelling
+        # it here, rather than in the shared base three other slices edit, both corrects the seam the
+        # parity pin now guards and makes the J2 case-sensitivity product finding real.
+        if path == "/api/groups" and method == "GET":
+            self._journey_list_groups(route, entry)
+            return
         # The picker's activation write, modelled to the real `api_set_active_group` branches so the
         # picker parity pin holds: a missing id is a 400, an unknown group a 404, a group the caller
         # cannot reach a 403, and a reachable group a 200. The shared base handler answers 403 for an
@@ -105,6 +128,14 @@ class GroupJourneyFixture(
         # the journeys never see the difference; the composite still models the server exactly.
         if path == "/api/groups/setActive" and method == "PATCH":
             self._journey_set_active(route, entry)
+            return
+        # The group workflow document picker searches documents across an explicit scope list with the
+        # plural `group_ids` param (WorkflowDocumentPicker -> fetchGroupDocuments([scopeId])). That
+        # multi-scope read is an authoring concern the base fixture answers (group_workspace.py ~L1045),
+        # not the single-group document management family, whose `/api/group_documents` handler asserts
+        # a singular `group_id`. Route the plural form to the base so J9's workflow editor can open.
+        if path == "/api/group_documents" and "group_ids" in entry.query:
+            GroupWorkspaceFixture._dispatch(self, route, entry)
             return
         if self._is_document_family(path):
             GroupDocumentCollaborationFixture._dispatch(self, route, entry)
@@ -136,6 +167,30 @@ class GroupJourneyFixture(
             return
         self.active_group = group_id
         self._json(route, {"message": "Active group saved."})
+
+    def _journey_list_groups(self, route, entry):
+        # `route_backend_groups` GET /api/groups: `search_groups` runs `CONTAINS(c.name, @search)`,
+        # a case-sensitive substring over the name only, then the route pages the natural order with
+        # `total_count = len(all_matching)`. A missing or empty term lists every group the caller is
+        # in. `self.groups` preserves insertion order, which is the order the harness's fake Cosmos
+        # returns, so the picker parity pin can compare the page-1 and page-2 id lists.
+        term = entry.query.get("search", [""])[0]
+        page = int(entry.query.get("page", ["1"])[0])
+        size = int(entry.query.get("page_size", ["25"])[0])
+        rows = [
+            {
+                "id": group_id, "name": context["workspace"]["name"],
+                "description": context["workspace"]["description"], "userRole": context["role"],
+                "isActive": group_id == self.active_group, "status": context["status"],
+            }
+            for group_id, context in self.groups.items()
+            if group_id not in self.denied_groups
+            and (not term or term in context["workspace"]["name"])
+        ]
+        self._json(route, {
+            "groups": rows[(page - 1) * size:page * size],
+            "page": page, "page_size": size, "total_count": len(rows),
+        })
 
     def _journey_orchestration_runs(self, route, entry):
         conversation = entry.query.get("conversation_id", [None])[0]
