@@ -181,14 +181,19 @@ management receipts from builders that equal the real route's response to the
 same request. When it was added, after version **0.261.161**, it corrected the
 fixtures in every family, from the read rows' fields and refusal texts to each
 management receipt and the collaboration reads' codes. Three product findings
-are pinned as strict `xfail` tests in `ui_tests/test_v2_group_document_management.py`
-until they're fixed:
+were pinned as strict `xfail` tests in `ui_tests/test_v2_group_document_management.py`.
+All three were fixed in version **0.261.164**, and the tests now pass:
 
-- a coded failure's dialog shows its machine code, such as
-  `document_propagation_incomplete`, instead of the server's sentence;
-- the conversation delete guard doesn't name the conversation the file
-  belongs to;
-- a multi-document download is saved as `documents.zip`, whatever the server
-  names the archive.
+- a coded failure's dialog showed its machine code, such as
+  `document_propagation_incomplete`. It now shows the server's sentence;
+- the conversation delete guard didn't name the conversation the file belongs
+  to. The confirmation now names it and links to it in V2 chat
+  (`/v2/chat?conversationId=<id>`, in a new tab). The guard's own link is never
+  followed, and a link to another site or to classic chat never becomes a link;
+- a multi-document download was always saved as `documents.zip`. It's now saved
+  under the archive name the server gives (`group-documents.zip`,
+  `public-documents.zip`), while a single document keeps its own file name.
+
+See the [V2 Fixture Parity Findings Fix](../fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md).
 
 No live service mutation, deployment, or large-workspace benchmark is implied.

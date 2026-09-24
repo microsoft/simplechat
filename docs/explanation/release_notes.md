@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.164)**
+
+#### Bug Fixes
+
+*   **V2 Shows A Failure's Sentence, Not Its Code**
+    *   When a request failed with a code and a sentence, V2 showed the code, for example `document_propagation_incomplete`. It now shows the sentence, such as "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
+    *   This covers document management, File Sync and collaboration refusals, the Microsoft 365 pending actions, the terms-of-use gate and CI bearer authentication. Failures whose message is already a sentence are unchanged.
+    *   (Ref: `lib/apiClient.ts`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Deleting A Document Names The Conversation That Needs It**
+    *   When a conversation depends on a document, the V2 delete confirmation now names the conversation and links to it in V2 chat, in a new tab.
+    *   Only the conversation's id or a link to this site is used, never a link to another site or to classic chat, and the title is always shown as text.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentDialogs.tsx`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Batch Downloads Keep The Server's Archive Name**
+    *   Downloading several group or public documents at once saved `documents.zip`. It now saves `group-documents.zip` or `public-documents.zip`, the names the server gives.
+    *   A single document keeps its own file name, and personal downloads are unchanged.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentExplorer.tsx`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Group Agents Offer Only Group Knowledge**
+    *   The V2 group agent editor offered public knowledge sources, which a group agent never keeps. It now offers only the group's own knowledge. Personal agents are unchanged.
+    *   (Ref: `lib/agentWorkbench.ts`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
 ### **(v0.261.163)**
 
 #### Bug Fixes

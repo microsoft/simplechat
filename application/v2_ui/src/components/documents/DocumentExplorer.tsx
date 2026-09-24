@@ -27,7 +27,7 @@ import {
     supportedDocumentQuery, type DocumentReadAdapter,
 } from '../../lib/documentReadAdapter';
 import {
-    changedDocumentMetadata, createGroupDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS,
+    changedDocumentMetadata, createGroupDocumentOperations, documentDownloadName, PERSONAL_DOCUMENT_OPERATIONS,
     type DocumentBatchOutcome, type DocumentDeleteOptions, type DocumentOperation,
     type DocumentOperationAdapter, type DocumentOperationError, type TagOperationError,
 } from '../../lib/documentOperations';
@@ -1001,9 +1001,9 @@ function ScopedDocumentExplorer({
         if (!captured) return;
         beginMutation('Preparing download', captured.targets.length);
         try {
-            const blob = await captured.adapter.download(captured.targets);
+            const download = await captured.adapter.download(captured.targets);
             if (!mounted.current) return;
-            saveBlob(blob, targets.length === 1 ? String(targets[0].file_name ?? 'document') : 'documents.zip');
+            saveBlob(download.blob, documentDownloadName(download, targets));
             toast.success('Download ready.');
         } catch (downloadError) {
             if (mounted.current) toast.error(errorMessage(downloadError, 'Download failed. No file was saved.'));

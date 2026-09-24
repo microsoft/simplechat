@@ -179,9 +179,12 @@ sanitizer, the combined model endpoint builder and the knowledge catalogue
 builder. When it was added, after version **0.261.161**, it corrected ten
 places where the fixture had drifted, including an unstorable Foundry agent,
 invented refusal texts, editor options the server never sends, and a knowledge
-catalogue with a public source no group catalogue lists. One is a product
-finding, pinned as a strict `xfail` until it's fixed: the group editor offers
-public knowledge, but a group agent never keeps it.
+catalogue with a public source no group catalogue lists. One was a product
+finding, pinned as a strict `xfail`: the group editor offered public knowledge,
+but a group agent never keeps it. It was fixed in version **0.261.164**. The
+group editor now offers only group knowledge, and the pin checks both the group
+and personal editors against the server's scope policy (see the
+[V2 Fixture Parity Findings Fix](../fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md)).
 
 The group and public fixtures record any request for personal data from a
 shared page as unexpected, so a test fails on it rather than the fixture

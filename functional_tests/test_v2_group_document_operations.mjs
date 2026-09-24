@@ -1,6 +1,7 @@
 // test_v2_group_document_operations.mjs
-// Version: 0.261.129
+// Version: 0.261.164
 // Implemented in: 0.261.129
+// A download returns the attachment name the server gave its file: 0.261.164
 // Executes immutable operation paths, capability gates and complete outcome receipts.
 
 import assert from 'node:assert/strict';
@@ -310,8 +311,9 @@ try {
     });
     await run('download errors, redirects and partial JSON never become Blob files', async () => {
         const incoming = document('shared', { group_id: 'origin', shared_group_active_id: 'group-a', shared_approval_status: 'approved', document_actions: ['download'] });
-        const blob = await adapter.download([incoming]);
-        assert.equal(await blob.text(), 'ORIGIN source bytes');
+        const download = await adapter.download([incoming]);
+        assert.equal(await download.blob.text(), 'ORIGIN source bytes');
+        assert.equal(download.fileName, 'source.pdf', 'A native download carries the attachment name the server gave it.');
         assert.equal(calls[0].path, '/api/groups/group-a/documents/shared/download');
         await adapter.download([document(), incoming]);
         assert.deepEqual(calls.at(-1).body, { document_ids: ['doc-1', 'shared'] });
