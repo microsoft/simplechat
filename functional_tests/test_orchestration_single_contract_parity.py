@@ -519,7 +519,7 @@ def test_a_retry_reruns_steps_that_completed_without_a_retried_producer(harness)
     assert steps["prepare"]["status"] == "completed" and not steps["prepare"].get("reused")
 
 
-def test_retry_invalidation_follows_consumers_and_ignores_disabled_producers(harness):
+def test_retry_invalidation_follows_consumers_and_ignores_disabled_producers(harness, monkeypatch):
     optional = {"binding": input_binding("facts"), "allow_partial": False, "optional": True}
     harness.create(
         [
@@ -531,10 +531,31 @@ def test_retry_invalidation_follows_consumers_and_ignores_disabled_producers(har
         final_response=input_binding("finish"),
     )
     record = harness.read()
-    stale = harness.recovery._reuse_invalidated_by_rerun
+    recovery = harness.recovery
+    stale = recovery._reuse_invalidated_by_rerun
+    contract_error = stale.__globals__["ResultContractError"]
+
+    def unparseable(step):
+        raise contract_error("result_binding_invalid")
 
     assert stale(record, {"context", "prepare", "finish"}) == {"prepare", "finish"}
-    assert stale(record, {"facts", "context", "prepare", "finish"}) == set()
+    with monkeypatch.context() as patched:
+        # Run listings project recovery for every run, so a run with nothing to run again
+        # (any completed run) must not parse step inputs at all.
+        patched.setitem(stale.__globals__, "step_input_specs", unparseable)
+        assert stale(record, {"facts", "context", "prepare", "finish"}) == set()
+        failed = {
+            **deepcopy(record), "status": "failed", "started_at": "2026-01-01T00:00:00+00:00",
+            "checkpoint_version": recovery.CHECKPOINT_VERSION, "execution_binding": "binding",
+            "execution_steps": [
+                {"step_id": step_id, "capability_id": "compose", "status": "completed", "checkpoint_available": True}
+                for step_id in ("context", "prepare", "finish")
+            ],
+        }
+        # A read-only projection reports a plan it cannot parse; it never raises.
+        projection = recovery.recovery_projection(failed)
+        assert projection["eligible"] is False
+        assert projection["reason_code"] == "checkpoint_invalid"
     for step in record["plan"]["steps"]:
         if step["step_id"] == "facts":
             step["enabled"] = False

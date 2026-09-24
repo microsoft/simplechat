@@ -81,6 +81,10 @@ def _reuse_invalidated_by_rerun(record, retained):
         return set()
     steps = [step for step in record['plan'].get('steps') or [] if step.get('enabled', True)]
     rerun = {step['step_id'] for step in steps} - set(retained)
+    if not rerun:
+        # Run listings project recovery for every run; one with nothing to run again,
+        # such as any completed run, needs no input parsing.
+        return set()
     consumed = {
         step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
         for step in steps if step['step_id'] in retained
@@ -372,7 +376,7 @@ def recovery_projection(record):
     ]
     try:
         stale = _reuse_invalidated_by_rerun(record, reused)
-    except PlanValidationError:
+    except (PlanValidationError, ResultContractError):
         stale, invalid = set(), True
     reused = [step_id for step_id in reused if step_id not in stale]
     retry = [
