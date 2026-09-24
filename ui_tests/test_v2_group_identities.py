@@ -30,7 +30,7 @@ from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 from ui_tests.fixtures.group_identities import (  # noqa: F401
     GroupIdentitiesFixture, group_identities_ui,
     EDITABLE_IDENTITY_ID, WITHHELD_IDENTITY_ID, FILE_SYNC_IDENTITY_ID,
-    IN_USE_IDENTITY_ID, CONNECTOR_ACTION_ID,
+    IN_USE_IDENTITY_ID, CONNECTOR_ACTION_ID, BOUND_CONNECTOR_ACTION_ID,
 )
 from ui_tests.test_v2_workspace_authoring import editor_section
 
@@ -328,4 +328,29 @@ def test_action_editor_member_gets_a_silent_unresolved_list(group_identities_ui)
         if entry.path == "/api/groups/group-b/identities" and entry.method == "GET"
     ]
     assert reads, "The editor must attempt the group identity route, which answers 403."
+    assert_no_personal_reads(ui)
+
+
+def test_action_editor_malformed_list_keeps_bound_identity_neutral(group_identities_ui):
+    """A malformed identity list is a hard load error, so a bound identity stays 'kept as is'."""
+    ui, page = group_identities_ui, group_identities_ui.page
+    # Force the group identity list to answer a malformed envelope (no identities array). The action
+    # editor must treat that as a hard load error rather than an empty successful load, so a bound
+    # identity keeps its neutral copy instead of being flagged replaceable.
+    ui.malformed_identity_list = True
+    ui.open(f"/groups/group-a/actions/{BOUND_CONNECTOR_ACTION_ID}")
+    editor_section(page, "Authentication")
+    # The identity control is addressed by its stable id: an identity-bound OpenAPI action also
+    # renders a "Reusable identity" option in the auth-method select, so the label is not unique.
+    select = page.locator("#openapi-identity")
+    expect(select).to_be_visible()
+    # The bound identity shows the neutral "Group identity" wording, never the actionable
+    # "Unavailable identity", because the list failed to resolve rather than loading empty.
+    expect(select.get_by_role(
+        "option", name=re.compile(rf"Group identity.*{re.escape(EDITABLE_IDENTITY_ID)}"))).to_have_count(1)
+    expect(page.get_by_text("Unavailable identity", exact=False)).to_have_count(0)
+    expect(page.get_by_text("Uses a group identity; kept as is", exact=False)).to_be_visible()
+    # The malformed envelope surfaces as a load error, not a silent empty success.
+    expect(page.get_by_text(re.compile("The identity response was malformed"))).to_be_visible()
+    assert identities_get(ui, group="group-a"), "The editor must attempt the group identity route."
     assert_no_personal_reads(ui)

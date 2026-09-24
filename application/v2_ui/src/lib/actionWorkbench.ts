@@ -307,9 +307,14 @@ export function createGroupActionWorkbench(
                 }
                 throw cause;
             }
-            const rows = isRecord(response) && Array.isArray(response.identities)
-                ? response.identities
-                : [];
+            // A malformed envelope (no identities array) is a hard load error, not an empty
+            // successful load: raise so the editor leaves resolvable false and shows the load
+            // error, keeping a bound identity's neutral "kept as is" copy instead of calling it
+            // "Unavailable". This mirrors identityWorkbench's strict envelope check.
+            if (!isRecord(response) || !Array.isArray(response.identities)) {
+                throw new Error('The identity response was malformed. Refresh and try again.');
+            }
+            const rows = response.identities;
             return rows.filter(isRecord).filter((identity) => {
                 if (identity.group_id !== groupId) {
                     throw new Error('The identity response does not match this group. Refresh and try again.');
