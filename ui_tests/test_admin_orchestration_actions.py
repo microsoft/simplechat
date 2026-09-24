@@ -1,8 +1,9 @@
 # test_admin_orchestration_actions.py
 """
 UI coverage for the orchestration action opt-in in both admin surfaces.
-Version: 0.261.098
+Version: 0.261.139
 Implemented in: 0.261.098
+The classic pane has no plan-contract switch and no locked answering step: 0.261.139
 
 Reuse the schema-backed admin fixture and Azure Playwright connection options.
 API interception uses synthetic settings; no live admin settings are changed.
@@ -122,22 +123,8 @@ def test_v2_hidden_opt_in_is_preserved_when_a_prerequisite_is_changed(orchestrat
     assert fixture.settings[ACTION_FLAG] is True
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_template_opt_in_and_action_capability_submit_normal_form_values(page, enabled):
-    fields = import_app_module("admin_settings_fields").get_admin_settings_fields()
+def _render_classic_pane(page, settings):
     registry = import_app_module("functions_orchestration_registry")
-    settings = {
-        field["key"]: copy.deepcopy(field["default"])
-        for section_id, definitions in fields.items()
-        if section_id.startswith("chat-orchestration-")
-        for field in definitions
-        if field.get("key") and "default" in field
-    }
-    settings.update({
-        "enable_chat_orchestration": True,
-        "enable_semantic_kernel": True,
-        ACTION_FLAG: enabled,
-    })
     environment = Environment(
         loader=FileSystemLoader(APP_ROOT / "templates"),
         autoescape=select_autoescape(["html"]),
@@ -150,6 +137,47 @@ def test_template_opt_in_and_action_capability_submit_normal_form_values(page, e
         orchestration_selected_capabilities=registry.all_capability_ids(),
     )
     page.set_content(f'<form id="orchestration-settings">{markup}</form>')
+    return registry
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_template_offers_no_contract_switch_and_no_locked_answering_step(page, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    registry = _render_classic_pane(page, {
+        "enable_chat_orchestration": True, "enable_chat_orchestration_harness": True,
+    })
+    expect(page.locator("#enable_chat_orchestration_harness")).to_have_count(0)
+    expect(page.get_by_text("harness", exact=False)).to_have_count(0)
+    expect(page.get_by_text("preview", exact=False)).to_have_count(0)
+    expect(page.locator("#chat_orchestration_capability_respond")).to_have_count(0)
+    capabilities = page.locator('input[name="chat_orchestration_enabled_capabilities"]')
+    expect(capabilities).to_have_count(len(registry.CAPABILITY_REGISTRY))
+    expect(page.locator('input[name="chat_orchestration_enabled_capabilities"]:disabled')).to_have_count(0)
+    expect(page.locator("#chat_orchestration_capability_compose")).to_be_checked()
+    expect(page.get_by_text("Plans need Prepare content to write a chat answer", exact=False)).to_be_visible()
+    page.locator("#chat_orchestration_capability_compose").uncheck()
+    submitted = page.evaluate(
+        "() => new FormData(document.getElementById('orchestration-settings')).getAll('chat_orchestration_enabled_capabilities')"
+    )
+    assert "compose" not in submitted and "respond" not in submitted
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_template_opt_in_and_action_capability_submit_normal_form_values(page, enabled):
+    fields = import_app_module("admin_settings_fields").get_admin_settings_fields()
+    settings = {
+        field["key"]: copy.deepcopy(field["default"])
+        for section_id, definitions in fields.items()
+        if section_id.startswith("chat-orchestration-")
+        for field in definitions
+        if field.get("key") and "default" in field
+    }
+    settings.update({
+        "enable_chat_orchestration": True,
+        "enable_semantic_kernel": True,
+        ACTION_FLAG: enabled,
+    })
+    _render_classic_pane(page, settings)
     checkbox = page.get_by_label("Enable Action Access", exact=True)
     expect(checkbox).to_be_checked(checked=enabled)
     expect(checkbox).to_have_attribute("aria-describedby", "chat-orchestration-actions-help")
@@ -160,7 +188,7 @@ def test_template_opt_in_and_action_capability_submit_normal_form_values(page, e
     expect(page.locator('label[for="chat_orchestration_capability_action_invoke"]')).to_contain_text(
         "Use an action"
     )
-    expect(page.locator("#chat_orchestration_capability_respond")).to_be_disabled()
+    expect(page.locator("#chat_orchestration_capability_respond")).to_have_count(0)
     checkbox.check()
     assert page.evaluate(
         "(key) => new FormData(document.getElementById('orchestration-settings')).get(key)",

@@ -573,7 +573,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             }
             return {
                 plans: { ...state.plans, [key]: canonical },
-                ...(canonical.planner_contract_version === 2 && Array.isArray(editor.export_catalog) ? {
+                ...(Array.isArray(editor.export_catalog) ? {
                     runRecovery: {
                         ...state.runRecovery,
                         [canonical.run_id]: {

@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.135"
+version: "0.261.139"
 ---
 
 ## Decide what should run
@@ -30,12 +30,12 @@ requirement.
 Deep Research does not require selecting the Web button first. Its automatic
 source discovery still depends on the administrator enabling Web Search.
 Selected workspaces and document filters continue to bound document access.
-Since **0.261.135**, in a Gather / Reason / Render plan, **Image** means you want
-images: the plan includes at least one image you asked for, generated as its own task
-when the plan runs. Without Image, such a plan still generates the images your request
-asks for, and it can suggest others as proposal cards that you approve one at a time.
-In an older phase-based plan, Image asks the answer for at least one proposal card.
-Plans can also include charts and Mermaid diagrams.
+Since **0.261.139**, every new orchestration plan uses Gather / Reason / Render.
+**Image** means you want images: the plan includes at least one image you asked
+for, generated as its own task when the plan runs. Without Image, a plan still
+generates images your request explicitly asks for, and it can suggest others as
+proposal cards that you approve one at a time. Plans can also include charts and
+Mermaid diagrams.
 Your saved Instruction memories, such as "I don't like charts", decide which
 visuals you get unless your current message explicitly asks for one.
 
@@ -68,14 +68,11 @@ already started cannot be edited.
 
 ## Read dependency-driven plans
 
-Version-aware plan inspection was implemented in version **0.261.127**, recorded
-in `application/single_app/config.py` (Refs: microsoft/simplechat#1509). It does
-not enable a new planning contract by itself. The following details appear when
-the server supplies a contract-v2 plan; older saved plans retain their original
-phase labels and meaning.
-
-A saved v1 step keeps its server-recorded phase even if the current capability
-catalog changes. A step whose phase cannot be resolved is still listed.
+Gather / Reason / Render plan inspection was implemented in version **0.261.127**
+and became the only plan view in **0.261.139**, recorded in
+`application/single_app/config.py` (Refs: microsoft/simplechat#1509). Plans
+created by an earlier orchestration version now show the message that they can't
+be opened or rerun, and should be replaced with a new request.
 
 **Gather**, **Reason**, and **Render** describe a task's purpose, not three
 mandatory stages. The preview follows the server's saved dependency/execution

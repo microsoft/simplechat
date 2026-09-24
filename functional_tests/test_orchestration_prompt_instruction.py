@@ -1,21 +1,20 @@
 # test_orchestration_prompt_instruction.py
 """
 Functional test for orchestration treating a selected prompt as an instruction.
-Version: 0.261.104
+Version: 0.261.139
 Implemented in: 0.261.092
+Single orchestration contract updated in: 0.261.139
 
 A saved prompt is a standing instruction: it says what kind of work this is. Orchestration used
 to be told only its name. "Quarterly review" says nothing about whether the work involves
-reading documents, searching the web, or comparing two things -- which is exactly what the plan
-has to decide -- and `triage_request` did not count a selected prompt as a signal at all, so
-reaching for a stored set of instructions could still be triaged as a remark to answer off the
-cuff.
+reading documents, searching the web, or comparing two things -- which is exactly what the
+single planner has to decide.
 
 Three things follow, and this test holds each of them:
 
   1. The planner is shown the prompt's wording, capped so an unbounded saved prompt cannot
      consume the planner's budget.
-  2. Every request reaches planning, with or without a selected prompt, document or agent.
+  2. The planner message path is the single Gather / Reason / Render contract.
   3. The stored plan names the prompt rather than quoting it. The plan document is kept and
      shown, and the wording is already in the message the plan was built from.
 
@@ -122,36 +121,39 @@ def test_no_prompt_reads_as_no_prompt():
     return True
 
 
-def test_requests_reach_planning_with_or_without_selected_instructions():
-    """Neither message length nor an unchecked control may bypass planning."""
-    print("Testing the all-request planning contract...")
+def test_requests_use_the_single_planner_message_contract():
+    """Neither message length nor an unchecked control may bypass the planner message path."""
+    print("Testing the single planner message contract...")
 
-    module = _extract(
-        PLANNER_PY,
-        {"triage_request"},
+    module = _definitions(
+        "functions_orchestration_planner.py",
         seed={
-            "COMPLEXITY_TRIVIAL": "trivial",
-            "COMPLEXITY_SIMPLE": "simple",
-            "COMPLEXITY_COMPLEX": "complex",
+            "DEPENDENCY_PLAN_CONTRACT_VERSION": 2,
+            "plan_contract_version": lambda plan: 2,
+            "ROUTING_INSTRUCTIONS": "",
         },
+        names={"PLANNER_SYSTEM_PROMPT", "build_planner_messages"},
     )
-    triage = module["triage_request"]
+    context = {
+        "message": "hi",
+        "user_selected": {"prompt": {"id": "p1", "name": "Quarterly review"}},
+        "capabilities": [],
+        "capability_availability": {"available": [], "unavailable": {}},
+    }
+    messages = module["build_planner_messages"](context)
 
-    bare = {"user_selected": {}}
-    assert triage("hi", bare) == "simple"
+    assert messages[0]["content"] == module["PLANNER_SYSTEM_PROMPT"]
+    assert json_fragment(messages[1]["content"], "Quarterly review"), (
+        "the selected prompt name must reach the planner context"
+    )
+    assert "triage_request" not in module, "the removed legacy triage helper must not be present"
 
-    with_prompt = {"user_selected": {"prompt": {"name": "Quarterly review", "content": "..."}}}
-    assert triage("hi", with_prompt) == "simple"
-
-    for signal, value in (
-        ("documents", ["doc-1"]),
-        ("agent", "Researcher"),
-        ("web_search", True),
-    ):
-        assert triage("hi", {"user_selected": {signal: value}}) == "simple"
-
-    print("  ok  selected instructions do not alter the all-request planning contract")
+    print("  ok  requests use the single planner message contract")
     return True
+
+
+def json_fragment(payload, expected):
+    return expected in payload
 
 
 def test_the_stored_plan_names_the_prompt_rather_than_quoting_it():
@@ -189,7 +191,7 @@ if __name__ == "__main__":
         test_version_is_at_least_the_implementing_release,
         test_the_planner_is_shown_the_prompts_wording,
         test_no_prompt_reads_as_no_prompt,
-        test_requests_reach_planning_with_or_without_selected_instructions,
+        test_requests_use_the_single_planner_message_contract,
         test_the_stored_plan_names_the_prompt_rather_than_quoting_it,
     ]
 

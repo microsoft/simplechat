@@ -1,8 +1,9 @@
 # test_orchestration_single_contract_parity.py
 """Gather/Reason/Render parity with the answer features legacy orchestration had.
 
-Version: 0.261.134
+Version: 0.261.139
 Implemented in: 0.261.134
+Single orchestration contract updated in: 0.261.139
 
 Uses the initialized headless harness (real bootstrap, model resolution, leases,
 checkpoints, retained results and renderer) with offline model replies. Covers:
@@ -610,9 +611,10 @@ def test_new_plans_use_the_dependency_contract_under_auto_routing():
     )
     with open(route_source, encoding="utf-8") as handle:
         source = handle.read()
-    body = source.split("def _new_plan_contract_version(settings, seeds):", 1)[1].split("\ndef ", 1)[0]
-    assert "model_routing" not in body
-    assert "get_new_plan_contract_version(" in body
+    # Auto routing never selects a plan contract; every new turn uses the only one.
+    assert "_new_plan_contract_version" not in source
+    assert "get_new_plan_contract_version" not in source
+    assert "'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION," in source
 
 
 def test_retry_flag_marks_only_read_only_gather_capabilities(harness):

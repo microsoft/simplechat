@@ -1,5 +1,5 @@
 // test_v2_orchestration_deliverables.mjs
-// Version: 0.261.135
+// Version: 0.261.139
 // Implemented in: 0.261.135
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
@@ -66,9 +66,9 @@ test('deliverables and step delivers survive normalization; malformed entries ar
         { id: 'z', kind: 'chart', description: 'A chart', quantity: -1, requested: 'other', status: 'weird' },
     ]), [{ id: 'z', kind: 'chart', description: 'A chart', requested: 'explicit', status: 'planned' }]);
     assert.equal(normalizeDeliverables(undefined), undefined);
-    // Legacy plans carry no deliverables, and steps without the field keep their old shape.
-    const legacy = normalizePlan({ deliverables: [{ id: 'a', kind: 'answer', description: 'An answer' }], steps: [{}] });
-    assert.equal(legacy.deliverables, undefined);
+    // Non-current plans are not renderable, and steps without the field keep their current shape.
+    const oldPlan = normalizePlan({ deliverables: [{ id: 'a', kind: 'answer', description: 'An answer' }], steps: [{}] });
+    assert.equal(oldPlan, null);
     const bare = normalizePlan({ planner_contract_version: 2, steps: [{ step_id: 'a', capability_id: 'compose' }] });
     assert.equal(Object.hasOwn(bare.steps[0], 'delivers'), false);
 });

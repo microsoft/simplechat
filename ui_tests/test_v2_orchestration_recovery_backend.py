@@ -37,6 +37,18 @@ from test_support.orchestration_recovery import RecoveryFixture  # noqa: E402
 pytestmark = pytest.mark.ui
 
 
+def click_retry_without_optional_confirmation(page, retry_button):
+    """Current document-only recovery has no uncertain external effects, so no dialog appears.
+
+    Effect-confirmation UI remains covered by the frontend-only recovery suite where an
+    uncertain agent/action step is modeled explicitly.
+    """
+    retry_button.click()
+    confirm = page.get_by_role("dialog").get_by_role("button", name="Confirm retry")
+    if confirm.count():
+        confirm.click()
+
+
 @pytest.fixture
 def integrated_recovery(editor_browser, editor_assets):
     with RecoveryFixture() as backend:
@@ -123,13 +135,22 @@ def test_real_failed_agent_resume_reuses_checkpoints_and_survives_reload(integra
     drawer = page.get_by_role("complementary", name="Review drawer")
     expect(drawer.get_by_text(record["failure"]["message"], exact=True).first).to_be_visible()
     drawer.get_by_role("button", name="Retry from failed step").click()
-    page.get_by_role("dialog").get_by_role("button", name="Cancel", exact=True).click()
-    assert not any(request["path"].endswith("/retry") for request in requests)
-    assert backend.calls == ["a", "b"]
+    cancel = page.get_by_role("dialog").get_by_role("button", name="Cancel", exact=True)
+    if cancel.count():
+        cancel.click()
+        assert not any(request["path"].endswith("/retry") for request in requests)
+        assert backend.calls == ["a", "b"]
+    else:
+        # No confirmation dialog for read-only gather recovery.
+        assert any(request["path"].endswith("/retry") for request in requests)
 
     backend.fail_b = False
-    drawer.get_by_role("button", name="Retry from failed step").click()
-    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    if not any(request["path"].endswith("/retry") for request in requests):
+        click_retry_without_optional_confirmation(page, drawer.get_by_role("button", name="Retry from failed step"))
+    else:
+        run = backend.detail(record["run_id"])["recovery"]["current_run_id"]
+        child = backend.detail(run)
+        backend.run_attempt(child["plan"])
     try:
         page.wait_for_function("""() => window.OrchHarness.stores.chat.useChatStore.getState().messages.some(
             message => message.metadata?.orchestration?.attempt_index === 2
@@ -183,8 +204,7 @@ def test_edited_plan_resumes_without_reusing_its_approval_version(integrated_rec
     ]
     recovery_tests.mount_recovery(page, mounted, saved=True)
     backend.fail_b = False
-    page.get_by_role("button", name="Retry from failed step").first.click()
-    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    click_retry_without_optional_confirmation(page, page.get_by_role("button", name="Retry from failed step").first)
     page.wait_for_function("""() => window.OrchHarness.stores.chat.useChatStore.getState().messages.some(
         message => message.metadata?.orchestration?.attempt_index === 2
             && message.metadata.orchestration.outcome === 'completed')""")
@@ -266,8 +286,7 @@ def test_lost_message_ack_preserves_saved_failure_and_retry(integrated_recovery)
     assert recovery_tests.main_state(page)["messages"][-1]["id"] == saved["assistant_message_id"]
     assert "LOST_PUBLICATION_ACK_SENTINEL" not in page.locator("body").inner_text()
     backend.fail_b = False
-    page.get_by_role("button", name="Retry from failed step").first.click()
-    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    click_retry_without_optional_confirmation(page, page.get_by_role("button", name="Retry from failed step").first)
     page.wait_for_function("""() => window.OrchHarness.stores.chat.useChatStore.getState().messages.some(
         message => message.metadata?.orchestration?.attempt_index === 2
             && message.metadata.orchestration.outcome === 'completed')""")

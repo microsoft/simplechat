@@ -128,5 +128,5 @@ them. A separately approved manual plan attempt has its own initial claim and
 budget. Two pre-existing scheduler-first mixed-bootstrap failures remain
 documented separately from the supported web and scheduler entrypoints.
 
-See [the harness contract](../features/ORCHESTRATION_RENDERING_HARNESS.md) and
+See [the harness contract](../features/ORCHESTRATION_GATHER_REASON_RENDER.md) and
 [checkpoint recovery](../features/ORCHESTRATION_CHECKPOINT_RECOVERY.md).

@@ -20,9 +20,11 @@ would be as bad as executing an invalid one.
 Two contracts live here:
 
 ``plan``
-    What the planner returns and the executor runs. Versioned by
-    ``ORCHESTRATION_PLAN_CONTRACT_VERSION`` so a plan persisted by an older build is
-    recognised rather than misread.
+    What the planner returns and the executor runs: Gather / Reason / Render steps that
+    exchange typed, retained results. Every saved plan carries the schema marker
+    ``planner_contract_version`` (``DEPENDENCY_PLAN_CONTRACT_VERSION``). A plan without it,
+    or with the earlier value, was written by the removed legacy contract; it is recognised
+    and refused with ``LegacyPlanError`` rather than misread.
 
 ``elicitation``
     What the planner returns *instead* when it cannot plan without more information. The
@@ -31,12 +33,11 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.135
+Version: 0.261.139
 """
 
 import hashlib
 import json
-import logging
 import math
 import uuid
 from copy import deepcopy
@@ -47,7 +48,6 @@ from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
 
 from agent_execution_context import AgentDelegationTimeout
-from functions_appinsights import log_event
 from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -55,13 +55,10 @@ from functions_orchestration_registry import (
     CAPABILITY_TABULAR_ANALYZE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
-    PRODUCES_EVIDENCE,
-    TERMINAL_CAPABILITY_ID,
     admitted_export_pairs,
     get_capability,
     get_capability_document_limit,
     get_capability_result_outputs,
-    phase_index,
     required_capability_ids,
     resolve_available_capability_ids,
 )
@@ -71,13 +68,15 @@ from functions_orchestration_result_contracts import (
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
 
-ORCHESTRATION_PLAN_CONTRACT_VERSION = 1
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
 
-# Document fields a step cannot simply lose. These are not in their capability's `required`
-# list, because a step may supply `documents_from_step` instead -- but once neither is
-# present the step has nothing to read and cannot run.
-DOCUMENT_FIELDS_REQUIRED_UNLESS_REFERENCED = ('document_ids',)
+# Shown wherever a saved plan from the removed legacy contract is opened, rerun, edited,
+# restored or continued. One stable sentence, so every surface says the same thing.
+LEGACY_PLAN_MESSAGE = (
+    "This plan was created by an earlier orchestration version and can't be opened or "
+    "rerun. Start a new request."
+)
+LEGACY_PLAN_CODE = 'legacy_plan'
 
 # Plan lifecycle.
 PLAN_STATUS_DRAFT = 'draft'
@@ -188,9 +187,36 @@ class PlanValidationError(ValueError):
         super().__init__(message)
 
 
+class LegacyPlanError(PlanValidationError):
+    """A saved plan from the removed legacy contract. It is never interpreted."""
+
+    def __init__(self):
+        super().__init__(LEGACY_PLAN_MESSAGE, code=LEGACY_PLAN_CODE)
+        self.message = LEGACY_PLAN_MESSAGE
+
+
+def is_legacy_plan(plan):
+    """Whether a saved plan predates the current contract: no marker, or the earlier one.
+
+    A missing marker is never read as the current contract, and a legacy plan is never
+    interpreted, so every caller that finds one refuses it with ``LEGACY_PLAN_MESSAGE``.
+    """
+    if not isinstance(plan, dict):
+        return True
+    version = plan.get('planner_contract_version')
+    return version is None or (type(version) is int and version == 1)
+
+
 def plan_contract_version(plan):
-    version = (plan if isinstance(plan, dict) else {}).get('planner_contract_version', 1)
-    if type(version) is not int or version not in (1, DEPENDENCY_PLAN_CONTRACT_VERSION):
+    """The current contract marker of a saved plan, or a refusal.
+
+    Raises ``LegacyPlanError`` for a plan written by the removed legacy contract and
+    ``PlanValidationError`` for any other unrecognized marker.
+    """
+    if is_legacy_plan(plan):
+        raise LegacyPlanError()
+    version = plan['planner_contract_version']
+    if type(version) is not int or version != DEPENDENCY_PLAN_CONTRACT_VERSION:
         raise PlanValidationError('Unsupported orchestration plan contract.', code='plan_version_unsupported')
     return version
 
@@ -269,14 +295,14 @@ def build_request_fingerprint(user_message, seeds=None, revision=0):
 
 
 # --------------------------------------------------------------------------------------
-# Argument validation against a capability's input schema
+# Scalar coercion for elicitation answers
 # --------------------------------------------------------------------------------------
 
 def _coerce_scalar(value, expected_type):
-    """Best-effort coercion of a planner-supplied scalar.
+    """Best-effort coercion of a submitted scalar.
 
-    A model routinely returns "12" where the schema says integer. Rejecting that would
-    discard an otherwise good plan over a quoting habit, so the narrow and unambiguous
+    A form routinely returns "12" where the schema says integer. Rejecting that would
+    discard an otherwise good answer over a quoting habit, so the narrow and unambiguous
     coercions are performed and anything else is refused.
     """
     if expected_type == 'string':
@@ -307,228 +333,12 @@ def _coerce_scalar(value, expected_type):
     return value
 
 
-def validate_step_arguments(capability, arguments):
-    """Check one step's arguments against its capability's input schema.
-
-    Returns ``(cleaned_arguments, errors)``. Only the properties the schema declares
-    survive: ``additionalProperties`` is false throughout the registry, and a planner that
-    invents an argument must not have it forwarded to an adapter that would either ignore
-    it or, worse, pass it on.
-    """
-    schema = (capability or {}).get('inputs') or {}
-    properties = schema.get('properties') or {}
-    required = set(schema.get('required') or ())
-    arguments = arguments if isinstance(arguments, dict) else {}
-
-    cleaned = {}
-    errors = []
-
-    for name, rules in properties.items():
-        if name not in arguments or arguments[name] is None:
-            if 'default' in rules:
-                cleaned[name] = rules['default']
-            continue
-
-        raw = arguments[name]
-        expected_type = rules.get('type')
-
-        if expected_type == 'array':
-            items_rules = rules.get('items') or {}
-            values = raw if isinstance(raw, (list, tuple)) else [raw]
-            coerced = []
-            for item in values:
-                item_value = _coerce_scalar(item, items_rules.get('type', 'string'))
-                if item_value is None or item_value == '':
-                    continue
-                if item_value not in coerced:
-                    coerced.append(item_value)
-            min_items = rules.get('minItems')
-            if min_items is not None and len(coerced) < min_items:
-                errors.append(f"'{name}' needs at least {min_items} value(s)")
-                continue
-            cleaned[name] = coerced
-            continue
-
-        value = _coerce_scalar(raw, expected_type)
-        if value is None or (expected_type == 'string' and value == ''):
-            errors.append(f"'{name}' is not a valid {expected_type}")
-            continue
-
-        enum_values = rules.get('enum')
-        if enum_values and value not in enum_values:
-            # A default is a better answer than a rejection when the model picked an
-            # out-of-range enum: the step is still meaningful, just less specific.
-            if 'default' in rules:
-                value = rules['default']
-            else:
-                errors.append(f"'{name}' must be one of {sorted(enum_values)}")
-                continue
-
-        if expected_type == 'string':
-            min_length = rules.get('minLength')
-            if min_length is not None and len(value) < min_length:
-                errors.append(f"'{name}' is empty")
-                continue
-
-        if expected_type in ('integer', 'number'):
-            minimum = rules.get('minimum')
-            maximum = rules.get('maximum')
-            if minimum is not None:
-                value = max(minimum, value)
-            if maximum is not None:
-                value = min(maximum, value)
-
-        cleaned[name] = value
-
-    for name in required:
-        if name not in cleaned:
-            errors.append(f"'{name}' is required")
-
-    return cleaned, errors
-
-
 # --------------------------------------------------------------------------------------
 # Plan validation
 # --------------------------------------------------------------------------------------
 
-def _resolve_document_references(steps):
-    """Resolve a step that reads whichever documents an earlier step found.
-
-    A plan could previously only act on documents whose ids were known when it was written,
-    which meant it could not express the most natural shape of all: search for the relevant
-    material, then analyse what turned up. ``documents_from_step`` says that instead.
-
-    Three things are checked:
-
-    - The named step must exist. A reference to a step that was dropped goes with it.
-    - It must not be the step itself, which could never resolve.
-    - It must produce documents. Only evidence-producing capabilities do, so pointing at a
-      web search or at ``respond`` would resolve to nothing every time.
-
-    Ordering is deliberately *not* checked here. A resolved reference is added to
-    ``depends_on``, and the topological pass that follows is what guarantees the referenced
-    step runs first -- with the existing cycle detection catching a plan that points two
-    steps at each other. Checking positions here as well would duplicate that and disagree
-    with it as soon as phase ordering moved a step.
-
-    A failure is a repair where the step still means something without the reference, and an
-    error where it does not: a step with no documents and no way to find any cannot run.
-    """
-    repairs = []
-    errors = []
-    failed = set()
-    by_id = {step['step_id']: step for step in steps}
-
-    for step in steps:
-        arguments = step.get('arguments') or {}
-        reference = _text(arguments.get('documents_from_step'))
-        if not reference:
-            continue
-
-        source = by_id.get(reference)
-        if source is None:
-            problem = 'names a step that is not in the plan'
-        elif reference == step['step_id']:
-            problem = 'refers to itself'
-        elif PRODUCES_EVIDENCE not in (
-            (get_capability(source['capability_id']) or {}).get('produces') or ()
-        ):
-            problem = 'reads from a step that does not produce documents'
-        else:
-            problem = None
-
-        if problem is None:
-            if reference not in step['depends_on']:
-                step['depends_on'] = [*step['depends_on'], reference]
-            continue
-
-        arguments.pop('documents_from_step', None)
-        if arguments.get('document_ids'):
-            repairs.append(
-                f"Step '{step['step_id']}' {problem}; its own documents were kept."
-            )
-        else:
-            errors.append(
-                f"Step '{step['step_id']}' {problem} and names no documents of its own."
-            )
-            failed.add(step['step_id'])
-
-    return [step for step in steps if step['step_id'] not in failed], repairs, errors
-
-
-def _enforce_phase_order(steps):
-    """Sort steps into phase order and drop dependencies that point backwards.
-
-    Returns ``(ordered_steps, repairs)``.
-
-    A plan runs knowledge, then reasoning, then output. A step that gathers after the
-    answer has been written is not merely out of order -- it would run, cost money, and
-    contribute nothing, because the answer it was meant to inform has already been
-    composed. The same is true of a dependency pointing from an earlier phase to a later
-    one: honouring it would drag the later step forward, which is the very inversion the
-    phase order exists to prevent.
-
-    The sort is stable, so within a phase the planner's own ordering survives untouched and
-    the topological pass that follows still decides what actually depends on what.
-    """
-    repairs = []
-
-    ordered = sorted(steps, key=lambda step: phase_index(step.get('capability_id')))
-    position = {
-        step['step_id']: phase_index(step.get('capability_id')) for step in ordered
-    }
-
-    for step in ordered:
-        own_phase = position.get(step['step_id'], 0)
-        kept = []
-        for dependency in step.get('depends_on') or ():
-            if position.get(dependency, own_phase) > own_phase:
-                repairs.append(
-                    f"Step '{step['step_id']}' waited on '{dependency}', which runs in a "
-                    f"later phase; the dependency was dropped."
-                )
-                continue
-            kept.append(dependency)
-        step['depends_on'] = kept
-
-    return ordered, repairs
-
-
-def _order_steps(steps):
-    """Topologically order steps, or report the ids caught in a cycle.
-
-    Returns ``(ordered_steps, cyclic_step_ids)``. A cycle is not repairable by reordering,
-    so the caller drops the dependencies rather than the steps -- a plan that runs its
-    steps in a defensible order is more useful than no plan at all.
-    """
-    by_id = {step['step_id']: step for step in steps}
-    resolved = []
-    permanent = set()
-    temporary = set()
-    cyclic = set()
-
-    def visit(step_id):
-        if step_id in permanent:
-            return
-        if step_id in temporary:
-            cyclic.add(step_id)
-            return
-        temporary.add(step_id)
-        for dependency in by_id[step_id].get('depends_on') or ():
-            if dependency in by_id:
-                visit(dependency)
-        temporary.discard(step_id)
-        permanent.add(step_id)
-        resolved.append(by_id[step_id])
-
-    for step in steps:
-        visit(step['step_id'])
-
-    return resolved, cyclic
-
-
 def order_dependency_steps(steps):
-    """Stable topological order, without phase sorting or removal of edges."""
+    """Stable topological order that keeps every declared edge."""
     pending = list(steps)
     ordered = []
     completed = set()
@@ -744,7 +554,7 @@ def validate_dependency_plan(
     agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
     export_catalog=None, deliverable_availability=None, image_selected=False,
 ):
-    """Compile v2 without dropping required work, arguments, outputs, or dependencies.
+    """Compile a plan without dropping required work, arguments, outputs, or dependencies.
 
     ``deliverable_availability`` is the server truth a new plan is checked against; see
     ``functions_orchestration_deliverables.compile_deliverables``.
@@ -934,289 +744,27 @@ def validate_plan(
     is applied here and applied again before finalization in the executor, because the two
     moments are not the same moment and access can be revoked between them.
 
-    ``agent_names`` is the set of agents this user can actually reach. A planner naming
-    anything else is treated exactly like a planner naming an unknown capability: the step
-    is dropped rather than handed to an adapter that would go looking for an agent nobody
-    offered. ``None`` means the caller resolved no catalog, so agent steps cannot be
-    checked and are refused outright -- an agent step with no catalog behind it has no way
-    to succeed.
+    ``agent_names`` and ``action_refs`` are the agents and actions this user can actually
+    reach. A planner naming anything else is refused exactly like a planner naming an
+    unknown capability, rather than handed to an adapter that would go looking for an
+    integration nobody offered.
 
-    Returns the plan with ``steps``, ``validation`` and ``status`` settled. Raises
-    ``PlanValidationError`` only when nothing runnable survives.
+    Required work, arguments, outputs and dependencies are never dropped to make a plan
+    fit: a plan that cannot run as written raises ``PlanValidationError``. A plan without
+    the current schema marker was written by the removed legacy contract and raises
+    ``LegacyPlanError``.
     """
     version = plan_contract_version(plan)
     if contract_version is not None and (type(contract_version) is not int or contract_version != version):
         raise PlanValidationError('The saved plan contract does not match the admitted contract.')
-    if version == DEPENDENCY_PLAN_CONTRACT_VERSION:
-        return validate_dependency_plan(
-            plan, settings=settings, authorized_document_ids=authorized_document_ids,
-            available_capability_ids=available_capability_ids, agent_names=agent_names,
-            action_refs=action_refs, existing_results=existing_results,
-            composition_profiles=composition_profiles,
-            export_catalog=export_catalog,
-            deliverable_availability=deliverable_availability, image_selected=image_selected,
-        )
-    settings = settings if isinstance(settings, dict) else {}
-    plan = plan if isinstance(plan, dict) else {}
-
-    errors = []
-    repairs = []
-
-    if available_capability_ids is None:
-        available_capability_ids = resolve_available_capability_ids(
-            settings,
-            allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
-        )
-    available = set(available_capability_ids or ())
-
-    known_agents = None
-    if agent_names is not None:
-        known_agents = {
-            str(value).strip() for value in agent_names if str(value).strip()
-        }
-    known_actions = set(_string_list(action_refs))
-
-    authorized = None
-    if authorized_document_ids is not None:
-        authorized = {str(value) for value in authorized_document_ids}
-
-    try:
-        max_steps = int(settings.get('chat_orchestration_max_steps') or 8)
-    except (TypeError, ValueError):
-        max_steps = 8
-    max_steps = max(1, min(max_steps, PLAN_HARD_MAX_STEPS))
-
-    raw_steps = plan.get('steps')
-    raw_steps = raw_steps if isinstance(raw_steps, list) else []
-
-    accepted = []
-    used_counts = {}
-    seen_ids = set()
-
-    for index, raw in enumerate(raw_steps):
-        if not isinstance(raw, dict):
-            errors.append(f"Step {index + 1} is not an object and was dropped.")
-            continue
-
-        capability_id = _text(raw.get('capability_id'))
-        capability = get_capability(capability_id)
-
-        if capability is None:
-            errors.append(f"Step {index + 1} names an unknown capability '{capability_id}'.")
-            continue
-
-        if capability_id not in available:
-            errors.append(
-                f"Step {index + 1} uses '{capability_id}', which is not enabled here."
-            )
-            continue
-
-        cap_limit = capability.get('max_per_plan')
-        if cap_limit is not None and used_counts.get(capability_id, 0) >= cap_limit:
-            repairs.append(
-                f"Dropped an extra '{capability_id}' step; at most {cap_limit} are allowed."
-            )
-            continue
-
-        arguments, argument_errors = validate_step_arguments(capability, raw.get('arguments'))
-        if argument_errors:
-            errors.append(
-                f"Step {index + 1} ({capability_id}): " + '; '.join(argument_errors)
-            )
-            continue
-
-        if capability_id == CAPABILITY_ACTION_INVOKE:
-            if arguments['action_ref'] not in known_actions:
-                errors.append(
-                    f"Step {index + 1} references an action unavailable to this request."
-                )
-                continue
-
-        # An agent step may only name an agent the caller can actually reach. A planner
-        # inventing a plausible-sounding agent is as likely as one inventing a capability,
-        # and is caught the same way rather than being discovered by an adapter searching a
-        # catalog that never contained it.
-        if 'agent_name' in arguments:
-            if known_agents is None:
-                errors.append(
-                    f"Step {index + 1} asks for an agent, but no agent catalog was "
-                    f"resolved for this request."
-                )
-                continue
-            if arguments['agent_name'] not in known_agents:
-                errors.append(
-                    f"Step {index + 1} names an agent this user cannot reach: "
-                    f"'{arguments['agent_name']}'."
-                )
-                continue
-
-        # Document authorization, and the administrator's per-action document ceiling.
-        for field in ('document_ids', 'right_document_ids'):
-            if field not in arguments:
-                continue
-            if authorized is not None:
-                permitted = [value for value in arguments[field] if value in authorized]
-                if len(permitted) != len(arguments[field]):
-                    repairs.append(
-                        f"Step {index + 1} referenced documents this user cannot read; "
-                        f"they were removed."
-                    )
-                arguments[field] = permitted
-            limit = get_capability_document_limit(capability, settings=settings)
-            if limit and len(arguments[field]) > limit:
-                repairs.append(
-                    f"Step {index + 1} was trimmed to {limit} document(s), the configured "
-                    f"maximum for this action."
-                )
-                arguments[field] = arguments[field][:limit]
-
-        if 'left_document_id' in arguments and authorized is not None:
-            if arguments['left_document_id'] not in authorized:
-                errors.append(
-                    f"Step {index + 1} compares against a document this user cannot read."
-                )
-                continue
-
-        # A step whose documents have all been removed has nothing left to do -- unless it
-        # is reading whatever an earlier step finds, in which case having no documents of
-        # its own is the entire point.
-        emptied = [
-            field
-            for field in ('document_ids', 'right_document_ids')
-            if field in arguments
-            and not arguments[field]
-            and not _text(arguments.get('documents_from_step'))
-            and (
-                field in set((capability.get('inputs') or {}).get('required') or ())
-                or field in DOCUMENT_FIELDS_REQUIRED_UNLESS_REFERENCED
-            )
-        ]
-        if emptied:
-            errors.append(
-                f"Step {index + 1} ({capability_id}) has no readable documents left."
-            )
-            continue
-
-        step_id = _text(raw.get('step_id')) or new_step_id(len(accepted))
-        if step_id in seen_ids:
-            step_id = new_step_id(len(accepted))
-            repairs.append(f"Renamed a duplicate step id to '{step_id}'.")
-        seen_ids.add(step_id)
-
-        accepted.append({
-            'step_id': step_id,
-            'capability_id': capability_id,
-            'title': _text(raw.get('title'), PLAN_MAX_TITLE_LENGTH) or capability['label'],
-            'rationale': _text(raw.get('rationale'), PLAN_MAX_RATIONALE_LENGTH),
-            'arguments': arguments,
-            'depends_on': _string_list(raw.get('depends_on'), limit=max_steps),
-            'optional': bool(raw.get('optional', False)),
-            'enabled': bool(raw.get('enabled', True)),
-            'estimated_cost': capability['cost_class'],
-            'phase': capability['phase'],
-            'status': STEP_STATUS_PENDING,
-            **({'model_task': raw['model_task']} if isinstance(raw.get('model_task'), str) else {}),
-            **({'model_binding': raw['model_binding']} if isinstance(raw.get('model_binding'), dict) else {}),
-        })
-        used_counts[capability_id] = used_counts.get(capability_id, 0) + 1
-
-    # Dependencies pointing at steps that did not survive are simply dropped: the step
-    # itself is still meaningful, it just no longer waits for something that is not coming.
-    surviving = {step['step_id'] for step in accepted}
-    for step in accepted:
-        kept = [value for value in step['depends_on'] if value in surviving and value != step['step_id']]
-        if len(kept) != len(step['depends_on']):
-            repairs.append(f"Step '{step['step_id']}' waited on a step that was removed.")
-        step['depends_on'] = kept
-
-    # A step may read the documents an earlier step found rather than naming its own. The
-    # reference is resolved here, once every surviving step id is known, because ids can be
-    # renamed above and a reference validated earlier could point at a name that no longer
-    # exists.
-    accepted, reference_repairs, reference_errors = _resolve_document_references(accepted)
-    repairs.extend(reference_repairs)
-    errors.extend(reference_errors)
-
-    # Phase order first, so the topological pass below sorts within a plan that already
-    # runs knowledge before reasoning before output rather than one that merely could.
-    accepted, phase_repairs = _enforce_phase_order(accepted)
-    repairs.extend(phase_repairs)
-
-    ordered, cyclic = _order_steps(accepted)
-    if cyclic:
-        repairs.append(
-            "Removed circular dependencies between steps: " + ', '.join(sorted(cyclic)) + '.'
-        )
-        for step in ordered:
-            if step['step_id'] in cyclic:
-                step['depends_on'] = []
-        ordered, _ = _order_steps(ordered)
-
-    # Every plan ends by answering. A planner that forgot is repaired rather than refused,
-    # because the gathering it did choose is usually right and re-planning costs a round
-    # trip to fix something mechanical.
-    terminal_steps = [
-        step for step in ordered if step['capability_id'] == TERMINAL_CAPABILITY_ID
-    ]
-    non_terminal = [
-        step for step in ordered if step['capability_id'] != TERMINAL_CAPABILITY_ID
-    ]
-
-    if len(non_terminal) > max_steps - 1:
-        dropped = len(non_terminal) - (max_steps - 1)
-        non_terminal = non_terminal[: max_steps - 1]
-        repairs.append(
-            f"Dropped {dropped} step(s); this deployment allows at most {max_steps} per plan."
-        )
-
-    if terminal_steps:
-        # Keep exactly one, and keep it last regardless of where it was proposed.
-        terminal = terminal_steps[0]
-        if len(terminal_steps) > 1:
-            repairs.append("Removed a duplicate answering step; a plan ends only once.")
-    else:
-        terminal = {
-            'step_id': new_step_id(len(non_terminal)),
-            'capability_id': TERMINAL_CAPABILITY_ID,
-            'title': get_capability(TERMINAL_CAPABILITY_ID)['label'],
-            'rationale': '',
-            'arguments': {},
-            'depends_on': [],
-            'optional': False,
-            'enabled': True,
-            'estimated_cost': get_capability(TERMINAL_CAPABILITY_ID)['cost_class'],
-            'status': STEP_STATUS_PENDING,
-        }
-        repairs.append("Added the answering step the plan ended without.")
-
-    surviving = {step['step_id'] for step in non_terminal}
-    terminal['depends_on'] = [
-        value for value in terminal.get('depends_on') or () if value in surviving
-    ] or list(surviving)
-    terminal['enabled'] = True
-    terminal['optional'] = False
-
-    final_steps = non_terminal + [terminal]
-
-    if not final_steps:
-        raise PlanValidationError('The plan contained no runnable steps.')
-
-    plan['steps'] = final_steps
-    plan['validation'] = {
-        'ok': not errors,
-        'errors': errors,
-        'repairs': repairs,
-    }
-    plan.setdefault('planner_contract_version', ORCHESTRATION_PLAN_CONTRACT_VERSION)
-
-    if errors or repairs:
-        log_event(
-            f"[ORCHESTRATION_SCHEMA] Plan validated with {len(errors)} error(s) and "
-            f"{len(repairs)} repair(s).",
-            level=logging.INFO,
-        )
-
-    return plan
+    return validate_dependency_plan(
+        plan, settings=settings, authorized_document_ids=authorized_document_ids,
+        available_capability_ids=available_capability_ids, agent_names=agent_names,
+        action_refs=action_refs, existing_results=existing_results,
+        composition_profiles=composition_profiles,
+        export_catalog=export_catalog,
+        deliverable_availability=deliverable_availability, image_selected=image_selected,
+    )
 
 
 def plan_document_ids(plan, *, include_disabled=False):
@@ -1341,20 +889,11 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
 
 
 def build_plan_outputs(plan):
-    """What the run will produce. Every plan produces an answer; some also produce files."""
-    outputs = [{'kind': 'message'}]
-    if plan_contract_version(plan) == DEPENDENCY_PLAN_CONTRACT_VERSION:
-        return outputs + [
-            {'kind': 'retained_result', 'source_step_id': step['step_id'], **deepcopy(output)}
-            for step in plan['steps'] if step.get('enabled', True) for output in step['outputs']
-        ]
-    for step in (plan or {}).get('steps') or ():
-        if not step.get('enabled', True):
-            continue
-        capability = get_capability(step.get('capability_id'))
-        if capability and 'artifacts' in (capability.get('produces') or ()):
-            outputs.append({'kind': 'artifact', 'source_step_id': step.get('step_id')})
-    return outputs
+    """What the run will produce: the answer, plus every enabled step's retained results."""
+    return [{'kind': 'message'}] + [
+        {'kind': 'retained_result', 'source_step_id': step['step_id'], **deepcopy(output)}
+        for step in plan['steps'] if step.get('enabled', True) for output in step['outputs']
+    ]
 
 
 def normalize_plan(
@@ -1371,7 +910,7 @@ def normalize_plan(
     agent_names=None,
     actions=None,
     *,
-    contract_version=1,
+    contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
     existing_results=None,
     composition_profiles=None,
     export_catalog=None,
@@ -1380,8 +919,8 @@ def normalize_plan(
 ):
     """Turn raw planner output into a complete, validated plan document.
 
-    ``deliverable_availability`` and ``image_selected`` apply only to a new dependency plan:
-    its deliverables are checked against what the server can produce right now.
+    ``deliverable_availability`` and ``image_selected`` check a new plan's deliverables
+    against what the server can produce right now.
     """
     settings = settings if isinstance(settings, dict) else {}
     plan = dict(plan) if isinstance(plan, dict) else {}
@@ -1489,12 +1028,11 @@ def apply_plan_edits(
         type(contract_version) is not int or contract_version != plan_contract_version(plan)
     ):
         raise PlanValidationError('The saved plan contract does not match the admitted contract.')
+    plan_contract_version(plan)
     if not isinstance(edits, dict):
         return plan
-    dependency_contract = plan_contract_version(plan) == DEPENDENCY_PLAN_CONTRACT_VERSION
     original = plan
-    if dependency_contract:
-        plan = deepcopy(plan)
+    plan = deepcopy(plan)
 
     disabled = set(_string_list(edits.get('disabled_step_ids')))
     removed_documents = edits.get('removed_document_ids')
@@ -1502,8 +1040,6 @@ def apply_plan_edits(
 
     edited = False
     for step in plan.get('steps') or ():
-        if step['capability_id'] == TERMINAL_CAPABILITY_ID:
-            continue
         if step['step_id'] in disabled and step.get('enabled', True):
             step['enabled'] = False
             edited = True
@@ -1520,46 +1056,43 @@ def apply_plan_edits(
 
     if edited:
         plan.setdefault('approval', {})['edited'] = True
-    if dependency_contract:
-        try:
-            if not any(step['enabled'] for step in plan['steps']):
-                raise PlanValidationError('The plan contains no enabled work.')
-            for step in plan['steps']:
-                capability = get_capability(step['capability_id'], contract_version=2)
-                if not Draft202012Validator(capability['inputs']).is_valid(step['arguments']):
-                    raise PlanValidationError('This edit leaves a required source unavailable.')
-                if composition_profiles is not None:
-                    _dependency_outputs(step, capability, composition_profiles, step['arguments'])
-                if (
-                    step['enabled'] and step['capability_id'] == 'document_analyze'
-                    and not step['arguments'].get('document_ids') and 'sources' not in step['inputs']
-                ):
-                    raise PlanValidationError('This edit leaves Analyze without a source.')
-            validate_input_bindings(
-                [step_result_bindings(step) for step in plan['steps']], existing_results=existing_results,
-                max_steps=PLAN_HARD_MAX_STEPS,
-            )
-            _validate_render_requests(plan['steps'], existing_results, export_catalog=export_catalog)
-            if plan.get('final_response'):
-                binding = InputBinding.from_dict(plan['final_response'])
-                if binding.step_id and not next(
-                    step['enabled'] for step in plan['steps'] if step['step_id'] == binding.step_id
-                ):
-                    raise PlanValidationError('The selected answer producer cannot be disabled.')
-            # A step the user switched off changes what an answer step writes for, such as a
-            # file it no longer feeds. The saved plan must describe exactly what will run, so
-            # checkpoints and retries compare the same deliverable briefs the executor derives.
-            plan['deliverables'] = compile_deliverables(
-                plan.get('deliverables'), plan['steps'], final_response=plan.get('final_response'),
-            )
-        except ResultContractError as exc:
-            raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
-        except DeliverableError as exc:
-            raise PlanValidationError(exc.message, code=exc.code) from exc
-        original.update(plan)
-        return original
-
-    return plan
+    try:
+        if not any(step['enabled'] for step in plan['steps']):
+            raise PlanValidationError('The plan contains no enabled work.')
+        for step in plan['steps']:
+            capability = get_capability(step['capability_id'])
+            if not Draft202012Validator(capability['inputs']).is_valid(step['arguments']):
+                raise PlanValidationError('This edit leaves a required source unavailable.')
+            if composition_profiles is not None:
+                _dependency_outputs(step, capability, composition_profiles, step['arguments'])
+            if (
+                step['enabled'] and step['capability_id'] == 'document_analyze'
+                and not step['arguments'].get('document_ids') and 'sources' not in step['inputs']
+            ):
+                raise PlanValidationError('This edit leaves Analyze without a source.')
+        validate_input_bindings(
+            [step_result_bindings(step) for step in plan['steps']], existing_results=existing_results,
+            max_steps=PLAN_HARD_MAX_STEPS,
+        )
+        _validate_render_requests(plan['steps'], existing_results, export_catalog=export_catalog)
+        if plan.get('final_response'):
+            binding = InputBinding.from_dict(plan['final_response'])
+            if binding.step_id and not next(
+                step['enabled'] for step in plan['steps'] if step['step_id'] == binding.step_id
+            ):
+                raise PlanValidationError('The selected answer producer cannot be disabled.')
+        # A step the user switched off changes what an answer step writes for, such as a
+        # file it no longer feeds. The saved plan must describe exactly what will run, so
+        # checkpoints and retries compare the same deliverable briefs the executor derives.
+        plan['deliverables'] = compile_deliverables(
+            plan.get('deliverables'), plan['steps'], final_response=plan.get('final_response'),
+        )
+    except ResultContractError as exc:
+        raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
+    except DeliverableError as exc:
+        raise PlanValidationError(exc.message, code=exc.code) from exc
+    original.update(plan)
+    return original
 
 
 def summarize_plan(plan):
@@ -1620,6 +1153,7 @@ FAILURE_MESSAGES = {
     'image_request_invalid': 'The image model did not accept the planned image request.',
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
+    LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
 }
 
 

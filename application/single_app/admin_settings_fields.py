@@ -3660,22 +3660,6 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
             "role": "capability",
         },
-        {
-            "key": "enable_chat_orchestration_harness",
-            "type": "switch",
-            "label": "Gather / Reason / Render harness (preview)",
-            "help": (
-                "Off by default. Requires Chat Orchestration and server rollout readiness. "
-                "Opts new plans into retained results and explicit file-rendering tasks "
-                "instead of legacy orchestration. Existing capability permissions, model "
-                "access and token, time and step budgets still apply. Turning this off "
-                "stops only new harness plans; saved plans, results and files keep their "
-                "recorded version and authorized read/recovery access."
-            ),
-            "default": False,
-            "role": "capability",
-            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
-        },
     ],
     "chat-orchestration-approval-section": [
         {
@@ -3771,10 +3755,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Which kinds of work a plan may contain. An empty selection allows every "
                 "otherwise-enabled capability; a non-empty selection narrows plans to "
-                "those capabilities. Legacy answering is always available. Prepare content, "
-                "Create a file and Generate images apply to admitted harness plans and remain "
-                "subject to rollout readiness. Generate images also requires Image Generation. "
-                "Use an action also requires Enable Action Access."
+                "those capabilities. Plans need Prepare content to write a chat answer or "
+                "the content of a file, and Create a file to deliver a downloadable file. "
+                "Generate images also requires Image Generation. Use an action also "
+                "requires Enable Action Access."
             ),
             "default": [],
             "options": [

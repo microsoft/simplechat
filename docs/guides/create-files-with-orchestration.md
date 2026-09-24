@@ -4,21 +4,22 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.135"
+version: "0.261.139"
 ---
 
 ## Availability
 
-This guide describes contract-v2 Gather / Reason / Render plans for the
-orchestration harness preview, integrated in version **0.261.127**, recorded in
-`application/single_app/config.py`. Retained-result foundations arrived in
-**0.261.125** and the shared renderer in **0.261.126**.
+This guide describes Gather / Reason / Render orchestration plans, which are
+the only plans created when Chat Orchestration is enabled. Retained-result
+foundations arrived in **0.261.125**, the shared renderer in **0.261.126**, and
+the single-contract rollout in **0.261.139**, recorded in
+`application/single_app/config.py`.
 
-An administrator must enable orchestration and its harness preview, and the
-server must admit the supported runtime. This release supplies that runtime;
-both settings remain off by default. Existing saved plans keep their original
-contract. Ordinary chat exports, standalone Analyze/Compare and workflow output
-settings are separate and keep their existing behavior.
+An administrator must enable Chat Orchestration and the capabilities needed for
+the requested output. Ordinary chat exports, standalone Analyze/Compare and
+workflow output settings are separate and keep their existing behavior. Plans
+created by an earlier orchestration version cannot be reopened or rerun; start a
+new request to create files with the current contract.
 
 See [orchestration settings](../admin/orchestration.md) for rollout and permissions.
 
@@ -91,8 +92,8 @@ describe purpose rather than three compulsory consecutive stages.
 Check each **Planned file** against your request: its name, format and source
 result should be clear. Several file tasks may use the same named result.
 Retained results and planned files are not download links or proof of completion.
-In the new contract, analysis or composition without an explicit Render task
-does not automatically attach a file.
+Analysis or composition without an explicit Render task does not automatically
+attach a file.
 
 For a table, specify the columns and their order when that matters. Nested data
 cannot be silently flattened into CSV. If the available findings do not already
@@ -177,4 +178,4 @@ its retained results and private output access.
 
 Files are private conversation artifacts by default, not automatically indexed
 workspace documents. Workspace publication, external delivery, workflow
-integration and audio generation are not part of this harness tranche.
+integration and audio generation remain separate capabilities.

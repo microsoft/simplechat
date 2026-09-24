@@ -1,8 +1,9 @@
 # test_orchestration_external_root_runtime.py
 """
 Actual HTTP external Gather through the default root and explicit JSON Render.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 The real schema, claim, headless runner, source review, configuration attestor,
 provider, retained store, renderer and publication run with only directory
@@ -43,7 +44,6 @@ def test_actual_http_default_root_gather_retains_renders_and_rechecks_after_rest
         "enable_url_access": True, "require_member_of_url_access_user": False,
         "source_review_allow_js_rendering": False,
         "source_review_enable_llm_planning": False,
-        "enable_chat_orchestration_harness": False,
     })
     harness.turn["content"] = f"Review {url} and export the retained findings as JSON."
     stored_turn = harness.messages.read_item(harness.turn["id"], "conversation-1")

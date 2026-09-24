@@ -239,7 +239,7 @@ export function OrchestrationPlanCard({
         }
         const currentStep = editedPlan?.steps.find((step) => stepRuntime[step.step_id]?.status === 'running');
         const progress = waiting ? 'Waiting for results'
-            : plan.planner_contract_version === 2 && currentStep ? stepRoleLabel(currentStep, true) : null;
+            : currentStep ? stepRoleLabel(currentStep, true) : null;
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
                 <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />

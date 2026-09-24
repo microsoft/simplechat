@@ -1,6 +1,7 @@
 // orchestrationOutputController.ts
 
 import { ApiError } from './apiClient';
+import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
     fetchOrchestrationRun, normalizeOrchestrationAttempt, retryOrchestrationFile,
 } from './orchestration';
@@ -159,12 +160,13 @@ export function refreshOrchestrationOutputs(
             }
             return true;
         } catch (error) {
+            const legacyMessage = legacyPlanErrorMessage(error);
             const denied = error instanceof ApiError && (error.isAuthError || error.status === 404);
             useOrchestrationStore.getState().updateRunRecovery(runId, {
                 outputAccessDenied: denied || useOrchestrationStore.getState().runRecovery[runId]?.outputAccessDenied,
-                outputError: denied
+                outputError: legacyMessage || (denied
                     ? 'These files are not currently accessible. Sign in if needed, then check saved file status.'
-                    : 'Saved file status could not be refreshed. Previous progress is shown; no work was restarted.',
+                    : 'Saved file status could not be refreshed. Previous progress is shown; no work was restarted.'),
             });
             return false;
         } finally {
@@ -278,12 +280,13 @@ export async function retryOrchestrationOutput(
         }
         clearIntent(conversationId, runId, outputId);
     } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
         const rejected = requested && error instanceof ApiError && error.status >= 400 && error.status < 500;
         const cleared = rejected ? clearIntent(conversationId, runId, outputId) : true;
         if (cleared) updateRetry(runId, outputId, {
             uncertain: requested && !rejected,
             blocked: Boolean(rejected),
-            error: !requested
+            error: legacyMessage || (!requested
                 ? 'The retry identity could not be saved in this tab. Enable browser storage and check saved file status. No new retry was requested.'
                 : rejected
                     ? error instanceof ApiError && error.isAuthError
@@ -291,7 +294,7 @@ export async function retryOrchestrationOutput(
                         : error instanceof ApiError && error.status === 404
                             ? 'This file was not found or is no longer available.'
                             : 'The server did not accept this file retry. Check saved file status before another request.'
-                    : 'The file retry could not be confirmed. Check saved status or retry this same request; other files and producer tasks will not repeat.',
+                    : 'The file retry could not be confirmed. Check saved status or retry this same request; other files and producer tasks will not repeat.'),
         });
     } finally {
         if (timeout) clearTimeout(timeout);

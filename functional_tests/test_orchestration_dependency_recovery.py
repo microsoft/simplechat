@@ -1,8 +1,9 @@
 # test_orchestration_dependency_recovery.py
 """Real leases, checkpoint restart, DAG reuse and current authorization for v2.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Only Cosmos/Blob transport, model responses and current source access are isolated.
 """
 
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from test_orchestration_dependency_runtime import binding, compose, runtime, source_input
+from test_orchestration_dependency_runtime import binding, compose, runtime, set_result_contract, source_input
 from test_support.app_stubs import stubbed_config
 from test_support.orchestration_revisions import AtomicMemoryContainer
 
@@ -286,7 +287,7 @@ def test_failed_typed_task_does_not_poison_an_independent_success_checkpoint(dur
 def test_changed_producer_contract_blocks_reuse_without_reinterpreting_saved_results(durable, monkeypatch):
     original = fail_first(durable)
     record = durable.read_run('run-1')
-    monkeypatch.setitem(durable.runtime.registry._DEPENDENCY_RESULT_CONTRACTS, 'compose', 'compose-v2')
+    set_result_contract(monkeypatch, durable.runtime.registry, 'compose', 'compose-v2')
     with pytest.raises(durable.runtime.checkpoints.CheckpointError) as failure:
         durable.recovery.validate_resume(
             record, durable.fresh_context(record), durable.case.settings, lambda: True,

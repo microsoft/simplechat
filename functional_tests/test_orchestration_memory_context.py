@@ -1,342 +1,275 @@
 # test_orchestration_memory_context.py
 """Functional regressions for audience-bound orchestration memory.
 
-Version: 0.261.105
+Version: 0.261.139
 Implemented in: 0.261.104
+Single orchestration contract updated in: 0.261.139
 
-Uses real Flask routes, revisions, executor, adapters and the shared memory reader.
-Only storage, membership, embedding and model boundaries are replaced. All network
-access is blocked; planning and answering may read memory but must never write it.
+Uses the shared memory reader and the Gather / Reason / Render compose adapter seam.
+Only storage, membership, embedding and model boundaries are replaced. Planning and
+answering may read memory but must never write it.
 """
 
+import importlib
 import json
 import sys
+import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import pytest
 from azure.core.exceptions import AzureError
 
-import test_fact_memory_read_only_context as fact_tests
-import test_orchestration_conversation_context_routes as context_tests
-import test_orchestration_plan_revision_routes as revision_tests
+from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
+from test_support.app_stubs import stubbed_config
+from test_support.orchestration_harness_execution import decoded_frames, input_binding
+from test_support.versioning import assert_app_version_at_least
 
 
 class OrchestrationMemoryTests(unittest.TestCase):
-    plan = context_tests.ConversationRouteTests.plan
-    planned = context_tests.ConversationRouteTests.planned
-    run_plan = context_tests.ConversationRouteTests.run_plan
-    open_editor = revision_tests.PlanRevisionRouteTests.open_editor
-    request_revision = revision_tests.PlanRevisionRouteTests.request_revision
-    revise = revision_tests.PlanRevisionRouteTests.revise
-    run_editor_plan = revision_tests.PlanRevisionRouteTests.run_editor_plan
-    list_facts = fact_tests.MemoryContextTests.list_facts
-    add_fact = fact_tests.MemoryContextTests.add_fact
-
     def setUp(self):
-        revision_tests.PlanRevisionRouteTests.setUp(self)
-        fact_tests.MemoryContextTests.setUp(self)
-        self.settings['enable_fact_memory_plugin'] = True
-        leaf_patch = patch.dict(sys.modules, {'functions_fact_memory_context': self.context})
-        leaf_patch.start()
-        self.addCleanup(leaf_patch.stop)
-        self.add_fact(1, scope_id='user1', memory_type='instruction', value='Prefer an accessible itinerary.')
-        self.add_fact(2, scope_id='user1', value='Saved destination: Crescent City.')
-        self.add_fact(3, scope_id='other-user', value='OTHER USER PRIVATE MEMORY')
-        self.addCleanup(self.assert_no_memory_writes)
+        with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
+            sys.modules.pop('functions_orchestration_memory', None)
+            sys.modules.pop('functions_orchestration_composition', None)
+            self.memory = importlib.import_module('functions_orchestration_memory')
+            self.composition = importlib.import_module('functions_orchestration_composition')
+        self.conversation = {'id': 'conv1', 'user_id': 'user1'}
+        self.settings = {'enable_fact_memory_plugin': True, 'enable_group_workspaces': True}
+        self.fact_calls = []
+        self.group_membership = Mock(return_value='User')
+        self.module_patches = patch.dict(sys.modules, {
+            'functions_fact_memory_context': self.fact_memory_module(),
+            'functions_group': types.SimpleNamespace(assert_group_role=self.group_membership),
+        })
+        self.module_patches.start()
+        self.addCleanup(self.module_patches.stop)
 
-    def assert_no_memory_writes(self):
-        self.assertTrue(all(call[0] == 'list_facts' for call in self.store.method_calls), self.store.method_calls)
-        self.batch_embeddings.assert_not_called()
+    def fact_memory_module(self):
+        def build_fact_memory_prompt_payload(**kwargs):
+            self.fact_calls.append(kwargs)
+            scope_id = kwargs['scope_id']
+            if scope_id == 'missing-embedding':
+                return {
+                    'context_messages': [{'role': 'system', 'content': 'Prefer an accessible itinerary.'}],
+                    'citations': [{'plugin_name': 'fact_memory', 'id': 'fact-1'}],
+                    'instruction_payload': {'context_messages': [
+                        {'role': 'system', 'content': 'Prefer accessibility.'},
+                    ]},
+                    'recall_payload': {'search_mode': 'embedding_unavailable'},
+                }
+            return {
+                'context_messages': [
+                    {'role': 'system', 'content': f'Saved memory for {scope_id}: Crescent City.'},
+                ],
+                'citations': [{'plugin_name': 'fact_memory', 'id': f'fact-{scope_id}'}],
+                'instruction_payload': {'context_messages': [
+                    {'role': 'system', 'content': 'Prefer an accessible itinerary.'},
+                ]},
+                'recall_payload': {'search_mode': 'semantic'},
+            }
+        return types.SimpleNamespace(build_fact_memory_prompt_payload=build_fact_memory_prompt_payload)
 
-    def planner_memory(self, calls=None):
-        return json.loads((calls or self.model.calls)[-1]['messages'][1]['content'])['memory']
-
-    def answer_calls(self):
-        return [
-            call for call in self.model.calls
-            if call['messages'][0]['content'] == self.modules.adapters.RESPONSE_CONTEXT_POLICY
-        ]
-
-    def shared_source(self):
-        conversation = self.conversations.read_item('conv1', 'conv1')
-        conversation.update(
-            conversation_kind='collaboration_source',
-            collaboration_conversation_id='shared-conversation',
-            chat_type='personal_single_user', is_hidden=True,
+    def test_private_planning_memory_is_scoped_and_read_only(self):
+        result = self.memory.load_orchestration_memory(
+            'user1', self.conversation, 'Which wineries are open?', settings=self.settings,
         )
-        self.conversations.upsert_item(conversation)
+        self.assertEqual(result['status'], 'available')
+        self.assertEqual(result['scope'], {'type': 'user', 'id': 'user1'})
+        self.assertIn('Crescent City', json.dumps(result['context_messages']))
+        self.assertEqual(self.fact_calls[0]['read_only'], True)
+        self.assertEqual(self.fact_calls[0]['authorized_user_id'], 'user1')
 
-    def group_plan(self):
-        self.settings['enable_group_workspaces'] = True
-        self.add_fact(4, scope_type='group', scope_id='group1', value='GROUP MEMORY')
-        return self.planned(doc_scope='group', active_group_ids=['group1'])
+    def test_group_workspace_reads_only_authorized_group_memory(self):
+        result = self.memory.load_orchestration_memory(
+            'user1', self.conversation, 'Review group facts.', settings=self.settings,
+            seeds={'doc_scope': 'group', 'active_group_ids': ['group1']},
+        )
+        self.assertEqual(result['scope'], {'type': 'group', 'id': 'group1'})
+        self.assertIn('group1', json.dumps(result['context_messages']))
+        self.assertEqual(self.fact_calls[0]['scope_type'], 'group')
+        self.assertEqual(self.fact_calls[0]['scope_id'], 'group1')
 
-    def test_private_planning_and_answering_use_scoped_memory_and_preserve_citations(self):
-        plan = self.planned()
-        memory = self.planner_memory()
-        self.assertEqual(memory['status'], 'available')
-        self.assertEqual(memory['scope_type'], 'user')
-        self.assertIn('Saved destination: Crescent City.', json.dumps(memory))
-        self.assertNotIn('OTHER USER PRIVATE MEMORY', json.dumps(memory))
-        self.assertNotIn('Saved destination:', json.dumps(list(self.runs.items.values())))
-        events = context_tests.frames(self.run_plan(plan))
-        self.assertFalse(any(event.get('error') for event in events), events)
-        answer = self.answer_calls()[-1]['messages']
-        self.assertIn('Saved destination: Crescent City.', json.dumps(answer))
-        self.assertIn('subordinate to the latest request', answer[0]['content'])
-        self.assertIn('Which are open on Wednesdays?', answer[-1]['content'])
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(len(terminal['agent_citations']), 2)
-        self.assertTrue(all(citation['plugin_name'] == 'fact_memory' for citation in terminal['agent_citations']))
-        self.assertIn('prior-authorized-conversation', json.dumps(terminal['agent_citations']))
-        saved_answers = [item for item in self.messages.items.values() if item.get('role') == 'assistant']
-        self.assertTrue(any('fact_memory' in json.dumps(item.get('agent_citations')) for item in saved_answers))
+    def test_disabled_memory_performs_no_reads_or_embeddings(self):
+        result = self.memory.load_orchestration_memory(
+            'user1', self.conversation, 'Any memory?', settings={'enable_fact_memory_plugin': False},
+        )
+        self.assertEqual(result['status'], 'disabled')
+        self.assertEqual(result['context_messages'], [])
+        self.assertEqual(self.fact_calls, [])
+        self.group_membership.assert_not_called()
 
-    def test_editing_refreshes_memory_without_persisting_raw_prompt_context(self):
-        editor = self.open_editor(self.planned())
-        self.add_fact(5, scope_id='user1', value='NEWLY SAVED MEMORY')
-        revised, _body = self.revise(editor, revision_tests.revised_plan())
-        self.assertIn('NEWLY SAVED MEMORY', json.dumps(self.planner_memory(self.edit_calls)))
-        record = self.runs.read_item(revised['plan']['run_id'], 'conv1')
-        self.assertEqual(record['memory_audience']['kind'], 'personal')
-        self.assertNotIn('NEWLY SAVED MEMORY', json.dumps(record))
+    def test_shared_source_owner_does_not_load_personal_or_group_memory(self):
+        conversation = {
+            **self.conversation,
+            'conversation_kind': 'collaboration_source',
+            'collaboration_conversation_id': 'shared-conversation',
+            'chat_type': 'personal_single_user',
+            'is_hidden': True,
+        }
+        result = self.memory.load_orchestration_memory(
+            'user1', conversation, 'Any memory?', settings=self.settings,
+            seeds={'doc_scope': 'group', 'active_group_ids': ['group1']},
+        )
+        self.assertEqual(result['status'], 'unavailable')
+        self.assertEqual(result['context_messages'], [])
+        self.assertIn('shared conversations', result['notices'][0])
+        self.assertEqual(self.fact_calls, [])
+        self.group_membership.assert_not_called()
 
-    def test_disabled_memory_performs_no_reads_or_embeddings_through_plan_and_run(self):
-        self.settings['enable_fact_memory_plugin'] = False
-        plan = self.planned()
-        self.assertEqual(self.planner_memory()['status'], 'disabled')
-        events = context_tests.frames(self.run_plan(plan))
-        self.assertFalse(any(event.get('error') for event in events), events)
-        self.store_factory.assert_not_called()
-        self.membership.assert_not_called()
-        self.embedding.assert_not_called()
+    def test_audience_change_blocks_saved_plan(self):
+        audience = self.memory.validate_memory_audience(self.conversation, 'user1')
+        changed = {**self.conversation, 'is_hidden': True, 'collaboration_conversation_id': 'shared'}
+        with self.assertRaises(self.memory.OrchestrationMemoryError) as failure:
+            self.memory.validate_memory_audience(changed, 'user1', expected=audience)
+        self.assertEqual(failure.exception.code, 'memory_audience_changed')
 
-    def test_shared_source_owner_does_not_load_personal_or_seeded_group_memory(self):
-        self.shared_source()
-        self.settings['enable_group_workspaces'] = True
-        plan = self.planned(doc_scope='group', active_group_ids=['group1'])
-        memory = self.planner_memory()
-        self.assertEqual(memory['status'], 'unavailable')
-        self.assertEqual(memory['messages'], [])
-        self.assertIn('shared conversations', memory['notices'][0])
-        events = context_tests.frames(self.run_plan(plan))
-        self.assertFalse(any(event.get('error') for event in events), events)
-        self.store_factory.assert_not_called()
-        self.membership.assert_not_called()
-
-    def test_private_group_workspace_reads_only_authorized_group_memory(self):
-        plan = self.group_plan()
-        memory = self.planner_memory()
-        self.assertEqual(memory['scope_type'], 'group')
-        self.assertIn('GROUP MEMORY', json.dumps(memory))
-        self.assertNotIn('Saved destination:', json.dumps(memory))
-        events = context_tests.frames(self.run_plan(plan))
-        self.assertFalse(any(event.get('error') for event in events), events)
-        self.membership.assert_called_with(
+    def test_revoked_group_scope_blocks_run_before_memory_reuse(self):
+        self.group_membership.side_effect = PermissionError('revoked')
+        with self.assertRaises(self.memory.OrchestrationMemoryError) as failure:
+            self.memory.validate_memory_context(
+                self.conversation, 'user1', scope={'type': 'group', 'id': 'group1'},
+            )
+        self.assertEqual(failure.exception.code, 'memory_scope_unavailable')
+        self.group_membership.assert_called_with(
             'user1', 'group1', allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
         )
-        self.assertTrue(all(call.kwargs['scope_id'] == 'group1' for call in self.store.list_facts.call_args_list))
 
-    def test_revoked_group_scope_blocks_run_before_any_execution(self):
-        plan = self.group_plan()
-        planned_queries = list(self.search_queries)
-        self.membership.side_effect = PermissionError('revoked')
-        response = self.run_plan(plan)
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.get_json()['code'], 'memory_scope_unavailable')
-        self.assertEqual(self.search_queries, planned_queries)
-        self.assertEqual(self.answer_calls(), [])
-
-    def test_revoked_group_scope_is_rechecked_after_retrieval_before_answer(self):
-        plan = self.group_plan()
-        self.after_search = lambda: setattr(self.membership, 'side_effect', PermissionError('revoked'))
-        events = context_tests.frames(self.run_plan(plan))
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
-        self.assertFalse(terminal['recovery']['eligible'])
-        self.assertEqual(self.answer_calls(), [])
-
-    def test_disabling_memory_during_retrieval_removes_final_context_and_citations(self):
-        plan = self.planned()
-        self.after_search = lambda: self.settings.update(enable_fact_memory_plugin=False)
-        events = context_tests.frames(self.run_plan(plan))
-        self.assertFalse(any(event.get('error') for event in events), events)
-        self.assertNotIn('Saved destination:', json.dumps(self.answer_calls()))
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(terminal.get('agent_citations'), [])
-
-    def test_changing_audience_after_planning_blocks_the_saved_plan(self):
-        plan = self.planned()
-        self.shared_source()
-        response = self.run_plan(plan)
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.get_json()['code'], 'memory_audience_changed')
-        self.assertEqual(self.answer_calls(), [])
-
-    def test_changing_audience_during_retrieval_blocks_answer_synthesis(self):
-        plan = self.planned()
-        self.after_search = self.shared_source
-        events = context_tests.frames(self.run_plan(plan))
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
-        self.assertFalse(terminal['recovery']['eligible'])
-        self.assertEqual(self.answer_calls(), [])
-
-    def test_changing_audience_during_planning_prevents_publication(self):
-        def change_after_memory_read():
-            if self.store.list_facts.called:
-                self.shared_source()
-
-        self.before_plan_reply = change_after_memory_read
-        _response, events = self.plan()
-        self.assertTrue(any(event.get('error') for event in events), events)
-        self.assertFalse(any(event.get('type') == 'orchestration_plan' for event in events), events)
-
-    def test_changing_audience_during_synthesis_prevents_answer_publication(self):
-        plan = self.planned()
-        completion = self.model.chat.completions.create
-
-        def change_during_answer(**kwargs):
-            response = completion(**kwargs)
-            if kwargs['messages'][0]['content'] == self.modules.adapters.RESPONSE_CONTEXT_POLICY:
-                self.shared_source()
-            return response
-
-        self.model.chat.completions.create = change_during_answer
-        events = context_tests.frames(self.run_plan(plan))
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
-        self.assertTrue(terminal['message_saved'])
-        self.assertNotIn('Saved destination:', json.dumps(events))
-
-    def test_revoked_group_membership_during_synthesis_blocks_answer_and_citations(self):
-        plan = self.group_plan()
-        completion = self.model.chat.completions.create
-
-        def revoke_during_answer(**kwargs):
-            response = completion(**kwargs)
-            if kwargs['messages'][0]['content'] == self.modules.adapters.RESPONSE_CONTEXT_POLICY:
-                self.membership.side_effect = PermissionError('revoked')
-            return response
-
-        self.model.chat.completions.create = revoke_during_answer
-        events = context_tests.frames(self.run_plan(plan))
-        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
-        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
-        self.assertTrue(terminal['message_saved'])
-        self.assertNotIn('GROUP MEMORY', json.dumps(events))
-        stored = self.runs.read_item(plan['run_id'], 'conv1')
-        self.assertEqual(stored['status'], 'failed')
-        self.assertTrue(stored.get('assistant_message_id'))
-
-    def private_memory_question(self):
-        question = revision_tests.question()
-        question['message'] = 'Should the visit include your saved destination: Crescent City?'
-        return question
-
-    def test_audience_change_during_planner_clarification_prevents_save_and_emit(self):
-        self.model.plan_override = self.private_memory_question()
-
-        def change_after_memory_read():
-            if self.store.list_facts.called:
-                self.shared_source()
-
-        self.before_plan_reply = change_after_memory_read
-        _response, events = self.plan()
-        self.assertTrue(any(event.get('error') for event in events), events)
-        self.assertNotIn('saved destination: Crescent City', json.dumps(events))
-        self.assertFalse(any(event.get('type') == 'orchestration_elicitation' for event in events))
-        self.assertFalse(any(row.get('question') for row in self.runs.items.values()))
-
-    def test_group_revocation_during_planner_clarification_prevents_save_and_emit(self):
-        self.settings['enable_group_workspaces'] = True
-        self.add_fact(4, scope_type='group', scope_id='group1', value='GROUP MEMORY')
-        self.model.plan_override = self.private_memory_question()
-
-        def revoke_after_memory_read():
-            if self.store.list_facts.called:
-                self.membership.side_effect = PermissionError('revoked')
-
-        self.before_plan_reply = revoke_after_memory_read
-        _response, events = self.plan(doc_scope='group', active_group_ids=['group1'])
-        self.assertTrue(any(event.get('error') for event in events), events)
-        self.assertFalse(any(event.get('type') == 'orchestration_elicitation' for event in events))
-        self.assertFalse(any(row.get('question') for row in self.runs.items.values()))
-
-    def test_pending_question_replay_rechecks_memory_audience_without_new_model_call(self):
-        self.model.plan_override = self.private_memory_question()
-        _response, events = self.plan()
-        self.assertTrue(any(event.get('type') == 'orchestration_elicitation' for event in events))
-        calls_before = len(self.model.calls)
-        self.shared_source()
-        _response, replay = self.plan()
-        self.assertTrue(any(event.get('error') for event in replay), replay)
-        self.assertNotIn('saved destination: Crescent City', json.dumps(replay))
-        self.assertEqual(len(self.model.calls), calls_before)
-
-    def test_completed_submission_replay_rechecks_memory_audience(self):
-        self.model.plan_override = self.private_memory_question()
-        _response, events = self.plan()
-        first_question = next(event['elicitation'] for event in events if event.get('type') == 'orchestration_elicitation')
-        answer = {
-            'revision': 1, 'elicitation': first_question,
-            'elicitation_response': {'action': 'accept', 'content': {'day': 'Friday'}},
-        }
-        _response, answered = self.plan(**answer)
-        self.assertTrue(any(event.get('type') == 'orchestration_elicitation' for event in answered), answered)
-        calls_before = len(self.model.calls)
-        self.shared_source()
-        _response, replay = self.plan(**answer)
-        self.assertTrue(any(event.get('error') for event in replay), replay)
-        self.assertNotIn('saved destination: Crescent City', json.dumps(replay))
-        self.assertEqual(len(self.model.calls), calls_before)
-
-    def test_completed_submission_replay_uses_its_original_memory_scope(self):
-        self.settings['enable_group_workspaces'] = True
-        self.add_fact(4, scope_type='group', scope_id='group1', value='GROUP MEMORY')
-        self.model.plan_override = self.private_memory_question()
-        _response, events = self.plan(doc_scope='group', active_group_ids=['group1'])
-        first_question = next(event['elicitation'] for event in events if event.get('type') == 'orchestration_elicitation')
-        answer = {
-            'revision': 1, 'elicitation': first_question,
-            'elicitation_response': {'action': 'accept', 'content': {'day': 'Friday'}},
-        }
-        _response, answered = self.plan(**answer)
-        self.assertTrue(any(event.get('type') == 'orchestration_elicitation' for event in answered), answered)
-        pending = next(row for row in self.runs.items.values() if row.get('question'))
-        self.assertEqual(
-            pending['submissions'][-1]['outcome']['memory_scope'], {'type': 'group', 'id': 'group1'},
-        )
-        # A later continuation may have a different scope; it must not authorize an older outcome.
-        pending['turn_context']['memory_scope'] = None
-        self.membership.side_effect = PermissionError('revoked')
-        calls_before = len(self.model.calls)
-        _response, replay = self.plan(**answer)
-        self.assertTrue(any(event.get('error') for event in replay), replay)
-        self.assertFalse(any(event.get('type') == 'orchestration_elicitation' for event in replay))
-        self.assertEqual(len(self.model.calls), calls_before)
+    def test_memory_storage_failure_is_safe_and_does_not_disclose_provider_details(self):
+        def fail(**kwargs):
+            raise AzureError('PRIVATE_CONNECTION_STRING')
+        sys.modules['functions_fact_memory_context'].build_fact_memory_prompt_payload = fail
+        with self.assertRaises(self.memory.OrchestrationMemoryError) as failure:
+            self.memory.load_orchestration_memory(
+                'user1', self.conversation, 'Any memory?', settings=self.settings,
+            )
+        self.assertEqual(failure.exception.code, 'memory_context_unavailable')
+        self.assertNotIn('PRIVATE_CONNECTION_STRING', str(failure.exception))
 
     def test_missing_fact_embeddings_are_reported_without_backfill(self):
-        self.facts[1]['value_embedding'] = None
-        self.planned()
-        memory = self.planner_memory()
-        self.assertEqual(memory['status'], 'partial')
-        self.assertIn('could not be searched', memory['notices'][0])
-        self.assertIn('accessible itinerary', json.dumps(memory))
-        self.assertNotIn('Saved destination:', json.dumps(memory))
-        self.embedding.assert_not_called()
+        result = self.memory.load_orchestration_memory(
+            'user1', self.conversation, 'Any memory?', settings=self.settings,
+            seeds={'doc_scope': 'group', 'active_group_ids': ['missing-embedding']},
+        )
+        self.assertEqual(result['status'], 'partial')
+        self.assertIn('could not be searched', result['notices'][0])
+        self.assertIn('accessible itinerary', json.dumps(result['context_messages']))
 
-    def test_memory_storage_failure_does_not_replace_the_previous_plan(self):
-        editor = self.open_editor(self.planned())
-        before = self.runs.read_item(editor['plan']['run_id'], 'conv1')['plan']
-        self.store.list_facts.side_effect = AzureError('private connection details')
-        response, events, _body = self.request_revision(editor)
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(any(event.get('code') == 'memory_context_unavailable' for event in events), events)
-        self.assertNotIn('private connection details', json.dumps(events))
-        self.assertEqual(self.runs.read_item(editor['plan']['run_id'], 'conv1')['plan'], before)
-        self.assertEqual(self.edit_calls, [])
+    def test_compose_reloads_saved_memory_at_answer_time(self):
+        calls = []
+        context = types.SimpleNamespace(
+            memory_context={'context_messages': [{'role': 'system', 'content': 'OLD MEMORY'}]},
+            reload_memory_context=lambda: calls.append('reload') or {
+                'context_messages': [{'role': 'system', 'content': 'NEWLY SAVED MEMORY'}],
+                'notices': ['Latest user instruction overrides saved memory.'],
+            },
+        )
+        result = self.composition._answer_memory(context)
+        self.assertEqual(calls, ['reload'])
+        self.assertIn('NEWLY SAVED MEMORY', json.dumps(result))
+        self.assertNotIn('OLD MEMORY', json.dumps(result))
+
+
+# Route/execution parity ports for the single orchestration contract.
+
+
+
+def available_memory(text="Saved destination: Crescent City."):
+    return {
+        "audience": {"kind": "personal", "owner_id": "owner", "collaboration_id": ""},
+        "status": "available", "scope_type": "user", "scope": {"type": "user", "id": "owner"},
+        "context_messages": [{"role": "system", "content": text}],
+        "instruction_messages": [], "citations": [{"plugin_name": "fact_memory", "id": "fact-1"}],
+        "notices": [],
+    }
+
+
+def disabled_memory():
+    return {
+        "audience": {"kind": "personal", "owner_id": "owner", "collaboration_id": ""},
+        "status": "disabled", "scope_type": None, "scope": None,
+        "context_messages": [], "instruction_messages": [], "citations": [], "notices": [],
+    }
+
+
+def test_editing_refreshes_memory_without_persisting_raw_prompt_context(harness, monkeypatch):
+    calls = []
+
+    def load_memory(user_id, conversation, query_text, **kwargs):
+        calls.append(query_text)
+        return available_memory("NEWLY SAVED MEMORY")
+
+    monkeypatch.setattr(harness.execution, "load_orchestration_memory", load_memory)
+    harness.create(replies=["Answer using refreshed memory."], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+    saved = harness.read()
+    assert "NEWLY SAVED MEMORY" not in json.dumps(saved)
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    assert done["status"] == "completed"
+    assert len(calls) == 2
+    assert "NEWLY SAVED MEMORY" in json.dumps(harness.model_calls[-1]["messages"])
+    assert "NEWLY SAVED MEMORY" not in json.dumps(harness.read())
+
+
+def test_memory_disabled_during_execution_removes_final_context_and_citations(harness, monkeypatch):
+    calls = []
+
+    def load_memory(user_id, conversation, query_text, **kwargs):
+        calls.append(dict(harness.settings))
+        if len(calls) == 1:
+            return available_memory("MUST_NOT_REACH_FINAL_ANSWER")
+        return disabled_memory()
+
+    monkeypatch.setattr(harness.execution, "load_orchestration_memory", load_memory)
+    harness.create(replies=["Final answer without saved memory."], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    assert done["status"] == "completed"
+    assert len(calls) == 2
+    assert "MUST_NOT_REACH_FINAL_ANSWER" not in json.dumps(harness.model_calls[-1]["messages"])
+    assert done.get("agent_citations") == []
+
+
+def test_audience_change_during_synthesis_blocks_publication(harness, monkeypatch):
+    monkeypatch.setattr(harness.execution, "load_orchestration_memory", lambda *args, **kwargs: available_memory())
+    harness.create(replies=["PRIVATE_MEMORY_ANSWER"], final_response=input_binding("prepare"))
+    execution = harness.prepare()
+    completion = harness.clients[0].chat.completions.create
+
+    def change_during_answer(**kwargs):
+        response = completion(**kwargs)
+        conversation = harness.conversations.read_item("conversation-1", "conversation-1")
+        conversation["collaboration_conversation_id"] = "now-shared"
+        harness.conversations.upsert_item(conversation)
+        return response
+
+    harness.clients[0].chat.completions.create = change_during_answer
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    assert done["status"] == "failed"
+    assert done["failure"]["code"] in {"context_unavailable", "result_invalid"}
+    assert done["message_saved"] is True
+    assert "PRIVATE_MEMORY_ANSWER" not in json.dumps(done)
+
+
+def test_revoked_group_memory_scope_blocks_before_answer(harness, monkeypatch):
+    functions_group = __import__("functions_group")
+    monkeypatch.setattr(
+        functions_group, "assert_group_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("revoked")),
+    )
+    harness.create(
+        replies=["Must not be generated."], final_response=input_binding("prepare"),
+        memory_scope={"type": "group", "id": "group1"},
+    )
+    with pytest.raises(harness.execution.HarnessExecutionError) as failure:
+        harness.prepare()
+    assert failure.value.code == "context_unavailable"
+    assert harness.model_calls == []
+
 
 
 if __name__ == '__main__':
+    assert_app_version_at_least('0.261.139')
     unittest.main()

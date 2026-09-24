@@ -1,6 +1,6 @@
 # Orchestration deliverables
 
-**Version: 0.261.135** (tracked in `application/single_app/config.py`)
+**Version: 0.261.139** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.135**
 
@@ -32,8 +32,7 @@ approves one at a time.
 
 ## Dependencies
 
-- Chat orchestration with Gather / Reason / Render plans (`enable_chat_orchestration` and
-  the Gather / Reason / Render setting). Legacy plans are unchanged.
+- Chat orchestration (`enable_chat_orchestration`). New plans use Gather / Reason / Render; plans created by an earlier orchestration version are not opened or rerun.
 - File deliverables need the `render_file` capability and the shared export catalog.
 - Generated images need `enable_image_generation` and a configured image model that the
   image service projection reports as supported. Orchestration grants no new access: the
@@ -258,7 +257,7 @@ everything you asked to receive."
 
 ## Testing and validation
 
-- `functional_tests/test_orchestration_deliverables.py` uses the real headless harness with
+- `functional_tests/test_orchestration_deliverables.py` uses the real headless orchestration runner with
   offline model replies and a doubled image service call. It covers:
   - validation, linking, derived visuals, optional image inputs, the Image control, and the
     image budget and options;

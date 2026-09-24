@@ -1,7 +1,7 @@
 # functions_orchestration_services.py
-"""Bind initialized application resources to the retained-result harness.
+"""Bind initialized application resources to the retained-result runtime.
 
-Version: 0.261.135
+Version: 0.261.139
 
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or

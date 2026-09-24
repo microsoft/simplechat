@@ -16,6 +16,7 @@
 
 import { createConversation } from './endpoints';
 import { ApiError } from './apiClient';
+import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
     beginPlanEdit,
     cancelOrchestrationRun,
@@ -400,7 +401,7 @@ async function dispatchPlan(
                         ...reasoningAdjustments, ...(normalized.reasoning_adjustments ?? []),
                     ]),
                 });
-                if (normalized.planner_contract_version === 2 && Array.isArray(exportCatalog)) {
+                if (Array.isArray(exportCatalog)) {
                     useOrchestrationStore.getState().updateRunRecovery(normalized.run_id, {
                         export_catalog: exportCatalog,
                     });
@@ -851,12 +852,14 @@ async function executeSavedPlan(
         );
     }
     if (result.rejection) {
+        const legacyMessage = result.rejection.code === 'legacy_plan' ? result.rejection.message : null;
         const current = useOrchestrationStore.getState();
         current.releaseRunAttempt(runId);
         current.updateRunRecovery(runId, {
             run_id: runId, turn_id: turnId, plan, status: plan.status,
             transportUnknown: false,
-            error: 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+            error: legacyMessage
+                || 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
         });
         useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
         return;
@@ -970,7 +973,14 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
                 ? 'The server is saving the final response. Checking saved status; no retry will start.'
                 : 'The server has not confirmed a final result. Execution may still be running. Checking saved status; no retry will start.',
         });
-    } catch {
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            useOrchestrationStore.getState().updateRunRecovery(runId, {
+                checking: false, transportUnknown: false, busy: false, error: legacyMessage,
+            });
+            return;
+        }
         useOrchestrationStore.getState().updateRunRecovery(runId, {
             checking: false, transportUnknown: true,
             error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
@@ -1077,6 +1087,11 @@ export async function retryOrchestrationRun(
         await executeSavedPlan(conversationId, plan.turn_id, plan);
         return {};
     } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            fail(legacyMessage);
+            return {};
+        }
         const info = error instanceof ApiError ? orchestrationErrorInfo(error.payload, error.status) : {};
         if (info.code) recoverySubmissions.delete(key);
         const payload = error instanceof ApiError && error.payload && typeof error.payload === 'object'
@@ -1130,8 +1145,13 @@ export async function runPreparedOrchestrationRetry(conversationId: string, runI
         current.setActiveTurn(conversationId, plan.turn_id);
         useOrchestrationStore.setState({ recoveryTarget: null });
         await executeSavedPlan(conversationId, plan.turn_id, plan);
-    } catch {
-        fail();
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            useOrchestrationStore.getState().updateRunRecovery(runId, { error: legacyMessage });
+        } else {
+            fail();
+        }
     } finally {
         recoveryLocks.delete(key);
     }
@@ -1157,9 +1177,11 @@ export async function cancelOrchestration(conversationId: string, runId?: string
         await cancelOrchestrationRun(run.runId, conversationId);
         if (activeControllers.get(conversationId) === controller) controller?.abort();
         await reconcileOrchestrationRun(conversationId, run.runId);
-    } catch {
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
         useOrchestrationStore.getState().updateRunRecovery(run.runId, {
-            error: 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
+            error: legacyMessage
+                || 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
         });
     }
 }
@@ -1551,10 +1573,14 @@ export async function previewPlanEditorRevision(target: PlanEditorTarget, runId:
         }
         useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
             (editor) => ({ ...editor, previewPlan: plan }));
-    } catch {
+    } catch (error) {
         if (stillSelected()) {
+            const legacyMessage = legacyPlanErrorMessage(error);
             useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
-                (editor) => ({ ...editor, error: 'This revision could not be previewed. The current plan is unchanged.' }));
+                (editor) => ({
+                    ...editor,
+                    error: legacyMessage || 'This revision could not be previewed. The current plan is unchanged.',
+                }));
         }
     } finally {
         if (stillSelected()) {

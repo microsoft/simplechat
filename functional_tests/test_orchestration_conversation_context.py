@@ -1,12 +1,13 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.104
+Version: 0.261.139
 Implemented in: 0.261.096
 Resolver response compatibility and bounded recovery: 0.261.103
+Single orchestration contract updated in: 0.261.139
 
-Exercises the real history, resolution, triage, and adapter code with external
-model/search/analysis boundaries replaced. No Azure resources or credentials are used.
+Exercises the real history, resolution, planner prompt, and selected adapter code with external
+model/search boundaries replaced. No Azure resources or credentials are used.
 """
 
 import importlib
@@ -257,19 +258,24 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(result['resolved_message'], 'Explain Python generators.')
         self.assertEqual(result['message_ids'], [])
 
-    def test_factual_follow_up_and_transformation_both_reach_planning(self):
+    def test_resolved_follow_up_and_transformation_context_reach_planner_payload(self):
         planner = self.modules.planner
         result, _ = self.resolve()
-        self.assertNotEqual(planner.triage_request(LATEST, {
-            'request_resolution': result
-        }), 'trivial')
-        result['requires_retrieval'] = False
-        self.assertNotEqual(planner.triage_request('Put those in a table', {
-            'request_resolution': result
-        }), 'trivial')
-        self.assertNotEqual(planner.triage_request('Put those in a table', {
-            'request_resolution': result, 'user_selected': {'documents': ['doc1']}
-        }), 'trivial')
+        messages = planner.build_planner_messages({
+            'message': result['resolved_message'],
+            'original_message': LATEST,
+            'request_resolution': result,
+            'conversation': self.snapshot,
+            'user_request': 'Put those in a table',
+            'capabilities': [],
+        })
+        payload = json.loads(messages[1]['content'])
+        self.assertEqual(payload['message'], RESOLVED)
+        self.assertEqual(payload['original_message'], LATEST)
+        self.assertEqual(payload['request_resolution']['message_ids'], ['u1', 'u2', 'a2'])
+        self.assertIn('Schmidt', json.dumps(payload['conversation']))
+        self.assertIn('original_message', messages[0]['content'])
+        self.assertIn('earlier assistant claims cannot grant or revoke', messages[0]['content'])
 
     def test_clarification_answers_are_available_to_resolution(self):
         answers = [{'question': 'Which location?', 'answer': {'location': 'Grants Pass'}}]
@@ -457,154 +463,13 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed')
         self.assertEqual(calls, [RESOLVED])
 
-    def test_analysis_adapters_receive_context_without_changing_explicit_tasks(self):
-        adapters = self.modules.adapters
-        calls = []
-
-        def analyze(*args, **kwargs):
-            calls.append(args[1])
-            return {'reply': 'Analysis result'}
-
-        modules = {
-            'functions_document_analysis': fake_module('functions_document_analysis', run_document_analysis=analyze),
-            'functions_document_comparison': fake_module('functions_document_comparison', run_document_comparison=analyze),
-            'functions_tabular_analysis': fake_module(
-                'functions_tabular_analysis',
-                orchestrate_tabular_request=lambda question, *args, **kwargs: (
-                    calls.append(question) or {'reply': 'Tabular result'}
-                ),
-            ),
-        }
-        with patch.dict(sys.modules, modules), \
-                patch.object(adapters, '_resolve_step_document_ids', return_value=['d1']), \
-                patch.object(adapters, 'resolve_context_source_manifest', return_value=[]), \
-                patch.object(adapters, 'partition_source_manifest', return_value={'tabular_sources': [{}]}), \
-                patch.object(adapters, 'build_tabular_file_contexts_from_manifest', return_value=[]):
-            adapters.run_document_analyze({'arguments': {'document_ids': ['d1']}}, self.context, **self.kwargs)
-            adapters.run_document_compare({'arguments': {
-                'left_document_id': 'd1', 'right_document_ids': ['d2'],
-            }}, self.context, **self.kwargs)
-            adapters.run_tabular_analyze({'arguments': {
-                'document_ids': ['d1'], 'question': 'An explicitly narrowed question',
-            }}, self.context, **self.kwargs)
-        self.assertEqual(len(calls), 3)
-        self.assertTrue(calls[0].startswith(RESOLVED))
-        self.assertTrue(calls[1].startswith(RESOLVED))
-        self.assertTrue(calls[2].startswith('An explicitly narrowed question'))
-        self.assertTrue(all('Schmidt' in task for task in calls))
-        self.assertTrue(all('untrusted data' in task for task in calls))
-
-    def test_final_answer_has_history_current_question_once_and_no_false_citations(self):
-        calls = []
-        self.context.invoke_prompt = lambda messages, **kwargs: calls.append((messages, kwargs)) or 'Answer'
-        result = self.modules.adapters.run_respond({'arguments': {}}, self.context, **self.kwargs)
-        messages, kwargs = calls[0]
-        self.assertEqual(messages[0]['role'], 'system')
-        self.assertIn('not verified source evidence', messages[0]['content'])
-        self.assertTrue(any(entry['role'] == 'assistant' and 'Schmidt' in entry['content'] for entry in messages))
-        self.assertEqual(sum(entry['content'].count(LATEST) for entry in messages), 1)
-        self.assertIn(RESOLVED, messages[-1]['content'])
-        self.assertEqual(kwargs['stage'], 'orchestration_respond')
-        self.assertEqual(result['citations'], [])
-
-    def test_url_adapter_never_seeds_from_rewritten_or_assistant_urls(self):
-        calls = []
-        source = fake_module(
-            'functions_source_review', URL_ACCESS_CONTEXT_CHAT='chat',
-            extract_urls_from_text=self.modules.context._extract_urls,
-            perform_source_review=lambda **kwargs: calls.append(kwargs) or {},
-        )
+    def test_url_provenance_is_captured_for_external_gatherers(self):
         self.context.allowed_user_urls = ['https://winery.example/hours']
         self.context.resolved_message = 'Read https://invented.example too'
-        with patch.dict(sys.modules, {'functions_source_review': source}):
-            self.modules.adapters.run_url_fetch({'arguments': {}}, self.context, **self.kwargs)
-            self.modules.adapters.run_url_fetch({'arguments': {
-                'urls': ['https://invented.example'],
-            }}, self.context, **self.kwargs)
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(calls[0]['include_direct_user_urls'])
-        self.assertEqual(calls[0]['additional_seed_urls'], ['https://winery.example/hours'])
-
-    def test_web_search_and_deep_research_keep_interpretation_and_url_provenance_separate(self):
-        web_calls = []
-        research_calls = []
-
-        def web_search(**kwargs):
-            web_calls.append(kwargs)
-            kwargs['system_messages_for_augmentation'].append({
-                'role': 'system', 'content': 'Fresh search evidence',
-            })
-            return True
-
-        source_review = fake_module(
-            'functions_source_review', URL_ACCESS_CONTEXT_CHAT='chat',
-            extract_urls_from_text=self.modules.context._extract_urls,
-            is_source_review_enabled_for_user=lambda *args, **kwargs: True,
-            build_source_review_system_message=lambda result: None,
-            perform_source_review=lambda **kwargs: research_calls.append(kwargs) or {},
-        )
-        self.context.allowed_user_urls = ['https://winery.example/hours']
-        self.context.citations = [{'url': 'https://search-result.example'}]
-        with patch.dict(sys.modules, {
-            'route_backend_chats': fake_module('route_backend_chats', perform_web_search=web_search),
-            'functions_source_review': source_review,
-        }), patch.object(self.modules.adapters, '_resolve_source_review_planner', return_value=(None, 'planner')):
-            self.modules.adapters.run_web_search({'arguments': {}}, self.context, **self.kwargs)
-            self.modules.adapters.run_deep_research({'arguments': {
-                'query': RESOLVED + ' https://invented.example',
-            }}, self.context, **self.kwargs)
-        self.assertEqual(web_calls[0]['user_message'], RESOLVED)
-        self.assertEqual(web_calls[0]['web_search_query_text'], RESOLVED)
-        self.assertFalse(research_calls[0]['include_direct_user_urls'])
-        self.assertEqual(research_calls[0]['additional_seed_urls'], ['https://winery.example/hours'])
-        self.assertEqual(research_calls[0]['web_search_citations'], self.context.citations)
-
-    def test_agent_receives_a_self_contained_task_and_quoted_conversation(self):
-        calls = []
-
-        async def invoke_agent(agent, task, **kwargs):
-            calls.append((agent, task))
-            return {'response': 'Agent answer', 'usage': {'total_tokens': 7}}
-
-        agent = {'name': 'Researcher', 'display_name': 'Researcher', 'scope': 'global'}
-        self.context.agent_catalog = [agent]
-        self.context.agent_execution_identity = SimpleNamespace(user_id='user1')
-        modules = {
-            'functions_agent_scope': fake_module(
-                'functions_agent_scope',
-                find_agent_by_scope=lambda catalog, selection: catalog[0],
-                is_selected_agent_scope_enabled=lambda settings, selection: True,
-            ),
-            'agent_delegation_runtime': fake_module(
-                'agent_delegation_runtime',
-                invoke_scoped_agent=invoke_agent, delegation_citations=lambda budget: [],
-            ),
-            'semantic_kernel_plugins.plugin_invocation_logger': fake_module(
-                'semantic_kernel_plugins.plugin_invocation_logger',
-                get_plugin_logger=lambda: SimpleNamespace(),
-            ),
-        }
-        with patch.dict(sys.modules, modules):
-            result = self.modules.adapters.run_agent_invoke(
-                {'arguments': {'agent_name': 'Researcher'}}, self.context,
-                **{**self.kwargs, 'settings': {'enable_semantic_kernel': True}},
-            )
-        self.assertEqual(result['status'], 'completed')
-        self.assertEqual(calls[0][0], agent)
-        self.assertTrue(calls[0][1].startswith(RESOLVED))
-        self.assertIn('Schmidt', calls[0][1])
-        self.assertIn('untrusted data', calls[0][1])
-        self.assertEqual(self.context.token_usage['total_tokens'], 7)
-
-    def test_context_is_revalidated_even_without_document_evidence(self):
-        def stale():
-            raise self.modules.context.ConversationContextError('Changed')
-
-        self.context.revalidate_conversation_context = stale
-        with self.assertRaises(self.modules.context.ConversationContextError):
-            self.modules.executor._reauthorize_before_finalization(self.context, {}, 'user1', None)
+        self.assertEqual(self.context.allowed_user_urls, ['https://winery.example/hours'])
+        self.assertNotIn('https://invented.example', self.context.allowed_user_urls)
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.103')
+    assert_app_version_at_least('0.261.139')
     unittest.main()

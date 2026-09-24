@@ -1,13 +1,13 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.135
+Version: 0.261.139
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
-Answer-writing steps also receive what the answer step of earlier orchestration received:
-saved memory, the resolved conversation references, the knowledge basis the planner
-declared, a disclosure of optional inputs that could not be gathered, and guidance for the
-visuals the planner named (charts, Mermaid diagrams, image proposal cards).
+Answer-writing steps receive saved memory, the resolved conversation references, the
+knowledge basis the planner declared, a disclosure of optional inputs that could not be
+gathered, and guidance for the visuals the planner named (charts, Mermaid diagrams, image
+proposal cards).
 """
 
 import json
@@ -162,7 +162,6 @@ def _answer_visuals(step, settings, context):
         'explicit_chart': VISUAL_CHART in flags, 'chart': VISUAL_CHART in flags, 'proactive_chart': False,
         'diagram': VISUAL_DIAGRAM in flags,
         'image': images and VISUAL_IMAGE_PROPOSAL in flags,
-        'image_required': False,
     }
 
 

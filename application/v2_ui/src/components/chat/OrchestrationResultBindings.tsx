@@ -6,7 +6,6 @@ import { bindsGeneratedImage, describeInputBinding } from '../../lib/orchestrati
 export function OrchestrationResultBindings({
     plan, step,
 }: { plan: OrchestrationPlan; step: OrchestrationStep }) {
-    if (plan.planner_contract_version !== 2) return null;
     const inputs = Object.entries(step.inputs ?? {});
     const outputs = step.outputs ?? [];
     const dependencies = step.depends_on.map((id) =>

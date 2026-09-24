@@ -1,8 +1,9 @@
 # test_orchestration_external_bootstrap.py
 """
 Application-owned current identity and acquisition wiring for retained results.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Runs the real bootstrap, authentication factory and directory reader with only
 the MSAL client, Cosmos storage and HTTP wire doubled. No tenant calls, consent
@@ -118,7 +119,7 @@ def retained_url_runtime(runtime, monkeypatch):
     executor = importlib.import_module("functions_orchestration_executor")
     url = "https://example.com/source"
     settings = {
-        "enable_chat_orchestration": True, "enable_chat_orchestration_harness": False,
+        "enable_chat_orchestration": True,
         "enable_url_access": True, "require_member_of_url_access_user": True,
         "chat_orchestration_enabled_capabilities": [], "max_generated_chat_artifact_size_mb": 1,
     }

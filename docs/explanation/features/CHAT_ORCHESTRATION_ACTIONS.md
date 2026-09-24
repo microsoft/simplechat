@@ -15,9 +15,9 @@ integration without loading a configured agent, its instructions or its unrelate
 For example, a ticket-status question can use an existing ticket-system action and pass
 its findings to the normal answer step.
 
-This is an optional knowledge capability, not a new output or do-something phase. It
-retains the selected action's existing behavior: knowledge-phase placement is planning
-intent, not a promise that the action cannot modify data.
+This is an optional Gather capability, not a file-rendering or do-something
+mode. It retains the selected action's existing behavior: Gather placement is
+planning intent, not a promise that the action cannot modify data.
 
 ## Dependencies
 
@@ -39,9 +39,9 @@ direct action selection; agent delegation continues through **Ask an agent**.
    action manifests, credentials, endpoints or connection settings to the planner or
    browser.
 2. **Plan and validate.** The capability is `action_invoke`, labeled **Use an action**, in
-   phase `knowledge`. A step takes `action_ref` and `task`. Its scope-qualified reference
-   distinguishes identically named actions without itself granting access. Normal
-   `depends_on` relationships order work before the terminal `respond` step.
+   role **Gather**. A step takes `action_ref` and `task`. Its scope-qualified reference
+   distinguishes identically named actions without itself granting access. Named
+   dependencies make the findings available to later `compose` or rendering work.
 3. **Review the selected resource.** Optional `plan.inputs.actions` contains only
    `{action_ref, display_name, scope_label}` entries. The existing Run view matches each
    action step by reference and renders its authoritative display name and scope as text.
@@ -80,8 +80,7 @@ runs after the action's own loop:
 
 The step summary reports the result, for example "Used Simulation (3 function calls) and
 created 1 chart." The chart travels in the step's tool citations, untruncated, and the answer
-step places it. Runs under the opt-in Gather/Reason/Render harness do not add the chart
-sub-step.
+places it from the planned visual binding.
 
 The existing `/api/v2/orchestration/plan` and `/api/v2/orchestration/run` endpoints and
 plan approval/editing flow remain the entry points. There is no second action allowlist,
@@ -166,13 +165,13 @@ See [Orchestration settings](../../admin/orchestration.md) for rollout and limit
 - `ui_tests/test_admin_orchestration_actions.py` exercises the real schema-backed admin
   page and template switch in Playwright without writing live settings.
 - `ui_tests/test_v2_orchestration_actions.py` uses the existing orchestration browser
-  harness for action identity/scope matching, safe rendering, status changes, normal plan
+  coverage for action identity/scope matching, safe rendering, status changes, normal plan
   edits and older-plan compatibility. It also runs the real controller against done
   frames with tool citations, checking that the standard message Sources panel keeps
   tools separate from web references and renders tool results as inert text.
 - Backend action catalog, planning and runtime tests cover authorization, isolated
   execution and failure behavior. The existing orchestration tests remain relevant for
-  phase ordering, executor behavior and citation persistence.
+  dependency ordering, executor behavior and citation persistence.
 - `functional_tests/test_orchestration_action_runtime.py` also covers the chart sub-step:
   exact rows become at most 200 chronological points, the sub-step cannot call the action,
   saved instructions reach it while facts do not, and capturing runs never add it.
@@ -195,5 +194,5 @@ checked against the configured integration.
   fallback when an action fails.
 - The focused loop can make model calls and incur both model and integration costs. No
   fixed cost or speed improvement is guaranteed.
-- No output-phase orchestration, action-management page or operation-permission editor
+- No action-management page or operation-permission editor
   is introduced.

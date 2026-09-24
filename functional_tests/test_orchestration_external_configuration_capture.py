@@ -1,10 +1,11 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.134
+Version: 0.261.139
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
 Pre-acquisition provider failure classification updated in: 0.261.134
+Single orchestration contract updated in: 0.261.139
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed.
@@ -966,13 +967,12 @@ def test_research_refuses_binding_replacement_during_capture(capture_runtime, fi
     assert not runtime.state.web and not runtime.state.pages
 
 
-def test_research_does_not_rediscover_planner_after_capture(capture_runtime, monkeypatch):
+def test_research_does_not_rediscover_planner_after_capture(capture_runtime):
     runtime = capture_runtime
-    resolve = Mock(side_effect=AssertionError("A captured planner must not be resolved again."))
-    monkeypatch.setattr(runtime.modules.adapters, "_resolve_source_review_planner", resolve)
+    # Only the captured binding supplies the research planner; no fallback resolver exists.
+    assert not hasattr(runtime.modules.adapters, "_resolve_source_review_planner")
     _, result = run_gather(runtime, "deep_research")
     assert result["status"] == "failed"
-    resolve.assert_not_called()
     assert runtime.state.web == [] and runtime.state.pages == []
 
 
@@ -1020,19 +1020,6 @@ def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(captu
     )
     assert preparations == [expected]
     invocation.assert_called_once()
-
-
-@pytest.mark.parametrize("capability", ["web_search", "url_fetch", "deep_research"])
-def test_v1_gather_does_not_require_or_call_capture(capture_runtime, capability):
-    runtime = capture_runtime
-    runtime.context.plan_contract_version = 1
-    callback = Mock(side_effect=AssertionError("Legacy execution must not capture v2 configuration."))
-    runtime.context.capture_external_source_configuration = callback
-    runtime.context.external_source_preflight = callback
-    _, result = run_gather(runtime, capability)
-    assert result["status"] == "completed", result
-    callback.assert_not_called()
-    assert runtime.state.web or runtime.state.pages
 
 
 @pytest.mark.parametrize("capability", ["web_search", "url_fetch", "deep_research", "agent_invoke", "action_invoke"])

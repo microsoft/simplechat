@@ -47,7 +47,7 @@ Storage version, result version, and calculation-specification version are
 independent. They are internal compatibility boundaries, not settings users
 must choose before asking a question.
 
-The [orchestration result foundation](ORCHESTRATION_RENDERING_HARNESS.md),
+The [orchestration result foundation](ORCHESTRATION_GATHER_REASON_RENDER.md),
 implemented in **0.261.125** (Refs #1509), can wrap an already authorized bounded
 `SavedAnalysisInput` in `SavedAnalysisRecordSource`. Its ordered public-values
 projection retains complete records, evidence, coverage, and source snapshots
@@ -73,14 +73,14 @@ or a stale guard fails before source analysis; the adapter never invents a token
 fingerprint or workflow identity.
 
 `get_adapter(name, contract_version=2)` lazily resolves `compose` and excludes
-legacy `respond`. The default `get_adapter(name)` and `name=` keyword calls keep
+the removed `respond` capability. The default `get_adapter(name)` and `name=` keyword calls keep
 the existing version-1 registry unchanged. The runtime owns selecting the plan
 contract; model arguments cannot select this dispatch policy.
 
 For v2 tabular steps, the adapter delegates only to the existing
 `NativeOrchestrationBridge` returned by the private server callback
 `context.native_bridge_for_step(step, context)`. Missing or invalid binding fails
-before legacy planning or publication. The bridge owns strict single-source
+before planning or publication. The bridge owns strict single-source
 admission, native execution and full named-result retention; its typed pending
 result and opaque wait handle are returned unchanged. Runtime continuation uses
 that bridge's `resume`, not another adapter execution. Version-1 tabular behavior
@@ -141,7 +141,7 @@ Outside that scope, the default standalone Markdown/download behavior and normal
 workflow operations are unchanged. Private saved results and checkpoints are
 still permitted. External action destinations and their broader side-effect
 governance are not redesigned by this policy. This boundary does not enable a
-new planner contract by itself; runtime admission, optional-output binding,
+orchestration planning by itself; runtime admission, optional-output binding,
 native compute-only handoff, and explicit rendering remain separately owned
 integration work.
 
@@ -318,7 +318,7 @@ replace that proof or a missing search run.
 The supported version-2 research subset uses deterministic query/link planning.
 It refuses server profiles with web search, more than one search query and
 `deep_research_enable_query_planning`, or both `enable_deep_source_review` and
-`source_review_enable_llm_planning`. The legacy planner tries different token and
+`source_review_enable_llm_planning`. The planner tries different token and
 temperature controls, and its model wrapper can further transform them.
 Constructor defaults do not prove those effective request controls, so these
 modes remain unavailable before search/page effects; the adapter does not
@@ -484,7 +484,7 @@ precision, complete-record paging, source revocation, and publication
 authorization/retry behavior. Scale fixtures use supported configured limits;
 they do not raise default limits for users.
 
-The local browser harness exercises both chat interfaces and the classic
+The local browser tests exercise both chat interfaces and the classic
 workflow publication controls, including keyboard/mobile behavior and
 unavailable results. Principal regression files include
 `test_document_analysis_final_results.py`, `test_saved_analysis_store_integration.py`,

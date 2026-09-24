@@ -84,7 +84,6 @@ export function OrchestrationDeliverables({
     /** The approval card lists only what the user asked for, without step names. */
     compact?: boolean;
 }) {
-    if (plan.planner_contract_version !== 2) return null;
     const rows = deliverableRows(plan, statusOf ?? (() => undefined), edits);
     const asked = rows.filter((row) => row.deliverable.requested === 'explicit');
     const added = compact ? [] : rows.filter((row) => row.deliverable.requested !== 'explicit');

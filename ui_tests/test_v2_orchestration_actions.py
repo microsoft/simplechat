@@ -1,7 +1,7 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.098
+Version: 0.261.139
 Implemented in: 0.261.098
 
 Use the existing orchestration harness and real stores/components. Serve its
@@ -76,13 +76,14 @@ def _plan(action_ref="group:ticket-lookup"):
         "run_id": "action-run",
         "turn_id": TURN,
         "conversation_id": CONVERSATION,
+        "planner_contract_version": 2,
         "intent": {"summary": "Find the ticket status", "complexity": "simple"},
         "inputs": {"documents": [], "web": False, "actions": copy.deepcopy(ACTIONS)},
         "steps": [
             {
                 "step_id": "lookup",
                 "capability_id": "action_invoke",
-                "phase": "knowledge",
+                "role": "gather",
                 "title": "Look up the ticket",
                 "rationale": "Use the existing ticket integration.",
                 "arguments": {"action_ref": action_ref, "task": "Find the status of ticket 1234."},
@@ -91,17 +92,24 @@ def _plan(action_ref="group:ticket-lookup"):
                 "enabled": True,
                 "estimated_cost": "medium",
                 "status": "pending",
+                "outputs": [{"name": "tool_result", "kind": "json-v1"}],
             },
             {
                 "step_id": "answer",
-                "capability_id": "respond",
-                "phase": "reasoning",
+                "capability_id": "compose",
+                "role": "reason",
                 "title": "Write the answer",
                 "arguments": {},
-                "depends_on": ["lookup"],
+                "depends_on": [],
+                "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                "delivers": ["answer"],
                 "estimated_cost": "low",
             },
         ],
+        "final_response": {"version": "orchestration-input-binding-v1", "step_id": "answer",
+                           "output_name": "answer", "existing_result": None},
+        "deliverables": [{"id": "answer", "kind": "answer", "requested": "explicit",
+                          "status": "planned", "description": "Ticket status answer."}],
         "approval": {"mode": "manual", "state": "pending", "timeout_seconds": 10},
         "status": "awaiting_approval",
     }
@@ -144,11 +152,11 @@ def test_action_identity_is_matched_by_reference_not_name_or_position(action_pag
     expect(_action_row(action_page)).to_contain_text("Use an action")
     expect(_action_row(action_page)).to_contain_text("Find the status of ticket 1234.")
     expect(_action_row(action_page)).not_to_contain_text(action["action_ref"])
-    sections = action_page.locator("#mount-a section")
-    expect(sections.nth(0)).to_contain_text("Gathering knowledge")
-    expect(sections.nth(0)).to_contain_text("Look up the ticket")
-    expect(sections.nth(1)).to_contain_text("Reasoning")
-    expect(sections.nth(1)).to_contain_text("Write the answer")
+    headings = action_page.locator("#mount-a h3").evaluate_all("(items) => items.map((item) => item.innerText.trim())")
+    assert "Gather" in headings
+    assert "Reason" in headings
+    expect(action_page.locator("[data-step-id='lookup']")).to_contain_text("Look up the ticket")
+    expect(action_page.locator("[data-step-id='answer']")).to_contain_text("Write the answer")
 
 
 def test_action_labels_are_inert_and_only_public_metadata_survives(action_page):
@@ -207,21 +215,21 @@ def test_missing_or_unmatched_action_metadata_does_not_guess_identity(action_pag
     expect(_action_row(action_page)).not_to_contain_text("Personal")
 
 
-def test_older_non_action_plan_remains_unchanged(action_page):
+def test_non_action_plan_remains_unchanged(action_page):
     plan = _plan()
     del plan["inputs"]["actions"]
     plan["steps"] = [plan["steps"][1]]
     plan["steps"][0]["depends_on"] = []
     _seed(action_page, plan)
     expect(action_page.get_by_text("Write the answer", exact=True)).to_be_visible()
-    expect(action_page.get_by_text("Always runs", exact=True)).to_be_visible()
+    expect(action_page.get_by_text("Always runs", exact=True)).to_have_count(0)
     expect(action_page.get_by_test_id("orchestration-action-input")).to_have_count(0)
 
 
 def test_action_step_keeps_existing_narrowing_controls(action_page):
     _seed(action_page, _plan())
     row = _action_row(action_page)
-    row.get_by_text("Will run", exact=True).click()
+    row.get_by_role("checkbox").click()
     expect(row.get_by_text("Skipped", exact=True)).to_be_visible()
     expect(row.get_by_test_id("orchestration-action-input")).to_contain_text("Support team")
     disabled = action_page.evaluate(
@@ -234,8 +242,8 @@ def test_action_step_keeps_existing_narrowing_controls(action_page):
         {"conversation": CONVERSATION, "turn": TURN},
     )
     assert disabled["disabled_step_ids"] == ["lookup"]
-    row.get_by_text("Skipped", exact=True).click()
-    expect(row.get_by_text("Will run", exact=True)).to_be_visible()
+    row.get_by_role("checkbox").click()
+    expect(row.get_by_text("Run Look up the ticket", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("status,summary", [
@@ -259,7 +267,13 @@ def test_action_identity_remains_visible_with_live_status(action_page, status, s
         {"conversation": CONVERSATION, "turn": TURN, "status": status, "summary": summary},
     )
     row = _action_row(action_page)
-    expect(row.get_by_text(status, exact=True)).to_be_visible()
+    labels = {
+        "running": "Gathering",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled",
+    }
+    expect(row.get_by_text(labels[status], exact=True).first).to_be_visible()
     expect(row.get_by_text(summary, exact=True)).to_be_visible()
     expect(row.get_by_test_id("orchestration-action-input")).to_contain_text("Support team")
     expect(row.get_by_role("checkbox")).to_have_count(0)

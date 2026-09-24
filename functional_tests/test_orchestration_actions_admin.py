@@ -1,8 +1,9 @@
 # test_orchestration_actions_admin.py
 """
 Functional coverage for the orchestration action admin opt-in.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.098
+Single plan contract (no mandatory answering step): 0.261.139
 
 Validate the declarative schema, template-form normalizer and generic V2 partial
 updates without initializing the application or contacting Azure.
@@ -42,7 +43,6 @@ def _form_normalizer():
     namespace = {
         "safe_int_with_source": INT_UTILS.safe_int_with_source,
         "all_capability_ids": REGISTRY.all_capability_ids,
-        "TERMINAL_CAPABILITY_ID": REGISTRY.TERMINAL_CAPABILITY_ID,
         "get_field_definition": FIELDS.get_field_definition,
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
@@ -75,7 +75,7 @@ class OrchestrationActionsAdminTests(unittest.TestCase):
         projection = REGISTRY.build_capability_client_projection(REGISTRY.CAPABILITY_REGISTRY)
         action = next(item for item in projection if item["id"] == "action_invoke")
         self.assertEqual(action["label"], action_options[0]["label"])
-        self.assertEqual(action["phase"], "knowledge")
+        self.assertEqual(action["role"], "gather")
 
     def test_v2_switch_coercion_changes_only_the_submitted_setting(self):
         current = {ACTION_FLAG: True, CAPABILITIES_KEY: ["web_search"]}
@@ -125,20 +125,23 @@ class OrchestrationActionsAdminTests(unittest.TestCase):
         })
         self.assertIn(CAPABILITIES_KEY, errors)
 
-    def test_template_form_round_trips_the_opt_in_and_terminal_step(self):
+    def test_template_form_round_trips_the_opt_in_without_adding_capabilities(self):
         form = MultiDict([
             ("enable_chat_orchestration", "on"),
             (ACTION_FLAG, "on"),
             (CAPABILITIES_KEY, "action_invoke"),
+            (CAPABILITIES_KEY, "respond"),
         ])
         enabled = NORMALIZE_FORM(form)
         self.assertIs(enabled[ACTION_FLAG], True)
-        self.assertEqual(enabled[CAPABILITIES_KEY], ["action_invoke", "respond"])
+        # The retired answering step is not a registered capability and is not kept.
+        self.assertEqual(enabled[CAPABILITIES_KEY], ["action_invoke"])
+        self.assertNotIn("enable_chat_orchestration_harness", enabled)
 
         form.pop(ACTION_FLAG)
         disabled = NORMALIZE_FORM(form, {ACTION_FLAG: True})
         self.assertIs(disabled[ACTION_FLAG], False)
-        self.assertEqual(disabled[CAPABILITIES_KEY], ["action_invoke", "respond"])
+        self.assertEqual(disabled[CAPABILITIES_KEY], ["action_invoke"])
 
     def test_template_empty_and_full_capability_lists_still_require_opt_in(self):
         options = FIELDS.get_field_definition(CAPABILITIES_KEY)["options"]
@@ -151,11 +154,12 @@ class OrchestrationActionsAdminTests(unittest.TestCase):
                 form[ACTION_FLAG] = "on"
                 self.assertIs(NORMALIZE_FORM(form)[ACTION_FLAG], True)
 
-    def test_full_legacy_selection_does_not_implicitly_grant_harness_capabilities(self):
-        selection = REGISTRY.all_capability_ids()
-        form = MultiDict((CAPABILITIES_KEY, value) for value in selection)
-        normalized = NORMALIZE_FORM(form)
-        self.assertEqual(normalized[CAPABILITIES_KEY], selection)
+    def test_every_registered_capability_is_an_admin_option(self):
+        options = [option["value"] for option in FIELDS.get_field_definition(CAPABILITIES_KEY)["options"]]
+        self.assertEqual(sorted(options), sorted(REGISTRY.all_capability_ids()))
+        # A full selection is stored as no opinion, so later capabilities stay enabled.
+        form = MultiDict((CAPABILITIES_KEY, value) for value in options)
+        self.assertEqual(NORMALIZE_FORM(form)[CAPABILITIES_KEY], [])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.135"
+version: "0.261.139"
 ---
 
 ## How to use this reference
@@ -301,10 +301,10 @@ authorized capabilities, while selected documents, agents, workspaces, and filte
 retain their intended constraints. Deep Research can be selected without also
 selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
 rather than sending your prompt to the image model, it combines with every other
-control and shapes the plan. Since **0.261.135**, a Gather / Reason / Render plan
-treats it as a request for images, which the plan generates as its own tasks when it
-runs; an older phase-based plan asks the answer for image proposal cards that each
-generate an image only when you approve them.
+control and shapes the plan. Since **0.261.139**, every new orchestration plan
+uses Gather / Reason / Render: Image is treated as a request for images, which
+the plan generates as its own tasks when it runs. Suggested images remain
+approval cards that generate only when you approve them.
 
 Every Orchestrate request now invokes the planner, even a short question or
 acknowledgment. The planner may choose a direct answer; no topic rule forces
@@ -333,7 +333,7 @@ the request.
 
 | Control or output | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. A Gather / Reason / Render plan must include at least one image you asked for; each is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files. An older phase-based plan includes at least one image proposal card instead, generated only when you approve it. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
+| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. Each requested image is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files when the file source uses it. Suggested images remain approval cards generated only when you approve them. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
 | Inline charts | Charts numeric results. When data comes from an action, the chart is drawn from the exact retrieved rows; long series show up to 200 points and keep each segment's highest and lowest value. | Plot telemetry, metrics, or other series without copying values into a prompt. | `enable_chat_orchestration` |
 | Mermaid diagrams | Draws flows, architectures, sequences, and relationships the gathered information describes. | Get an editable, accessible diagram instead of a picture of one. | `enable_chat_orchestration` |
 
@@ -376,16 +376,15 @@ plan rather than editing the main chat message. See
 | Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
-| Run task switch (contract-v2 plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A server-supplied contract-v2 plan that has not started |
-| Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A contract-v2 task with an output schema |
-| Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A contract-v2 view with a server-provided catalog; absent otherwise |
-| Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A contract-v2 plan view without a loaded catalog |
+| Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |
+| Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
+| Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
+| Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
 
 Version-aware inspection was implemented in **0.261.127** (Refs:
 microsoft/simplechat#1509; `application/single_app/config.py`). Gather / Reason /
 Render are roles, not global phase buckets: consecutive groups preserve the
-server's actual dependency order, including repeated roles. Older saved plans
-keep their legacy interpretation. Named input descriptions identify the producer,
+server's actual dependency order, including repeated roles. Plans created by an earlier orchestration version show the stable message that they can't be opened or rerun. Named input descriptions identify the producer,
 output, and whether partial data is allowed. The server remains authoritative
 for binding compatibility, capability admission, source access, and limits.
 

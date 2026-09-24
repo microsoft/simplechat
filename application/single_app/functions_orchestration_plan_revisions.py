@@ -5,7 +5,10 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.135
+A run whose plan came from the removed legacy contract is refused with
+``LEGACY_PLAN_MESSAGE`` wherever it would be opened, edited, restored or run.
+
+Version: 0.261.139
 """
 
 import hashlib
@@ -27,7 +30,8 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef
 from functions_orchestration_schema import (
-    PlanValidationError, apply_plan_edits, plan_contract_version, summarize_plan,
+    LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, apply_plan_edits, is_legacy_plan,
+    plan_contract_version, summarize_plan,
 )
 from functions_orchestration_timing import initial_execution_deadline
 
@@ -61,7 +65,7 @@ _PLAN_FIELDS = (
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
-    'optional', 'enabled', 'estimated_cost', 'phase', 'status',
+    'optional', 'enabled', 'estimated_cost', 'status',
     'role', 'inputs', 'outputs', 'model_task', 'model_binding', 'delivers',
 )
 _QUESTION_FIELDS = (
@@ -93,8 +97,19 @@ class PlanRevisionError(ValueError):
         self.current_run_id = current_run_id
 
 
+def legacy_plan_error():
+    """The one refusal for a saved plan from the removed legacy contract."""
+    return PlanRevisionError(LEGACY_PLAN_MESSAGE, code=LEGACY_PLAN_CODE, status_code=409)
+
+
 def plan_revision_contract_version(plan, context=None):
-    """Use the saved plan's contract, never the rollout setting for new plans."""
+    """The saved plan's contract marker, checked against its saved turn context.
+
+    A plan from the removed legacy contract gets the one legacy refusal. A saved turn
+    context that disagrees with its plan is a changed plan, whatever its marker says.
+    """
+    if is_legacy_plan(plan):
+        raise legacy_plan_error()
     try:
         version = plan_contract_version(plan)
         if (
@@ -229,8 +244,13 @@ def _same_lineage(left, right):
     )
 
 
-def read_revision_run(run_id, user_id, conversation_id, *, follow_current=False):
-    """Read an owned raw run, optionally following only its own revision chain."""
+def read_revision_run(run_id, user_id, conversation_id, *, follow_current=False, allow_legacy=False):
+    """Read an owned raw run, optionally following only its own revision chain.
+
+    A run from the removed legacy contract raises ``legacy_plan_error()`` unless
+    ``allow_legacy`` is set, which only conversation deletion does, so it can remove the
+    run's saved data. Nothing else reads, reopens or interprets such a run.
+    """
     if not all(_valid_id(value) for value in (run_id, user_id, conversation_id)):
         raise _not_found()
     original = None
@@ -255,6 +275,8 @@ def read_revision_run(run_id, user_id, conversation_id, *, follow_current=False)
         ):
             raise _not_found()
         if not follow_current or 'superseded_by_run_id' not in record:
+            if not allow_legacy and is_legacy_plan(record.get('plan')):
+                raise legacy_plan_error()
             return record
         target = record['superseded_by_run_id']
         if not _valid_id(target):
@@ -341,8 +363,9 @@ def _normalize_edits(plan, edits):
         raise _invalid('Invalid step or document removals.')
     if any(not _valid_id(step_id) or step_id not in steps for step_id in disabled):
         raise _invalid('Choose steps from the current plan.')
-    if any(steps[step_id].get('capability_id') == 'respond' for step_id in disabled):
-        raise _invalid('The final answering step cannot be disabled.')
+    final_response = plan.get('final_response')
+    if isinstance(final_response, dict) and final_response.get('step_id') in disabled:
+        raise _invalid('The step that writes the chat answer cannot be disabled.')
     clean_removed = {}
     for step_id, document_ids in removed.items():
         if (
@@ -858,7 +881,7 @@ def claim_plan_run(
 
     Optional catalogs and profiles describe current server admission, not saved
     permissions. They validate the frozen plan before any execution lease write.
-    V2 start and deadline use server settings and share that same conditional write.
+    The start and deadline use server settings and share that same conditional write.
     """
     record = read_revision_run(run_id, user_id, conversation_id)
     if record.get('checkpoints_deleted') or record.get('latest_attempt_run_id'):
@@ -879,12 +902,12 @@ def claim_plan_run(
     contract_version = plan_revision_contract_version(record['plan'], record)
     existing_results = resolve_revision_result_aliases(
         record, user_id, result_alias_resolver=result_alias_resolver,
-    ) if contract_version == 2 else None
-    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
+    )
+    admitted_catalog = resolve_revision_export_catalog(export_catalog)
     plan = apply_plan_edits(
         deepcopy(record['plan']), overlay, existing_results=existing_results,
         contract_version=contract_version, export_catalog=admitted_catalog,
-        composition_profiles=composition_profiles if contract_version == 2 else None,
+        composition_profiles=composition_profiles,
     )
     started_at = _now()
     now = started_at.isoformat()
@@ -907,8 +930,7 @@ def claim_plan_run(
         'execution_lease': lease_fields(), 'recovery_version': uuid.uuid4().hex,
         'attempt_index': record.get('attempt_index') or 1,
     })
-    if contract_version == 2:
-        updates['execution_deadline_at'] = initial_execution_deadline(started_at, settings)
+    updates['execution_deadline_at'] = initial_execution_deadline(started_at, settings)
     if conversation_context is not None:
         if not isinstance(conversation_context, dict):
             raise _invalid('Invalid conversation context.')

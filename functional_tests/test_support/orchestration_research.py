@@ -2,8 +2,9 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.104
+Version: 0.261.139
 Implemented in: 0.261.099
+Single orchestration contract updated in: 0.261.139
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.
@@ -15,14 +16,16 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import re
 import sys
 import types
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, ClassVar, Dict, Iterable, List, Optional
 from unittest.mock import patch
 
 
@@ -31,6 +34,78 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 CASE_FILE = Path(__file__).with_name("orchestration_research_cases.json")
 PLANNER_FILE = "functions_orchestration_planner.py"
 REGISTRY_FILE = "functions_orchestration_registry.py"
+RESULT_CONTRACTS_FILE = "functions_orchestration_result_contracts.py"
+OFFLINE_CAPABILITY_IDS = {
+    "document_search", "document_analyze", "document_compare", "web_search",
+    "url_fetch", "deep_research", "action_invoke", "agent_invoke", "compose",
+}
+
+
+class _OfflineDraftValidator:
+    """Small schema validator for the synthetic planner cases."""
+
+    def __init__(self, schema):
+        self.schema = schema if isinstance(schema, dict) else {}
+
+    def is_valid(self, value):
+        if self.schema.get("type") == "object" and not isinstance(value, dict):
+            return False
+        required = self.schema.get("required") or []
+        if any(name not in value for name in required):
+            return False
+        properties = self.schema.get("properties") or {}
+        for name, rules in properties.items():
+            if name not in value or not isinstance(rules, dict):
+                continue
+            current = value[name]
+            expected = rules.get("type")
+            if expected == "string" and not isinstance(current, str):
+                return False
+            if expected == "array" and not isinstance(current, list):
+                return False
+            if expected == "object" and not isinstance(current, dict):
+                return False
+            if rules.get("minLength") and isinstance(current, str) and len(current) < rules["minLength"]:
+                return False
+            if "enum" in rules and current not in rules["enum"]:
+                return False
+        return True
+
+
+def _deliverable_availability(settings, *, capabilities, unavailable=None, export_catalog=None):
+    available = {capability["id"] for capability in capabilities or ()}
+    return {
+        "answer": {"status": "available"} if "compose" in available else {
+            "status": "unavailable", "reason": "capability_not_enabled_for_orchestration",
+        },
+        "files": {},
+        "images": {},
+        "charts": {},
+        "diagrams": {},
+        "facts": [],
+        "recipes": [],
+    }
+
+
+def _compile_deliverables(
+    deliverables, steps, *, final_response=None, availability=None, image_selected=False,
+):
+    values = [copy.deepcopy(item) for item in deliverables or [] if isinstance(item, dict)]
+    if not values and final_response:
+        values = [{
+            "id": "answer", "kind": "answer", "requested": "explicit",
+            "description": "The answer", "status": "planned", "implicit": True,
+        }]
+    return values
+
+
+def _offline_registry_capabilities(registry, candidate_ids=None):
+    selected = set(candidate_ids) if candidate_ids is not None else OFFLINE_CAPABILITY_IDS
+    return [
+        registry["_resolve_descriptor"](descriptor)
+        for descriptor in registry["CAPABILITY_REGISTRY"]
+        if selected is None or descriptor["id"] in selected
+    ]
 
 
 class OfflineAPIError(RuntimeError):
@@ -58,6 +133,40 @@ def _assignment(tree, name):
 
 def _definitions(filename, seed=None, names=None):
     """Load real functions/constants with only explicitly supplied, offline dependencies."""
+    if filename == REGISTRY_FILE:
+        # The registry's table reads two constants from the pure result-contract module.
+        contracts = _definitions(
+            RESULT_CONTRACTS_FILE, names={"IMAGE_ASSET_KIND", "RESULT_KINDS"},
+        )
+        seed = {
+            "IMAGE_ASSET_KIND": contracts["IMAGE_ASSET_KIND"], "RESULT_KINDS": contracts["RESULT_KINDS"],
+            "deepcopy": copy.deepcopy, **(seed or {}),
+        }
+    elif filename == "functions_orchestration_schema.py":
+        contracts = _definitions(RESULT_CONTRACTS_FILE)
+        seed = {
+            **contracts,
+            "Draft202012Validator": _OfflineDraftValidator,
+            "SchemaError": ValueError,
+            "ServiceRequestError": RuntimeError,
+            "APIConnectionError": RuntimeError,
+            "APITimeoutError": RuntimeError,
+            "AgentDelegationTimeout": RuntimeError,
+            "ModelCatalogError": RuntimeError,
+            "DeliverableError": type("DeliverableError", (ValueError,), {"code": "deliverables_invalid"}),
+            "compile_deliverables": _compile_deliverables,
+            **(seed or {}),
+        }
+    elif filename == PLANNER_FILE:
+        seed = {
+            "build_deliverable_availability": _deliverable_availability,
+            "TASKS": {},
+            "ROUTING_INSTRUCTIONS": "",
+            "assign_step_models": lambda *_args, **_kwargs: None,
+            "authorized_routing_candidates": lambda *_args, **_kwargs: [],
+            "ModelCatalogError": RuntimeError,
+            **(seed or {}),
+        }
     path = APP_ROOT / filename
     tree = ast.parse(path.read_text(encoding="utf-8"))
     body = []
@@ -70,8 +179,11 @@ def _definitions(filename, seed=None, names=None):
             if any(name.isupper() and (names is None or name in names) for name in targets):
                 body.append(node)
     namespace = {
-        "json": json, "logging": logging, "re": re, "uuid": uuid, "hashlib": hashlib,
+        "json": json, "logging": logging, "math": math, "re": re, "uuid": uuid,
+        "hashlib": hashlib, "copy": copy, "deepcopy": copy.deepcopy,
+        "dataclass": dataclass, "fields": fields,
         "Any": Any, "Dict": Dict, "Iterable": Iterable, "List": List, "Optional": Optional,
+        "ClassVar": ClassVar,
         # Production telemetry is intentionally disabled for this isolated evaluation.
         "log_event": lambda *args, **kwargs: None,
         **(seed or {}),
@@ -125,6 +237,9 @@ def planner_runtime():
         "normalize_user_roles", "has_deep_research_app_role", "is_source_review_enabled_for_user",
     }))
     registry = _definitions(REGISTRY_FILE)
+    registry["_build_capabilities"] = lambda candidate_ids=None: _offline_registry_capabilities(
+        registry, candidate_ids,
+    )
     schema = _definitions("functions_orchestration_schema.py", seed=registry)
     events = _definitions("functions_orchestration_events.py")
     delegation = _definitions("functions_agent_delegation.py", names={"AGENT_PLUGIN_TYPE"})
@@ -175,7 +290,7 @@ def capture_baseline():
     for name, tree, source in (
         ("PLANNER_SYSTEM_PROMPT", planner_tree, planner_source),
         ("build_planner_messages", planner_tree, planner_source),
-        ("CAPABILITY_REGISTRY", registry_tree, registry_source),
+        ("capabilities_for_contract", registry_tree, registry_source),
         ("build_planner_capability_projection", registry_tree, registry_source),
         ("build_planner_context", context_tree, context_source),
         ("resolve_seeds", context_tree, context_source),
@@ -232,7 +347,7 @@ def capture_baseline():
             for case in suite["cases"]
         },
         "capabilities": registry["build_planner_capability_projection"](
-            registry["CAPABILITY_REGISTRY"]
+            _offline_registry_capabilities(registry)
         ),
         "parameters": {
             "max_tokens": ast.literal_eval(_assignment(planner_tree, "PLANNER_MAX_TOKENS").value),
@@ -263,6 +378,10 @@ def case_inputs(runtime, suite, case):
         "user_roles": copy.deepcopy(case.get("user_roles", suite["user_roles"])),
         "message_urls": [],
         "agent_catalog": copy.deepcopy(case.get("agents", [])),
+        "external_source_admission": lambda **_kwargs: None,
+        "external_source_preflight": lambda **_kwargs: None,
+        "capture_external_source_configuration": lambda *_args, **_kwargs: None,
+        "external_source_authorizer": lambda **_kwargs: None,
     }
     signals = runtime.context["build_conversation_signals"](
         case.get("prior_messages", []), case["message"],

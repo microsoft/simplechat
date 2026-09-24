@@ -1,8 +1,9 @@
 # test_orchestration_research_capture.py
 """Bounded research acquisition through actual construction, engines and readers.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Only external storage, metadata/provider transport and page I/O are doubled.
 The real planner constructor, attestor, current reader and result facade run.
@@ -493,21 +494,6 @@ def test_research_retains_last_complete_engine_excerpt_beyond_a_preview(research
     assert notes == "\n".join(result["notes"])
     assert current._captures == {}
     assert result["artifacts"] == []
-    state.planner_calls.assert_not_called()
-
-
-def test_legacy_research_does_not_require_construction_or_capture(research):
-    state = research
-    state.context.plan_contract_version = 1
-    state.context.planner_client = object()
-    state.context.capture_external_source_configuration = Mock(
-        side_effect=AssertionError("Legacy research must not capture configuration."),
-    )
-    _, result = run_gather(state.runtime, "deep_research")
-    assert result["status"] == "completed", result
-    assert len(state.runtime.state.web) == len(state.runtime.state.pages) == 1
-    assert state.events == state.captures == state.admissions == []
-    state.context.capture_external_source_configuration.assert_not_called()
     state.planner_calls.assert_not_called()
 
 

@@ -13,7 +13,6 @@ STEP_TASKS = {
     "tabular_analyze": "data_analysis",
     "deep_research": "reasoning",
     "action_invoke": "tool_use",
-    "respond": "general",
     "compose": "general",
 }
 MODEL_FIELDS = ("model_deployment", "model_id", "model_endpoint_id", "model_provider")
@@ -115,28 +114,20 @@ def assign_step_models(plan, candidates):
 
 
 def answer_selection(plan, seeds):
-    """The model that writes the chat answer: the respond step, or the final-response producer."""
+    """The model that writes the chat answer: the final-response producer's binding."""
     if plan.get("model_routing") != "auto":
         return seeds
     steps = [step for step in plan.get("steps", []) if step.get("enabled", True)]
-    if plan.get("planner_contract_version") == 2:
-        final_step = ((plan.get("final_response") or {}).get("step_id"))
-        candidates = (
-            [step for step in steps if step.get("step_id") == final_step]
-            + [step for step in reversed(steps) if step.get("capability_id") == "compose"]
-            + steps
-        )
-        binding = next((step["model_binding"] for step in candidates if step.get("model_binding")), None)
-        # A plan with no model-backed step (for example rendering an existing result) still
-        # needs a context model; it keeps the default selection rather than inventing one.
-        return binding_seeds(seeds, binding) if binding else seeds
-    binding = next((
-        step.get("model_binding") for step in steps
-        if step.get("capability_id") == "respond"
-    ), None)
-    if not binding:
-        raise ModelCatalogError("Auto plan is missing its answer model. Replan before running.")
-    return binding_seeds(seeds, binding)
+    final_step = ((plan.get("final_response") or {}).get("step_id"))
+    candidates = (
+        [step for step in steps if step.get("step_id") == final_step]
+        + [step for step in reversed(steps) if step.get("capability_id") == "compose"]
+        + steps
+    )
+    binding = next((step["model_binding"] for step in candidates if step.get("model_binding")), None)
+    # A plan with no model-backed step (for example rendering an existing result) still
+    # needs a context model; it keeps the default selection rather than inventing one.
+    return binding_seeds(seeds, binding) if binding else seeds
 
 
 def binding_seeds(seeds, binding):
@@ -210,8 +201,6 @@ def step_model_context(
         )
         context.planner_deployment = model.deployment
         context.step_model = model
-        if step.get("capability_id") == "respond":
-            context.answer_model = model
         yield
     finally:
         for field, value in previous.items():

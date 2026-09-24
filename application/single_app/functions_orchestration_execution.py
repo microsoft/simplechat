@@ -1,8 +1,12 @@
 # functions_orchestration_execution.py
-"""Headless preparation and guarded publication for saved V2 harness attempts.
+"""Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.135
+Version: 0.261.139
 Implemented in: 0.261.127
+
+Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
+legacy contract is refused before any preparation. The ``Harness*`` names below are the
+historical names of this runtime and are kept for compatibility with its callers.
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
 to ``prepare_harness_execution``. Preparation starts an unstarted lease; ``execute``
@@ -24,7 +28,7 @@ with ``retryable`` set when appropriate; they never masquerade as source denial.
 Directory, external-configuration and screening service failures propagate with
 that classification from preparation and normal finalization too, without
 publishing uncertain content or replacing validated service retryability.
-Typed V2 checkpoint-read and output-storage outages remain retryable through
+Typed checkpoint-read and output-storage outages remain retryable through
 known application wrappers; missing or invalid proof is not reclassified.
 An optional server ``checkpoint_factory(record, context, settings, lease)`` binds
 an explicit continuation owner at execution time. It is never persisted; omitting
@@ -37,7 +41,7 @@ lease through ``WorkflowResultStore.bind_orchestration_execution`` before capabi
 retained-result access. Its canonical binding keeps native producer tokens
 unchanged while fencing generic result access with the current parent claim;
 older store views are never rebound. Model-free delivery does not claim results.
-V2 preparation and execution each own a strict source-authority scope on the
+Preparation and execution each own a strict source-authority scope on the
 calling worker. Nested source failures remain fenced even when caught; answer
 and research calls check that fence before and after provider invocation. The
 scope is released with the operation, never retained on a lease or shared between
@@ -49,11 +53,11 @@ the output facade still owns verified source-denial and hold projections.
 Capability discovery uses the initialized services' shared request bindings;
 ``external_source_preflight``, ``external_source_admission``,
 ``external_source_authorizer`` and ``capture_external_source_configuration`` stay
-runtime-only and must all be present before their saved V2 capabilities can be
+runtime-only and must all be present before their saved capabilities can be
 prepared. Preflight is the real synchronous invocation guard; configuration capture
 separately validates current/actual acquisition support. The authorizer comes from
 ``services.results.access``. Discovery neither invokes these callbacks nor applies
-a new-plan readiness check to saved V2 work.
+a new-plan readiness check to saved work.
 Runtime preflight/capture/admission callbacks check their original claim before
 and after each invocation, including failure. The captured actor/run/token/claim
 identity cannot be replaced by retagging the lease. Their closures reject a stopped
@@ -70,8 +74,9 @@ Every published reply, including model-free delivery, passes chat's configured
 output checkpoint first. A removed reply publishes only the safe notice, without
 citations or file cards; an administrator's later retraction is never overwritten.
 Check-before-display runs keep files private until that checked reply is saved.
-Saved history rejects content-check removals through the shared normalizer. Dependency
-plans do not enforce per-step Auto model bindings, so a v2 plan carrying them fails closed.
+Saved history rejects content-check removals through the shared normalizer. An Auto plan's
+per-step model bindings are reauthorized before model setup; a missing or stale binding fails
+closed.
 
 Application-owner imports are deliberately deferred until preparation. Importing
 this module neither imports a route nor discovers configuration or Azure clients.
@@ -154,8 +159,10 @@ from functions_orchestration_result_contracts import InputBinding, ResultContrac
 from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
+    LEGACY_PLAN_CODE,
     build_failure,
     failure_explanation,
+    is_legacy_plan,
     plan_contract_version,
     PlanValidationError,
     safe_failure,
@@ -1527,8 +1534,13 @@ class HarnessExecution:
 
 
 def _claimed_harness_execution(record, lease, *, delivery_only=False, checkpoint_factory=None):
-    if type(record) is not dict or plan_contract_version(record.get("plan")) != 2:
-        raise HarnessExecutionError("context_unavailable")
+    if type(record) is not dict or is_legacy_plan(record.get("plan")):
+        # A plan from the removed legacy contract is never executed or published.
+        raise HarnessExecutionError(LEGACY_PLAN_CODE if type(record) is dict else "context_unavailable")
+    try:
+        plan_contract_version(record["plan"])
+    except PlanValidationError as exc:
+        raise HarnessExecutionError("context_unavailable") from exc
     if lease is None:
         raise HarnessExecutionError("ownership_lost")
     # The concrete lease imports the application-owned run store. It is not a
@@ -1583,7 +1595,7 @@ def prepare_harness_execution(
     record, *, settings=None, identity_context=None, execution_identity=None, lease=None,
     checkpoint_factory=None,
 ):
-    """Prepare V2, finalizing definite failures but propagating uncertain authority."""
+    """Prepare a saved attempt, finalizing definite failures but propagating uncertain authority."""
     execution = _claimed_harness_execution(record, lease, checkpoint_factory=checkpoint_factory)
     try:
         if checkpoint_factory is not None and not callable(checkpoint_factory):

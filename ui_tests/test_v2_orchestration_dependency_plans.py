@@ -1,7 +1,7 @@
 # test_v2_orchestration_dependency_plans.py
 """
 Real-component tests for version-aware orchestration plans and durable waiting.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
 Refs: microsoft/simplechat#1509
 
@@ -143,7 +143,9 @@ def test_interleaved_roles_keep_actual_order_and_accessible_bindings(editor_ui, 
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
     view = mount_run_view(page, api)
-    expect(view.locator("h3")).to_have_text(["Gather", "Reason", "Gather", "Reason"])
+    expect(view.locator("h3").filter(has_text=re.compile("^(Gather|Reason)$"))).to_have_text(
+        ["Gather", "Reason", "Gather", "Reason"]
+    )
     expect(view.locator("[data-step-id]")).to_have_count(5)
     rendered = view.locator("[data-step-id]").evaluate_all(
         "(steps) => steps.map(step => step.getAttribute('aria-label'))"
@@ -163,39 +165,28 @@ def test_interleaved_roles_keep_actual_order_and_accessible_bindings(editor_ui, 
 
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("version", [None, 1])
-def test_legacy_plan_is_not_reclassified_by_current_role_descriptors(editor_ui, version, width):
+def test_non_current_plan_is_not_rendered(editor_ui, version, width):
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
+    mount_run_view(page, api, dependency_plan())
     plan = editor_tests.make_plan(CONVERSATION, TURN)
     if version is None:
         plan.pop("planner_contract_version", None)
     else:
         plan["planner_contract_version"] = version
-    plan["steps"][0].update(capability_id="document_analyze", phase="knowledge", role="reason")
-    view = mount_run_view(page, api, plan)
-    page.evaluate("""() => {
-        const store = window.OrchHarness.stores.bootstrap.useBootstrapStore;
-        store.setState({ data: { ...store.getState().data, orchestration: {
-            enabled: true, capabilities: [{id: 'document_analyze', phase: 'output', role: 'reason'}],
-        } } });
-    }""")
-    expect(view.locator("h3")).to_have_text(["Gathering knowledge", "Reasoning"])
-    expect(view.get_by_role("heading", name="Named outputs", exact=True)).to_have_count(0)
-    normalized = plan_state(page)["plan"]
-    assert normalized["planner_contract_version"] == 1
-    assert "role" not in normalized["steps"][0]
-    assert "outputs" not in normalized["steps"][0]
+    plan["steps"][0].update(capability_id="document_analyze", role="reason")
+    normalized = page.evaluate("(raw) => window.OrchHarness.plan.normalizePlan(raw)", plan)
+    assert normalized is None
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_legacy_step_with_unknown_phase_remains_visible_without_current_capability(editor_ui, width):
+def test_step_with_unknown_role_remains_visible_without_current_capability(editor_ui, width):
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
     plan = editor_tests.make_plan(CONVERSATION, TURN)
-    plan["planner_contract_version"] = 1
     plan["steps"].append({
         "step_id": "historical-step", "capability_id": "retired-capability",
-        "title": "Historical step", "phase": "retired-phase",
+        "title": "Historical step", "role": "retired-role",
         "arguments": {}, "depends_on": [], "status": "completed", "enabled": True,
     })
     view = mount_run_view(page, api, plan)
@@ -203,7 +194,8 @@ def test_legacy_step_with_unknown_phase_remains_visible_without_current_capabili
     historical = view.locator("[data-step-id='historical-step']")
     expect(historical).to_be_visible()
     expect(historical).to_have_attribute("aria-label", f"Step {len(plan['steps'])}: Historical step")
-    expect(view.locator("h3")).to_have_text(["Gathering knowledge", "Reasoning"])
+    expect(view.locator("h3").filter(has_text=re.compile("^(Gather|Reason)$"))).to_have_text(["Gather", "Reason"])
+    expect(view.get_by_text("Gathering knowledge", exact=True)).to_have_count(0)
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -434,7 +426,7 @@ def test_normalization_preserves_named_contract_and_server_order(editor_ui):
         plan.steps[3].enabled = false;
         return {
             explanation: P.stepDisableExplanation(plan, 'gather_followup'),
-            order: P.orderStepsForDisplay([plan.steps[4], ...plan.steps.slice(0, 4)], 2)
+            order: P.orderStepsForDisplay([plan.steps[4], ...plan.steps.slice(0, 4)])
                 .map(step => step.step_id),
         };
     }""", plan)
@@ -659,7 +651,7 @@ def test_waiting_survives_stream_loss_reload_and_same_attempt_completion(depende
 
     page.get_by_role("button", name="Review the running plan").click()
     drawer = page.get_by_role("complementary", name="Review drawer")
-    expect(drawer.locator("[data-step-id='prepare_findings']")).to_contain_text("waiting")
+    expect(drawer.locator("[data-step-id='prepare_findings']")).to_contain_text("Waiting for results")
     drawer.get_by_role("tab", name="Map", exact=True).click()
     expect(drawer.get_by_text("Waiting for results", exact=True)).to_be_visible()
     expect(drawer.get_by_text(re.compile(r"\d+ artifacts?"))).to_have_count(0)
@@ -710,7 +702,7 @@ def test_partial_step_status_is_preserved_on_hydration(dependency_recovery_ui):
     expect(page.get_by_role("status").filter(has_text=re.compile("^Waiting for required results")).first).to_be_visible()
     page.get_by_role("button", name="Review the running plan").click()
     drawer = page.get_by_role("complementary", name="Review drawer")
-    expect(drawer.locator("[data-step-id='gather_first']")).to_contain_text("partial")
+    expect(drawer.locator("[data-step-id='gather_first']")).to_contain_text("Partially completed")
     expect(drawer.get_by_role("checkbox")).to_have_count(0)
     assert not api.calls("/run")
 
@@ -721,9 +713,12 @@ def test_map_does_not_replace_an_older_run_with_the_current_turns_plan(dependenc
     old.update(run_id="earlier-run", plan_id="earlier-plan", status="completed")
     old["intent"]["summary"] = "Earlier saved answer"
     old["steps"] = [{
-        "step_id": "earlier-answer", "capability_id": "respond", "title": "Earlier answer step",
-        "phase": "reasoning", "arguments": {}, "status": "completed",
+        "step_id": "earlier-answer", "capability_id": "compose", "title": "Earlier answer step",
+        "role": "reason", "arguments": {}, "status": "completed",
+        "outputs": [{"name": "answer", "kind": "markdown-v1"}], "delivers": ["answer"],
     }]
+    old["final_response"] = {"version": "orchestration-input-binding-v1", "step_id": "earlier-answer",
+                             "output_name": "answer", "existing_result": None}
     record = api.add_record(old)
     record.update(
         status="completed", outcome="completed", completed_at="2026-09-20T19:00:00Z",
@@ -747,7 +742,7 @@ def test_map_does_not_replace_an_older_run_with_the_current_turns_plan(dependenc
     expect(old_row.get_by_text(TITLES[0], exact=True)).to_have_count(0)
     old_row.get_by_role("button", name="Earlier saved answer", exact=True).click()
     expect(drawer.get_by_text("Earlier answer step", exact=True)).to_be_visible()
-    expect(drawer.get_by_role("heading", name="Reasoning", exact=True)).to_be_visible()
+    expect(drawer.get_by_role("heading", name="Reason", exact=True)).to_be_visible()
     current = editor_tests.state(page, recovery_tests.CONVERSATION, recovery_tests.TURN)
     assert current["plan"]["run_id"] == api.plan["run_id"]
     assert current["plan"]["planner_contract_version"] == 2

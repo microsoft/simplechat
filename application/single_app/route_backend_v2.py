@@ -476,6 +476,7 @@ def _build_orchestration(settings, public_settings):
     capabilities = resolve_available_capabilities(
         settings,
         allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        include_runtime_bindings=False,
     )
 
     approval_mode = str(
