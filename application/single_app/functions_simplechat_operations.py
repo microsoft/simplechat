@@ -2179,6 +2179,13 @@ def add_group_member_for_current_user(
         elif member_role == "document_manager":
             if target_user_id not in fresh_group_doc.get("documentManagers", []):
                 fresh_group_doc.setdefault("documentManagers", []).append(target_user_id)
+        # A member added directly has no request left to decide.
+        pending_users = fresh_group_doc.get("pendingUsers")
+        if isinstance(pending_users, list):
+            fresh_group_doc["pendingUsers"] = [
+                entry for entry in pending_users
+                if not (isinstance(entry, dict) and entry.get("userId") == target_user_id)
+            ]
 
         fresh_group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         added["actor_role"] = fresh_actor_role

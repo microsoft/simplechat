@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import *
+from functions_group_membership import OWNER_ROLE_MESSAGE
 from functions_group_membership_audit import (
     log_group_member_role_change,
     notify_group_member_role_change,
@@ -119,6 +120,16 @@ def _guarded_group_write(group_id, apply_changes, *, cache_reason):
     if committed is None:
         return None, (jsonify({"error": "Group not found"}), 404)
     return committed, None
+
+
+# The owner's role changes only by transferring ownership, with the native answer.
+OWNER_ROLE_CHANGE_RESPONSE = {"error": OWNER_ROLE_MESSAGE, "error_code": "owner_target"}
+
+
+def _has_group_role(group_doc, user_id):
+    """``get_user_role_in_group``, skipping a ``users[]`` entry without a ``userId``."""
+    users = [entry for entry in group_doc.get("users") or [] if isinstance(entry, dict) and "userId" in entry]
+    return bool(get_user_role_in_group({**group_doc, "users": users}, user_id))
 
 
 def register_route_backend_groups(bp):
@@ -609,16 +620,21 @@ def register_route_backend_groups(bp):
             if user_index is None:
                 raise _ClassicResponse({"error": "Request not found"}, 404)
 
+            # A decision settles every request from the user, and an approval never
+            # adds a second entry for someone who is already a member.
+            member_to_add = pending_list[user_index]
+            group_doc["pendingUsers"] = [
+                pending_user for pending_user in pending_list
+                if not (isinstance(pending_user, dict) and pending_user.get("userId") == request_id)
+            ]
             if action == "approve":
-                member_to_add = pending_list.pop(user_index)
-                group_doc["users"].append(member_to_add)
+                if not _has_group_role(group_doc, request_id):
+                    group_doc["users"].append(member_to_add)
                 outcome["message"] = "User approved and added as a member"
             else:
-                pending_list.pop(user_index)
                 outcome["message"] = "User rejected"
             outcome["action"] = action
 
-            group_doc["pendingUsers"] = pending_list
             group_doc["modifiedDate"] = datetime.utcnow().isoformat()
             return group_doc
 
@@ -755,7 +771,7 @@ def register_route_backend_groups(bp):
             description=description
         )
 
-        return jsonify({"message": message}), 200
+        return jsonify({"message": message, "success": True}), 200
 
 
     @bp.route("/api/groups/<group_id>/members/<member_id>", methods=["PATCH"])
@@ -787,6 +803,8 @@ def register_route_backend_groups(bp):
             target_role = get_user_role_in_group(group_doc, member_id)
             if not target_role:
                 raise _ClassicResponse({"error": "Member is not in the group"}, 404)
+            if target_role == "Owner":
+                raise _ClassicResponse(OWNER_ROLE_CHANGE_RESPONSE, 409)
 
             # Get member details for logging
             member_name = "Unknown"
@@ -859,15 +877,18 @@ def register_route_backend_groups(bp):
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
 
-        if not get_user_role_in_group(group_doc, user_id):
+        if not _has_group_role(group_doc, user_id):
             return jsonify({"error": "You are not a member of this group"}), 403
 
         search = request.args.get("search", "").strip().lower()
         role_filter = request.args.get("role", "").strip()
 
         results = []
-        for u in group_doc["users"]:
-            uid = u["userId"]
+        for u in group_doc.get("users") or []:
+            # An entry without a userId is not a member row.
+            uid = u.get("userId") if isinstance(u, dict) else None
+            if not uid:
+                continue
             user_role = (
                 "Owner" if uid == group_doc["owner"]["id"] else
                 "Admin" if uid in group_doc.get("admins", []) else
@@ -878,8 +899,8 @@ def register_route_backend_groups(bp):
             if role_filter and role_filter != user_role:
                 continue
 
-            dn = u.get("displayName", "").lower()
-            em = u.get("email", "").lower()
+            dn = str(u.get("displayName") or "").lower()
+            em = str(u.get("email") or "").lower()
 
             if search and (search not in dn and search not in em):
                 continue
@@ -928,7 +949,8 @@ def register_route_backend_groups(bp):
             if not matching_member:
                 raise _ClassicResponse({"error": "The specified new owner is not a member of the group"}, 400)
 
-            old_owner_id = group_doc["owner"]["id"]
+            old_owner = group_doc["owner"]
+            old_owner_id = old_owner["id"]
 
             group_doc["owner"] = {
                 "id": new_owner_id,
@@ -950,6 +972,8 @@ def register_route_backend_groups(bp):
             if not found_old_owner:
                 group_doc["users"].append({
                     "userId": old_owner_id,
+                    "email": old_owner.get("email", ""),
+                    "displayName": old_owner.get("displayName", ""),
                 })
 
             if old_owner_id in group_doc.get("admins", []):

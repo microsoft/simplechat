@@ -12,6 +12,8 @@ response, and the deliberate fixes that follow can be shown to change only what
 they set out to.
 """
 
+from pathlib import Path
+
 import pytest
 
 from test_support.group_directory_harness import group_directory_environment, group_document, person
@@ -151,22 +153,52 @@ def test_classic_decision_on_a_missing_group(env):
     )
 
 
-def test_classic_approve_of_a_member_duplicates_them(env):
-    """Recorded: decision 3 fixes it in the classic route."""
+def test_classic_approve_of_a_member_adds_no_duplicate(env):
+    """Decision 3: the answer is unchanged, the request is settled, and no second entry is added."""
     seed(env, pending=("member-1",))
     env.as_user("owner-1")
-    assert env.call("PATCH", "/api/groups/g-1/requests/member-1", {"action": "approve"}).status_code == 200
-    assert user_ids(env).count("member-1") == 2
+    assert answer(env.call("PATCH", "/api/groups/g-1/requests/member-1", {"action": "approve"})) == (
+        200, {"message": "User approved and added as a member"},
+    )
+    assert user_ids(env).count("member-1") == 1
+    assert env.stored_group("g-1")["pendingUsers"] == []
+    assert env.bumps == ["group_member_request_approved"]
 
 
-def test_classic_decisions_remove_only_the_first_entry(env):
-    """Recorded: decision 3 makes both remove every entry for the user."""
+def test_classic_approve_of_a_role_holder_without_a_users_entry_adds_no_entry(env):
+    """Already a member means the classic role predicate, as in the native approve."""
+    document = group_document("g-1", "Team", pending=("manager-1",))
+    document["users"] = [entry for entry in document["users"] if entry["userId"] != "manager-1"]
+    env.seed_document(document)
+    env.as_user("owner-1")
+    assert env.call("PATCH", "/api/groups/g-1/requests/manager-1", {"action": "approve"}).status_code == 200
+    assert "manager-1" not in user_ids(env) and env.stored_group("g-1")["pendingUsers"] == []
+
+
+def test_classic_approve_skips_a_users_entry_without_a_user_id(env):
+    """The member check added by decision 3 does not fail on a malformed entry."""
+    document = group_document("g-1", "Team", pending=("applicant-1",))
+    document["users"].insert(0, {"email": "no-id@example.test"})
+    env.seed_document(document)
+    env.as_user("owner-1")
+    assert env.call("PATCH", "/api/groups/g-1/requests/applicant-1", {"action": "approve"}).status_code == 200
+    assert env.stored_group("g-1")["users"][-1] == person("applicant-1")
+
+
+def test_classic_decisions_settle_every_entry_for_the_user(env):
+    """Decision 3: approve and reject both remove every entry for the user, and only theirs."""
     document = group_document("g-1", "Team", pending=("applicant-1", "outsider-1", "applicant-1", "outsider-1"))
     env.seed_document(document)
     env.as_user("owner-1")
-    env.call("PATCH", "/api/groups/g-1/requests/applicant-1", {"action": "approve"})
-    env.call("PATCH", "/api/groups/g-1/requests/outsider-1", {"action": "reject"})
-    assert env.stored_group("g-1")["pendingUsers"] == [person("applicant-1"), person("outsider-1")]
+    assert answer(env.call("PATCH", "/api/groups/g-1/requests/applicant-1", {"action": "approve"})) == (
+        200, {"message": "User approved and added as a member"},
+    )
+    assert env.stored_group("g-1")["pendingUsers"] == [person("outsider-1"), person("outsider-1")]
+    assert user_ids(env).count("applicant-1") == 1
+    assert answer(env.call("PATCH", "/api/groups/g-1/requests/outsider-1", {"action": "reject"})) == (
+        200, {"message": "User rejected"},
+    )
+    assert env.stored_group("g-1")["pendingUsers"] == [] and "outsider-1" not in user_ids(env)
 
 
 # ---------------------------------------------------------------------------
@@ -235,14 +267,26 @@ def test_classic_add_on_a_missing_group(env):
     )
 
 
-def test_classic_add_ignores_the_group_status_and_pending_entries(env):
-    """Recorded: decision 3 makes the classic add clear the user's pending entries."""
-    seed(env, status="locked", pending=("newcomer-1",))
+def test_classic_add_ignores_the_group_status_and_clears_pending_entries(env):
+    """The classic add stays open in every status (decision 2 limits the native add
+    only); decision 3 makes it clear the user's pending entries, and only theirs."""
+    seed(env, status="locked", pending=("newcomer-1", "applicant-1", "newcomer-1"))
+    env.as_user("owner-1")
+    assert answer(env.call("POST", "/api/groups/g-1/members", {
+        "userId": "newcomer-1", "email": "nia.newcomer@example.test", "displayName": "Nia Newcomer",
+    })) == (200, {"message": "Member added", "success": True})
+    assert env.stored_group("g-1")["pendingUsers"] == [person("applicant-1")]
+
+
+def test_classic_add_keeps_a_group_without_a_pending_list_as_it_is(env):
+    document = group_document("g-1", "Team")
+    del document["pendingUsers"]
+    env.seed_document(document)
     env.as_user("owner-1")
     assert env.call("POST", "/api/groups/g-1/members", {
         "userId": "newcomer-1", "email": "nia.newcomer@example.test", "displayName": "Nia Newcomer",
     }).status_code == 200
-    assert env.stored_group("g-1")["pendingUsers"] == [person("newcomer-1")]
+    assert "pendingUsers" not in env.stored_group("g-1")
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +296,9 @@ def test_classic_add_ignores_the_group_status_and_pending_entries(env):
 def test_classic_leave(env):
     seed(env)
     env.as_user("member-1")
-    assert answer(env.call("DELETE", "/api/groups/g-1/members/member-1")) == (200, {"message": "You have left the group"})
+    assert answer(env.call("DELETE", "/api/groups/g-1/members/member-1")) == (
+        200, {"message": "You have left the group", "success": True},
+    )
     assert "member-1" not in user_ids(env)
     assert env.bumps == ["group_member_removed"]
     assert records(env) == [{
@@ -271,7 +317,9 @@ def test_classic_leave(env):
 def test_classic_remove(env):
     seed(env)
     env.as_user("owner-1")
-    assert answer(env.call("DELETE", "/api/groups/g-1/members/manager-1")) == (200, {"message": "User removed"})
+    assert answer(env.call("DELETE", "/api/groups/g-1/members/manager-1")) == (
+        200, {"message": "User removed", "success": True},
+    )
     stored = env.stored_group("g-1")
     assert "manager-1" not in user_ids(env) and "manager-1" not in stored["documentManagers"]
     assert env.bumps == ["group_member_removed"]
@@ -370,12 +418,29 @@ def test_classic_role_change_refusals(env, caller, target, body, expected):
     assert env.write_calls() == [] and env.notifications == []
 
 
-def test_classic_role_change_on_the_owner_stores_invalid_data(env):
-    """Recorded: decision 4 turns it into a 409 in the classic route."""
+@pytest.mark.parametrize("caller", ["owner-1", "admin-1"])
+def test_classic_role_change_on_the_owner_is_refused(env, caller):
+    """Decision 4: the native 409, and nothing is stored, bumped, logged or sent."""
     seed(env)
-    env.as_user("admin-1")
-    assert env.call("PATCH", "/api/groups/g-1/members/owner-1", {"role": "Admin"}).status_code == 200
-    assert "owner-1" in env.stored_group("g-1")["admins"]
+    env.as_user(caller)
+    for role in ("Admin", "DocumentManager", "User"):
+        assert answer(env.call("PATCH", "/api/groups/g-1/members/owner-1", {"role": role})) == (409, {
+            "error": env.modules.membership.OWNER_ROLE_MESSAGE, "error_code": "owner_target",
+        })
+    stored = env.stored_group("g-1")
+    assert "owner-1" not in stored["admins"] and "owner-1" not in stored["documentManagers"]
+    assert env.write_calls() == [] and env.bumps == []
+    assert env.notifications == [] and env.activity_records() == []
+
+
+@pytest.mark.parametrize("caller,body,expected", [
+    ("manager-1", {"role": "Admin"}, (403, {"error": "Only the owner or admin can update roles"})),
+    ("owner-1", {"role": "Owner"}, (400, {"error": "Invalid role. Must be Admin, DocumentManager, or User"})),
+])
+def test_classic_role_change_on_the_owner_keeps_the_earlier_refusals(env, caller, body, expected):
+    seed(env)
+    env.as_user(caller)
+    assert answer(env.call("PATCH", "/api/groups/g-1/members/owner-1", body)) == expected
 
 
 def test_classic_role_change_on_a_missing_group(env):
@@ -407,19 +472,33 @@ def test_classic_member_list(env):
     assert answer(env.call("GET", "/api/groups/g-1/members")) == (403, {"error": "You are not a member of this group"})
 
 
-def test_classic_member_list_breaks_on_malformed_entries(env):
-    """Recorded: the member list fix skips them (commit 3)."""
+def test_classic_member_list_skips_malformed_entries(env):
+    """The member list fix: an entry without a ``userId`` is skipped, also when the
+    caller's own entry comes after it, and a null name or email searches as "".
+    Every row keeps the classic shape."""
     document = group_document("g-1", "Team")
-    document["users"].append({"email": "no-id@example.test"})
-    env.seed_document(document)
-    env.as_user("member-1")
-    with pytest.raises(KeyError):
-        env.call("GET", "/api/groups/g-1/members")
-    document = group_document("g-1", "Team")
+    document["users"] += [{"email": "no-id@example.test"}, {"userId": "", "email": "blank@example.test"}, "stray"]
     document["users"].append({"userId": "outsider-1", "displayName": None, "email": None})
     env.seed_document(document)
-    with pytest.raises(AttributeError):
-        env.call("GET", "/api/groups/g-1/members?search=x")
+    for caller in ("member-1", "outsider-1"):
+        env.as_user(caller)
+        status, body = answer(env.call("GET", "/api/groups/g-1/members"))
+        assert status == 200
+        assert [row["userId"] for row in body] == ["owner-1", "admin-1", "manager-1", "member-1", "outsider-1"]
+        assert body[-1] == {"userId": "outsider-1", "displayName": None, "email": None, "role": "User"}
+        assert [row["userId"] for row in env.call("GET", "/api/groups/g-1/members?search=MAX").get_json()] == ["member-1"]
+        assert env.call("GET", "/api/groups/g-1/members?search=no-id").get_json() == []
+        assert [row["userId"] for row in env.call("GET", "/api/groups/g-1/members?role=User").get_json()] == [
+            "member-1", "outsider-1",
+        ]
+
+
+def test_classic_member_list_of_a_group_without_a_users_list(env):
+    document = group_document("g-1", "Team")
+    del document["users"]
+    env.seed_document(document)
+    env.as_user("owner-1")
+    assert answer(env.call("GET", "/api/groups/g-1/members")) == (200, [])
 
 
 # ---------------------------------------------------------------------------
@@ -458,14 +537,57 @@ def test_classic_transfer_on_a_missing_group(env):
     )
 
 
-def test_classic_transfer_appends_a_missing_old_owner_bare(env):
-    """Recorded: decision 5 appends the old owner with their email and name."""
+def test_classic_transfer_appends_a_missing_old_owner_with_their_details(env):
+    """Decision 5: the old owner keeps the email and name the owner record held."""
     document = group_document("g-1", "Team")
     document["users"] = [entry for entry in document["users"] if entry["userId"] != "owner-1"]
     env.seed_document(document)
     env.as_user("owner-1")
+    assert answer(env.call("PATCH", "/api/groups/g-1/transferOwnership", {"newOwnerId": "member-1"})) == (
+        200, {"message": "Ownership transferred successfully"},
+    )
+    assert env.stored_group("g-1")["users"][-1] == person("owner-1")
+
+
+def test_classic_transfer_appends_an_old_owner_without_details_with_blanks(env):
+    document = group_document("g-1", "Team")
+    document["users"] = [entry for entry in document["users"] if entry["userId"] != "owner-1"]
+    document["owner"] = {"id": "owner-1"}
+    env.seed_document(document)
+    env.as_user("owner-1")
     assert env.call("PATCH", "/api/groups/g-1/transferOwnership", {"newOwnerId": "member-1"}).status_code == 200
-    assert env.stored_group("g-1")["users"][-1] == {"userId": "owner-1"}
+    assert env.stored_group("g-1")["users"][-1] == {"userId": "owner-1", "email": "", "displayName": ""}
+
+
+# ---------------------------------------------------------------------------
+# The classic manage page reads these answers
+# ---------------------------------------------------------------------------
+
+MANAGE_GROUP_JS = Path(__file__).resolve().parents[1] / "application" / "single_app" / "static" / "js" / "group" / "manage_group.js"
+
+
+def _js_function(source, name):
+    start = source.index(f"async function {name}(")
+    end = source.index("\n}\n", start)
+    return source[start:end]
+
+
+def test_classic_bulk_remove_counts_a_removal_as_a_success(env):
+    """Decision 7: bulk remove counts a DELETE only when the body says ``success``,
+    which the classic route now sends; its refusals still carry only ``error``."""
+    bulk_remove = _js_function(MANAGE_GROUP_JS.read_text(encoding="utf-8"), "bulkRemoveMembers")
+    assert "fetch(`/api/groups/${groupId}/members/${member.userId}`" in bulk_remove
+    assert "method: 'DELETE'" in bulk_remove
+    assert "if (response.ok && data.success) {" in bulk_remove
+    assert "data.error" in bulk_remove
+
+    seed(env)
+    env.as_user("owner-1")
+    assert env.call("DELETE", "/api/groups/g-1/members/manager-1").get_json()["success"] is True
+    refused = env.call("DELETE", "/api/groups/g-1/members/outsider-1").get_json()
+    assert "success" not in refused and refused["error"]
+    env.as_user("member-1")
+    assert env.call("DELETE", "/api/groups/g-1/members/member-1").get_json()["success"] is True
 
 
 if __name__ == "__main__":

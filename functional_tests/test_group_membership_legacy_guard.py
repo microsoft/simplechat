@@ -16,7 +16,8 @@ the guard adds:
 - a group deleted mid-write is the classic 404 and is never recreated;
 - a group that keeps changing is a 409 ``group_write_conflict``;
 - the route's own rules are re-checked on the fresh copy, so a demotion, a removal
-  or an approval that lands first refuses the write;
+  or an approval that lands first refuses the write, and decision 3's fixes (no
+  duplicate member, every request settled) apply to the fresh copy too;
 - the cache bumps stay as they were.
 
 It also pins that the race M7A recorded is closed: a classic write that lands after
@@ -149,6 +150,24 @@ def test_the_rules_are_rechecked_on_the_fresh_copy(env, write, change, expected)
     assert (response.status_code, response.get_json()) == expected
     assert [call[0] for call in env.write_calls()] == ["replace_item"]
     assert env.bumps == [] and env.notifications == [] and env.activity_records() == []
+
+
+def test_a_classic_approve_does_not_duplicate_a_member_added_first(env):
+    """Decision 3 on the fresh copy: an add that lands first is not duplicated."""
+    send = prepare(env, "approve")
+    env.groups.before_replace.append(land(env, lambda record: record["users"].append(person("applicant-1"))))
+    assert send().status_code == 200
+    stored = env.stored_group("g-1")
+    assert [entry["userId"] for entry in stored["users"]].count("applicant-1") == 1
+    assert stored["pendingUsers"] == []
+
+
+def test_a_classic_add_clears_a_request_that_lands_first(env):
+    """Decision 3 on the fresh copy: the added user's request, made mid-write, is settled."""
+    send = prepare(env, "add")
+    env.groups.before_replace.append(land(env, lambda record: record["pendingUsers"].append(person("newcomer-1"))))
+    assert send().status_code == 200
+    assert env.stored_group("g-1")["pendingUsers"] == [person("applicant-1")]
 
 
 def test_the_add_audit_describes_the_committed_copy(env):

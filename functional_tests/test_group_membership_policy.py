@@ -12,7 +12,8 @@ decision. This test pins:
 - the seam with the classic routes: the real classic PATCH, DELETE and transfer
   routes allow exactly the per-member actions the policy advertises, and the real
   classic add, request list and leave routes agree with the group-level operations,
-  apart from the recorded, deliberate divergences;
+  apart from decision 2's recorded divergence (the classic add stays open in a
+  locked or inactive group);
 - the seam with the native routes: every action the member list advertises is one
   the native routes accept, and every action it withholds is one they refuse.
 """
@@ -118,13 +119,9 @@ def test_member_actions_for_unknown_roles_are_empty(env):
 # The seam with the classic routes
 # ---------------------------------------------------------------------------
 
-# Deliberate differences from the classic routes, each decided in the M7B
-# pre-build. The classic role change still accepts the owner as its target, which
-# stores the owner in admins or documentManagers (decision 4, fixed in commit 3).
-KNOWN_CLASSIC_DIVERGENCES = {
-    ("Owner", "Owner", "change_role"),
-    ("Admin", "Owner", "change_role"),
-}
+# The per-member actions have no deliberate differences left: decision 4's classic
+# fix made the classic role change refuse the owner as its target, as the hint
+# withholds it.
 
 
 def classic_allows(env, caller_id, target_id, action):
@@ -152,10 +149,7 @@ def test_member_actions_agree_with_the_classic_routes(env, caller_id, target_id)
         if action == "transfer_ownership" and is_self:
             continue  # a transfer to yourself is a classic no-op, not an action
         allowed = classic_allows(env, caller_id, target_id, action)
-        if (caller_role, target_role, action) in KNOWN_CLASSIC_DIVERGENCES:
-            assert allowed and action not in advertised
-        else:
-            assert allowed == (action in advertised), (caller_role, target_role, action)
+        assert allowed == (action in advertised), (caller_role, target_role, action)
 
 
 def test_group_operations_agree_with_the_classic_routes(env):
