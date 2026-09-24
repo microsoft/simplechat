@@ -1,8 +1,9 @@
 # public_document_management.py
 """
 Closed M3B public document management responses for the real production V2 SPA.
-Version: 0.261.133
+Version: 0.261.163
 Implemented in: 0.261.133
+Server-verbatim propagation failure (`propagation_incomplete`): 0.261.163
 
 Reuse M3A public reads, local production assets, request recording, response gates
 and Azure Playwright connection options. Reads and operations share the immutable
@@ -87,6 +88,21 @@ def tag_vocabulary_conflict(public_workspace_id="pub-a"):
         "stage": "vocabulary", "public_workspace_id": public_workspace_id,
         "error": "tag_vocabulary_conflict",
         "message": "The public workspace tag vocabulary changed during propagation. Review the refreshed tags and retry.",
+    }
+
+
+# The 500 a metadata write returns when the document saved but its projections did not, verbatim
+# from functions_public_document_management.public_operation_error: the machine code is in `error`
+# and the sentence the explorer shows is in `message`.
+PROPAGATION_INCOMPLETE_MESSAGE = (
+    "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
+)
+
+
+def propagation_incomplete(document_id, *, public_workspace_id="pub-a"):
+    return {
+        "error": "document_propagation_incomplete", "message": PROPAGATION_INCOMPLETE_MESSAGE,
+        "repair_required": True, "document_id": document_id, "public_workspace_id": public_workspace_id,
     }
 
 

@@ -1,8 +1,10 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.160
+Version: 0.261.163
 Implemented in: 0.261.129
+Coded failures show the server's sentence, delete guards name the conversation, and downloads take
+the server's attachment name: 0.261.163
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -500,13 +502,9 @@ def test_metadata_changed_field_patch_retains_failed_draft_and_immutable_group(g
     assert ui.record("same-document")["abstract"] == original["abstract"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): a coded failure carries its machine code in `error` and its "
-    "sentence in `message`, and apiClient's readErrorMessage prefers `error`, so the metadata dialog shows "
-    "'document_propagation_incomplete' instead of the server's sentence. The suite's propagation|repair "
-    "pattern matched the code."
-))
 def test_metadata_propagation_failure_shows_the_servers_sentence(group_management_ui):
+    """A coded failure carries its machine code in `error` and its sentence in `message`; the
+    dialog shows the sentence, never the code."""
     ui = group_management_ui
     open_documents(ui)
     dialog = edit_metadata(ui)
@@ -517,6 +515,7 @@ def test_metadata_propagation_failure_shows_the_servers_sentence(group_managemen
     )
     perform(ui, failed, dialog.get_by_role("button", name="Save", exact=True).click)
     expect(dialog.get_by_role("alert")).to_contain_text(PROPAGATION_INCOMPLETE_MESSAGE)
+    expect(dialog.get_by_role("alert")).not_to_contain_text("document_propagation_incomplete")
 
 
 def test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening(group_management_ui):
