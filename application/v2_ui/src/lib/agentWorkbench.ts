@@ -267,7 +267,9 @@ export function createGroupAgentWorkbench(
         scope,
         basePath: `${workspaceBasePath(scope)}/agents`,
         draftScope: { kind: 'group', id: groupId },
-        knowledgeScopes: ['group', 'public'],
+        // A group agent keeps only group knowledge: the server lists no public source in a group
+        // catalogue, and `_enforce_scope_policy` stores no public workspace for a group agent.
+        knowledgeScopes: ['group'],
         instructionScope,
         delegationScope,
         // A group agent's actions_to_load candidates and its "New action" handoff both use the

@@ -1,7 +1,7 @@
 # test_data_management_search_write_fence_authorization.py
 """
 Functional test for Data Management Search fence authorization safety.
-Version: 0.250.071
+Version: 0.261.163
 Implemented in: 0.250.071
 
 This test ensures an AI Search migration fence cannot make a document-unshare
@@ -10,6 +10,7 @@ request report success while stale Search chunks still grant access.
 
 import ast
 import copy
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,8 @@ def load_search_write_helpers():
     namespace = {
         "hold_data_management_search_write_slot": lambda *_args, **_kwargs: FakeSlot(),
         "cosmos_data_management_jobs_container": object(),
+        # A non-group write holds no projection fence: `nullcontext(None)` stands in for it.
+        "nullcontext": nullcontext,
     }
     exec(compile(isolated_module, str(DOCUMENTS_PATH), "exec"), namespace)
     return namespace["_execute_document_search_write"]

@@ -2,13 +2,15 @@
 
 import { ApiError, apiUrl, CREDENTIALS_MODE, requestWithStatus, uploadFileWithStatus } from './apiClient';
 import { isScreeningAvailable } from './contentScreening';
+import { readConversationParam } from './conversationUrl';
 import { documentId, generatedArtifactRestriction, normalizeStringList, supportsExtractionModeChange } from './documentExplorer';
 import type { DocumentReadScope } from './documentReadAdapter';
 import {
     bulkDeletePersonalDocuments, bulkTagPersonalDocuments, createPersonalDocumentTag,
     deletePersonalDocumentTag, downloadPersonalDocument, downloadPersonalDocuments,
-    extractPersonalDocumentMetadata, reprocessPersonalDocumentExtraction, updatePersonalDocumentMetadata,
-    updatePersonalDocumentTag, uploadPersonalDocuments, type BulkTagAction, type DocumentMetadataUpdate,
+    extractPersonalDocumentMetadata, filenameFromContentDisposition, reprocessPersonalDocumentExtraction,
+    updatePersonalDocumentMetadata, updatePersonalDocumentTag, uploadPersonalDocuments, type BulkTagAction,
+    type DocumentMetadataUpdate,
 } from './endpoints';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
@@ -48,6 +50,12 @@ export interface DocumentUploadOutcome {
     errors: string[];
 }
 
+/** A downloaded file, with the attachment name the server gave it, or null when it named none. */
+export interface DocumentDownload {
+    blob: Blob;
+    fileName: string | null;
+}
+
 export interface TagVocabularyError {
     stage: 'vocabulary';
     /** Group-scoped vocabulary failures carry group_id; public-scoped ones carry public_workspace_id. */
@@ -75,7 +83,7 @@ export interface DocumentOperationAdapter {
     editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<'updated' | 'queued'>;
     tagDocuments: (documents: WorkspaceDocument[], action: BulkTagAction, tags: string[]) => Promise<DocumentBatchOutcome>;
     deleteDocuments: (documents: WorkspaceDocument[], options: DocumentDeleteOptions) => Promise<DocumentBatchOutcome>;
-    download: (documents: WorkspaceDocument[]) => Promise<Blob>;
+    download: (documents: WorkspaceDocument[]) => Promise<DocumentDownload>;
     extractMetadata: (documents: WorkspaceDocument[]) => Promise<DocumentBatchOutcome>;
     reprocess: (documents: WorkspaceDocument[], mode: 'read' | 'layout') => Promise<DocumentBatchOutcome>;
     createTag: (name: string, color?: string) => Promise<TagMutationOutcome>;
@@ -132,6 +140,67 @@ function operationErrors(value: unknown): DocumentOperationError[] {
         error: typeof error.error === 'string' ? error.error : undefined,
         message: typeof error.message === 'string' ? error.message : undefined,
     }));
+}
+
+/**
+ * A same-origin relative path, normalized: it starts with a single `/`, has no scheme, and
+ * resolves against this page's origin to that origin. A protocol-relative URL, a backslash (which
+ * a browser may read as a slash), and any whitespace or control character make it none at all.
+ */
+export function sameOriginRelativePath(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')
+        || /[\\\s\u0000-\u001f\u007f]/.test(value)) {
+        return null;
+    }
+    try {
+        const origin = window.location.origin;
+        const url = new URL(value, origin);
+        return url.origin === origin ? `${url.pathname}${url.search}${url.hash}` : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The conversation a conversation-linked delete guard names, for its confirmation to show: the
+ * title as text, and the conversation to open natively. Its id is the guard's own conversation id
+ * or, without one, the conversation its url names -- read only from a same-origin relative url.
+ * The url itself, which points at the classic chat page, is never followed.
+ */
+export function deleteGuardConversation(
+    error: DocumentOperationError,
+): { title: string; conversationId: string | null } | null {
+    const conversation: unknown = error.conversation;
+    if (!isRecord(conversation) || typeof conversation.title !== 'string' || !conversation.title.trim()) return null;
+    let conversationId = typeof conversation.id === 'string' ? conversation.id.trim() : '';
+    if (!conversationId) {
+        const path = sameOriginRelativePath(conversation.url);
+        conversationId = path ? readConversationParam(new URL(path, window.location.origin).searchParams) ?? '' : '';
+    }
+    return { title: conversation.title.trim(), conversationId: conversationId || null };
+}
+
+/**
+ * The name a download response gives its file, from its Content-Disposition (`filename*` first,
+ * then `filename`), reduced to a bare file name: any path and control character is dropped, and a
+ * name that is empty or only dots is none at all.
+ */
+export function attachmentFileName(header: string | null): string | null {
+    const named = filenameFromContentDisposition(header);
+    if (!named) return null;
+    const bare = (named.split(/[\\/]/).pop() ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+    return bare && !/^\.+$/.test(bare) ? bare : null;
+}
+
+/**
+ * What the explorer saves a download as. A single document keeps its own file name: the name a
+ * server gives one file is a lossy `secure_filename` of it (`报告.pdf` arrives as `pdf`). Several
+ * are saved under the archive name the server gives, or documents.zip without one. A personal
+ * download never carries the server's name, so it is named as it always has been.
+ */
+export function documentDownloadName(download: DocumentDownload, documents: readonly WorkspaceDocument[]): string {
+    if (documents.length === 1) return String(documents[0].file_name ?? 'document');
+    return download.fileName ?? 'documents.zip';
 }
 
 export function inspectDocumentBatch(
@@ -408,7 +477,14 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
         },
         download: async (documents) => {
             const ids = idsFor('download', documents);
-            if (!native) return ids.length === 1 ? downloadPersonalDocument(ids[0]) : downloadPersonalDocuments(ids);
+            // The personal routes' own names are not read, so a personal download is named as it
+            // always has been.
+            if (!native) {
+                return {
+                    blob: await (ids.length === 1 ? downloadPersonalDocument(ids[0]) : downloadPersonalDocuments(ids)),
+                    fileName: null,
+                };
+            }
             const response = await fetch(apiUrl(ids.length === 1
                 ? `${base}/${encodeURIComponent(ids[0])}/download` : `${base}/download`), {
                 method: ids.length === 1 ? 'GET' : 'POST', credentials: CREDENTIALS_MODE,
@@ -417,7 +493,7 @@ function createOperations(scope: DocumentReadScope, supported: ReadonlySet<Docum
             if (response.status !== 200 || response.redirected || !/^attachment(?:;|$)/i.test(response.headers.get('Content-Disposition') ?? '')) {
                 throw new ApiError('The download was not authorized or did not return a complete file. No file was saved.', response.status, null);
             }
-            return response.blob();
+            return { blob: await response.blob(), fileName: attachmentFileName(response.headers.get('Content-Disposition')) };
         },
         extractMetadata: async (documents) => {
             const ids = idsFor('extract_metadata', documents);

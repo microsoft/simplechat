@@ -2,8 +2,10 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.134
+Version: 0.261.164
 Implemented in: 0.261.132
+A coded failure shows the server's sentence (apiClient), and an archive takes the server's
+name: 0.261.164
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -27,8 +29,8 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.public_document_management import (
-    DOCUMENT_ACTIONS, OPERATIONS, delete_result, metadata_result,  # noqa: F401
-    operation_path, public_management_ui, tag_result, tag_vocabulary_conflict,
+    DOCUMENT_ACTIONS, OPERATIONS, PROPAGATION_INCOMPLETE_MESSAGE, delete_result, metadata_result,  # noqa: F401
+    operation_path, propagation_incomplete, public_management_ui, tag_result, tag_vocabulary_conflict,
 )
 from ui_tests.fixtures.public_document_collaboration import (
     COLLABORATION_OPERATIONS, collaboration_receipt, public_collaboration_ui,  # noqa: F401
@@ -603,15 +605,12 @@ def test_metadata_patch_retains_failed_draft_and_targets_the_immutable_workspace
     dialog.get_by_label("Keywords", exact=True).fill("baseline, reviewed")
     body = {"title": "Updated public brief", "keywords": ["baseline", "reviewed"]}
     failed = ui.queue_operation(
-        "PATCH", "same-document", body=body, status=503,
-        response={
-            "error": "document_propagation_incomplete",
-            "message": "Metadata propagation is incomplete. Keep this draft while document repair is required.",
-            "document_id": "same-document", "public_workspace_id": "pub-a", "repair_required": True,
-        },
+        "PATCH", "same-document", body=body, status=500, response=propagation_incomplete("same-document"),
     )
     perform(ui, failed, dialog.get_by_role("button", name="Save", exact=True).click)
-    expect(dialog.get_by_role("alert")).to_contain_text(re.compile(r"propagation|repair", re.IGNORECASE))
+    # The server's sentence, not its `document_propagation_incomplete` code.
+    expect(dialog.get_by_role("alert")).to_contain_text(PROPAGATION_INCOMPLETE_MESSAGE)
+    expect(dialog.get_by_role("alert")).not_to_contain_text("document_propagation_incomplete")
     expect(dialog.get_by_label(re.compile(r"^Title"))).to_have_value("Updated public brief")
     expect(ui.page.get_by_text("Metadata saved.", exact=True)).to_have_count(0)
     assert ui.record("same-document") == original
@@ -768,14 +767,15 @@ def test_downloads_save_complete_bytes_and_refusals_never_become_files(public_ma
             archive.writestr(ZipInfo(name, date_time=(2026, 9, 1, 0, 0, 0)), content)
     archive_bytes = stream.getvalue()
     select_documents(ui, "same-document", "notes-document")
+    # The public route names its archive public-documents.zip, and the explorer saves it so.
     batch = ui.queue_operation(
         "POST", "download", body={"document_ids": ["same-document", "notes-document"]},
         response=archive_bytes, content_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="documents.zip"'},
+        headers={"Content-Disposition": 'attachment; filename="public-documents.zip"'},
     )
     with ui.page.expect_download() as download:
         perform(ui, batch, command(ui, "Download").click)
-    assert download.value.suggested_filename == "documents.zip"
+    assert download.value.suggested_filename == "public-documents.zip"
     saved_archive = tmp_path / "set.zip"
     download.value.save_as(saved_archive)
     assert saved_archive.read_bytes() == archive_bytes

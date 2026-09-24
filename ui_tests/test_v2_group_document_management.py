@@ -1,8 +1,10 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.161
+Version: 0.261.164
 Implemented in: 0.261.129
+Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
+the server's name: 0.261.164
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -526,13 +528,9 @@ def test_metadata_changed_field_patch_retains_failed_draft_and_immutable_group(g
     assert ui.record("same-document")["abstract"] == original["abstract"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): a coded failure carries its machine code in `error` and its "
-    "sentence in `message`, and apiClient's readErrorMessage prefers `error`, so the metadata dialog shows "
-    "'document_propagation_incomplete' instead of the server's sentence. The suite's propagation|repair "
-    "pattern matched the code."
-))
 def test_metadata_propagation_failure_shows_the_servers_sentence(group_management_ui):
+    """A coded failure carries its machine code in `error` and its sentence in `message`; the
+    dialog shows the sentence, never the code."""
     ui = group_management_ui
     open_documents(ui)
     dialog = edit_metadata(ui)
@@ -543,6 +541,7 @@ def test_metadata_propagation_failure_shows_the_servers_sentence(group_managemen
     )
     perform(ui, failed, dialog.get_by_role("button", name="Save", exact=True).click)
     expect(dialog.get_by_role("alert")).to_contain_text(PROPAGATION_INCOMPLETE_MESSAGE)
+    expect(dialog.get_by_role("alert")).not_to_contain_text("document_propagation_incomplete")
 
 
 def test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening(group_management_ui):
@@ -898,13 +897,10 @@ def test_partial_bulk_delete_retains_conversation_guard_and_retries_only_failed_
     assert not any("force" in entry.query or "keep_source" in str(entry.body) for entry in ui.operation_requests)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): the server sends the linked conversation (its title and url) "
-    "with the guard, but the confirmation shows only the document and the guard's generic message, so it "
-    "never says which conversation the file belongs to. The suite asserted the title only because the fixture "
-    "wrote it into an invented message."
-))
 def test_conversation_guard_names_the_linked_conversation(group_management_ui):
+    """The confirmation names the conversation a file was uploaded in, and opens it natively on
+    the V2 chat page, never at the classic url the server sends; the link opens in a new tab,
+    keeping the confirmation."""
     ui = group_management_ui
     open_documents(ui)
     select_documents(ui, "notes-document")
@@ -919,7 +915,58 @@ def test_conversation_guard_names_the_linked_conversation(group_management_ui):
     perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
     confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
     expect(confirmation).to_contain_text(CONVERSATION_DELETE_MESSAGE)
-    expect(confirmation).to_contain_text("Planning review")
+    expect(confirmation).to_contain_text("Conversation: Planning review")
+    link = confirmation.get_by_role("link", name=re.compile(r"^Planning review"))
+    expect(link).to_have_attribute("href", "/v2/chat?conversationId=existing-workspace-chat")
+    expect(link).to_have_attribute("target", "_blank")
+    expect(link).to_have_attribute("rel", "noopener noreferrer")
+
+
+def test_conversation_guard_links_only_the_native_chat_and_renders_text(group_management_ui):
+    """Robustness: deliberately malformed guards. Without a conversation id, an absolute,
+    protocol-relative, backslash or scripted url never becomes a link, and a url that names no
+    conversation shows the title only; with an id, the link is the native chat page, never the
+    url. A title is always text, never markup."""
+    ui = group_management_ui
+    title = '<img src=x onerror="window.__guardInjected = true"> Planning review'
+    cases = (
+        (None, "https://evil.example/chats?conversation_id=stolen", None),
+        (None, "//evil.example/chats?conversation_id=stolen", None),
+        (None, "/\\evil.example/chats?conversation_id=stolen", None),
+        # xss-check: ignore -- deliberately malformed server urls this test proves are never rendered as links.
+        (None, "javascript:alert(1)//?conversation_id=stolen", None),
+        (None, "/chats", None),
+        (None, "/chats?conversation_id=from-the-url", "/v2/chat?conversationId=from-the-url"),
+        ("existing-workspace-chat", "javascript:alert(1)", "/v2/chat?conversationId=existing-workspace-chat"),
+    )
+    open_documents(ui)
+    for conversation_id, url, href in cases:
+        select_documents(ui, "notes-document")
+        command(ui, "Delete").click()
+        dialog = ui.page.get_by_role("dialog", name="Delete documents", exact=True)
+        guard = conversation_delete_guard(
+            "notes-document", conversation_id or "unused", title=title, file_name="notes-document.pdf",
+        )
+        if conversation_id is None:
+            del guard["conversation"]["id"]
+        guard["conversation"]["url"] = url
+        guarded = ui.queue_operation(
+            "DELETE", "notes-document", query={"delete_mode": ["all_versions"]}, status=409, response=guard,
+        )
+        perform(ui, guarded, dialog.get_by_role("button", name="Delete", exact=True).click)
+        confirmation = ui.page.get_by_role("dialog", name="Some documents need confirmation", exact=True)
+        expect(confirmation, f"The {url!r} guard must still name its conversation.").to_contain_text(f"Conversation: {title}")
+        links = confirmation.get_by_role("link")
+        if href is None:
+            expect(links, f"The {url!r} guard must not become a link.").to_have_count(0)
+        else:
+            expect(links).to_have_count(1)
+            expect(links).to_have_attribute("href", href)
+        expect(confirmation.locator("img")).to_have_count(0)
+        confirmation.get_by_role("button", name="Cancel", exact=True).click()
+        expect(confirmation).to_have_count(0)
+    assert ui.page.evaluate("() => window.__guardInjected === undefined")
+    assert len(ui.operation_requests) == len(cases)
 
 
 def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_management_ui, tmp_path):
@@ -968,12 +1015,8 @@ def test_approved_source_single_and_batch_downloads_save_complete_bytes(group_ma
     assert "origin" not in ui.groups
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (documents fixture parity): the explorer saves every multi-document download as "
-    "'documents.zip' (DocumentExplorer's saveBlob fallback) instead of the attachment name the server sends, "
-    "'group-documents.zip'. The fixture's invented Content-Disposition used the explorer's own name."
-))
 def test_batch_download_is_saved_under_the_servers_archive_name(group_management_ui):
+    """A multi-document download is saved under the archive name the server's attachment gives."""
     ui = group_management_ui
     open_documents(ui)
     select_documents(ui, "same-document", "shared-report")
@@ -987,6 +1030,40 @@ def test_batch_download_is_saved_under_the_servers_archive_name(group_management
     with ui.page.expect_download() as download:
         perform(ui, batch, command(ui, "Download").click)
     assert download.value.suggested_filename == GROUP_ARCHIVE_NAME
+
+
+def test_archives_take_a_bare_server_name_and_singles_keep_their_own(group_management_ui):
+    """Robustness: deliberately unusual attachment headers. An archive is saved under the server's
+    name, `filename*` preferred and any path dropped, or documents.zip when the name is empty or
+    only a path. A single download keeps the document's own name, whatever lossy name (the
+    server's secure_filename) its header carries."""
+    ui = group_management_ui
+    ui.record("shared-report")["file_name"] = "Published report (final).pdf"
+    ui.record("same-document")["file_name"] = "报告.pdf"
+    open_documents(ui)
+    both = ("same-document", "shared-report")
+    cases = (
+        (both, "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20set.zip; filename=\"resume_set.zip\"", "résumé set.zip"),
+        (both, 'attachment; filename="../../reports/evil.zip"', "evil.zip"),
+        (both, 'attachment; filename="reports/"', "documents.zip"),
+        (both, 'attachment; filename=""', "documents.zip"),
+        (("shared-report",), 'attachment; filename="Published_report_final.pdf"', "Published report (final).pdf"),
+        (("same-document",), 'attachment; filename="pdf"', "报告.pdf"),
+        (("shared-report",), "attachment", "Published report (final).pdf"),
+    )
+    for identifiers, disposition, expected in cases:
+        select_documents(ui, *identifiers)
+        reply = ui.queue_operation(
+            "GET" if len(identifiers) == 1 else "POST",
+            f"{identifiers[0]}/download" if len(identifiers) == 1 else "download",
+            body=None if len(identifiers) == 1 else {"document_ids": list(identifiers)},
+            response=b"file bytes", content_type="application/octet-stream",
+            headers={"Content-Disposition": disposition},
+        )
+        with ui.page.expect_download() as download:
+            perform(ui, reply, command(ui, "Download").click)
+        assert download.value.suggested_filename == expected, disposition
+    assert len(ui.operation_requests) == len(cases)
 
 
 def test_final_html_json_and_error_download_bodies_never_become_files(group_management_ui):

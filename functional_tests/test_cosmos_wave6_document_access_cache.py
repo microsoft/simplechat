@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 6 document access Redis cache.
-Version: 0.250.043
+Version: 0.261.163
 Implemented in: 0.250.029
 DAI cache TTL default updated in: 0.250.031
 DAI version marker TTL hygiene added in: 0.250.043
@@ -113,6 +113,37 @@ class FakeCosmosContainer:
         if "SELECT TOP 1 VALUE C.ID" in query_upper:
             return [item["id"] for item in results[:1]]
         return results
+
+
+class FakeFencedDocumentsContainer(FakeCosmosContainer):
+    """A group documents container with the etag semantics the projection fence relies on.
+
+    Syncing a group document reads its stored source and claims it with a conditional
+    replace, so every write stamps a fresh ``_etag`` and a replace must name the current one.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.etag_counter = 0
+
+    def _stamped(self, body):
+        self.etag_counter += 1
+        return {**copy.deepcopy(body), "_etag": str(self.etag_counter)}
+
+    def upsert_item(self, body):
+        stored = self._stamped(body)
+        self.items[(self._partition_key_for_body(body), body["id"])] = stored
+        return copy.deepcopy(stored)
+
+    def replace_item(self, item, body, etag=None, match_condition=None):
+        key = (self._partition_key_for_body(body), item)
+        if key not in self.items:
+            raise FakeCosmosError(404, f"Missing item {item}")
+        if etag is not None and self.items[key].get("_etag") != etag:
+            raise FakeCosmosError(412, f"ETag conflict for {item}")
+        stored = self._stamped(body)
+        self.items[key] = stored
+        return copy.deepcopy(stored)
 
 
 class FakeRedisClient:
@@ -276,6 +307,7 @@ def _load_document_access_index_module(
     groups_container=None,
     public_workspaces_container=None,
     user_settings_container=None,
+    group_documents_container=None,
 ):
     original_modules = {}
     for module_name in [
@@ -294,6 +326,7 @@ def _load_document_access_index_module(
     groups_container = groups_container or FakeCosmosContainer()
     public_workspaces_container = public_workspaces_container or FakeCosmosContainer()
     user_settings_container = user_settings_container or FakeCosmosContainer()
+    group_documents_container = group_documents_container or FakeFencedDocumentsContainer()
 
     fake_app_settings_cache = types.ModuleType("app_settings_cache")
     fake_app_settings_cache.get_app_cache_redis_client = lambda: redis_client
@@ -307,7 +340,7 @@ def _load_document_access_index_module(
     fake_config.cosmos_user_settings_container = user_settings_container
     fake_config.cosmos_user_documents_container = FakeCosmosContainer()
     fake_config.cosmos_user_documents_container_name = "documents"
-    fake_config.cosmos_group_documents_container = FakeCosmosContainer()
+    fake_config.cosmos_group_documents_container = group_documents_container
     fake_config.cosmos_group_documents_container_name = "group_documents"
     fake_config.cosmos_public_documents_container = FakeCosmosContainer()
     fake_config.cosmos_public_documents_container_name = "public_documents"
@@ -437,10 +470,15 @@ def test_document_access_cache_version_hash_resolution_returns_safe_scope_metada
         user_id="owner-1",
         group_id="group-1",
     )
+    # A group document's sync reads its stored source through the projection fence,
+    # so the document must exist in the group documents container.
+    group_documents_container = FakeFencedDocumentsContainer()
+    group_documents_container.upsert_item(group_document)
 
     with _load_document_access_index_module(
         redis_client,
         groups_container=groups_container,
+        group_documents_container=group_documents_container,
     ) as (indexing, _index_container, settings_container):
         settings_container.upsert_item(_succeeded_backfill_state())
         indexing.sync_document_access_index_for_document(

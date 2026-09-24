@@ -57,14 +57,20 @@ interface RequestOptions {
     headers?: Record<string, string>;
 }
 
+/** A bare machine code, one lowercase token such as `document_propagation_incomplete`. */
+const MACHINE_CODE = /^[a-z][a-z0-9_]*$/;
+
 async function readErrorMessage(response: Response): Promise<{ message: string; payload: unknown }> {
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
         try {
             const payload = (await response.json()) as Record<string, unknown> | null;
+            const error = payload && typeof payload.error === 'string' ? payload.error : '';
+            const sentence = payload && typeof payload.message === 'string' ? payload.message : '';
+            // A coded failure carries its machine code in `error` and its sentence in `message`.
+            // The sentence is what a person reads; `payload` still carries the code for callers.
             const message =
-                (payload && typeof payload.error === 'string' && payload.error) ||
-                (payload && typeof payload.message === 'string' && payload.message) ||
+                (MACHINE_CODE.test(error) && sentence.trim() ? sentence : error || sentence) ||
                 `Request failed with status ${response.status}`;
             return { message, payload };
         } catch {
