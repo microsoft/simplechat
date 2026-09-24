@@ -44,7 +44,7 @@ def test_group_selection_populates_shared_shell_without_personal_data(group_ui, 
     section(ui.page, "Documents")
     expect(ui.page.get_by_role("searchbox", name="Search documents. Press Enter to search immediately.", exact=True)).to_be_visible()
     expect(ui.page.get_by_role("button", name="Upload", exact=True)).to_have_count(0)
-    expect(ui.page.get_by_role("button", name="Open classic group workspace", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_be_visible()
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/documents") or entry.path in ("/api/user/plugins", "/api/user/agents")]
     section(ui.page, "Overview")
     ui.assert_no_overflow()
@@ -201,7 +201,7 @@ def test_classic_handoff_reconfirms_the_selected_group(group_ui):
     ui.active_group = "group-a"
     ui.open("/groups/group-a/documents")
     ui.active_group = "group-b"
-    ui.page.get_by_role("button", name="Open classic group workspace", exact=True).click()
+    ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True).click()
     expect(ui.page).to_have_url(f"{ORIGIN}/group_workspaces")
     assert ui.classic_visits == [("/group_workspaces", "group-a")]
 

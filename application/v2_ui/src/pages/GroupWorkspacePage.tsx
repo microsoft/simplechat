@@ -5,7 +5,7 @@ import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-do
 import { ArrowUpRight, Compass, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { PageHeader } from '../components/layout/PageHeader';
-import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
+import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
 import { GroupWorkspacePicker } from '../components/workspace/GroupWorkspacePicker';
 import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
 import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
@@ -13,7 +13,7 @@ import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
     GROUP_SECTION_BLURBS, GROUP_STATUS_LABELS, groupRoleLabel, groupWorkspaceNavigationAvailability,
-    groupWorkspacePath, classicGroupSectionLabel, readGroupDocumentTarget,
+    groupWorkspacePath, isGroupWorkspaceSection, readGroupDocumentTarget,
 } from '../lib/groupWorkspaceNavigation';
 import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { resolveWorkspaceSections } from '../lib/workspaceSections';
@@ -148,16 +148,14 @@ export function GroupWorkspacePage() {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
         return {
             id, label, icon, group, blurb: GROUP_SECTION_BLURBS[id],
-            availabilityLabel: id === 'workflows' || id === 'documents' || id === 'tags' || id === 'prompts' ? undefined
-                : id === 'agents' ? (context?.sections.agents.enabled ? undefined : 'Classic')
-                : id === 'identities' ? (context?.sections.identities.enabled ? undefined : 'Classic')
-                : id === 'endpoints' ? (context?.sections.endpoints.enabled ? undefined : 'Classic')
-                : id === 'sync' ? (context?.sections.sync.enabled ? undefined : 'Classic')
-                : id === 'actions' ? (context?.sections.actions.enabled ? undefined
-                    : context?.native_delegation?.enabled ? 'Call agent' : 'Classic')
-                : 'Classic',
+            // Every group section is native now, so none hands off to classic. The only marker left
+            // flags Actions as Call-agent-only: when the group action capability is off but the
+            // Call agent tools stay on (native_delegation), that delegation view is what the user
+            // actually gets, so the nav slot advertises it by name.
+            availabilityLabel: id === 'actions' && !context?.sections.actions.enabled && context?.native_delegation?.enabled
+                ? 'Call agent' : undefined,
         };
-    }), [context?.native_delegation?.enabled, context?.sections.actions.enabled, context?.sections.agents.enabled, context?.sections.identities.enabled, context?.sections.endpoints.enabled, context?.sections.sync.enabled]);
+    }), [context?.sections.actions.enabled, context?.native_delegation?.enabled]);
     const resolved = useMemo(() => resolveWorkspaceSections(
         sections, context ? groupWorkspaceNavigationAvailability(context) : null,
     ), [sections, context]);
@@ -239,6 +237,22 @@ export function GroupWorkspacePage() {
         setDirty(false);
         setResourceBusy(false);
     }, [viewerId]);
+
+    // A stray resource segment on a section that has no resource route -- every native group section
+    // except the actions and agents editors -- must never fall through to a classic handoff. Once the
+    // context is loaded, drop the segment so the section itself renders, turning a /workflows/<id>
+    // deep link into the ?workflow_id= query the workflows section already understands. Actions and
+    // agents keep their editor route while that section is available; when it is off they have no
+    // editor, so their stray segment is dropped too and the section (or its lock) shows instead.
+    useEffect(() => {
+        if (!context || !groupId || !section || !resourceId || !isGroupWorkspaceSection(section)) return;
+        if (section === 'actions' && context.sections.actions.enabled) return;
+        if (section === 'agents' && context.sections.agents.enabled) return;
+        const target = section === 'workflows'
+            ? `${groupWorkspacePath(groupId, 'workflows')}?workflow_id=${encodeURIComponent(resourceId)}`
+            : groupWorkspacePath(groupId, section);
+        navigate(target, { replace: true });
+    }, [context, groupId, section, resourceId, navigate]);
 
     const selectGroup = async (id: string) => {
         setNotice('');
@@ -387,7 +401,7 @@ export function GroupWorkspacePage() {
                                 <div><dt className="text-xs text-text-3">Owner</dt><dd className="break-words">{context.workspace.owner.display_name || 'Owner information unavailable'}{context.workspace.owner.email ? ` · ${context.workspace.owner.email}` : ''}</dd></div>
                             </dl>
                             <WorkspaceOverview basePath={basePath} resolved={resolved} showRelationships={false}
-                                description="Shared documents, prompts and automation for this group. Sections marked Classic open in the existing interface while their V2 experience is being built." />
+                                description="Shared documents, prompts and automation for this group. A locked section shows why it's unavailable to you." />
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
@@ -401,7 +415,7 @@ export function GroupWorkspacePage() {
                             )
                             : section === 'tags' && !resourceId ? (
                                 context.document_permissions.can_view ? <GroupTagsSection context={context}
-                                    interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}
+                                    interactionDisabled={accessUnconfirmed}
                                     onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
                                     : <EmptyState icon={<Lock size={28} />} title="Tags are not available" description="You do not have access to this group's documents." />
                             )
@@ -424,8 +438,7 @@ export function GroupWorkspacePage() {
                                     </>
                                 ) : section === 'actions' && context.native_delegation?.enabled && !resourceId ? (
                                     <>
-                                        <SectionIntro title="Actions" description="Manage Call agent actions and their local callers. Other group actions still use the classic editor." />
-                                        <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed} onClick={() => openClassic('/group_workspaces')}>Open classic group workspace<ArrowUpRight size={14} /></GlassButton>
+                                        <SectionIntro title="Actions" description="Group actions are turned off for this group. You can still choose which agents this group can call and which local actions may trigger them." />
                                         <AgentDelegationManager scope={{ type: 'group', groupId: context.scope.id }}
                                             allowManage={context.native_delegation.can_manage} interactionDisabled={accessUnconfirmed}
                                             onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
@@ -445,12 +458,10 @@ export function GroupWorkspacePage() {
                                 ) : section === 'sync' && !resourceId && groupFileSourceAdapter ? (
                                     <GroupFileSourcesSection adapter={groupFileSourceAdapter} />
                                 ) : (
-                                    <GlassPanel elevation="flat" className="space-y-4 p-5">
-                                        <SectionIntro title={selected.section.label} description={selected.section.blurb} />
-                                        <p className="text-sm text-text-2">This section is available in the classic group workspace. Choose {classicGroupSectionLabel(selected.section.id, selected.section.label)} there; {context.workspace.name} will be selected for you.</p>
-                                        <GlassButton variant="primary" disabled={resourceBusy || accessUnconfirmed}
-                                            onClick={() => openClassic('/group_workspaces')}>Open classic group workspace<ArrowUpRight size={15} /></GlassButton>
-                                    </GlassPanel>
+                                    <div className="flex items-center justify-center gap-2 py-12 text-sm text-text-3" role="status" aria-live="polite">
+                                        <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                                        Opening the requested view...
+                                    </div>
                                 )}
                 </div>
             ) : !error ? <EmptyState title="Workspace details unavailable" description="Select another group or refresh workspace details." /> : null}
