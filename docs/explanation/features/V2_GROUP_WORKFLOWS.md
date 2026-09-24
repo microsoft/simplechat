@@ -81,20 +81,12 @@ allows it, and explains that the task analyzes the files each sync changed.
 
 ### Alerts
 
-Every group workflow shows a read-only **Alerts** summary: **When to alert**,
-**Pop-up priority**, and the number of **Alert rules**. The values are resolved
-the way the server's `resolve_workflow_alert_config` does, including older
-records that store only a priority.
-
-Whether the summary offers a classic link depends on the workflow:
-
-| Workflow | Summary |
-|---|---|
-| `definition_version` 1 with no `flow` | **Edit alerts in the classic workspace** is offered. It uses the group page's classic handoff, which asks about unsaved changes and selects this group first. The summary warns that saving the workflow in V2 converts it, after which the classic editor can no longer open it. |
-| Saved by V2 (version 2 or 3) | Says the alert settings are kept unchanged when you save. The classic editor refuses these definitions, so their alerts can't be changed until native alert editing is available. |
-| New in V2 | Says alerts can't be added yet. |
-
-The link predicate matches the classic editor's own `workflowNeedsNativeEditor`.
+In 0.261.141, group workflows showed a read-only **Alerts** summary, and linked
+to the classic editor for version 1 workflows. **From 0.261.144, alerts are
+edited natively in V2, for personal and group workflows. The classic link is
+gone.** See [V2 Workflow Alert Editing](V2_WORKFLOW_ALERT_EDITING.md). Viewers
+who can't manage a workflow still see the read-only summary, which is resolved
+the way the server's `resolve_workflow_alert_config` does.
 
 ### Approvals
 
@@ -107,11 +99,10 @@ runtime read also carries `group_id`. No change was needed.
 | File | Change |
 |---|---|
 | `application/single_app/route_backend_workflows.py` | The sources route honours `?group_id` |
-| `application/v2_ui/src/lib/workflowEditor.ts` | File Sync configuration, validation and save helpers; the source list fetch; the alert summary and classic predicate; Analyze targets |
+| `application/v2_ui/src/lib/workflowEditor.ts` | File Sync configuration, validation and save helpers; the source list fetch; the alert summary and classic predicate (moved to `workflowAlerts.ts`, and the predicate removed, in 0.261.144); Analyze targets |
 | `application/v2_ui/src/components/workflows/WorkflowFileSyncFields.tsx` | New: the File Sync section |
-| `application/v2_ui/src/components/workflows/WorkflowAlertSummary.tsx` | New: the alert summary |
+| `application/v2_ui/src/components/workflows/WorkflowAlertSummary.tsx` | New: the alert summary (read-only viewers only from 0.261.144) |
 | `application/v2_ui/src/components/workflows/WorkflowEditorDialog.tsx`, `WorkflowTaskFields.tsx` | Trigger choice, schedule fields, the new sections, Analyze targets |
-| `application/v2_ui/src/pages/workspace/WorkflowsSection.tsx`, `pages/GroupWorkspacePage.tsx` | The classic handoff for the alerts link |
 
 ## Known limitations
 
@@ -119,16 +110,12 @@ runtime read also carries `group_id`. No change was needed.
   the save fail with 404. The editor treats that as lost access and closes the
   draft. The editor prevents this whenever its list was loaded after the
   deletion.
-- **Personal workflows.** Personal File Sync workflows that analyze changed files
-  still can't be saved in V2. Personal File Sync authoring isn't part of this
-  release.
-- **Older group records.** A group workflow saved before `definition_version`
-  existed reads as version 2 in V2, so it offers no classic alerts link, even
-  though the classic editor could open it.
+- **Personal workflows.** Personal File Sync authoring isn't part of this
+  release. From 0.261.144, a personal workflow that analyzes changed files can
+  be saved in V2; see the [Analyze changed files fix](../fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md).
 - **Member view.** A member's read-only editor asks for the group's Microsoft 365
   run-as accounts. The route refuses members, so the editor shows "Could not load
   eligible Microsoft 365 accounts". This is pre-existing.
-- **Native alert editing** is the follow-up slice M6B.
 
 ## Testing and validation
 
@@ -136,7 +123,7 @@ runtime read also carries `group_id`. No change was needed.
 |---|---|---|
 | `functional_tests/test_group_workflow_file_sync_sources_scope.py` | 12 | The explicit group is listed and the active group is never read; the `groupId` and whitespace spellings; DocumentManager allowed; a member refused with a group ID; a non-member and an unknown group; the legacy path without `group_id` unchanged; the disabled and unassigned gates; File Sync off gives an empty list |
 | `functional_tests/test_group_workflow_round_trip_preservation.py` | 5 | A workflow with alert rules, URL access, a Monitor File Sync trigger and an Analyze action is saved, loaded and sent back unchanged. Every stored field matches except the modification stamps, and a second round trip is stable. Runs through the real workflow modules |
-| `functional_tests/test_group_workflow_file_sync_client_parity.py` | 25 | The production TypeScript runs under Node, and each payload goes through the real `save_group_workflow`. The editor allows a save if and only if the server accepts it, over 21 cases. The alert summary and classic predicate match the server and classic implementations |
+| `functional_tests/test_group_workflow_file_sync_client_parity.py` | 25 (24 from 0.261.144) | The production TypeScript runs under Node, and each payload goes through the real `save_group_workflow`. The editor allows a save if and only if the server accepts it, over 21 cases. The alert summary matches the server. The classic-predicate case was removed with the link in 0.261.144 |
 | `ui_tests/test_v2_group_workflow_file_sync.py` | 12 | Authoring checked on the saved body; editing and the round trip, including Analyze on changed files; File Sync before a manual run; unavailable sources; no sources and the server's refusal text; the member view; responsive layout |
 | `functional_tests/test_workflow_*.js` | 112 | The existing workflow editor logic, unchanged |
 

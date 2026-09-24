@@ -71,19 +71,47 @@ group has File Sync sources:
 Choose between 1 and 10 of the group's own sources. A source the group no
 longer offers is marked **No longer available**; remove it before saving.
 Personal workflows keep the File Sync settings they already have, but can't
-create new ones in V2 yet.
+create new ones in V2 yet. From version **0.261.144**, a personal workflow
+whose Analyze task works on the files File Sync changed can be saved in V2.
 
-## Review a group workflow's alerts
+## Set up alerts
 
-Group workflows show their alert settings read-only under **Alerts**: when to
-alert, the pop-up priority, and how many rules there are. Saving in V2 keeps
-them unchanged.
+From version **0.261.144**, personal and group workflows are given alerts in the
+V2 editor, under **Alerts** after the tasks. The alert settings are:
 
-For a workflow created in the classic editor that V2 hasn't saved yet, **Edit
-alerts in the classic workspace** opens it there. Edit alerts first: once V2
-saves the workflow, the classic editor can no longer open it. Workflows created
-or saved in V2 can't have their alerts changed until native alert editing is
-available.
+- **When to alert:** **Never notify me**, **On every run** (choose a **Pop-up
+  alert priority**), or **Only when a condition is met**.
+- **Alert rules**, up to 20, used by **Only when a condition is met**. Each rule
+  has a condition:
+  - the run finished with a status;
+  - a task finished with a status;
+  - the output text contains, lacks or matches a pattern;
+  - a File Sync result;
+  - the run produced no output;
+  - a model judges a condition you describe;
+  - the agent raised an alert.
+
+  A rule that reads output (task status, output text, no output, or a model's
+  judgement) can look at the final output, any task's output, or one task. Run
+  status, File Sync results and agent alerts apply to the whole run. A rule's
+  **severity** decides where the alert lands: info and low go to the
+  notification bell, and medium and above open the pop-up alert, unless you
+  choose the delivery yourself. A new rule is named after its condition until you
+  give it a name.
+- **If a model evaluated condition cannot be judged** appears when a rule asks a
+  model to judge. It either skips the rule silently, or alerts anyway so a
+  failure isn't missed.
+
+When several rules match one run, the highest severity wins and every matched
+rule is listed. Rules you keep while alerts are off, or on every run, are still
+saved and still checked.
+
+If you delete a task that a rule watches, the rule is marked, and the editor
+won't save until you choose another task or remove the rule. A problem with the
+alert settings is shown with the rule's number.
+
+Members who can't manage the workflow see a read-only summary. A workflow saved
+in V2 can no longer be opened by the classic editor.
 
 ## Choose the Microsoft 365 Run as account
 

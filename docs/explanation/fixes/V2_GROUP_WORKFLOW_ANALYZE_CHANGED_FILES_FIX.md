@@ -50,6 +50,31 @@ own condition. Personal workflows are unchanged.
 | The same workflow without File Sync | V2 refuses to save | V2 refuses to save, as the server does |
 | Personal workflow | Unchanged | Unchanged |
 
+## Personal workflows (0.261.144)
+
+The personal save path has the same rule. `save_personal_workflow` sets
+`allow_empty_file_sync_targets` when File Sync is enabled with
+`use_changed_documents` (`functions_personal_workflows.py`), and substitutes the
+dynamic target for an Analyze task with no documents. The group-only check in
+`workflowFileSyncProvidesAnalyzeTargets` still refused these workflows in
+personal V2. So a personal workflow created in the classic editor, with File
+Sync analyzing changed files, could be opened in V2 but not saved.
+
+From 0.261.144, `workflowFileSyncProvidesAnalyzeTargets` applies the server's
+condition in both scopes. Personal File Sync **authoring** is still not part of
+V2; the fix only lets V2 save the File Sync settings a personal workflow already
+has.
+
+`functional_tests/test_workflow_file_sync_analyze_targets.py` runs the personal
+and group cases through the real save functions: accepted with File Sync and
+changed documents, refused without. The existing group parity test was updated
+accordingly.
+
+| Case | Before (0.261.141) | After (0.261.144) |
+| --- | --- | --- |
+| Personal workflow, File Sync with changed files, Analyze without documents | V2 refuses to save | Saves |
+| The same personal workflow without File Sync | V2 refuses to save | V2 refuses to save, as the server does |
+
 ## Related
 
 - [V2 Group Workflows](../features/V2_GROUP_WORKFLOWS.md)

@@ -136,8 +136,8 @@ Ordinary members do not see identities.
 
 Use **Workflows** for the native workflow editor and run history. From version
 **0.261.141**, workflow managers can also set a group workflow to run when File
-Sync finds changes, or to sync first before each run. Alert settings appear
-read-only; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
+Sync finds changes, or to sync first before each run. From **0.261.144**,
+workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
 **Sync** and **Endpoints** are marked **Classic** while their native V2
 experiences are being built. **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.

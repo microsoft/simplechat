@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.144)**
+
+#### New Features
+
+*   **Native Workflow Alert Editing**
+    *   Personal and group workflows can have their alerts set up and changed in the V2 workflow editor: when to alert, a pop-up priority, and up to 20 rules. The rules cover seven kinds of condition, each with a scope, a severity and a delivery.
+    *   Before this, a workflow created or saved in V2 could never get alerts, because the classic editor can't open V2 definitions. The group editor's link to the classic alert editor is removed.
+    *   The editor checks the settings with the server's own rules and messages before saving, and a workflow whose alerts you didn't touch is saved with them unchanged.
+    *   (Ref: `WorkflowAlertEditor.tsx`, `workflowAlerts.ts`, `functions_workflow_alerts.py`, [V2 Workflow Alert Editing](features/V2_WORKFLOW_ALERT_EDITING.md))
+
+#### Bug Fixes
+
+*   **A Removed Task No Longer Blocks Every Save**
+    *   Fixed V2 refusing every save, with a generic "Invalid workflow settings" message, after a task watched by an alert rule was deleted. The editor now marks the rule and says which one to fix.
+    *   Invalid alert settings now get a specific message naming the rule, on both save routes and in the classic editor. Other invalid settings keep the generic message.
+    *   (Ref: `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Removed-Task Save Fix](fixes/WORKFLOW_ALERT_REMOVED_TASK_SAVE_FIX.md))
+
+*   **Personal Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a personal workflow whose Analyze task uses the files File Sync changed, a setup the server accepts. It already worked for group workflows from 0.261.141.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, [Analyze Changed Files Fix](fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
 ### **(v0.261.143)**
 
 #### Bug Fixes
