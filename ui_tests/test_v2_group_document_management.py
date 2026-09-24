@@ -1,10 +1,11 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.164
+Version: 0.261.166
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
 the server's name: 0.261.164
+A tag vocabulary conflict shows its sentence and keeps the draft: 0.261.166
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -35,10 +36,11 @@ from ui_tests.fixtures.group_document_management import (
     CONVERSATION_DELETE_MESSAGE, DOCUMENT_ACTIONS, DOCUMENT_CHANGED_ERROR, DOCUMENT_DELETED_MESSAGE,
     DOCUMENT_OPERATION_FAILED_ERROR, GROUP_ARCHIVE_NAME, METADATA_UPDATED_MESSAGE, OPERATIONS,
     PROPAGATION_INCOMPLETE_MESSAGE, SYNCED_DELETE_OPTIONS, TAG_CREATED_MESSAGE, TAG_REVISION_CHANGED_ERROR,
+    VOCABULARY_CONFLICT_CODE, VOCABULARY_CONFLICT_MESSAGE,
     attachment, batch_error, bulk_tag_result, connect_options, conversation_delete_guard,  # noqa: F401
     delete_result, group_management_ui, metadata_result, operation_path, propagation_incomplete,  # noqa: F401
-    queue_result, synced_delete_guard, tag_created, tag_result, tag_vocabulary_conflict, upload_refusal,
-    upload_result,
+    queue_result, synced_delete_guard, tag_created, tag_result, tag_vocabulary_conflict, tag_vocabulary_refusal,
+    upload_refusal, upload_result,
 )
 from ui_tests.fixtures.group_documents import ARTIFACT_AWAITING_APPROVAL_STATUS, document, pending_artifact, restricted
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID
@@ -1204,6 +1206,26 @@ def test_tag_creation_requires_201_and_the_actual_name_and_colour(group_manageme
         expect(ui.page.get_by_role("button", name="Create", exact=True)).to_be_enabled()
         assert ui.vocabulary["group-a"] == original, name
     assert len(ui.operation_requests) == len(cases)
+
+
+def test_a_tag_vocabulary_conflict_shows_the_servers_sentence_and_keeps_the_draft(group_management_ui):
+    ui = group_management_ui
+    original = copy.deepcopy(ui.vocabulary["group-a"])
+    open_tags(ui)
+    ui.page.get_by_label("New tag", exact=True).fill("urgent")
+    # The real 409 when the group changed under the vocabulary write: its sentence in `error`, its
+    # machine code in `error_code`.
+    reply = ui.queue_operation(
+        "POST", "tags", body={"tag_name": "urgent", "color": "#3b82f6"}, response=tag_vocabulary_refusal(), status=409,
+    )
+    perform(ui, reply, ui.page.get_by_role("button", name="Create", exact=True).click)
+    expect(ui.page.get_by_role("alert").filter(has_text=VOCABULARY_CONFLICT_MESSAGE)).to_be_visible()
+    expect(ui.page.get_by_text(VOCABULARY_CONFLICT_CODE)).to_have_count(0)
+    expect(ui.page.get_by_label("New tag", exact=True)).to_have_value("urgent")
+    expect(ui.page.get_by_label("Colour for urgent", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Create", exact=True)).to_be_enabled()
+    assert ui.vocabulary["group-a"] == original
+    assert len(ui.operation_requests) == 1
 
 
 def test_native_tag_encoded_rename_merge_and_delete_consume_owned_current_outcomes(group_management_ui):

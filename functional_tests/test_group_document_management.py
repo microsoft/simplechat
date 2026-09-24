@@ -1,8 +1,9 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.130
+Version: 0.261.166
 Implemented in: 0.261.129
+A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.166
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,
@@ -29,6 +30,7 @@ import uuid
 import zipfile
 
 import pytest
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 from flask import jsonify, make_response
 from werkzeug.utils import secure_filename
 
@@ -119,7 +121,9 @@ class MutableContainer(ReadOnlyContainer):
         self._before("patch", item, patch_operations)
         expected = json.loads(filter_predicate.split(" = ", 1)[1])
         if self.records[item].get("_etag") != expected:
-            raise StoreFailure(412)
+            # What the SDK raises when the service answers a failed filter predicate with 412
+            # (test_group_document_sdk_conditions.py pins that against the real pipeline).
+            raise CosmosAccessConditionFailedError(status_code=412, message="PRIVATE-PROVIDER-DIAGNOSTIC")
         updated = deepcopy(self.records[item])
         for operation in patch_operations:
             parts = [part.replace("~1", "/").replace("~0", "~") for part in operation["path"].split("/")[1:]]
@@ -640,6 +644,89 @@ def test_tag_persistence_is_conditional_and_never_overwrites_other_group_fields(
     assert env.groups["group-a"]["users"] == [{"userId": "new-member"}]
     assert env.groups["group-a"]["owner"] == before["owner"]
     assert env.group_container.writes == []
+
+
+VOCABULARY_CONFLICT = {
+    "error": "The group's tags or permissions changed. Refresh and retry.",
+    "error_code": "vocabulary_conflict",
+}
+
+
+def lose_the_vocabulary_patch(env, *, removing=False):
+    """A group write lands between the vocabulary pre-check and the conditional patch it guards.
+
+    With ``removing``, only the cleanup patch that removes an old name loses; any patch before it
+    lands.
+    """
+
+    def concurrent_group_write(operation, item, body):
+        if operation == "patch" and (not removing or any(entry["op"] == "remove" for entry in body)):
+            env.group_container.before_write = None
+            env.group_container.change(item, users=[{"userId": "new-member"}])
+
+    env.group_container.before_write = concurrent_group_write
+
+
+@pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
+def test_either_vocabulary_check_raises_the_one_coded_conflict_and_writes_nothing(management, check):
+    env = management
+    snapshot = deepcopy(env.groups["group-a"])
+    if check == "pre_check":
+        env.group_container.change("group-a", users=[{"userId": "new-member"}])
+    else:
+        lose_the_vocabulary_patch(env)
+    with pytest.raises(env.management.GroupDocumentOperationError) as failure:
+        env.management._patch_tag_definitions("owner", "group-a", snapshot, {"new-tag": {"color": "#abcdef"}})
+    assert failure.value.code == 409
+    assert failure.value.payload == VOCABULARY_CONFLICT
+    assert [attempt[0] for attempt in env.group_container.attempts] == ([] if check == "pre_check" else ["patch"])
+    assert env.group_container.writes == []
+    assert env.groups["group-a"]["tag_definitions"] == snapshot["tag_definitions"]
+    assert env.groups["group-a"]["users"] == [{"userId": "new-member"}]
+
+
+@pytest.mark.parametrize("operation", ["create_tag", "recolour_tag", "rename_tag"])
+def test_a_lost_vocabulary_patch_answers_the_coded_conflict_and_writes_nothing(management, operation):
+    env = management
+    definitions = deepcopy(env.groups["group-a"]["tag_definitions"])
+    documents = deepcopy(env.source.records)
+    lose_the_vocabulary_patch(env)
+    response = invoke(env, operation)
+    assert response.status_code == 409
+    assert response.get_json() == {**VOCABULARY_CONFLICT, "group_id": "group-a"}
+    assert "PRIVATE-PROVIDER" not in response.get_data(as_text=True)
+    assert [attempt[0] for attempt in env.group_container.attempts] == ["patch"]
+    assert env.group_container.writes == []
+    assert env.groups["group-a"]["tag_definitions"] == definitions
+    assert env.groups["group-a"]["users"] == [{"userId": "new-member"}]
+    assert env.source.writes == [] and env.source.records == documents
+
+
+@pytest.mark.parametrize("operation", ["rename_tag", "delete_tag"])
+def test_a_lost_vocabulary_cleanup_keeps_the_old_name_and_reports_the_coded_conflict(management, operation):
+    env = management
+    lose_the_vocabulary_patch(env, removing=True)
+    response = invoke(env, operation)
+    body = response.get_json()
+    assert response.status_code == 207
+    assert body["vocabulary_retained"] is True
+    assert body["success"] == [{"document_id": "document-a", "tags": ["renamed"] if operation == "rename_tag" else []}]
+    assert body["errors"] == [{
+        "stage": "vocabulary", "group_id": "group-a",
+        "error": VOCABULARY_CONFLICT["error_code"], "message": VOCABULARY_CONFLICT["error"],
+    }]
+    assert "PRIVATE-PROVIDER" not in response.get_data(as_text=True)
+    assert "reference" in env.groups["group-a"]["tag_definitions"]
+    assert env.groups["group-a"]["users"] == [{"userId": "new-member"}]
+
+
+def test_a_lost_vocabulary_patch_while_tagging_names_the_coded_conflict_per_document(management):
+    env = management
+    lose_the_vocabulary_patch(env)
+    response = invoke(env, "tag_documents")
+    assert response.status_code == 207
+    assert response.get_json()["errors"] == [{**VOCABULARY_CONFLICT, "document_id": "document-a", "group_id": "group-a"}]
+    assert "new-tag" not in env.groups["group-a"]["tag_definitions"]
 
 
 def test_tag_rename_keeps_old_vocabulary_on_partial_propagation(management):

@@ -1,10 +1,11 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.161
+Version: 0.261.166
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
+A tag vocabulary conflict refusal carries its code (`tag_vocabulary_refusal`): 0.261.166
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -63,7 +64,8 @@ def operation_path(resource, group_id="group-a"):
 # File Sync delete guard), verbatim, so a browser test that renders a receipt's text renders the
 # server's; functional_tests/test_group_document_fixture_parity.py holds every builder below to the
 # real route. A coded failure carries its machine code in `error` and its sentence in `message`;
-# any other refusal carries only its sentence, in `error`.
+# any other refusal carries its sentence in `error`, and a tag vocabulary conflict also names its
+# code in `error_code`.
 METADATA_UPDATED_MESSAGE = "Group document metadata updated."
 METADATA_QUEUED_MESSAGE = "Metadata saved and queued for content screening."
 DOCUMENT_DELETED_MESSAGE = "Group document deleted."
@@ -76,7 +78,10 @@ TAG_MESSAGES = {
 TAG_PARTIAL_MESSAGE = (
     "Some tag changes are incomplete. The original vocabulary has been retained; refresh before retrying."
 )
+# The one tag vocabulary conflict, whether the etag pre-check caught the change or the conditional
+# patch lost to it (GROUP_TAG_VOCABULARY_CONFLICT_MESSAGE and _CODE).
 VOCABULARY_CONFLICT_MESSAGE = "The group's tags or permissions changed. Refresh and retry."
+VOCABULARY_CONFLICT_CODE = "vocabulary_conflict"
 PROPAGATION_INCOMPLETE_MESSAGE = (
     "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
 )
@@ -206,10 +211,18 @@ def tag_result(operation, *, tag=None, success=(), errors=()):
 
 
 def tag_vocabulary_conflict(group_id="group-a"):
+    """The vocabulary's own entry in a re-tag receipt, when removing the old name finds the group
+    changed."""
     return {
-        "stage": "vocabulary", "group_id": group_id, "error": "vocabulary_conflict",
+        "stage": "vocabulary", "group_id": group_id, "error": VOCABULARY_CONFLICT_CODE,
         "message": VOCABULARY_CONFLICT_MESSAGE,
     }
+
+
+def tag_vocabulary_refusal(group_id="group-a"):
+    """The 409 a tag create, recolour or rename sends when its vocabulary write finds the group
+    changed."""
+    return {"error": VOCABULARY_CONFLICT_MESSAGE, "error_code": VOCABULARY_CONFLICT_CODE, "group_id": group_id}
 
 
 # A download route sends each file with these protective headers (the Cache-Control as the

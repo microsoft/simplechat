@@ -1,8 +1,9 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.161
+Version: 0.261.166
 Implemented in: 0.261.161
+A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.166
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:
@@ -25,7 +26,8 @@ that the status and the machine-readable code match. A management receipt is com
 builder a browser test scripts must equal the real route's response to the same request, and it
 is served through the fixture's own ``_dispatch``, which validates the request as it would the
 browser's. A document route carries a coded failure's machine code in ``error`` and its sentence in
-``message``; any other refusal carries only its sentence, in ``error``.
+``message``; any other refusal carries its sentence in ``error``, and a tag vocabulary conflict
+also names its code in ``error_code``.
 
 The real routes run through the family API suites' harnesses: ``test_group_document_read_apis.py``
 for the reads (the real read, access, projection, screening and route modules),
@@ -36,10 +38,11 @@ server stores (a share becomes a ``shared_group_ids`` entry, a screening summary
 marker whose scan the server can read), so each projection is compared with the server's
 projection of the same document.
 
-Three findings are pinned as strict xfails in ``ui_tests/test_v2_group_document_management.py``,
-because each is the explorer's own behaviour and only a browser shows it: a coded failure's dialog
-shows its machine code, the conversation guard never names the conversation, and a
-multi-document download is saved as ``documents.zip`` whatever the server names it.
+Three findings this backfill pinned as strict xfails in
+``ui_tests/test_v2_group_document_management.py`` were fixed in 0.261.164 and are plain pins there
+now: a coded failure's dialog showed its machine code, the conversation guard never named the
+conversation, and a multi-document download was saved as ``documents.zip`` whatever the server
+named it.
 """
 
 import ast
@@ -66,7 +69,7 @@ from ui_tests.fixtures.group_document_management import (  # noqa: E402
     DOCUMENT_CHANGED_ERROR, GROUP_ARCHIVE_NAME, GroupDocumentManagementFixture, TAG_REVISION_CHANGED_ERROR,
     attachment, batch_error, bulk_tag_result, conversation_delete_guard, delete_result, metadata_result,
     operation_path, propagation_incomplete, queue_result, synced_delete_guard, tag_created, tag_result,
-    tag_vocabulary_conflict, upload_refusal, upload_result,
+    tag_vocabulary_conflict, tag_vocabulary_refusal, upload_refusal, upload_result,
 )
 from ui_tests.fixtures.group_document_collaboration import (  # noqa: E402
     COLLABORATION_DENIED, COLLABORATION_GONE, COLLABORATION_STATUS_REFUSED, FAILED_HANDOFF_ERRORS,
@@ -76,7 +79,7 @@ from ui_tests.fixtures.group_document_collaboration import (  # noqa: E402
 import test_group_document_collaboration as collaboration_suite  # noqa: E402
 import test_group_document_publication as publication_suite  # noqa: E402
 from test_group_document_read_apis import document, environment, get  # noqa: E402,F401  (environment is a pytest fixture)
-from test_group_document_management import StoreFailure, management  # noqa: E402,F401  (management is a pytest fixture)
+from test_group_document_management import StoreFailure, lose_the_vocabulary_patch, management  # noqa: E402,F401  (management is a pytest fixture)
 from test_group_document_collaboration import sharing  # noqa: E402,F401  (sharing is a pytest fixture)
 from test_group_document_publication import publication, publication_modules  # noqa: E402,F401  (pytest fixtures)
 from test_support.agent_delegation import APP_ROOT, execute_functions  # noqa: E402
@@ -731,19 +734,37 @@ def test_partial_tag_receipt_parity(management, operation):
     assert_receipt_parity(f"partial tag {operation}", served, real)
 
 
+def change_after_the_first_context_read(env):
+    """The group changes after the operation's first context read and before the vocabulary's
+    pre-check reads it again, so the pre-check refuses before any patch is sent."""
+    original = env.management.require_group_document_management_context
+    reads = []
+
+    def changed_between_reads(user_id, group_id, operation):
+        reads.append(operation)
+        if len(reads) == 2:
+            env.group_container.change(group_id, users=[{"userId": "new-member"}])
+        return original(user_id, group_id, operation)
+
+    env.scoped_monkeypatch.setattr(env.management, "require_group_document_management_context", changed_between_reads)
+
+
+@pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
 @pytest.mark.parametrize("operation", ["rename", "delete"])
-def test_tag_vocabulary_conflict_receipt_parity(management, operation):
-    """When the group changes while its documents are re-tagged, the old vocabulary is kept and
-    the conflict is reported as the vocabulary's own error."""
+def test_tag_vocabulary_conflict_receipt_parity(management, operation, check):
+    """When the group changes while its documents are re-tagged, or while the old name is removed,
+    the old vocabulary is kept and the conflict is reported as the vocabulary's own error."""
     env = management
     env.groups[GROUP_A]["tag_definitions"] = deepcopy(TAG_DEFINITIONS)
+    if check == "pre_check":
+        def concurrent_group_edit(**_kwargs):
+            env.group_container.change(GROUP_A, tag_definitions={
+                **env.groups[GROUP_A]["tag_definitions"], "parallel": {"color": "#ffffff"},
+            })
 
-    def concurrent_group_edit(**_kwargs):
-        env.group_container.change(GROUP_A, tag_definitions={
-            **env.groups[GROUP_A]["tag_definitions"], "parallel": {"color": "#ffffff"},
-        })
-
-    env.document_helpers["update_chunk_metadata"] = concurrent_group_edit
+        env.document_helpers["update_chunk_metadata"] = concurrent_group_edit
+    else:
+        lose_the_vocabulary_patch(env, removing=True)
     tag, tags = ({"name": "archive", "color": "#8b5cf6"}, ["archive"]) if operation == "rename" else (None, [])
     expected = tag_result(
         operation, tag=tag, success=[{"document_id": "document-a", "tags": tags}], errors=[tag_vocabulary_conflict()],
@@ -756,7 +777,31 @@ def test_tag_vocabulary_conflict_receipt_parity(management, operation):
     else:
         real = env.client.delete(f"{MANAGEMENT_ROOT}/tags/reference")
         served = fixture_receipt(fixture, "DELETE", "tags/reference", response=expected, status=207)
-    assert_receipt_parity(f"vocabulary conflict {operation}", served, real)
+    assert_receipt_parity(f"vocabulary conflict {operation} ({check})", served, real)
+
+
+@pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
+@pytest.mark.parametrize("scenario", ["create", "recolour", "rename"])
+def test_tag_vocabulary_refusal_parity(management, scenario, check):
+    """A tag create, recolour or rename whose vocabulary write finds the group changed is refused
+    with the one coded conflict, whichever check catches the change."""
+    env = management
+    env.groups[GROUP_A]["tag_definitions"] = deepcopy(TAG_DEFINITIONS)
+    if check == "pre_check":
+        change_after_the_first_context_read(env)
+    else:
+        lose_the_vocabulary_patch(env)
+    fixture = new_management_fixture()
+    if scenario == "create":
+        body = {"tag_name": "urgent", "color": "#ef4444"}
+        real = env.client.post(f"{MANAGEMENT_ROOT}/tags", json=body)
+        served = fixture_receipt(fixture, "POST", "tags", response=tag_vocabulary_refusal(), status=409, body=body)
+    else:
+        body = {"color": "#ef4444"} if scenario == "recolour" else {"new_name": "archive"}
+        real = env.client.patch(f"{MANAGEMENT_ROOT}/tags/reference", json=body)
+        served = fixture_receipt(fixture, "PATCH", "tags/reference", response=tag_vocabulary_refusal(), status=409, body=body)
+    assert_receipt_parity(f"vocabulary refusal {scenario} ({check})", served, real)
+    assert env.group_container.writes == [] and env.source.writes == []
 
 
 @pytest.mark.parametrize("batch", [False, True])
