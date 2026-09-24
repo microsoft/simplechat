@@ -25,7 +25,36 @@ Use public workspaces for curated materials intended for a broad audience, such 
 - Your role determines whether you can upload, manage prompts, tag documents, or only browse.
 - Downloads and File Sync for public workspaces have separate admin controls.
 
-## Steps
+## Use public workspaces in V2
+
+Public workspace documents open in the same document explorer as My Workspace
+and group workspaces, from version **0.261.132**. Open **Public Workspaces** and
+choose a workspace. The address includes the workspace, so a bookmark opens the
+same one. Choosing a workspace also makes it your active public workspace for
+chat, but the page itself never depends on that selection: every request names
+the workspace it is for.
+
+- **Browse.** Search, filter, sort, and page through the workspace's documents,
+  and inspect a document's details and version history. Every member can do
+  this.
+- **Manage** (version **0.261.133**). Owners, Admins, and DocumentManagers can
+  upload files, edit metadata, and tag documents one at a time or in bulk. They
+  can also extract metadata, reprocess a document (including changing its
+  extraction mode), and delete the current revision or every version.
+  Downloads are available to them when the administrator allows downloads for
+  the workspace. Ordinary members can read documents but cannot change or
+  download them.
+- **Review publish requests** (version **0.261.134**). When someone asks to
+  publish a generated file into the workspace, the request waits in the
+  explorer. A reviewer approves, rejects, or withdraws it without leaving the
+  workspace.
+
+Sharing a public document with other workspaces is not available. Public
+prompts and workspace administration (members, roles, ownership, settings,
+logo, requests, statistics, and activity) still use the classic page, as do the
+directory's visibility preferences and saved visibility lists.
+
+## Use the classic workspace
 
 1. Open **Public Workspaces**.
 2. Use **Select a workspace...** to choose the public workspace.
