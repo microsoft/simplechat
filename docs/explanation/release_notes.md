@@ -2,6 +2,37 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.154)**
+
+#### New Features
+
+*   **Group Settings, Activity and Statistics APIs**
+    *   New server routes under `/api/groups/<group_id>/settings` read and change a named group's name, description, color, logo, download setting and retention periods. Routes under `/api/groups/<group_id>/insights` read its activity feed, statistics and document count.
+    *   Each settings section carries a revision, so a save made from an out-of-date copy is refused with a reload instead of overwriting someone else's change. Every write applies to the group as it currently is.
+    *   One policy decides what the caller may do, matching the classic rules. It is published as `settings_management` in the settings read and in the V2 group context. A locked or inactive group's name, description, color and logo can't be changed, as on the classic page.
+    *   The activity feed shows reviewed summaries and members' display names only, never document titles, file names, emails or error text. The statistics match the classic figures, refuse custom ranges over 366 days, and report a storage failure instead of zeros.
+    *   The V2 Settings, Activity and Statistics views that use these routes arrive in a later release.
+    *   (Ref: `functions_group_settings.py`, `functions_group_settings_policy.py`, `functions_group_insights.py`, `route_backend_group_settings.py`, [Group Settings APIs](features/GROUP_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Settings Saves No Longer Undo Membership Changes**
+    *   Classic renames and the color, logo, download and retention saves, as well as the administrator's retention force push, saved the whole group without a condition. A save landing just after a membership change could undo it, and a late save could recreate a deleted group. Each now applies to the group as it currently is.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, [Group Settings Write Safety Fix](fixes/GROUP_SETTINGS_WRITE_SAFETY_FIX.md))
+
+*   **Delete Group Asks For The Group's Documents To Be Removed First**
+    *   The classic manage page's document count always came back as 0, so **Delete group** never asked the owner to remove the group's documents, and they were left behind. The count is now the group's current documents, as its document list shows them.
+    *   (Ref: `get_group_file_count`, `count_current_group_documents`, [Group Document Count Fix](fixes/GROUP_DOCUMENT_COUNT_FIX.md))
+
+*   **Group Retention Settings Save Correctly**
+    *   **Using organization default** can be saved again, and saving one retention period keeps the other. Values that aren't a number of days get the existing message instead of being stored as 1 day or failing.
+    *   The route now follows the group workspaces and group retention policy switches.
+    *   (Ref: `update_group_retention_settings`, [Group Retention Settings Fix](fixes/GROUP_RETENTION_SETTINGS_FIX.md))
+
+*   **Group Settings Errors No Longer Show Internal Details**
+    *   A failed rename, download or logo save showed the raw Cosmos DB or image library message. It now shows a plain message and logs only the error type. A logo that decompresses to an enormous image is refused instead of failing.
+    *   (Ref: `route_backend_groups.py`, [Group Settings Error Text Fix](fixes/GROUP_SETTINGS_ERROR_TEXT_FIX.md))
+
 ### **(v0.261.153)**
 
 #### User Interface Enhancements

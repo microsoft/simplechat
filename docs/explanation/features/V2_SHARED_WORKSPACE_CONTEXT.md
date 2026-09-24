@@ -51,6 +51,8 @@ depending on the first page of a membership list.
 | `document_permissions` | Distinct view, chat, upload, edit, delete, and download eligibility. |
 | `document_queries` | Actual current query capabilities, not a promise that personal explorer features already work for groups. |
 | `document_management` | Versioned support and current workspace-level operation eligibility; missing support leaves the group interface read-only. |
+| `document_collaboration`, `prompt_management`, `action_management`, `agent_management`, `identity_management`, `endpoint_management`, `file_source_management` | The operations each native group surface offers the caller, built by the same policy its routes enforce. Each surface's feature documentation describes its block. |
+| `settings_management` | From version **0.261.154**: `{schema_version, operations, reasons}` for the group's settings, activity, statistics and document count, built by the decision the native group settings routes enforce. See [Group Settings APIs](GROUP_SETTINGS_APIS.md). |
 
 Responses use `Cache-Control: no-store`. Raw settings, group membership arrays,
 pending requests, endpoint configurations, credentials, and logo bytes are not

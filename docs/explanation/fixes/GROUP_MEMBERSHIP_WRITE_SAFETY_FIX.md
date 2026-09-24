@@ -101,9 +101,10 @@ usual unexpected error, with the data-free conflict message.
 
 ## Remaining unconditional writers
 
-The group settings writers are converted in the next release: rename, download
-settings, the logo, and retention, including its admin force push. These are
-recorded for a follow-up:
+The group settings writers (rename, download settings, the logo, and
+retention, including its admin force push) were converted in version
+**0.261.154**; see [Group Settings Write Safety Fix](GROUP_SETTINGS_WRITE_SAFETY_FIX.md).
+These are recorded for a follow-up:
 - in `route_backend_control_center.py`: the group activity cache, the status
   change, the admin add member, take ownership and transfer ownership;
 - the group tag definition writers, in `route_backend_group_documents.py` and

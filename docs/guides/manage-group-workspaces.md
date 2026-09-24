@@ -212,7 +212,12 @@ join requests, and group settings. From version **0.261.151**, membership
 changes made there no longer overwrite each other. For example, two admins
 approving and removing members at the same time both take effect. Approving
 someone who is already a member no longer adds them twice, and a bulk removal
-reports its results correctly.
+reports its results correctly. From version **0.261.154**, saving the group's
+settings there doesn't undo other changes either. Renaming the group, or
+changing its color, logo, download setting or retention periods, keeps a
+membership change made at the same moment. Retention can be set back to
+**Using organization default**. **Delete group** now asks the owner to remove
+the group's documents first when it has any; before, it counted none.
 
 Save or cancel open changes before switching groups. Navigating away from an
 unfinished editor asks whether to discard it. Returning to the browser refreshes

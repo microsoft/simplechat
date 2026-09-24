@@ -211,9 +211,10 @@ could not be completed. Try again.", logged with the error type only.
 - **Membership changes don't appear in the group activity feed,** as before.
   Their activity records keep the group ID where the feed doesn't look.
 - **Other whole-document writers.** The membership writers are now
-  conditional. The group settings writers are converted in the next release.
-  A few writers remain for a follow-up, and one of them landing just after a
-  membership change can still undo it:
+  conditional, and the group settings writers followed in version
+  **0.261.154** ([Group Settings APIs](GROUP_SETTINGS_APIS.md)). A few writers
+  remain for a follow-up, and one of them landing just after a membership
+  change can still undo it:
   - the Control Center's group actions;
   - group tag definitions;
   - the inactive marker;
