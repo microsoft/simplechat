@@ -1,6 +1,6 @@
 # Orchestration answers that miss what the user asked for
 
-Fixed in version: **0.261.134** (Gather / Reason / Render answer parity) and **0.261.135**
+Fixed in version: **0.261.134** (Gather / Reason / Render answer parity) and **0.261.138**
 (the deliverables contract and generated images in files). A later layer of the same
 change makes Gather / Reason / Render the only orchestration contract.
 
@@ -248,7 +248,7 @@ compose writes from general knowledge when appropriate, a failed search is discl
 rather than turned into placeholders, and web sources arrive as links. A later layer of
 this change makes Gather / Reason / Render the only contract and removes its admin toggle.
 
-## Technical details (0.261.135): deliverables and generated images
+## Technical details (0.261.138): deliverables and generated images
 
 Root causes 2 and 5 are fixed structurally. The full contract is described in
 [Orchestration deliverables](../features/ORCHESTRATION_DELIVERABLES.md).
@@ -299,7 +299,7 @@ Root causes 2 and 5 are fixed structurally. The full contract is described in
   finished content and never says files cannot be created. For an unavailable deliverable
   it is told not to promise or apologize for it, because the delivery note states it once.
 
-### Review fixes (0.261.135)
+### Review fixes (0.261.138)
 
 An independent review found four issues. Each is fixed and has a regression test.
 
@@ -334,7 +334,7 @@ An independent review found four issues. Each is fixed and has a regression test
   re-linked. Each answer owns the list of images it shows, and React V2, the classic
   client, and conversation export group images by that list as well as by their source.
 
-### Files modified (0.261.135)
+### Files modified (0.261.138)
 
 | File | Change |
 | --- | --- |
@@ -355,7 +355,7 @@ An independent review found four issues. Each is fixed and has a regression test
 | `route_backend_conversation_export.py`, `static/js/chat/chat-messages.js` | Export and the classic client group an answer's listed images |
 | `v2_ui/src/...` | You asked for section, image step prompts, image input wording, reload after generated images, planned image cards without approval |
 
-### Validation (0.261.135)
+### Validation (0.261.138)
 
 - `functional_tests/test_orchestration_deliverables.py`: 44 test cases in the real headless
   harness, covering validation and repair, `generate_image` gating, budget, prompt checks

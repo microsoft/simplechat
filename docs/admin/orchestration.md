@@ -213,7 +213,7 @@ granted by a non-empty legacy capability selection. Both admin surfaces preserve
 these selections; an explicitly legacy-only selection does not become permission
 for every newly added capability when saved.
 
-Since **0.261.135**, **Generate images** (`generate_image`) lets a harness plan generate
+Since **0.261.138**, **Generate images** (`generate_image`) lets a harness plan generate
 the images a user asks for, one planned task per image and at most four per plan. The
 images appear in the answer and are embedded in DOCX, PDF, and PowerPoint files. It also
 requires **Enable Image Generation** and a configured image model; users gain no image

@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.135
+Version: 0.261.138
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps also receive what the answer step of earlier orchestration received:

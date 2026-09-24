@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved V2 harness attempts.
 
-Version: 0.261.135
+Version: 0.261.138
 Implemented in: 0.261.127
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease

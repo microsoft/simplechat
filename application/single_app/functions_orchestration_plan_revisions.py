@@ -5,7 +5,7 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.135
+Version: 0.261.138
 """
 
 import hashlib

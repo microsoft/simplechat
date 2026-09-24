@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.135"
+version: "0.261.138"
 ---
 
 ## Availability
@@ -45,7 +45,7 @@ can use them directly.
 
 ## Check that the plan delivers what you asked for
 
-Since **0.261.135**, a plan lists what you asked to receive before its steps. The
+Since **0.261.138**, a plan lists what you asked to receive before its steps. The
 approval card and the plan panel show it under **You asked for**, with the step that
 produces each item. Use it to confirm the plan will create a real file: a file is
 created only by a Render task, and text or a table in the chat answer is not a file.

@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.135"
+version: "0.261.138"
 ---
 
 ## Decide what should run
@@ -30,7 +30,7 @@ requirement.
 Deep Research does not require selecting the Web button first. Its automatic
 source discovery still depends on the administrator enabling Web Search.
 Selected workspaces and document filters continue to bound document access.
-Since **0.261.135**, in a Gather / Reason / Render plan, **Image** means you want
+Since **0.261.138**, in a Gather / Reason / Render plan, **Image** means you want
 images: the plan includes at least one image you asked for, generated as its own task
 when the plan runs. Without Image, such a plan still generates the images your request
 asks for, and it can suggest others as proposal cards that you approve one at a time.
@@ -136,7 +136,7 @@ asked the answer to include.
 
 ### Check what you asked for
 
-Since **0.261.135**, **You asked for** appears at the top of the plan panel and on the
+Since **0.261.138**, **You asked for** appears at the top of the plan panel and on the
 approval card. It lists what you asked to receive: the answer, each file with its
 format, images with their count, and any chart or diagram. Each item shows its state:
 

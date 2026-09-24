@@ -1,8 +1,8 @@
 # Orchestration deliverables
 
-**Version: 0.261.135** (tracked in `application/single_app/config.py`)
+**Version: 0.261.138** (tracked in `application/single_app/config.py`)
 
-**Implemented in version: 0.261.135**
+**Implemented in version: 0.261.138**
 
 ## Overview
 

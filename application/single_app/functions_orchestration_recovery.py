@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.135
+Version: 0.261.138
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe

@@ -20,7 +20,7 @@ Auto model routing stays on the standard step executor, which enforces per-step
 bindings. Harness streams share chat's content-check event filtering, and removed or
 pending replies hide their run files from history projections.
 
-Version: 0.261.135
+Version: 0.261.138
 """
 
 import hashlib

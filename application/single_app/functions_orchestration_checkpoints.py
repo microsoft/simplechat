@@ -1,7 +1,7 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.135
+Version: 0.261.138
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 """

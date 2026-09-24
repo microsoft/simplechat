@@ -1,8 +1,8 @@
 # test_v2_orchestration_generated_images.py
 """
 Real-component browser coverage for images an orchestrated answer generated as planned steps.
-Version: 0.261.135
-Implemented in: 0.261.135
+Version: 0.261.138
+Implemented in: 0.261.138
 
 The production controller, SSE reader, stores, message list and image cards execute in the
 existing local/Azure Playwright harness. Only API responses are deterministic. The answer

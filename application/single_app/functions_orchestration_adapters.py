@@ -48,7 +48,7 @@ Charts, Mermaid diagrams and image proposals follow ``functions_orchestration_vi
 gathering steps keep what a requested visual needs, an action step can chart its exact
 results, and ``respond`` places those charts and writes the diagrams and image proposals.
 
-Version: 0.261.135
+Version: 0.261.138
 """
 
 import inspect

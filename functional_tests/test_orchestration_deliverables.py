@@ -1,8 +1,8 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.135
-Implemented in: 0.261.135
+Version: 0.261.138
+Implemented in: 0.261.138
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -54,7 +54,7 @@ REPORT_TEXT = (
 
 
 def test_version_includes_the_deliverables_contract():
-    assert_app_version_at_least("0.261.135")
+    assert_app_version_at_least("0.261.138")
 
 
 # ------------------------------------------------------------------------------------------
@@ -1206,7 +1206,7 @@ def _claim_retry(harness, child):
 
 
 def test_a_retry_generates_the_missing_image_and_delivers_all_of_them(harness, monkeypatch):
-    """Version 0.261.135: a retry reuses the images that exist and rewrites the report and file."""
+    """Version 0.261.138: a retry reuses the images that exist and rewrites the report and file."""
     route = importlib.import_module("functions_image_api_route")
     checkpoints = importlib.import_module("functions_orchestration_checkpoints")
     calls = _enable_images(harness, monkeypatch, failures={

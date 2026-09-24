@@ -1027,7 +1027,7 @@ gathered knowledge, so they do not use the reserved output phase.
   existing approval route. They are offered only when `enable_image_generation` is on. The
   answer decides from the request type whether images help, including when the user did not
   ask. In a legacy plan, selecting **Image** in Orchestrate asks for at least one proposal.
-  Since **0.261.135**, a Gather / Reason / Render plan generates the images the user asks
+  Since **0.261.138**, a Gather / Reason / Render plan generates the images the user asks
   for as planned steps instead, and keeps proposal cards for images it only suggests (see
   [Deliverables and generated images](#deliverables-and-generated-images)).
 
@@ -1094,7 +1094,7 @@ legacy answer step had, and the planner states what the answer may rely on. See 
 
 ### Deliverables and generated images
 
-Since **0.261.135**, a Gather / Reason / Render plan lists what the user asked to receive
+Since **0.261.138**, a Gather / Reason / Render plan lists what the user asked to receive
 before its steps, and the server checks that list. See
 [Orchestration deliverables](ORCHESTRATION_DELIVERABLES.md) for the full contract.
 
@@ -1434,7 +1434,7 @@ research-selection rate is not itself a quality improvement.
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
 - **Generated images are AI illustrations, and proposal images stay out of files.** Since
-  **0.261.135**, a Gather / Reason / Render plan generates each image the user asks for
+  **0.261.138**, a Gather / Reason / Render plan generates each image the user asks for
   and embeds it in DOCX, PDF, and PPTX files. Web search cannot retrieve existing pictures,
   so a report links authentic sources and uses captioned AI illustrations. A plan generates
   at most four images, one after another. Proposal images the planner only suggests are

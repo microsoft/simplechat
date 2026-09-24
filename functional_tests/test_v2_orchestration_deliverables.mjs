@@ -1,6 +1,6 @@
 // test_v2_orchestration_deliverables.mjs
-// Version: 0.261.135
-// Implemented in: 0.261.135
+// Version: 0.261.138
+// Implemented in: 0.261.138
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
 // Also reads a terminal frame shaped as the harness publishes it through the real run

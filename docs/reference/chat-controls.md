@@ -317,7 +317,7 @@ authorized capabilities, while selected documents, agents, workspaces, and filte
 retain their intended constraints. Deep Research can be selected without also
 selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
 rather than sending your prompt to the image model, it combines with every other
-control and shapes the plan. Since **0.261.135**, a Gather / Reason / Render plan
+control and shapes the plan. Since **0.261.138**, a Gather / Reason / Render plan
 treats it as a request for images, which the plan generates as its own tasks when it
 runs; an older phase-based plan asks the answer for image proposal cards that each
 generate an image only when you approve them.
