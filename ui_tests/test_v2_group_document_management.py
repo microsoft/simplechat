@@ -933,6 +933,7 @@ def test_conversation_guard_links_only_the_native_chat_and_renders_text(group_ma
         (None, "https://evil.example/chats?conversation_id=stolen", None),
         (None, "//evil.example/chats?conversation_id=stolen", None),
         (None, "/\\evil.example/chats?conversation_id=stolen", None),
+        # xss-check: ignore -- deliberately malformed server urls this test proves are never rendered as links.
         (None, "javascript:alert(1)//?conversation_id=stolen", None),
         (None, "/chats", None),
         (None, "/chats?conversation_id=from-the-url", "/v2/chat?conversationId=from-the-url"),
