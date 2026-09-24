@@ -1,9 +1,9 @@
 # orchestration_recovery.py
 """Offline browser-to-Flask recovery fixture using real routes and checkpoints.
 
-Version: 0.261.136
+Version: 0.261.139
 Implemented in: 0.261.105
-Single orchestration contract updated in: 0.261.136
+Single orchestration contract updated in: 0.261.139
 Use ``with RecoveryFixture() as fixture``. ``plan_attempt()``, ``run_attempt(plan)``,
 ``detail(run_id)`` and ``retry(run_id, **overrides)`` operate through the Flask client.
 ``calls`` records gather adapter invocations; ``fail_b`` controls the failed step.
@@ -14,11 +14,10 @@ import json
 import unittest
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import patch
 
 # Keep NumPy's native runtime outside per-test sys.modules snapshots. Reloading
 # Semantic Kernel otherwise registers hundreds of DLL search paths on Windows.
-import numpy
+import numpy  # noqa: F401
 import pytest
 from flask import Blueprint, Flask
 from werkzeug.test import Client
@@ -27,7 +26,16 @@ from werkzeug.wrappers import Response
 from test_orchestration_harness_routes import login
 from test_support.offline_bootstrap import offline_app_imports
 from test_support.orchestration_harness_execution import HarnessEnvironment, input_binding
-from test_support.orchestration_results import ResultFixture
+from test_support.orchestration_results import complete
+
+
+DEFAULT_ANSWER = 'Completed answer using Saved findings a, Saved findings b, and Saved findings c.'
+# Catalog reads are storage I/O; the agent itself never runs (its adapter is replaced).
+RECOVERY_AGENT = {
+    'id': 'agent1', 'name': 'RecoveryAgent', 'display_name': 'Recovery agent',
+    'scope_type': 'global', 'scope_id': 'global', 'is_global': True, 'is_group': False,
+    'agent_type': 'aifoundry', 'catalog_key': 'global:global:agent1',
+}
 
 
 def frames(response):
@@ -73,12 +81,18 @@ class RecoveryFixture(unittest.TestCase):
         )
         self.route = self.modules.route
         self.settings = self.harness.settings
-        self.settings['enable_semantic_kernel'] = False
+        self.settings.update(enable_semantic_kernel=True, allow_user_agents=True)
+        # The production route reads these module globals; bind them to this fixture's
+        # isolated containers exactly as the HTTP harness does, so nothing leaks between tests.
+        self.monkeypatch.setattr(self.route, 'cosmos_conversations_container', self.harness.conversations)
+        self.monkeypatch.setattr(self.route, 'cosmos_messages_container', self.harness.messages)
         self.monkeypatch.setattr(self.route, 'get_settings', lambda: dict(self.settings))
         self.monkeypatch.setattr(self.route, 'get_user_settings', lambda user_id: {'settings': {}})
-        self.monkeypatch.setattr(self.route, 'resolve_agent_catalog', lambda *args, **kwargs: [
-            {'id': 'agent1', 'name': 'RecoveryAgent', 'display_name': 'Recovery agent'},
-        ])
+        for module in (self.route, self.harness.execution, self.harness.bootstrap):
+            if hasattr(module, 'resolve_agent_catalog'):
+                self.monkeypatch.setattr(
+                    module, 'resolve_agent_catalog', lambda *args, **kwargs: [deepcopy(RECOVERY_AGENT)],
+                )
         self.monkeypatch.setattr(self.route, 'capture_execution_identity', lambda *args, **kwargs: None)
         self.monkeypatch.setattr(self.route, 'load_orchestration_memory', lambda *args, **kwargs: {
             'audience': {'kind': 'personal', 'owner_id': self.user_id, 'collaboration_id': ''},
@@ -106,6 +120,7 @@ class RecoveryFixture(unittest.TestCase):
 
         original_adapter = self.modules.executor._dependency_adapter
         schema = self.modules.schema
+        results = importlib.import_module('functions_orchestration_results')
 
         def gather_adapter(step, context, **kwargs):
             self.calls.append(step['step_id'])
@@ -118,13 +133,30 @@ class RecoveryFixture(unittest.TestCase):
                     error='SECRET_SENTINEL https://private.test/<script>private</script>',
                     summary='A planned step timed out before returning results.',
                 )
+            if step['capability_id'] == 'agent_invoke':
+                # The agent's findings are retained as source-free prepared content through
+                # the real result service; external agent acquisition is out of scope here.
+                prepared = {
+                    'version': 'orchestration-gathered-content-v1', 'capability_id': 'agent_invoke',
+                    'content_scope': 'reported_external_content', 'evidence': [], 'citations': [],
+                    'notes': [f"Saved findings {step['step_id']}"],
+                    'limitations': ['Reported agent findings, not whole-source coverage.'],
+                }
+                task = context.result_service.persist_task_result(
+                    producer=context.result_producer(step), role='gather', status='complete',
+                    outputs=[results.NamedOutput('prepared', 'structured-v1', prepared, complete(1))],
+                    sources=[], origin='generated',
+                    guard_token=context.result_guard_token_for_step(step['step_id']),
+                    input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
+                )
+                return schema.build_step_result(task_result=task, summary=f"Saved findings {step['step_id']}")
             return schema.build_step_result(
                 notes=[f"Saved findings {step['step_id']}"],
                 summary=f"Saved findings {step['step_id']}",
             )
 
         def dependency_adapter(capability_id):
-            if capability_id == 'document_search':
+            if capability_id in ('document_search', 'agent_invoke'):
                 return gather_adapter
             return original_adapter(capability_id)
 
@@ -138,14 +170,17 @@ class RecoveryFixture(unittest.TestCase):
 
             def create(**call_kwargs):
                 if self.model.answer_error is not None:
+                    self.harness.model_calls.append(deepcopy(call_kwargs))
                     raise self.model.answer_error
                 if not self.harness.replies:
-                    self.harness.replies.append('Completed answer using Saved findings a, Saved findings b, and Saved findings c.')
+                    self.harness.replies.append(DEFAULT_ANSWER)
                 return original_create(**call_kwargs)
 
             client.chat.completions.create = create
             return client
 
+        # Every model client the application builds comes from the planner's client class.
+        self.monkeypatch.setattr(self.harness.planner, 'AzureOpenAI', client_factory)
         self.harness.client = client_factory
         app = Flask(__name__)
         app.config.update(TESTING=True, SECRET_KEY='recovery-real-route-test')
@@ -190,7 +225,10 @@ class RecoveryFixture(unittest.TestCase):
                 'kind': 'plan', 'intent': {'summary': 'Gather two results.', 'complexity': 'simple'},
                 'steps': [
                     {'step_id': 'a', 'capability_id': 'document_search', 'title': 'Gather A', 'arguments': {'query': 'A'}},
-                    {'step_id': 'b', 'capability_id': 'document_search', 'title': 'Gather B', 'arguments': {'query': 'B'}, 'depends_on': ['a']},
+                    {
+                        'step_id': 'b', 'capability_id': 'agent_invoke', 'title': 'Gather B',
+                        'arguments': {'agent_name': 'RecoveryAgent', 'task': 'B'}, 'depends_on': ['a'],
+                    },
                     {'step_id': 'c', 'capability_id': 'document_search', 'title': 'Gather C', 'arguments': {'query': 'C'}, 'depends_on': ['b']},
                     {
                         'step_id': 'answer', 'capability_id': 'compose', 'title': 'Answer',
@@ -205,7 +243,8 @@ class RecoveryFixture(unittest.TestCase):
                 'final_response': input_binding('answer'),
             },
             self.conversation_id, self.user_id, settings=self.settings,
-            available_capability_ids=['document_search', 'compose'],
+            available_capability_ids=['document_search', 'agent_invoke', 'compose'],
+            agent_names=['RecoveryAgent'],
         )
 
     def plan_attempt(self):
@@ -229,8 +268,7 @@ class RecoveryFixture(unittest.TestCase):
 
     def run_attempt(self, plan):
         self.harness.replies = [
-            self.model.answer_error if self.model.answer_error is not None
-            else 'Completed answer using Saved findings a, Saved findings b, and Saved findings c.'
+            self.model.answer_error if self.model.answer_error is not None else DEFAULT_ANSWER
         ]
         return self.client.post('/api/v2/orchestration/run', json={
             'conversation_id': self.conversation_id, 'run_id': plan['run_id'],
