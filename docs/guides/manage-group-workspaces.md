@@ -134,9 +134,12 @@ Ordinary members do not see identities.
 
 ### Use group tools and manage the workspace
 
-Use **Workflows** for the native workflow editor and run history. **Sync** and
-**Endpoints** are marked **Classic** while their native V2 experiences are being
-built. **Open classic group workspace** confirms the
+Use **Workflows** for the native workflow editor and run history. From version
+**0.261.141**, workflow managers can also set a group workflow to run when File
+Sync finds changes, or to sync first before each run. Alert settings appear
+read-only; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
+**Sync** and **Endpoints** are marked **Classic** while their native V2
+experiences are being built. **Open classic group workspace** confirms the
 selected group before navigating; choose the relevant classic tab there.
 Owners and administrators also have **Manage group (classic)** for members,
 join requests, and group settings.

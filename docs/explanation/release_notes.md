@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.141)**
+
+#### New Features
+
+*   **File Sync Triggers In V2 Group Workflows**
+    *   Group workflows can use the **Monitor File Sync changes** trigger in the native V2 editor. On a schedule, it syncs the chosen group File Sync sources and runs only when files changed. A manual or interval workflow can also sync its sources first before each run.
+    *   The editor applies the server's rules before saving: one to ten of the group's own sources, and waiting for the sync before continuing only on changes. It flags a source the group no longer offers so it can be removed. The source list is requested for the page's own group, so another tab changing the active group can't swap it.
+    *   An Analyze task can work on the files each sync changed instead of selected documents.
+    *   (Ref: `WorkflowFileSyncFields.tsx`, `workflowEditor.ts`, `route_backend_workflows.py`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+#### User Interface Enhancements
+
+*   **Group Workflow Alert Summary**
+    *   Group workflows show their stored alert settings read-only: when to alert, the pop-up priority and the number of rules. Saving in V2 keeps them unchanged.
+    *   A workflow the classic editor can still open links there to edit its alerts, and warns that saving in V2 converts it. Native alert editing arrives in a later release.
+    *   (Ref: `WorkflowAlertSummary.tsx`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+#### Bug Fixes
+
+*   **Group Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a group workflow whose Analyze task has no selected documents because File Sync supplies the changed files, a setup the server accepts and the classic editor creates.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, `WorkflowTaskFields.tsx`, [Analyze Changed Files Fix](fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
 ### **(v0.261.140)**
 
 #### New Features

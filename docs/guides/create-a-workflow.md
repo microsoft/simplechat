@@ -53,6 +53,38 @@ draft instead of overwriting another editor's changes.
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
+## Run a group workflow when File Sync finds changes
+
+From version **0.261.141**, the V2 editor for group workflows can author File
+Sync. Owners, Admins, and other workflow managers see these choices when the
+group has File Sync sources:
+
+- **Monitor File Sync changes** is a trigger. On the interval you set, it syncs
+  the selected sources, waits for the sync to finish, and runs the workflow only
+  when files changed.
+- **Run File Sync before each run** syncs the selected sources first on a manual
+  or interval workflow. **Wait for File Sync** and **Continue the workflow**
+  decide whether the workflow waits, and whether it runs when nothing changed.
+- **Use changed files as Analyze targets** lets an Analyze task with no
+  selected documents work on the files each sync changed.
+
+Choose between 1 and 10 of the group's own sources. A source the group no
+longer offers is marked **No longer available**; remove it before saving.
+Personal workflows keep the File Sync settings they already have, but can't
+create new ones in V2 yet.
+
+## Review a group workflow's alerts
+
+Group workflows show their alert settings read-only under **Alerts**: when to
+alert, the pop-up priority, and how many rules there are. Saving in V2 keeps
+them unchanged.
+
+For a workflow created in the classic editor that V2 hasn't saved yet, **Edit
+alerts in the classic workspace** opens it there. Edit alerts first: once V2
+saves the workflow, the classic editor can no longer open it. Workflows created
+or saved in V2 can't have their alerts changed until native alert editing is
+available.
+
 ## Choose the Microsoft 365 Run as account
 
 Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
