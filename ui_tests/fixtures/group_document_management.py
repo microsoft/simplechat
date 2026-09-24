@@ -1,7 +1,7 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.129
 
 Reuse M2A reads, local production assets, request recording, response gates and

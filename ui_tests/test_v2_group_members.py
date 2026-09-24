@@ -1,7 +1,7 @@
 # test_v2_group_members.py
 """
 Production-SPA coverage for the native V2 group Members section.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.155
 
 Exercises the real Members section -- a section of the group WorkspaceShell in its Manage group,

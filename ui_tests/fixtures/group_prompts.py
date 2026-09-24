@@ -1,7 +1,7 @@
 # group_prompts.py
 """
 Closed M3 group prompt HTTP fixtures for the real production V2 SPA.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.136
 
 The fixture serves the immutable `/api/groups/<group_id>/prompts[...]` family, gated by

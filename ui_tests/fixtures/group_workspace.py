@@ -1,11 +1,11 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
-Group context held to the server's builder, field by field: 0.261.158
+Group context held to the server's builder, field by field: 0.261.157
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group

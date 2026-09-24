@@ -1,7 +1,7 @@
 # group_document_collaboration.py
 """
 Closed M2C sharing/publication HTTP fixtures for the real production V2 SPA.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.130
 
 Reuse the existing local asset boundary, M2A reads, response gates, request

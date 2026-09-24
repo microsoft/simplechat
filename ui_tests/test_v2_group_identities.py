@@ -1,7 +1,7 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.139
 
 Exercises the real identities section and its editor dialog against closed synthetic

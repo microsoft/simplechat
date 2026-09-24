@@ -1,7 +1,7 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.147
 Credential identifiers kept on edit: 0.261.156
 

@@ -1,7 +1,7 @@
 # group_documents.py
 """
 Closed M2A group document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.128
 
 The fixture serves full-set query results and separately scoped details/versions.

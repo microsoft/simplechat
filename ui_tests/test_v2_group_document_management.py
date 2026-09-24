@@ -1,7 +1,7 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.158
+Version: 0.261.157
 Implemented in: 0.261.129
 
 Only HTTP responses are scripted. Components, stores, navigation, downloads,
