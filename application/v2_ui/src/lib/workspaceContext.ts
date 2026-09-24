@@ -108,6 +108,16 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The group file source management hint (M5B). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit, delete, sync or test group file sources, computed from the
+     * file source manage roles and status exactly like identity_management. Absence means
+     * "read-only", never an empty grant.
+     */
+    file_source_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 /**

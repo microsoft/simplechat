@@ -18,7 +18,7 @@ never restores into group B or personal scope.
 import os
 import re
 import subprocess
-import sys
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -398,19 +398,24 @@ def test_group_action_draft_scope_isolation_holds():
         "application/v2_ui/node_modules is missing; restore the frontend dependencies first"
     )
     assert DRAFT_LOGIC_TS.exists(), "The draft-scope runtime check is missing."
-    bundle = V2_DIR / "node_modules" / ".cache-group-action-drafts.mjs"
+    # Call the local esbuild binary directly. A bare `npx` can download a package, and `node_modules`
+    # is a shared junction here, so the bundle carries a unique name and is removed afterwards.
+    esbuild = V2_DIR / "node_modules" / "esbuild" / "bin" / "esbuild"
+    assert esbuild.exists(), (
+        "application/v2_ui/node_modules/esbuild is missing; restore the frontend dependencies first"
+    )
+    bundle = V2_DIR / "node_modules" / f".cache-group-action-drafts-{uuid.uuid4().hex}.mjs"
     try:
         subprocess.run(
             [
-                "npx", "esbuild", str(DRAFT_LOGIC_TS), "--bundle", "--platform=node",
+                "node", str(esbuild), str(DRAFT_LOGIC_TS), "--bundle", "--platform=node",
                 "--format=esm", "--packages=external", "--define:import.meta.env={}",
                 f"--outfile={bundle}", "--log-level=error",
             ],
-            cwd=str(V2_DIR), check=True, shell=(sys.platform == "win32"),
+            cwd=str(V2_DIR), check=True, capture_output=True, text=True,
         )
         result = subprocess.run(
             ["node", str(bundle)], cwd=str(V2_DIR), capture_output=True, text=True,
-            shell=(sys.platform == "win32"),
         )
     finally:
         if bundle.exists():
