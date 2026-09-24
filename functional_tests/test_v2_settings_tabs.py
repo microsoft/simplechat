@@ -2,7 +2,7 @@
 """
 Functional test for the V2 settings tabs and the routes behind them.
 
-Version: 0.261.041
+Version: 0.261.161
 Implemented in: 0.261.022
 
 Each tab reads a different set of endpoints, and every field name and query parameter here
@@ -47,8 +47,15 @@ def test_workspace_lists_match_their_routes():
     assert '"workspaces": mapped' in public, (
         "The public workspaces route no longer returns `workspaces`"
     )
-    assert "response?.groups" in client, "The client must read `groups` for group workspaces"
-    assert "response?.workspaces" in client, (
+    # Both kinds read their list through one validated reader, `readPage(response, key, ...)`,
+    # so check each kind names its own array, and only its own.
+    assert "const items = response[key];" in client, "The shared reader no longer reads the named array"
+    group_kind = client[client.index("export const GROUP_WORKSPACES"):client.index("export const PUBLIC_WORKSPACES")]
+    public_kind = client[client.index("export const PUBLIC_WORKSPACES"):]
+    assert "readPage(response, 'groups'," in group_kind and "'workspaces'" not in group_kind, (
+        "The client must read `groups` for group workspaces"
+    )
+    assert "readPage(response, 'workspaces'," in public_kind and "'groups'" not in public_kind, (
         "The client must read `workspaces` for public workspaces"
     )
 

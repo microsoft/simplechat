@@ -1,7 +1,7 @@
 # group_identity_harness.py
 """Shared, isolated harness for the native group identity endpoint tests (M5A).
 
-Version: 0.261.157
+Version: 0.261.161
 Implemented in: 0.261.139
 
 Extracted verbatim from ``test_group_identity_apis.py`` so the API suite and the
@@ -22,7 +22,6 @@ import importlib.util
 import json
 import socket
 import sys
-import uuid
 from copy import deepcopy
 from functools import wraps
 from types import SimpleNamespace
@@ -40,7 +39,6 @@ from test_support.agent_delegation import (
     execute_functions,
     module_stub,
 )
-from test_support.versioning import assert_app_version_at_least
 
 
 LIST_PATH = "/api/groups/group-a/identities"
