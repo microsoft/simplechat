@@ -30,6 +30,7 @@ from ui_tests.fixtures.group_agents import (  # noqa: F401
     GroupAgentsFixture, connect_options, group_agents_ui,
     EDITABLE_AGENT_ID, WITHHELD_AGENT_ID, FOUNDRY_AGENT_ID, MEMBER_AGENT_ID, PROVIDED_AGENT_ID,
 )
+from ui_tests.fixtures.group_workspace import GROUP_FOUNDRY_ENDPOINT_ID  # noqa: F401
 from ui_tests.test_v2_workspace_authoring import (
     begin_action, collection_item, configure_agent, editor_section, name_field,
 )
@@ -303,16 +304,27 @@ def test_manager_with_no_models_keeps_authoring_guidance(group_agents_ui):
     expect(page.get_by_text("Uses a configured model.", exact=True)).to_have_count(0)
 
 
-def test_group_scoped_foundry_endpoint_hides_discovery(group_agents_ui):
-    """A group-scoped Foundry connection offers no discovery and never posts the active-group route."""
+def test_group_scoped_foundry_endpoint_discovers_via_named_group_route(group_agents_ui):
+    """A group-scoped Foundry connection discovers through the named-group route, not the active-group one."""
     ui, page = group_agents_ui, group_agents_ui.page
     open_editor(ui, FOUNDRY_AGENT_ID)
     editor_section(page, "Model & connection")
-    # The saved connection is group-scoped, so honest copy replaces the Discover control entirely.
-    expect(page.get_by_text("Discovery for a group-scoped Foundry connection", exact=False)).to_be_visible()
-    expect(page.get_by_role("button", name="Discover agents", exact=True)).to_have_count(0)
+    # M5C re-enables discovery for a group-scoped connection through the named-group route, which
+    # resolves the page's group from the path rather than the caller's active group.
+    discover = page.get_by_role("button", name="Discover agents", exact=True)
+    expect(discover).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == "/api/groups/group-a/models/foundry/agents"
+    ) as response:
+        discover.click()
+    assert response.value.ok, "A group-scoped Foundry connection must discover through the named-group route."
+    body = response.value.request.post_data_json
+    assert body.get("endpoint_id") == GROUP_FOUNDRY_ENDPOINT_ID
+    # The path scopes the group, so no scope field rides the named-group route.
+    assert "scope" not in body, "The named-group Foundry route takes no scope field."
     assert not [entry for entry in ui.requests if entry.path == "/api/models/foundry/agents"], (
-        "A group-scoped Foundry endpoint must never trigger active-group discovery from a group page."
+        "A group-scoped Foundry endpoint must not fall back to the active-group discovery route."
     )
     assert not ui.unexpected_requests, ui.unexpected_requests
 

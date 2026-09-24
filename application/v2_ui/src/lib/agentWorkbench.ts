@@ -25,7 +25,10 @@ import { generateAgentId } from './workspaceApi';
 import {
     buildEditorWrite, isRecord,
     type ActionConfiguration, type AgentConfiguration, type AgentEditorOptions, type AuthoringResource,
+    type WorkspaceAgentType,
 } from './workspaceAuthoring';
+import type { FoundryDiscoveryRecord } from './workspaceAgentAuthoring';
+import type { WorkspaceModelEndpoint } from './types';
 import {
     deleteAuthoringAgent, fetchAgentEditor, fetchAgentEditorOptions, fetchAuthoringActions,
     fetchAuthoringAgents, saveAgentConfiguration,
@@ -34,7 +37,7 @@ import {
     fetchAgentKnowledgeCatalog, fetchGroupAgentKnowledgeCatalog, type AgentKnowledgeCatalog,
 } from './workspaceAgentKnowledge';
 import {
-    draftAgentInstructions, PERSONAL_INSTRUCTION_SCOPE, type InstructionDraftScope,
+    discoverAgentFoundryResources, draftAgentInstructions, PERSONAL_INSTRUCTION_SCOPE, type InstructionDraftScope,
 } from './workspaceAgentCommands';
 import {
     fetchAgentTargets, PERSONAL_DELEGATION_SCOPE, type AgentTargetCatalog, type DelegationScope,
@@ -93,6 +96,15 @@ export interface AgentWorkbenchAdapter {
     draftInstructions: (
         draft: AgentConfiguration, actions: ActionConfiguration[], catalog: AgentKnowledgeCatalog | null, signal?: AbortSignal,
     ) => Promise<string>;
+    /**
+     * Discover Foundry resources for a saved connection. Personal routes every connection through
+     * the legacy account-wide route byte-identically. Group routes a group-scoped connection through
+     * the named-group route so discovery resolves the page's group rather than the caller's active
+     * group, while a global connection keeps the legacy route.
+     */
+    discoverFoundryResources: (
+        endpoint: WorkspaceModelEndpoint, type: WorkspaceAgentType, signal?: AbortSignal,
+    ) => Promise<{ agents: FoundryDiscoveryRecord[]; responses_api_version?: string }>;
 }
 
 /**
@@ -169,6 +181,7 @@ export const PERSONAL_AGENT_WORKBENCH: AgentWorkbenchAdapter = {
     fetchTargets: (signal) => fetchAgentTargets(PERSONAL_DELEGATION_SCOPE, signal),
     fetchKnowledge: (signal) => fetchAgentKnowledgeCatalog(signal),
     draftInstructions: (draft, actions, catalog, signal) => draftAgentInstructions(draft, actions, catalog, signal),
+    discoverFoundryResources: (endpoint, type, signal) => discoverAgentFoundryResources(endpoint, type, signal),
 };
 
 function groupAgentsUrl(groupId: string, agentId?: string): string {
@@ -308,5 +321,7 @@ export function createGroupAgentWorkbench(
         fetchKnowledge: (signal) => fetchGroupAgentKnowledgeCatalog(groupId, signal),
         draftInstructions: (draft, actions, catalog, signal) =>
             draftAgentInstructions(draft, actions, catalog, signal, instructionScope),
+        discoverFoundryResources: (endpoint, type, signal) =>
+            discoverAgentFoundryResources(endpoint, type, signal, groupId),
     };
 }

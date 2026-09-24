@@ -230,7 +230,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                         {restored ? <p role="status" className="mt-3 text-xs text-text-3">Your unsaved draft was restored from this tab’s memory.</p> : null}</>,
                 },
                 { id: 'model', label: 'Model & connection', content: structured(<AgentModelFields draft={draft} setDraft={setDraft} options={options} original={original}
-                    allowCustomEndpoints={adapter.allowsCustomEndpoints(options.settings)} groupScope={adapter.scope.kind === 'group'}
+                    allowCustomEndpoints={adapter.allowsCustomEndpoints(options.settings)} discoverFoundryResources={adapter.discoverFoundryResources}
                     neutralReadOnlyCopy={adapter.scope.kind === 'group' && readOnly} />) },
                 { id: 'actions', label: 'Actions', content: structured(<AgentActionPicker draft={draft} setDraft={setDraft}
                     actions={actions} targets={targets} loading={actionsLoading} error={actionsError} targetError={targetError}

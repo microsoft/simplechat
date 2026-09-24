@@ -16,11 +16,13 @@
 // given, and against `normalize_model_endpoints` in functions_settings.py, which is what
 // it stores.
 
-import { api } from './apiClient';
+import { ApiError, api, requestWithStatus } from './apiClient';
 import {
-    buildCustomConnectionPayload, connectionRequestModel, CUSTOM_AUTH_TYPE_OPTIONS, validateCustomConnection,
-    type CustomApiType, type CustomApiTypeDescriptor, type CustomNetworkPolicy,
+    buildCustomConnectionPayload, connectionRequestModel, CUSTOM_AUTH_TYPE_OPTIONS, EMPTY_CUSTOM_NETWORK_POLICY,
+    validateCustomConnection, type CustomApiType, type CustomApiTypeDescriptor, type CustomNetworkPolicy,
 } from './customModelConnections';
+import { isRecord } from './workspaceAuthoring';
+import { requireWorkspaceId } from './workspaceContext';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -186,6 +188,18 @@ export interface ModelConnection {
     has_api_key?: boolean;
     has_client_secret?: boolean;
     has_bearer_token?: boolean;
+    /**
+     * A per-request conflict token, present only on a group model endpoint. It rides on the list
+     * row and is echoed back as `expected_revision` on a PATCH or DELETE so a concurrent write is
+     * refused rather than silently overwritten. The admin surface has no equivalent and omits it.
+     */
+    revision?: string;
+    /**
+     * The operations the caller may perform on this specific group endpoint (a subset of
+     * edit/enable/delete/test), computed by the server from role and status. Absent on the admin
+     * surface, where every operation is allowed.
+     */
+    endpoint_actions?: string[];
     [key: string]: unknown;
 }
 
@@ -1076,3 +1090,321 @@ export const fetchDefaultModel = (signal?: AbortSignal) =>
 
 export const saveDefaultModel = (selection: DefaultModelSelection) =>
     api.put<{ selection: DefaultModelSelection }>(DEFAULT_MODEL_BASE, { selection });
+
+/* -------------------------------------------------------------------------- */
+/* Scope-aware adapter                                                         */
+/* -------------------------------------------------------------------------- */
+//
+// The manager shipped admin-only, talking straight to /api/v2/admin/model-endpoints and the shared
+// /api/models/* discovery routes. This adapter is the seam that lets the same component serve a
+// group workspace natively, the way identityWorkbench.ts made the identities section scope-aware.
+// The admin adapter is a thin pass-through so its behaviour stays byte-identical; the group adapter
+// uses the named-group routes, gates every write on server hints with no fallback, carries the
+// per-endpoint revision as a conditional-write token, and hides the admin-only surfaces (connection
+// and capability tests, the network policy editor, and the migration notices) that have no group
+// equivalent.
+
+export type ModelConnectionsScope =
+    | { kind: 'admin' }
+    | { kind: 'group'; id: string; name: string };
+
+export const ENDPOINT_OPERATIONS = ['create', 'edit', 'delete', 'enable', 'test'] as const;
+export type EndpointOperation = typeof ENDPOINT_OPERATIONS[number];
+
+/** A resource that still references an endpoint, blocking its deletion. */
+export interface EndpointReference {
+    kind: string;
+    id: string;
+    name: string;
+}
+
+/**
+ * A stale-revision conflict on a specific endpoint (409 `endpoint_conflict`). The editor catches
+ * this: the stored endpoint changed, so the draft is kept and a reload is offered to pick up the
+ * fresh revision rather than the edit being lost.
+ */
+export class EndpointConflictError extends Error {
+    constructor(message = 'This model endpoint changed. Reload it before saving.') {
+        super(message);
+        this.name = 'EndpointConflictError';
+    }
+}
+
+/**
+ * A concurrent, unrelated write to the group document (409 `group_write_conflict`). The endpoint's
+ * own revision is still valid, so the draft is kept and a plain retry succeeds; no reload is needed.
+ */
+export class GroupWriteConflictError extends Error {
+    constructor(message = 'The group changed while this model endpoint was being saved. Try again.') {
+        super(message);
+        this.name = 'GroupWriteConflictError';
+    }
+}
+
+/** A delete refused because the endpoint is still referenced (409 `endpoint_in_use`). */
+export class EndpointInUseError extends Error {
+    readonly references: EndpointReference[];
+    constructor(references: EndpointReference[], message = 'This model endpoint is still in use.') {
+        super(message);
+        this.name = 'EndpointInUseError';
+        this.references = references;
+    }
+}
+
+export interface ModelConnectionsAdapter {
+    scope: ModelConnectionsScope;
+    /** Whether the "Test connection" affordance renders (/api/models/test-connection, admin only). */
+    canTestConnection: boolean;
+    /** Whether the image and embedding capability tests render (admin-settings route, admin only). */
+    canTestCapabilities: boolean;
+    /** Whether the custom network policy editor renders (admin settings, admin only). */
+    canEditNetworkPolicy: boolean;
+    /** Whether migration and default-model notices render (admin settings state, admin only). */
+    showMigrationNotices: boolean;
+    /** Whether the caller may create a connection in this scope, so the Add control renders. */
+    canCreate: boolean;
+    supported: ReadonlySet<EndpointOperation>;
+    allows: (operation: EndpointOperation, connection?: ModelConnection) => boolean;
+    list: (signal?: AbortSignal) => Promise<ConnectionListResponse>;
+    create: (payload: Record<string, unknown>) => Promise<{ endpoint: ModelConnection }>;
+    update: (connection: ModelConnection, payload: Record<string, unknown>) => Promise<{ endpoint: ModelConnection }>;
+    remove: (connection: ModelConnection) => Promise<{ success: boolean }>;
+    discover: (payload: Record<string, unknown>) => Promise<{ models?: Array<Record<string, unknown>> }>;
+    testConnection: (payload: Record<string, unknown>) => Promise<{ success?: boolean; count?: number; validation_only?: boolean; message?: string }>;
+    testConnectionModel: (payload: Record<string, unknown>, model: ConnectionModel | string) => Promise<{ success?: boolean }>;
+    /**
+     * Fetch the latest stored copy of a single endpoint after a stale-revision conflict, so a
+     * re-save carries its fresh revision. Provided only where conflicts occur (group scope); admin
+     * omits it, so the editor's reload affordance never appears and its behaviour is unchanged.
+     */
+    reload?: (id: string) => Promise<ModelConnection | null>;
+    /** Announce that the stored list changed. Admin bumps the shared store; group is a no-op. */
+    onChanged: () => void;
+}
+
+/**
+ * The admin adapter, byte-identical to the historical direct calls. The store callback is injected
+ * so this module stays free of a store dependency, keeping the lib importable outside a UI build.
+ */
+export function createAdminModelConnectionsAdapter(onChanged: () => void): ModelConnectionsAdapter {
+    return {
+        scope: { kind: 'admin' },
+        canTestConnection: true,
+        canTestCapabilities: true,
+        canEditNetworkPolicy: true,
+        showMigrationNotices: true,
+        canCreate: true,
+        supported: new Set(ENDPOINT_OPERATIONS),
+        allows: () => true,
+        list: (signal) => fetchModelConnections(signal),
+        create: (payload) => createModelConnection(payload),
+        update: (connection, payload) => updateModelConnection(connection.id, payload),
+        remove: (connection) => deleteModelConnection(connection.id),
+        discover: (payload) => discoverModels(payload),
+        testConnection: (payload) => testConnection(payload),
+        testConnectionModel: (payload, model) => testConnectionModel(payload, model),
+        onChanged,
+    };
+}
+
+/**
+ * The operations a group `endpoint_management` hint offers.
+ *
+ * Mirrors `advertisedIdentityOperations`: an unrecognised block (missing, wrong schema, or a
+ * non-string entry) yields the empty set rather than a guess, so a malformed hint disables writing
+ * rather than enabling it.
+ */
+export function advertisedEndpointOperations(value: unknown): ReadonlySet<EndpointOperation> {
+    if (!isRecord(value) || value.schema_version !== 1 || !Array.isArray(value.operations)
+        || !value.operations.every((operation) => typeof operation === 'string')) {
+        return new Set();
+    }
+    const offered = value.operations;
+    return new Set(ENDPOINT_OPERATIONS.filter((operation) => offered.includes(operation)));
+}
+
+/**
+ * Whether an operation is allowed in a scope. Admin allows everything. Group requires the
+ * workspace-level `endpoint_management` hint to offer it; edit, enable, delete and test additionally
+ * require the specific endpoint to carry the operation in its own `endpoint_actions`. There is no
+ * fallback that enables an action when the hint or the per-item actions are empty or absent.
+ */
+export function endpointOperationAllowed(
+    scope: ModelConnectionsScope,
+    supported: ReadonlySet<EndpointOperation>,
+    operation: EndpointOperation,
+    connection?: ModelConnection,
+): boolean {
+    if (scope.kind === 'admin') {
+        return true;
+    }
+    if (!supported.has(operation)) {
+        return false;
+    }
+    if (operation === 'create') {
+        return true;
+    }
+    return Array.isArray(connection?.endpoint_actions) && connection.endpoint_actions.includes(operation);
+}
+
+function groupEndpointsUrl(groupId: string, endpointId?: string): string {
+    const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/model-endpoints`;
+    return endpointId ? `${base}/${encodeURIComponent(requireWorkspaceId(endpointId))}` : base;
+}
+
+function groupModelsUrl(groupId: string, action: 'fetch' | 'test-model'): string {
+    return `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/models/${action}`;
+}
+
+/** A PATCH that carries only `enabled` is the enable op; anything more is a full edit. */
+function isEnableOnlyPayload(payload: Record<string, unknown>): boolean {
+    const keys = Object.keys(payload);
+    return keys.length === 1 && keys[0] === 'enabled';
+}
+
+/**
+ * Validate the group list envelope strictly. The group route returns only this group's own stored
+ * endpoints -- no globals and no per-item scope -- so identity is proven at the envelope: an
+ * `endpoints` array whose every item carries a non-empty string `id`, a non-empty string `revision`
+ * and an `endpoint_actions` array. A response that fails this is thrown on rather than rendered as
+ * an empty list, so a drifted or truncated payload never reads as "no connections".
+ */
+function normalizeGroupList(value: unknown): ConnectionListResponse {
+    if (!isRecord(value) || !Array.isArray(value.endpoints)) {
+        throw new Error('The model endpoint list was malformed. Refresh and try again.');
+    }
+    const endpoints = value.endpoints.map((item) => {
+        if (!isRecord(item) || typeof item.id !== 'string' || !item.id
+            || typeof item.revision !== 'string' || !item.revision
+            || !Array.isArray(item.endpoint_actions)) {
+            throw new Error('A model endpoint response was malformed. Refresh and try again.');
+        }
+        return item as ModelConnection;
+    });
+    return {
+        endpoints,
+        multi_endpoint_enabled: value.multi_endpoint_enabled === true,
+        custom_api_types: Array.isArray(value.custom_api_types) ? value.custom_api_types as CustomApiTypeDescriptor[] : [],
+        // Admin-only members have no group equivalent; fill them with neutral defaults so the shared
+        // component's admin branches read as "nothing to show" and never render an admin surface.
+        migration: null,
+        embedding_migration: null,
+        default_notices: {},
+        custom_network_policy: EMPTY_CUSTOM_NETWORK_POLICY,
+    };
+}
+
+/** The create route wraps the record under `endpoint`; a missing record is a malformed response. */
+function endpointFromResponse(value: unknown): ModelConnection {
+    if (isRecord(value) && isRecord(value.endpoint)) {
+        return value.endpoint as ModelConnection;
+    }
+    throw new Error('The model endpoint response was malformed. Refresh and try again.');
+}
+
+function requiredRevision(connection: ModelConnection): string {
+    const revision = typeof connection.revision === 'string' ? connection.revision.trim() : '';
+    if (!revision) {
+        throw new Error('This model endpoint is missing its version marker. Refresh and try again.');
+    }
+    return revision;
+}
+
+function endpointReferences(value: unknown): EndpointReference[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.filter(isRecord).map((entry) => ({
+        kind: String(entry.kind ?? ''),
+        id: String(entry.id ?? ''),
+        name: String(entry.name ?? ''),
+    }));
+}
+
+async function conditionalGroupWrite(
+    method: 'PATCH' | 'DELETE', url: string, body: Record<string, unknown>,
+): Promise<unknown> {
+    try {
+        const response = await requestWithStatus<unknown>(url, { method, body });
+        return response.data;
+    } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 409) {
+            const payload = cause.payload;
+            const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : undefined;
+            const code = isRecord(payload) ? payload.error_code : undefined;
+            if (code === 'endpoint_in_use') {
+                throw new EndpointInUseError(endpointReferences(isRecord(payload) ? payload.references : undefined), message);
+            }
+            if (code === 'group_write_conflict') {
+                throw new GroupWriteConflictError(message);
+            }
+            // Any other 409, including the stored-endpoint `endpoint_conflict`, is a stale-revision
+            // conflict that a reload resolves.
+            throw new EndpointConflictError(message);
+        }
+        throw cause;
+    }
+}
+
+export function createGroupModelConnectionsAdapter(
+    scope: Extract<ModelConnectionsScope, { kind: 'group' }>, management: unknown,
+): ModelConnectionsAdapter {
+    if (scope.kind !== 'group') {
+        throw new Error('Group model connections require an explicit group scope.');
+    }
+    const groupId = requireWorkspaceId(scope.id);
+    const supported = advertisedEndpointOperations(management);
+    const allows = (operation: EndpointOperation, connection?: ModelConnection) =>
+        endpointOperationAllowed(scope, supported, operation, connection);
+    return {
+        scope,
+        canTestConnection: false,
+        canTestCapabilities: false,
+        canEditNetworkPolicy: false,
+        showMigrationNotices: false,
+        canCreate: supported.has('create'),
+        supported,
+        allows,
+        list: async (signal) => normalizeGroupList(await api.get<unknown>(groupEndpointsUrl(groupId), signal)),
+        create: async (payload) => {
+            if (!allows('create')) {
+                throw new Error('Creating model connections is not available in this group.');
+            }
+            return { endpoint: endpointFromResponse(await api.post<unknown>(groupEndpointsUrl(groupId), payload)) };
+        },
+        update: async (connection, payload) => {
+            const operation: EndpointOperation = isEnableOnlyPayload(payload) ? 'enable' : 'edit';
+            if (!allows(operation, connection)) {
+                throw new Error('Editing this model connection is not available.');
+            }
+            const updated = await conditionalGroupWrite('PATCH', groupEndpointsUrl(groupId, connection.id), {
+                ...payload, expected_revision: requiredRevision(connection),
+            });
+            return { endpoint: endpointFromResponse(updated) };
+        },
+        remove: async (connection) => {
+            if (!allows('delete', connection)) {
+                throw new Error('Deleting this model connection is not available.');
+            }
+            await conditionalGroupWrite('DELETE', groupEndpointsUrl(groupId, connection.id), {
+                expected_revision: requiredRevision(connection),
+            });
+            return { success: true };
+        },
+        discover: (payload) => api.post<{ models?: Array<Record<string, unknown>> }>(groupModelsUrl(groupId, 'fetch'), payload),
+        testConnection: () => {
+            throw new Error('Connection testing is not available for group model connections.');
+        },
+        testConnectionModel: (payload, model) => api.post<{ success?: boolean }>(groupModelsUrl(groupId, 'test-model'), {
+            ...payload,
+            model: typeof model === 'string' ? { deploymentName: model } : model,
+        }),
+        reload: async (id) => {
+            // Re-list and pick out the one row, so a stale-revision conflict can refresh just the
+            // editor's baseline. A row absent from the fresh list means it was removed elsewhere.
+            const fresh = await normalizeGroupList(await api.get<unknown>(groupEndpointsUrl(groupId)));
+            return fresh.endpoints.find((endpoint) => endpoint.id === id) ?? null;
+        },
+        onChanged: () => {},
+    };
+}
