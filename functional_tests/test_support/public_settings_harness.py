@@ -12,11 +12,12 @@ Loaded unchanged from their files:
 - ``functions_group`` (``functions_public_workspaces`` imports it), ``functions_workspace_branding``
   (including the real logo processing) and ``functions_stats_windows``;
 - ``functions_public_workspaces`` (the role predicate and the etag guard),
-  ``functions_public_directory``, ``functions_public_settings_policy`` and
-  ``functions_public_settings``;
+  ``functions_public_directory``, ``functions_public_settings_policy``,
+  ``functions_public_settings`` and ``route_backend_public_settings``;
 - the classic ``route_backend_public_workspaces`` and ``route_backend_retention_policy``,
   registered as ``app.py`` registers them, so every seam test compares the native
-  decision with the classic routes' real outcomes.
+  routes with the classic routes' real outcomes. ``env.client`` has both, and
+  ``env.legacy_client`` only the classic routes, as an older server would.
 
 The session decorators, ``enabled_required`` and the public file download predicates are
 the real definitions.
@@ -331,7 +332,7 @@ class PublicSettingsEnvironment:
         self.as_user("outsider-1")
 
     def clients(self):
-        return [client for client in (getattr(self, "client", None), self.legacy_client) if client is not None]
+        return [self.client, self.legacy_client]
 
     def as_user(self, user_id, roles=("User",)):
         name, email = PEOPLE.get(user_id, (f"Name {user_id}", f"{user_id}@example.test"))
@@ -375,8 +376,11 @@ class PublicSettingsEnvironment:
             kwargs["content_type"] = content_type
         if query_string is not None:
             kwargs["query_string"] = query_string
-        client = self.legacy_client if legacy or getattr(self, "client", None) is None else self.client
+        client = self.legacy_client if legacy else self.client
         return getattr(client, method.lower())(path, **kwargs)
+
+    def settings_read(self, ws_id="public-1", **kwargs):
+        return self.call("GET", f"/api/public-workspaces/{ws_id}/settings", **kwargs)
 
     def revision(self, section, ws_id="public-1"):
         return self.modules.settings.section_revision(self.stored_workspace(ws_id), section)
@@ -500,23 +504,30 @@ def public_settings_environment():
         directory = _load(stack, "functions_public_directory")
         policy = _load(stack, "functions_public_settings_policy")
         settings_functions = _load(stack, "functions_public_settings")
+        routes = _load(stack, "route_backend_public_settings")
         legacy_routes = _load(stack, "route_backend_public_workspaces")
         retention_routes = _load(stack, "route_backend_retention_policy")
 
         env.modules = SimpleNamespace(
             branding=branding, stats_windows=stats_windows, group=group, public_workspaces=public_workspaces,
-            directory=directory, policy=policy, settings=settings_functions, legacy_routes=legacy_routes,
-            retention_routes=retention_routes, authentication=authentication, settings_module=settings_module,
+            directory=directory, policy=policy, settings=settings_functions, routes=routes,
+            legacy_routes=legacy_routes, retention_routes=retention_routes, authentication=authentication,
+            settings_module=settings_module,
         )
 
-        legacy_app = Flask("public_settings_legacy", root_path=str(APP_ROOT))
-        legacy_app.config.update(TESTING=True, SECRET_KEY="test-only-session-key")
-        _register(legacy_app, authentication, "backend_public_workspaces",
-                  legacy_routes.register_route_backend_public_workspaces)
-        _register(legacy_app, authentication, "backend_retention_policy",
-                  retention_routes.register_route_backend_retention_policy)
-        env.legacy_app = legacy_app
-        env.legacy_client = legacy_app.test_client()
+        def build_app(name, include_new):
+            app = Flask(name, root_path=str(APP_ROOT))
+            app.config.update(TESTING=True, SECRET_KEY="test-only-session-key")
+            _register(app, authentication, "backend_public_workspaces",
+                      legacy_routes.register_route_backend_public_workspaces)
+            _register(app, authentication, "backend_retention_policy",
+                      retention_routes.register_route_backend_retention_policy)
+            if include_new:
+                _register(app, authentication, "backend_public_settings", routes.register_route_backend_public_settings)
+            return app
+
+        env.app, env.legacy_app = build_app("public_settings_contract", True), build_app("public_settings_legacy", False)
+        env.client, env.legacy_client = env.app.test_client(), env.legacy_app.test_client()
         env.reset()
         yield env
 

@@ -6,8 +6,8 @@ Implemented in: 0.261.181
 
 ``public_settings_decisions`` is the one decision behind the native public workspace
 settings and insights routes and their ``settings_management`` block. This test holds
-it to the classic routes' real outcomes, run for real in
-``test_support/public_settings_harness.py``:
+it, and the native routes built on it, to the classic routes' real outcomes, run for
+real in ``test_support/public_settings_harness.py``:
 
 - the name, description and hero color against ``PATCH /api/public_workspaces/<ws_id>``,
   and the logo against ``POST /api/public_workspaces/<ws_id>/logo``: the owner only, in
@@ -23,7 +23,8 @@ every cell runs with both. In every cell the decision allows exactly what the cl
 route allows, apart from the rules stricter than the classic routes, each pinned as the
 only difference: profile and logo writes while the workspace is ``locked``, ``inactive``
 or in a status this version doesn't recognize, and retention while public retention
-policies are off.
+policies are off. An allowed operation succeeds on the native route, and a refused one
+is a 403 carrying the decision's reason.
 """
 
 import ast
@@ -93,6 +94,18 @@ def assert_seam(classic_allows, reason, *, native_only=()):
     assert (reason is None) == classic_allows, (classic_allows, reason)
 
 
+def assert_native_follows(env, response, reason):
+    """The native route does exactly what the decision says."""
+    body = response.get_json()
+    if reason is None:
+        assert allowed(response), body
+    else:
+        refusal = env.modules.settings.refusal(reason, env.stored_workspace(WORKSPACE))
+        assert response.status_code == 403, body
+        assert body == {"error": refusal.description, "error_code": reason}
+    assert response.headers["Cache-Control"] == "no-store"
+
+
 def logo_upload():
     return {"logo_file": (BytesIO(png_bytes()), "logo.png")}
 
@@ -105,28 +118,40 @@ PROFILE_CELLS = list(itertools.product(CALLERS, MEMBER_FORMATS, STATUSES))
 
 
 @pytest.mark.parametrize("caller,members,status", PROFILE_CELLS)
-def test_profile_decisions_follow_the_classic_update_route(env, caller, members, status):
+def test_profile_writes_follow_the_classic_update_route(env, caller, members, status):
+    prepare(env, caller, members, status=status)
+    classic = env.call("PATCH", f"/api/public_workspaces/{WORKSPACE}",
+                       {"name": "Classic name", "description": "d", "heroColor": "#112233"}, legacy=True)
+
     prepare(env, caller, members, status=status)
     reasons = {operation: decision(env, caller, operation)
                for operation in ("edit_name", "edit_description", "edit_color")}
     assert len(set(reasons.values())) == 1, reasons
-    classic = env.call("PATCH", f"/api/public_workspaces/{WORKSPACE}",
-                       {"name": "Classic name", "description": "d", "heroColor": "#112233"}, legacy=True)
+    native = env.call("PATCH", f"/api/public-workspaces/{WORKSPACE}/settings/profile", {
+        "revision": env.revision("profile", WORKSPACE), "name": "Native name", "description": "d",
+        "hero_color": "#112233",
+    })
 
     assert_seam(allowed(classic), reasons["edit_name"], native_only=("public_workspace_status_unavailable",))
     if status in READ_ONLY_STATUSES and allowed(classic):
         assert reasons["edit_name"] == "public_workspace_status_unavailable"
+    assert_native_follows(env, native, reasons["edit_name"])
 
 
 @pytest.mark.parametrize("caller,members,status", PROFILE_CELLS)
-def test_logo_decisions_follow_the_classic_upload_route(env, caller, members, status):
+def test_logo_writes_follow_the_classic_upload_route(env, caller, members, status):
+    prepare(env, caller, members, status=status)
+    classic = env.call("POST", f"/api/public_workspaces/{WORKSPACE}/logo", data=logo_upload(), legacy=True)
+
     prepare(env, caller, members, status=status)
     reason = decision(env, caller, "edit_logo")
-    classic = env.call("POST", f"/api/public_workspaces/{WORKSPACE}/logo", data=logo_upload(), legacy=True)
+    native = env.call("PUT", f"/api/public-workspaces/{WORKSPACE}/settings/logo",
+                      data={**logo_upload(), "revision": env.revision("logo", WORKSPACE)})
 
     assert_seam(allowed(classic), reason, native_only=("public_workspace_status_unavailable",))
     if status in READ_ONLY_STATUSES and allowed(classic):
         assert reason == "public_workspace_status_unavailable"
+    assert_native_follows(env, native, reason)
 
 
 def test_no_creation_role_applies_to_the_profile_or_the_logo(env):
@@ -157,17 +182,23 @@ DOWNLOAD_CELLS = list(itertools.product(CALLERS, MEMBER_FORMATS, CAPABILITIES, (
 
 
 @pytest.mark.parametrize("caller,members,capability,status", DOWNLOAD_CELLS)
-def test_download_decisions_follow_the_classic_download_settings_route(env, caller, members, capability, status):
+def test_download_writes_follow_the_classic_download_settings_route(env, caller, members, capability, status):
     prepare(env, caller, members, status=status, **CAPABILITIES[capability])
-    reason = decision(env, caller, "edit_downloads")
     classic = env.call("PATCH", f"/api/public_workspaces/{WORKSPACE}/download-settings",
                        {"disable_file_downloads": True}, legacy=True)
+
+    prepare(env, caller, members, status=status, **CAPABILITIES[capability])
+    reason = decision(env, caller, "edit_downloads")
+    native = env.call("PATCH", f"/api/public-workspaces/{WORKSPACE}/settings/downloads", {
+        "revision": env.revision("downloads", WORKSPACE), "disable_file_downloads": True,
+    })
 
     assert_seam(allowed(classic), reason)
     if caller in ("owner-1", "admin-1"):
         # Each capability cell means what it says: an assigned GUID is allowed, and an
         # assignment elsewhere is refused for the capability, not for a bad id.
         assert (reason is None) == (capability in ("on", "assigned")), (capability, reason)
+    assert_native_follows(env, native, reason)
 
 
 # ---------------------------------------------------------------------------
@@ -178,19 +209,25 @@ RETENTION_CELLS = list(itertools.product(CALLERS, MEMBER_FORMATS, (True, False),
 
 
 @pytest.mark.parametrize("caller,members,retention_on,status", RETENTION_CELLS)
-def test_retention_decisions_follow_the_classic_retention_route(env, caller, members, retention_on, status):
+def test_retention_writes_follow_the_classic_retention_route(env, caller, members, retention_on, status):
     prepare(env, caller, members, status=status, enable_retention_policy_public=retention_on)
-    reason = decision(env, caller, "edit_retention")
     classic = env.call("POST", f"/api/retention-policy/public/{WORKSPACE}", {
         "conversation_retention_days": 30, "document_retention_days": 30,
     }, legacy=True)
 
+    prepare(env, caller, members, status=status, enable_retention_policy_public=retention_on)
+    reason = decision(env, caller, "edit_retention")
+    native = env.call("PATCH", f"/api/public-workspaces/{WORKSPACE}/settings/retention", {
+        "revision": env.revision("retention", WORKSPACE), "conversation_retention_days": 30,
+    })
+
     # The classic route checks no switch, so while public retention policies are off it
-    # still accepts the owner and admins, which the native decision refuses.
+    # still accepts the owner and admins, which the native route refuses.
     assert_seam(allowed(classic), reason, native_only=("public_workspace_retention_disabled",))
     if not retention_on and caller in ("owner-1", "admin-1"):
         assert allowed(classic)
         assert reason == "public_workspace_retention_disabled"
+    assert_native_follows(env, native, reason)
 
 
 @pytest.mark.parametrize("caller", ["owner-1", "admin-1"])
@@ -200,6 +237,11 @@ def test_retention_needs_public_workspaces_on_where_the_classic_route_does_not(e
                        legacy=True)
     assert classic.status_code == 200
     assert decision(env, caller, "edit_retention") == "public_workspace_retention_disabled"
+    native = env.call("PATCH", f"/api/public-workspaces/{WORKSPACE}/settings/retention", {
+        "revision": env.revision("retention", WORKSPACE), "conversation_retention_days": 30,
+    })
+    assert native.status_code == 400
+    assert native.get_json() == {"error": "Enable Public Workspaces is disabled."}
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +262,32 @@ def test_insight_decisions_follow_the_classic_reads(env, caller, members, operat
     classic = env.call("GET", f"/api/public_workspaces/{WORKSPACE}{READS[operation]}", legacy=True)
 
     assert_seam(allowed(classic), reason)
+
+
+@pytest.mark.parametrize("caller,members", list(itertools.product(CALLERS, MEMBER_FORMATS)))
+def test_the_settings_read_needs_an_owner_or_admin_as_the_classic_settings_tab_does(env, caller, members):
+    prepare(env, caller, members)
+    response = env.settings_read(WORKSPACE)
+    if caller in ("owner-1", "admin-1"):
+        assert response.status_code == 200
+        assert response.get_json()["settings"]["viewer_role"] == CALLERS[caller]
+    else:
+        assert response.status_code == 403
+        assert response.get_json()["error_code"] == "public_workspace_manager_required"
+
+
+@pytest.mark.parametrize("caller,status,retention_on", [
+    ("owner-1", "active", True),
+    ("owner-1", "locked", False),
+    ("owner-1", "archived", True),
+    ("admin-1", "inactive", True),
+])
+def test_the_settings_read_publishes_the_decision(env, caller, status, retention_on):
+    prepare(env, caller, status=status, enable_retention_policy_public=retention_on)
+    published = env.settings_read(WORKSPACE).get_json()["settings"]["settings_management"]
+    assert published == env.modules.policy.build_public_settings_management(
+        CALLERS[caller], env.stored_workspace(WORKSPACE), env.get_settings(),
+    )
 
 
 # ---------------------------------------------------------------------------
