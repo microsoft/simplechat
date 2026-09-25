@@ -30,6 +30,7 @@ import { useBootstrapStore } from '../stores/bootstrapStore';
 import { usePublicWorkspaceStore, PublicWorkspaceRequestSuperseded } from '../stores/publicWorkspaceStore';
 import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
 import { PublicDocumentsSection } from './workspace/DocumentsSection';
+import { PublicPromptsSection } from './workspace/PromptsSection';
 
 const CLASSIC_WORKSPACE_HREF = '/public_workspaces';
 
@@ -123,13 +124,14 @@ export function PublicWorkspacePage() {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
         return {
             id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id],
-            availabilityLabel: id === 'documents' ? undefined : 'Classic',
+            availabilityLabel: id === 'documents' || id === 'prompts' ? undefined : 'Classic',
         };
     }), []);
     const resolved = useMemo(() => resolveWorkspaceSections(sections, context), [sections, context]);
     const selected = resolved.find((entry) => entry.section.id === section);
     const nativeDocuments = Boolean(ready && section === 'documents' && !resourceId
         && selected?.enabled && context.document_permissions.can_view);
+    const nativePrompts = Boolean(ready && section === 'prompts' && !resourceId && selected?.enabled);
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
     useEffect(() => {
@@ -213,7 +215,7 @@ export function PublicWorkspacePage() {
 
     const error = notice || state.error;
     return (
-        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments}>
+        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts}>
             {error ? <div role="alert" className="mb-4 space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
                 <p>{error}</p>
                 <GlassButton size="sm" disabled={state.loading || state.refreshing} onClick={() => {
@@ -233,7 +235,7 @@ export function PublicWorkspacePage() {
                     action={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Browse the public directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
-                    className={nativeDocuments ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+                    className={nativeDocuments || nativePrompts ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
                     {!section ? (
                         <>
                             <dl className="space-y-2 text-sm text-text-2">
@@ -252,6 +254,8 @@ export function PublicWorkspacePage() {
                                     linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
                                     onClearLinkedDocument={clearDocumentLink} />
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description={`You do not have access to this ${labels.lower_singular}'s documents.`} />
+                            ) : section === 'prompts' && !resourceId ? (
+                                <div className="min-h-0 flex-1"><PublicPromptsSection context={context} /></div>
                             ) : (
                                 <GlassPanel elevation="flat" className="space-y-4 p-5">
                                     <SectionIntro title={selected.section.label} description={selected.section.blurb} />

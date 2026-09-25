@@ -1,7 +1,7 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.175
+Version: 0.261.177
 Implemented in: 0.261.168
 
 Every public browser suite builds its selected-workspace context from
@@ -17,7 +17,7 @@ section or hint only one side has fails. That covers every field the V2 client r
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
 - every section: `enabled`, `can_manage`, `reason` and `group`;
 - `document_permissions` and `document_queries`;
-- both hints: `document_management` and `document_collaboration`.
+- three hints: `document_management`, `document_collaboration` and `prompt_management`.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
@@ -34,8 +34,10 @@ scenario for the client, and this test holds it to the builder's text.
 M9A resolves the read-only M3A leftover the M9B verification pinned as a strict xfail: the builder
 now opens the documents section with `section(True, manager)`, so a manager of an active workspace
 manages it, matching the group builder, and the registry drops the sections public workspaces will
-never have (agents, actions, endpoints and workflows). The fixture serves the server's value, and
-this test walks the union of both sides' keys, so a section only one side lists fails.
+never have (agents, actions, endpoints and workflows). M9C opens the prompts section the same way
+and publishes a `prompt_management` hint from `public_prompt_management_operations`. The fixture
+serves the server's value, and this test walks the union of both sides' keys, so a section or hint
+only one side lists fails.
 """
 
 import ast
@@ -80,6 +82,7 @@ METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace", "sections",
     "document_permissions", "document_queries", "document_management", "document_collaboration",
+    "prompt_management",
 )
 WORKSPACE_ID = "pub-a"
 WORKSPACE_NAME = "Research library"
@@ -357,6 +360,22 @@ def test_an_active_public_manager_can_manage_the_documents_section(public, role)
     real = real_context(public, role, "active")
     assert "upload" in real["document_management"]["operations"]
     assert real["sections"]["documents"]["can_manage"] is True
+
+
+@pytest.mark.parametrize("role", list(fixture_module.PUBLIC_MANAGER_ROLES))
+def test_an_active_public_manager_can_manage_the_prompts_section(public, role):
+    real = real_context(public, role, "active")
+    assert real["prompt_management"]["operations"] == ["create", "edit", "delete"]
+    assert real["sections"]["prompts"]["enabled"] is True
+    assert real["sections"]["prompts"]["can_manage"] is True
+
+
+@pytest.mark.parametrize("status", ("locked", "upload_disabled"))
+def test_a_reader_sees_the_prompts_section_open_without_management(public, status):
+    real = real_context(public, "User", status)
+    assert real["sections"]["prompts"]["enabled"] is True
+    assert real["sections"]["prompts"]["can_manage"] is False
+    assert real["prompt_management"]["operations"] == []
 
 
 if __name__ == "__main__":

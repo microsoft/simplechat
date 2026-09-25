@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.175
+Version: 0.261.177
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -74,6 +74,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_public_document_management": ("login_required", "user_required"),
     "backend_public_document_collaboration": ("login_required", "user_required"),
     "backend_public_prompts": ("login_required", "user_required"),
+    "backend_public_prompts_scoped": ("login_required", "user_required"),
     "backend_public_workspaces": ("login_required", "user_required"),
     "backend_public_directory": ("login_required", "user_required"),
     "backend_retention_policy": ("login_required",),
@@ -206,6 +207,11 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_directory.py", "api_group_join_request_create"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_directory.py", "api_group_join_request_cancel"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_directory.py", "api_public_directory_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompts_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompts_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_delete"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_list"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_add"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_role"): ("login_required", "user_required", "enabled_required"),

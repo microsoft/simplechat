@@ -93,6 +93,7 @@ import { Dropdown, type DropdownOption } from '../ui/Dropdown';
 import { suggestPromptName } from '../../lib/promptSlash';
 import { readPromptParam, readPromptScope } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
+import { resolvePublicPromptForChat } from '../../lib/promptWorkbench';
 import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
 import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
@@ -537,6 +538,31 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
               )
             : promptCatalog.find((item) => item.id === linkedPromptId);
         if (!prompt) {
+            // R4a: a public "Use in chat" link names its workspace and prompt explicitly, so a
+            // workspace hidden from the chat catalog still resolves. This fires only on a catalog
+            // miss for an explicit public link; it fetches the one prompt (reauthorized server-side
+            // by role and status, never through the visibility map), attaches its content on success,
+            // and on any failure falls back to the same "no longer available" toast, attaching
+            // nothing. It writes no catalog or visibility state, and the link is already marked
+            // consumed above, so it never replays. The group and personal paths are unchanged.
+            if (linkedPromptScope && linkedPromptScope.kind === 'public') {
+                const workspaceId = linkedPromptScope.id;
+                void resolvePublicPromptForChat(workspaceId, linkedPromptId)
+                    .then((fetched) => {
+                        attachPrompt({
+                            id: fetched.id,
+                            name: fetched.name,
+                            content: fetched.content,
+                            description: fetched.description,
+                            scope_type: 'public',
+                            scope_id: workspaceId,
+                        });
+                    })
+                    .catch(() => {
+                        toast.error('That prompt is no longer available.');
+                    });
+                return;
+            }
             // A scoped link names its workspace so the reason is legible: a member who lost
             // access, or a deleted prompt, should not read as "some prompt, somewhere, is gone".
             const groupName = linkedPromptScope

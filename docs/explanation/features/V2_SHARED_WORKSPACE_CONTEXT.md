@@ -264,6 +264,11 @@ list (`PUBLIC_WORKSPACE_SECTION_IDS` in `lib/workspaceContext.ts`), not the
 group one, and a link to a section public workspaces don't have opens "Section
 not found". See [V2 Public Workspace Directory](V2_PUBLIC_DIRECTORY.md).
 
+From version **0.261.177**, the public `prompts` section is available and
+managed by an active manager, and the context carries `prompt_management`
+(`create`, `edit` and `delete` for a manager in an active workspace). See
+[V2 Public Prompts](V2_PUBLIC_PROMPTS.md).
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action
