@@ -1,8 +1,10 @@
 # public_document_collaboration.py
 """
 Closed M3C public generated-artifact approval HTTP fixtures for the real V2 SPA.
-Version: 0.261.134
+Version: 0.261.168
 Implemented in: 0.261.134
+A configured workspace carries the server's review handshake (public_context) unless a test scripts
+its own: 0.261.168
 
 Extend the M3B management boundary with the publication review surface. Public
 workspaces have no cross-workspace sharing in this milestone, so only generated
@@ -25,9 +27,7 @@ from ui_tests.fixtures.public_document_management import (
     OperationReply, PRESENTATION_SETTINGS, PublicDocumentManagementFixture, operation_path,
 )
 from ui_tests.fixtures.public_documents import document
-from ui_tests.fixtures.public_workspace import (  # noqa: F401
-    PUBLIC_MANAGER_ROLES, connect_options,
-)
+from ui_tests.fixtures.public_workspace import connect_options  # noqa: F401
 from ui_tests.fixtures.workspace_authoring import OWNER_ID, WorkspaceAuthoringFixture
 
 
@@ -123,14 +123,11 @@ class PublicDocumentCollaborationFixture(PublicDocumentManagementFixture):
                 )
 
     def configure_workspace(self, workspace_id="pub-a", *, role="DocumentManager", status="active", operations=None):
+        """The server's context for a role and status; a test that scripts its own review handshake
+        passes `operations`."""
         self.set_policy(workspace_id, role=role, status=status)
-        context = self.workspaces[workspace_id]
-        if operations is None:
-            manager = context["role"] in PUBLIC_MANAGER_ROLES
-            operations = COLLABORATION_OPERATIONS if manager and status == "active" else ("inspect",)
-            if status in ("inactive", "unknown"):
-                operations = ()
-        context["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
+        if operations is not None:
+            self.workspaces[workspace_id]["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
 
     def review_state(self, identifier="same-document", workspace_id="pub-a"):
         return self.reviews[(workspace_id, identifier)]
