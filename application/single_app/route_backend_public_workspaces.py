@@ -17,7 +17,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -1092,7 +1092,7 @@ def register_route_backend_public_workspaces(bp):
             return jsonify({"error": "Forbidden"}), 403
 
         try:
-            stats_window = resolve_stats_time_window(request.args)
+            stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400
 

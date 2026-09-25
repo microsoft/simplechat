@@ -524,14 +524,19 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         }
     }
     
-    # Get permissions for current status
-    permissions = status_permissions.get(status, status_permissions['active'])
+    # An unrecognized status is treated as inactive rather than active: a status the
+    # code does not know must never be given active's full permissions. Its reason is
+    # the public context's own words for an unknown status.
+    known_status = status in status_permissions
+    permissions = status_permissions.get(status, status_permissions['inactive'])
     
     # Check if operation is allowed
     allowed = permissions.get(operation_type, False)
     
     # Generate helpful reason message if not allowed
     if not allowed:
+        if not known_status:
+            return False, "This workspace's status is not recognized. Contact an administrator."
         reasons = {
             'locked': {
                 'upload': 'This public workspace is locked (read-only mode). Document uploads are disabled.',
