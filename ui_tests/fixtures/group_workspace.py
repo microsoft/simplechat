@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.172
+Version: 0.261.174
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -14,6 +14,7 @@ File source sync fields folded and normalized by the server's own rules, and bro
 resolved relative to the source root: 0.261.171
 Browsed files carry the engine's canonical remote path, and ignore items are keyed as the server
 keys them: 0.261.172
+The group screening hint, granted by the screening routes' own roles: 0.261.174
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -778,6 +779,9 @@ def _sanitize_file_source(record):
 GROUP_STATUSES = ("active", "locked", "upload_disabled", "inactive")
 GROUP_VIEWABLE_STATUSES = ("active", "locked", "upload_disabled")
 GROUP_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+# The roles every group-scoped content screening route accepts (`assert_scope_access`), read from the
+# server, so the `screening_management` hint grants exactly what those routes allow.
+SCREENING_REVIEW_ROLES = _app_constant("content_screening/permissions.py", "REVIEW_ROLES")
 
 # The server's reasons, verbatim: a status that bars viewing (check_group_status_allows_operation, and
 # the builder's own text for a status it does not recognize), a role that may not manage the group's
@@ -1150,6 +1154,10 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             download_enabled=downloads_enabled,
         ),
         "document_collaboration": document_collaboration(role, status),
+        # By role only, as the builder computes it: the screening routes check no group status.
+        "screening_management": {
+            "schema_version": 1, "operations": ["manage"] if role in SCREENING_REVIEW_ROLES else [],
+        },
         "prompt_management": prompt_management(role, status),
         # A switched-off capability sends an empty hint, as its availability predicate empties it.
         "action_management": (

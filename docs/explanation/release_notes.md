@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.174)**
+
+#### User Interface Enhancements
+
+*   **Content Screening Scans From A Group's Documents**
+    *   A group's Owner, Admins and DocumentManagers now get **Screening scans** in the V2 group Documents section, the same modal personal documents offer. They can scan the group, follow recent scans with cancel, resume and retry, see the policy additions, and open Content review.
+    *   The server decides who sees it: the workspace context publishes the members the screening routes accept, so a member is never offered a control the server would refuse.
+    *   (Ref: `DocumentsSection.tsx`, `ScreeningWorkspaceControls.tsx`, `functions_workspace_context.py`, [V2 Group Document Management](features/V2_GROUP_DOCUMENT_MANAGEMENT.md))
+
 ### **(v0.261.173)**
 
 #### Bug Fixes
