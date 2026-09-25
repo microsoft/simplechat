@@ -1,11 +1,12 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.166
+Version: 0.261.168
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
 A tag vocabulary conflict refusal carries its code (`tag_vocabulary_refusal`): 0.261.166
+The refusal also answers a bulk tagging batch and, naming the document, a metadata save: 0.261.168
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -219,10 +220,13 @@ def tag_vocabulary_conflict(group_id="group-a"):
     }
 
 
-def tag_vocabulary_refusal(group_id="group-a"):
-    """The 409 a tag create, recolour or rename sends when its vocabulary write finds the group
-    changed."""
-    return {"error": VOCABULARY_CONFLICT_MESSAGE, "error_code": VOCABULARY_CONFLICT_CODE, "group_id": group_id}
+def tag_vocabulary_refusal(group_id="group-a", document_id=None):
+    """The 409 a tag vocabulary write sends when it finds the group changed: from a tag create,
+    recolour or rename, from a bulk tagging batch, or, naming the document, from a metadata save."""
+    refusal = {"error": VOCABULARY_CONFLICT_MESSAGE, "error_code": VOCABULARY_CONFLICT_CODE, "group_id": group_id}
+    if document_id is not None:
+        refusal["document_id"] = document_id
+    return refusal
 
 
 # A download route sends each file with these protective headers (the Cache-Control as the

@@ -263,6 +263,11 @@ def update_group_document_metadata(
 ):
     validate_group_document_id(document_id)
     document = authorize_group_document_operation(user_id, group_id, document_id, operation)
+    if "tags" in changes and ensure_definitions:
+        # A definition no document uses yet is valid (a created tag is one), so the vocabulary is
+        # written first: a conflict leaves the document untouched, and a document write that fails
+        # afterwards leaves at most an unused definition.
+        _ensure_document_tag_definitions(user_id, group_id, changes["tags"])
     guard = partial(
         authorize_group_document_operation, user_id, group_id, document_id, operation,
         expected_version=document.get("version"),
@@ -273,8 +278,6 @@ def update_group_document_metadata(
     )
     if not isinstance(saved, dict) or saved.get("id") != document_id or saved.get("group_id") != group_id:
         raise DocumentMutationPropagationError("The scoped document update could not be confirmed.")
-    if "tags" in changes and ensure_definitions:
-        _ensure_document_tag_definitions(user_id, group_id, changes["tags"])
     invalidate_group_search_cache(group_id)
     log_document_metadata_update_transaction(
         user_id=user_id, document_id=document_id, workspace_type="group", group_id=group_id,
@@ -305,6 +308,10 @@ def tag_group_documents(user_id, group_id, payload):
         if not valid:
             raise GroupDocumentOperationError(message, 400)
     require_group_document_management_context(user_id, group_id, "tag_documents")
+    if action != "remove_tags":
+        # One vocabulary write for the batch's new tags, before any document: a conflict refuses
+        # the whole batch with no document written.
+        _ensure_document_tag_definitions(user_id, group_id, tags)
     result = {"success": [], "errors": []}
     for document_id in document_ids:
         try:
@@ -318,6 +325,7 @@ def tag_group_documents(user_id, group_id, payload):
                 updated_tags = tags
             update_group_document_metadata(
                 user_id, group_id, document_id, {"tags": updated_tags}, operation="tag_documents",
+                ensure_definitions=False,
             )
             result["success"].append({"document_id": document_id, "tags": updated_tags})
         except Exception as error:

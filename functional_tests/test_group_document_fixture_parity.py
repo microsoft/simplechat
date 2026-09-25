@@ -1,9 +1,10 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.166
+Version: 0.261.168
 Implemented in: 0.261.161
 A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.166
+A bulk tagging batch or metadata save that meets it is refused whole, with no document written: 0.261.168
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:
@@ -734,19 +735,17 @@ def test_partial_tag_receipt_parity(management, operation):
     assert_receipt_parity(f"partial tag {operation}", served, real)
 
 
-def change_after_the_first_context_read(env):
-    """The group changes after the operation's first context read and before the vocabulary's
-    pre-check reads it again, so the pre-check refuses before any patch is sent."""
+def change_before_the_vocabulary_pre_check(env):
+    """The group changes just before the vocabulary's pre-check reads it, after every earlier read
+    of the operation, so the pre-check refuses before any patch is sent."""
     original = env.management.require_group_document_management_context
-    reads = []
 
-    def changed_between_reads(user_id, group_id, operation):
-        reads.append(operation)
-        if len(reads) == 2:
+    def changed_at_the_pre_check(user_id, group_id, operation):
+        if sys._getframe(1).f_code.co_name == "_patch_tag_definitions":
             env.group_container.change(group_id, users=[{"userId": "new-member"}])
         return original(user_id, group_id, operation)
 
-    env.scoped_monkeypatch.setattr(env.management, "require_group_document_management_context", changed_between_reads)
+    env.scoped_monkeypatch.setattr(env.management, "require_group_document_management_context", changed_at_the_pre_check)
 
 
 @pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
@@ -781,14 +780,15 @@ def test_tag_vocabulary_conflict_receipt_parity(management, operation, check):
 
 
 @pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
-@pytest.mark.parametrize("scenario", ["create", "recolour", "rename"])
+@pytest.mark.parametrize("scenario", ["create", "recolour", "rename", "bulk_tag", "metadata"])
 def test_tag_vocabulary_refusal_parity(management, scenario, check):
-    """A tag create, recolour or rename whose vocabulary write finds the group changed is refused
-    with the one coded conflict, whichever check catches the change."""
+    """A tag create, recolour or rename, a bulk tagging batch or a metadata save whose vocabulary
+    write finds the group changed is refused with the one coded conflict, whichever check catches
+    the change, and no document is written."""
     env = management
     env.groups[GROUP_A]["tag_definitions"] = deepcopy(TAG_DEFINITIONS)
     if check == "pre_check":
-        change_after_the_first_context_read(env)
+        change_before_the_vocabulary_pre_check(env)
     else:
         lose_the_vocabulary_patch(env)
     fixture = new_management_fixture()
@@ -796,6 +796,16 @@ def test_tag_vocabulary_refusal_parity(management, scenario, check):
         body = {"tag_name": "urgent", "color": "#ef4444"}
         real = env.client.post(f"{MANAGEMENT_ROOT}/tags", json=body)
         served = fixture_receipt(fixture, "POST", "tags", response=tag_vocabulary_refusal(), status=409, body=body)
+    elif scenario == "bulk_tag":
+        body = {"document_ids": ["document-a"], "action": "add_tags", "tags": ["archive"]}
+        real = env.client.post(f"{MANAGEMENT_ROOT}/bulk-tag", json=body)
+        served = fixture_receipt(fixture, "POST", "bulk-tag", response=tag_vocabulary_refusal(), status=409, body=body)
+    elif scenario == "metadata":
+        body = {"tags": ["reference", "archive"]}
+        real = env.client.patch(f"{MANAGEMENT_ROOT}/document-a", json=body)
+        served = fixture_receipt(
+            fixture, "PATCH", "document-a", response=tag_vocabulary_refusal(document_id="document-a"), status=409, body=body,
+        )
     else:
         body = {"color": "#ef4444"} if scenario == "recolour" else {"new_name": "archive"}
         real = env.client.patch(f"{MANAGEMENT_ROOT}/tags/reference", json=body)
