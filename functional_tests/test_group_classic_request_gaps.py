@@ -1,7 +1,7 @@
 # test_group_classic_request_gaps.py
 """
 Functional test for three classic group request gaps (residuals R2).
-Version: 0.261.160
+Version: 0.261.173
 Implemented in: 0.261.160
 
 - ``PATCH /api/groups/<group_id>/download-settings`` read
@@ -20,8 +20,9 @@ Implemented in: 0.261.160
   both a 500. The bounds, message and checker the native statistics use now live in
   ``functions_stats_windows`` (``resolve_bounded_stats_time_window``), and both
   routes use them, so such a date is a 400 with the native text. Classic windows keep
-  no length cap. Public workspace statistics and profile trends still use the
-  unbounded window, unchanged.
+  no length cap. Public workspace statistics now use the bounded window too (pinned in
+  ``test_public_classic_request_gaps.py``); profile trends still use the unbounded
+  window, unchanged.
 
 The routes run for real in ``test_support/group_settings_harness.py``.
 """
@@ -259,7 +260,7 @@ def _window_resolvers(file_name):
 @pytest.mark.parametrize("file_name,expected", [
     ("route_backend_groups.py", ["resolve_bounded_stats_time_window"]),
     ("functions_group_insights.py", ["resolve_bounded_stats_time_window"]),
-    ("route_backend_public_workspaces.py", ["resolve_stats_time_window"]),
+    ("route_backend_public_workspaces.py", ["resolve_bounded_stats_time_window"]),
     ("route_frontend_profile.py", ["resolve_stats_time_window"]),
 ])
 def test_each_stats_route_uses_its_window(file_name, expected):

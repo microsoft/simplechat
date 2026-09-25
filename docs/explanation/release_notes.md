@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.173)**
+
+#### Bug Fixes
+
+*   **Public Workspace Changes No Longer Overwrite Each Other**
+    *   Every classic writer of a public workspace, 27 in all, saved a copy it had read earlier. They covered members, requests, roles, ownership, settings, logo, downloads, retention, tags and seven Control Center actions. So one change could undo another made at the same moment, and a save could bring back a deleted workspace. They now write conditionally, keep unrelated changes, never recreate a deleted workspace, and answer "The public workspace changed while your request was being saved. Try again." when a workspace keeps changing.
+    *   Admins promoted in classic can now see and decide document manager requests, add members and receive ownership. A legacy member entry no longer breaks the members routes, and a role change or ownership transfer keeps the member's name and email.
+    *   Unknown workspace statuses now get the inactive permissions instead of the active ones. Statistics refuse out-of-range dates with a reviewed message instead of failing. The update, download and logo routes answer reviewed messages instead of raw error text, including for an oversized image. Invalid download and retention settings are refused.
+    *   A tag change that loses to a concurrent change answers the coded vocabulary conflict, and metadata edits and bulk tagging save nothing when refused.
+    *   (Ref: `functions_public_workspaces.py`, `route_backend_public_workspaces.py`, `route_backend_public_documents.py`, `route_backend_control_center.py`, `route_backend_retention_policy.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
 ### **(v0.261.172)**
 
 #### Bug Fixes

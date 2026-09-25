@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.261.160
+Version: 0.261.173
 Implemented in: 0.250.006
 Settings write invalidation scoped in: 0.250.037
 Guarded group membership writers: 0.261.151
@@ -118,39 +118,6 @@ def _load_chat_bootstrap_module(settings_container, redis_client=None):
     return importlib.import_module("functions_chat_bootstrap_cache")
 
 
-def _load_public_workspaces_module(public_workspaces_container, invalidation_reasons):
-    fake_config = types.ModuleType("config")
-    fake_config.cosmos_public_workspaces_container = public_workspaces_container
-    fake_config.datetime = datetime
-    fake_config.exceptions = types.SimpleNamespace(CosmosResourceNotFoundError=FakeCosmosError)
-    sys.modules["config"] = fake_config
-
-    fake_group = types.ModuleType("functions_group")
-    sys.modules["functions_group"] = fake_group
-
-    fake_authentication = types.ModuleType("functions_authentication")
-    fake_authentication.get_current_user_info = lambda: None
-    sys.modules["functions_authentication"] = fake_authentication
-
-    fake_settings = types.ModuleType("functions_settings")
-    sys.modules["functions_settings"] = fake_settings
-
-    fake_branding = types.ModuleType("functions_workspace_branding")
-    fake_branding.DEFAULT_WORKSPACE_HERO_COLOR = "#000000"
-    fake_branding.get_workspace_logo_metadata = lambda *args, **kwargs: {}
-    fake_branding.normalize_workspace_hero_color = lambda value: value or "#000000"
-    sys.modules["functions_workspace_branding"] = fake_branding
-
-    fake_bootstrap_cache = types.ModuleType("functions_chat_bootstrap_cache")
-    fake_bootstrap_cache.bump_chat_bootstrap_global_cache_version = (
-        lambda reason=None: invalidation_reasons.append(reason)
-    )
-    sys.modules["functions_chat_bootstrap_cache"] = fake_bootstrap_cache
-
-    sys.modules.pop("functions_public_workspaces", None)
-    return importlib.import_module("functions_public_workspaces")
-
-
 def _cache_inputs():
     return {
         "settings": {
@@ -254,10 +221,6 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         "functions_public_workspaces.py": [
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_created\")",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_deleted\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_added\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_removed\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_approved\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_rejected\")",
         ],
         "functions_simplechat_operations.py": [
             "cache_reason=\"group_marked_inactive\"",
@@ -271,12 +234,12 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "cache_reason=\"group_ownership_transferred\"",
         ],
         "route_backend_public_workspaces.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_updated\")",
+            "cache_reason=\"public_workspace_updated\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_request_approved\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_removed\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_role_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
+            "cache_reason=\"public_workspace_member_added\"",
+            "cache_reason=\"public_workspace_member_removed\"",
+            "cache_reason=\"public_workspace_member_role_updated\"",
+            "cache_reason=\"public_workspace_ownership_transferred\"",
         ],
         "route_backend_control_center.py": [
             "cache_reason=\"group_status_updated\"",
@@ -304,6 +267,16 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
     assert "cosmos_groups_container.upsert_item" not in group_update_route
     assert "cache_reason=\"group_updated\"" in group_update_route
 
+    public_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_public_workspaces.py"), "r", encoding="utf-8").read()
+    public_update_route = public_source[
+        public_source.index("def api_update_public_workspace(ws_id):"):
+        public_source.index("def api_upload_public_workspace_logo(ws_id):")
+    ]
+    # The public settings write goes through the public etag guard, which bumps the cache on commit.
+    assert "_guarded_public_write(" in public_update_route
+    assert "cosmos_public_workspaces_container.upsert_item" not in public_update_route
+    assert "cache_reason=\"public_workspace_updated\"" in public_update_route
+
 
 def test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis():
     """Volatile chat bootstrap payloads should not write shared cache entries to settings without Redis."""
@@ -318,33 +291,20 @@ def test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_wi
     assert not any(item_id.startswith("shared_cache_entry:chat_bootstrap:") for item_id in settings_container.items)
 
 
-def test_public_workspace_request_approval_persists_manager_and_invalidates_cache():
-    """Approving a document-manager request should persist both membership and pending cleanup."""
-    public_workspaces_container = FakeCosmosContainer()
-    invalidation_reasons = []
-    public_workspaces_container.create_item({
-        "id": "workspace-1",
-        "pendingDocumentManagers": [
-            {
-                "userId": "user-1",
-                "email": "user1@example.com",
-                "displayName": "User One",
-            },
-        ],
-        "documentManagers": [],
-    })
-    public_workspaces = _load_public_workspaces_module(public_workspaces_container, invalidation_reasons)
-
-    public_workspaces.approve_document_manager_request("workspace-1", "user-1")
-
-    saved_workspace = public_workspaces_container.items["workspace-1"]
-    assert saved_workspace["pendingDocumentManagers"] == []
-    assert saved_workspace["documentManagers"] == [{
-        "userId": "user-1",
-        "email": "user1@example.com",
-        "displayName": "User One",
-    }]
-    assert invalidation_reasons == ["public_workspace_document_manager_request_approved"]
+def test_public_workspace_request_approval_routes_through_guard_and_invalidates_cache():
+    """Approving a document-manager request writes through the public etag guard, not a raw upsert."""
+    source = open(
+        os.path.join(SINGLE_APP_DIR, "route_backend_public_workspaces.py"), "r", encoding="utf-8"
+    ).read()
+    handle_route = source[
+        source.index("def api_handle_public_request(ws_id, req_id):"):
+        source.index("def api_add_public_member(ws_id):")
+    ]
+    # The approval writes through the public etag guard; no raw container upsert remains,
+    # and only an approval bumps the shared cache after the guarded commit.
+    assert "_guarded_public_write(" in handle_route
+    assert "cosmos_public_workspaces_container.upsert_item" not in handle_route
+    assert "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_request_approved\")" in handle_route
 
 
 if __name__ == "__main__":
@@ -354,7 +314,7 @@ if __name__ == "__main__":
         test_chat_bootstrap_route_and_write_hooks_are_wired,
         test_phase3_low_churn_invalidation_hooks_are_wired,
         test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis,
-        test_public_workspace_request_approval_persists_manager_and_invalidates_cache,
+        test_public_workspace_request_approval_routes_through_guard_and_invalidates_cache,
     ]
     results = []
     for test in tests:

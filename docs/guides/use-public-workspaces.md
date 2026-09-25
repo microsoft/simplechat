@@ -56,6 +56,11 @@ prompts and workspace administration (members, roles, ownership, settings,
 logo, requests, statistics, and activity) still use the classic page, as do the
 directory's visibility preferences and saved visibility lists.
 
+From version **0.261.173**, the classic public workspace pages save changes
+conditionally. If someone else changes the same workspace at that moment, a
+save that can't be applied answers "The public workspace changed while your
+request was being saved. Try again." Nothing else is lost, so try again.
+
 ## Use the classic workspace
 
 1. Open **Public Workspaces**.

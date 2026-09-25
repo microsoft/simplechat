@@ -13,6 +13,82 @@ from functions_workspace_branding import (
     normalize_workspace_hero_color,
 )
 
+
+# How many times a conditional public-workspace write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+PUBLIC_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class PublicWorkspaceDocumentWriteConflict(RuntimeError):
+    """The public workspace document kept changing while a write was being applied to it."""
+
+
+# Every public route answers PublicWorkspaceDocumentWriteConflict the same way: 409
+# with this code and this reviewed sentence. Other modules import these rather than
+# copy them.
+PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE = "public_workspace_write_conflict"
+PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE = "The public workspace changed while your request was being saved. Try again."
+
+
+def _stored_public_workspace_fields(document):
+    """A public workspace document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_public_workspace_document_with_etag_guard(ws_id, apply_changes, *, cache_reason, attempts=PUBLIC_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored public workspace document and write it back conditionally.
+
+    The public workspace document also carries membership, status and every other
+    workspace-scoped setting, so a writer that changes one part of it must never
+    restore the rest from an outdated copy. ``apply_changes`` receives a private copy
+    of the document just read and returns the document to write; the replace is
+    conditional on that read's ``_etag`` (``IfNotModified``). When another writer lands
+    in between, the document is read again and ``apply_changes`` is re-applied to the
+    newer copy, up to ``attempts`` writes, after which
+    ``PublicWorkspaceDocumentWriteConflict`` is raised. Because it can run more than
+    once, ``apply_changes`` must derive its result only from the copy it is given;
+    raising from it abandons the write with nothing stored.
+
+    A workspace that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_public_workspaces_container.read_item(item=ws_id, partition_key=ws_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_public_workspace_fields(current) == _stored_public_workspace_fields(attempted):
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_public_workspaces_container.replace_item(
+                item=ws_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise PublicWorkspaceDocumentWriteConflict("The public workspace document kept changing while it was being saved.")
+
 def create_public_workspace(name: str, description: str) -> dict:
     """
     Creates a new public workspace. The creator becomes the Owner by default.
@@ -234,89 +310,6 @@ def get_pending_document_manager_requests(ws_id: str) -> list:
     return ws.get("pendingDocumentManagers", [])
 
 
-def add_document_manager(ws_id: str, user_id: str, email: str, display_name: str) -> None:
-    """
-    Add a user as a document manager.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws.setdefault("documentManagers", []).append({
-        "userId": user_id,
-        "email": email,
-        "displayName": display_name
-    })
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_added")
-
-
-def remove_document_manager(ws_id: str, user_id: str) -> None:
-    """
-    Remove a user from document managers.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws["documentManagers"] = [
-        dm for dm in ws.get("documentManagers", [])
-        if dm["userId"] != user_id
-    ]
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_removed")
-
-
-def approve_document_manager_request(ws_id: str, request_user_id: str) -> None:
-    """
-    Approve a pending document-manager request and add the user.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    pend = ws.get("pendingDocumentManagers", [])
-    new_pend = []
-    for p in pend:
-        if p["userId"] == request_user_id:
-            existing_manager_ids = {
-                dm.get("userId") if isinstance(dm, dict) else dm
-                for dm in ws.get("documentManagers", [])
-            }
-            if p["userId"] not in existing_manager_ids:
-                ws.setdefault("documentManagers", []).append({
-                    "userId": p["userId"],
-                    "email": p["email"],
-                    "displayName": p["displayName"]
-                })
-        else:
-            new_pend.append(p)
-
-    ws["pendingDocumentManagers"] = new_pend
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_approved")
-
-
-def reject_document_manager_request(ws_id: str, request_user_id: str) -> None:
-    """
-    Reject (remove) a pending document-manager request.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws["pendingDocumentManagers"] = [
-        p for p in ws.get("pendingDocumentManagers", [])
-        if p["userId"] != request_user_id
-    ]
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_rejected")
-
-
 def count_public_workspace_documents(ws_id: str) -> int:
     """
     Return the number of documents in this public workspace.
@@ -531,14 +524,19 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         }
     }
     
-    # Get permissions for current status
-    permissions = status_permissions.get(status, status_permissions['active'])
+    # An unrecognized status is treated as inactive rather than active: a status the
+    # code does not know must never be given active's full permissions. Its reason is
+    # the public context's own words for an unknown status.
+    known_status = status in status_permissions
+    permissions = status_permissions.get(status, status_permissions['inactive'])
     
     # Check if operation is allowed
     allowed = permissions.get(operation_type, False)
     
     # Generate helpful reason message if not allowed
     if not allowed:
+        if not known_status:
+            return False, "This workspace's status is not recognized. Contact an administrator."
         reasons = {
             'locked': {
                 'upload': 'This public workspace is locked (read-only mode). Document uploads are disabled.',
