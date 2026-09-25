@@ -5,6 +5,7 @@
 // functions_public_document_policy.py, where only the Owner, Admin and DocumentManager roles manage
 // documents, and only an active workspace takes uploads); this only words it for each scope.
 
+import type { DocumentOperation } from './documentOperations';
 import type { GroupWorkspaceStatus } from './workspaceContext';
 
 export type SharedDocumentScope = 'group' | 'public';
@@ -16,12 +17,12 @@ export interface SharedDocumentAccess {
     advertised: boolean;
 }
 
-type EmptyReason = 'managers' | 'uploads_disabled' | 'locked' | 'unavailable' | 'unconfirmed';
-type RefusalReason = 'managers' | 'locked' | 'unavailable' | 'unconfirmed';
+type UploadReason = 'managers' | 'uploads_disabled' | 'locked' | 'unavailable' | 'unconfirmed';
+type ManagementReason = 'managers' | 'locked' | 'unavailable' | 'unconfirmed';
 
-// Complete sentences for each scope, so each reads (and translates) whole. The explorer's heading
-// already says there are no documents yet; these say who can add them, or why no one can.
-const EMPTY_DESCRIPTIONS: Record<SharedDocumentScope, Record<EmptyReason, string>> = {
+// Complete sentences for each scope, so each reads (and translates) whole. The empty explorer's
+// heading already says there are no documents yet; these say who can add them, or why no one can.
+const UPLOAD_UNAVAILABLE: Record<SharedDocumentScope, Record<UploadReason, string>> = {
     group: {
         managers: "This group's owner, admins and document managers can add documents.",
         uploads_disabled: 'Document uploads are disabled for this group.',
@@ -38,7 +39,7 @@ const EMPTY_DESCRIPTIONS: Record<SharedDocumentScope, Record<EmptyReason, string
     },
 };
 
-const MANAGEMENT_REFUSALS: Record<SharedDocumentScope, Record<RefusalReason, string>> = {
+const MANAGEMENT_REFUSALS: Record<SharedDocumentScope, Record<ManagementReason, string>> = {
     group: {
         managers: "Only this group's owner, admins and document managers can manage its documents.",
         locked: "This group is locked (read-only), so its documents can't be changed.",
@@ -53,21 +54,45 @@ const MANAGEMENT_REFUSALS: Record<SharedDocumentScope, Record<RefusalReason, str
     },
 };
 
-/** The description an empty explorer shows a viewer who can't upload to it. */
-export function emptyDocumentsDescription(scope: SharedDocumentScope, access: SharedDocumentAccess): string {
-    const reason: EmptyReason = !access.advertised ? 'unconfirmed'
-        : access.status === 'upload_disabled' ? 'uploads_disabled'
-            : access.status === 'locked' ? 'locked'
-                : access.status === 'inactive' || access.status === 'unknown' ? 'unavailable'
-                    : 'managers';
-    return EMPTY_DESCRIPTIONS[scope][reason];
+function uploadReason(access: SharedDocumentAccess): UploadReason {
+    if (!access.advertised) return 'unconfirmed';
+    if (access.status === 'upload_disabled') return 'uploads_disabled';
+    if (access.status === 'locked') return 'locked';
+    if (access.status === 'inactive' || access.status === 'unknown') return 'unavailable';
+    return 'managers';
+}
+
+function managementReason(access: SharedDocumentAccess): ManagementReason {
+    if (!access.advertised) return 'unconfirmed';
+    if (access.status === 'locked') return 'locked';
+    if (access.status === 'inactive' || access.status === 'unknown') return 'unavailable';
+    return 'managers';
+}
+
+/**
+ * Why a viewer can't add documents to this workspace: the description an empty explorer shows them,
+ * and the answer to an upload they try while holding other document operations.
+ */
+export function documentUploadUnavailable(scope: SharedDocumentScope, access: SharedDocumentAccess): string {
+    return UPLOAD_UNAVAILABLE[scope][uploadReason(access)];
 }
 
 /** Why a viewer the server grants no document operation at all can't make the change they tried. */
 export function documentManagementRefusal(scope: SharedDocumentScope, access: SharedDocumentAccess): string {
-    const reason: RefusalReason = !access.advertised ? 'unconfirmed'
-        : access.status === 'locked' ? 'locked'
-            : access.status === 'inactive' || access.status === 'unknown' ? 'unavailable'
-                : 'managers';
-    return MANAGEMENT_REFUSALS[scope][reason];
+    return MANAGEMENT_REFUSALS[scope][managementReason(access)];
+}
+
+/**
+ * What a shared explorer tells a viewer whose operation it refused: why they can't manage its
+ * documents at all, or, for an upload from a viewer who holds other operations, why no upload can
+ * happen. Null leaves the explorer's generic answer, because any other refusal is a per-document
+ * decision.
+ */
+export function sharedOperationRefusal(
+    scope: SharedDocumentScope, operation: DocumentOperation, supported: ReadonlySet<DocumentOperation>,
+    access: SharedDocumentAccess,
+): string | null {
+    if (supported.size === 0) return documentManagementRefusal(scope, access);
+    if (operation === 'upload' && !supported.has('upload')) return documentUploadUnavailable(scope, access);
+    return null;
 }

@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.168)**
+
+#### Bug Fixes
+
+*   **Refused Group Tag Edits Save Nothing**
+    *   A metadata edit or bulk tag in a group saved the documents before it checked the group's tag definitions. If someone changed the group's tags at that moment, the request was refused with "Refresh and retry", although the documents had already been saved.
+    *   The definitions are now written first, so a refused edit saves nothing, and a refused bulk tag reports one conflict for the whole batch.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Definitions First Fix](fixes/GROUP_TAG_DEFINITIONS_FIRST_FIX.md))
+
+#### User Interface Enhancements
+
+*   **A Refused Upload Says Why**
+    *   A group or public workspace manager who drops files where uploads are disabled, or into a locked workspace, is now told why instead of getting a generic message.
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, [Shared Workspace Document Access Copy Fix](fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
 ### **(v0.261.167)**
 
 #### Bug Fixes

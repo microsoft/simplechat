@@ -101,7 +101,9 @@ revisions or incoming shared sources. If propagation or a vocabulary update
 only partly succeeds, the old vocabulary can remain until the reported
 failures are resolved. If someone else changes the group's tags at the same
 moment, the change is refused with "The group's tags or permissions changed.
-Refresh and retry.", and nothing is lost by refreshing and trying again.
+Refresh and retry.", and nothing is lost by refreshing and trying again. From
+version **0.261.168** that's also true of metadata edits and bulk tagging: they
+save nothing when refused.
 
 Review each upload/bulk result. Queued extraction or metadata screening is not
 finished processing, and a partial outcome is not an instruction to retry the

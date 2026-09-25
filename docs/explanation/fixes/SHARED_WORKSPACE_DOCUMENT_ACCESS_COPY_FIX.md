@@ -64,6 +64,18 @@ In a public workspace, read "This public workspace" for "This group".
 current server sends. Inactive and unrecognized statuses can't normally be
 reached, because the Documents section is unavailable there.
 
+### Refused uploads (0.261.168)
+
+From version **0.261.168**, a viewer who holds other document operations but
+can't upload is told why when they drop files, with the empty state's reasons.
+Before, they got the generic per-document message. This covers a manager in a
+workspace whose uploads are disabled, or a manager of a locked workspace with
+downloads. For example, "Document uploads are disabled for this group." or
+"This public workspace is locked (read-only), so documents can't be added."
+Other refused operations keep the generic message, because they're decided per
+document. `sharedOperationRefusal` in `documentAccessCopy.ts` chooses between
+them, and `test_v2_document_access_copy_logic.mjs` pins the choice.
+
 ## Validation
 
 - `functional_tests/test_v2_document_access_copy_logic.mjs` (5 checks) covers

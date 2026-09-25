@@ -2,12 +2,13 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.167
+Version: 0.261.168
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
 The empty explorer and a refused change name this public workspace and who can change its
 documents, never a group or classic: 0.261.167
+A manager who can't upload is told why when dropping files: 0.261.168
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -603,6 +604,24 @@ def test_a_reader_who_drops_files_is_told_who_manages_public_documents(public_ma
     expect(ui.page.get_by_text(
         "Only this public workspace's owner, admins and document managers can manage its documents.", exact=True,
     ).first).to_be_visible()
+    expect(ui.page.get_by_text(
+        "This operation is not currently permitted for every selected document. Refresh access or adjust the selection.",
+        exact=True,
+    )).to_have_count(0)
+    assert not ui.operation_requests
+
+
+@pytest.mark.parametrize("role, status, refusal", [
+    ("DocumentManager", "upload_disabled", "Document uploads are disabled for this public workspace."),
+    ("Owner", "locked", "This public workspace is locked (read-only), so documents can't be added."),
+])
+def test_a_public_manager_who_cannot_upload_is_told_why_when_dropping_files(public_management_ui, role, status, refusal):
+    ui = public_management_ui
+    ui.set_policy("pub-a", role=role, status=status)
+    open_management(ui)
+    expect(explorer(ui).locator('input[type="file"]')).to_have_count(0)
+    drop_file(ui)
+    expect(ui.page.get_by_text(refusal, exact=True).first).to_be_visible()
     expect(ui.page.get_by_text(
         "This operation is not currently permitted for every selected document. Refresh access or adjust the selection.",
         exact=True,

@@ -115,7 +115,9 @@ now: uploads disabled, a locked group, or a status that doesn't allow it. A
 change such a viewer tries, such as dropping a file, is refused in the same
 terms. If the `document_management` hint isn't recognized, both ask for a
 refresh instead. The sentences are in `lib/documentAccessCopy.ts`, and the
-explorer gets the group's status from the Documents section.
+explorer gets the group's status from the Documents section. From version
+**0.261.168**, a manager who can't upload, because uploads are disabled or the
+group is locked, is told the same reason when dropping files.
 
 Failed saves retain usable drafts and clear error/recovery guidance. Dirty and
 busy callbacks cooperate with the group shell's navigation guards. Aborting a

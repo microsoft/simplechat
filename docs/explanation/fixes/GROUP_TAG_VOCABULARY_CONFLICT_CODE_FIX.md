@@ -64,12 +64,13 @@ draft.
   lost-patch parity cases fail. The survivor is the check path, which that
   mutation doesn't touch. Without the `error_code`, 6 of 6 and 6 of 6 fail.
 
-### Known limitation
+### Known limitation (fixed in 0.261.168)
 
-A metadata edit or bulk tag saves the document before it ensures the new tags'
-definitions. So a lost vocabulary write can answer this 409 after the document
-was already saved. A retry succeeds. Ensuring the definitions first is the
-follow-up.
+In this version, a metadata edit or bulk tag still saved the document before it
+ensured the new tags' definitions. So a lost vocabulary write could answer this
+409 after the document was already saved; a retry succeeded. From version
+**0.261.168**, the definitions are written first; see
+[Group Tag Definitions First Fix](GROUP_TAG_DEFINITIONS_FIRST_FIX.md).
 
 ## Related
 

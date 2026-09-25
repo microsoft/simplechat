@@ -1,9 +1,10 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.167
+Version: 0.261.168
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
+New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,
@@ -473,7 +474,11 @@ def test_failed_source_cas_never_changes_projections_or_resurrects(management, r
     env.source.after_query = race_after_snapshot
     response = env.client.patch(f"{ROOT}/document-a", json={"title": "Rejected", "tags": ["new-tag"]})
     assert response.status_code in {404, 409}
-    assert env.source.writes == [] and env.group_container.writes == []
+    assert env.source.writes == []
+    # The vocabulary is written before the document, so the lost document write leaves the new
+    # tag's definition unused, which is a valid state; nothing else changes.
+    assert [(operation, item) for operation, item, _body in env.group_container.writes] == [("patch", "group-a")]
+    assert set(env.groups["group-a"]["tag_definitions"]) == {"unused", "reference", "new-tag"}
     assert env.chunk_writes == [] and env.blobs.metadata_writes == []
     env.index_updates.assert_not_called()
     if race == "changed":
@@ -720,13 +725,65 @@ def test_a_lost_vocabulary_cleanup_keeps_the_old_name_and_reports_the_coded_conf
     assert env.groups["group-a"]["users"] == [{"userId": "new-member"}]
 
 
-def test_a_lost_vocabulary_patch_while_tagging_names_the_coded_conflict_per_document(management):
+def test_a_lost_vocabulary_patch_refuses_the_metadata_save_and_writes_no_document(management):
     env = management
+    before = deepcopy(env.source.records["document-a"])
     lose_the_vocabulary_patch(env)
-    response = invoke(env, "tag_documents")
-    assert response.status_code == 207
-    assert response.get_json()["errors"] == [{**VOCABULARY_CONFLICT, "document_id": "document-a", "group_id": "group-a"}]
+    response = env.client.patch(f"{ROOT}/document-a", json={"title": "Refused title", "tags": ["brand-new"]})
+    assert response.status_code == 409
+    assert response.get_json() == {**VOCABULARY_CONFLICT, "document_id": "document-a", "group_id": "group-a"}
+    assert env.source.writes == [] and env.source.records["document-a"] == before
+    assert env.chunk_writes == [] and env.blobs.metadata_writes == []
+    assert "brand-new" not in env.groups["group-a"]["tag_definitions"]
+
+
+def add_group_document(env, identifier):
+    record = document(identifier)
+    record.update(blob_container="group-documents", blob_path=f"{record['group_id']}/{record['file_name']}")
+    env.source.records[identifier] = record
+    env.blobs.put(record["blob_path"])
+    return record
+
+
+def test_a_lost_vocabulary_patch_refuses_the_whole_tagging_batch_and_writes_no_document(management):
+    env = management
+    add_group_document(env, "document-c")
+    before = deepcopy(env.source.records)
+    lose_the_vocabulary_patch(env)
+    response = env.client.post(f"{ROOT}/bulk-tag", json={
+        "document_ids": ["document-a", "document-c"], "action": "add_tags", "tags": ["new-tag"],
+    })
+    assert response.status_code == 409
+    assert response.get_json() == {**VOCABULARY_CONFLICT, "group_id": "group-a"}
+    assert [attempt[0] for attempt in env.group_container.attempts] == ["patch"]
+    assert env.source.writes == [] and env.source.records == before
+    assert env.chunk_writes == [] and env.blobs.metadata_writes == []
     assert "new-tag" not in env.groups["group-a"]["tag_definitions"]
+
+
+@pytest.mark.parametrize("route", ["metadata", "bulk"])
+def test_new_tags_are_defined_before_any_document_carries_them(management, route):
+    env = management
+    add_group_document(env, "document-c")
+    writes = []
+    env.group_container.before_write = lambda operation, item, _body: writes.append(("group", operation, item))
+    env.source.before_write = lambda operation, item, _body: writes.append(("document", operation, item))
+    if route == "metadata":
+        response = env.client.patch(f"{ROOT}/document-a", json={"tags": ["reference", "new-tag"]})
+        tagged = ["document-a"]
+    else:
+        response = env.client.post(f"{ROOT}/bulk-tag", json={
+            "document_ids": ["document-a", "document-c"], "action": "add_tags", "tags": ["new-tag"],
+        })
+        tagged = ["document-a", "document-c"]
+    assert response.status_code == 200, response.get_json()
+    # One vocabulary patch, and it lands before the first document write.
+    assert writes[0] == ("group", "patch", "group-a")
+    assert [entry for entry in writes if entry[0] == "group"] == [("group", "patch", "group-a")]
+    assert {entry[2] for entry in writes if entry[0] == "document"} == set(tagged)
+    assert "new-tag" in env.groups["group-a"]["tag_definitions"]
+    for identifier in tagged:
+        assert env.source.records[identifier]["tags"] == ["reference", "new-tag"]
 
 
 def test_tag_rename_keeps_old_vocabulary_on_partial_propagation(management):

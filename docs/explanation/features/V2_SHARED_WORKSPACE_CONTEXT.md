@@ -229,6 +229,33 @@ compared as soon as the server sends it. It was added after version
 
 Those were corrected, and so were the browser tests that relied on them.
 
+`functional_tests/test_public_context_fixture_parity.py` does the same for the
+public workspace context, from version **0.261.168**. Every public browser suite
+builds its context with `public_context` in `ui_tests/fixtures/public_workspace.py`.
+The test runs the real public context builder and route through the same
+harness for:
+- every role and status, including an unrecognized status;
+- every seeded context;
+- the per-suite setters that recompute a context.
+
+Before it, the public fixture had drifted from the server:
+- it opened every section to readers and let managers manage them, where the
+  server opens only Documents;
+- `can_manage_workspace` was given to any manager, where the server gives it
+  to the Owner and Admins;
+- chat was refused in locked workspaces, where the server allows it;
+- editing was allowed in `upload_disabled` and downloading was allowed for
+  readers, where the server allows neither;
+- the collaboration hint was missing or approximated;
+- the unrecognized-status handling, the inactive reason and the not-found text
+  differed.
+
+It also pins one server inconsistency as a strict expected failure. The public
+builder opens Documents with a section whose `can_manage` is false even for an
+active manager, whose `document_management` hint grants every operation. The
+group builder doesn't do this. No V2 client reads that flag today; the public
+directory work will correct it.
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action

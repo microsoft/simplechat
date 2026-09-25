@@ -22,7 +22,7 @@ import { groupScope, publicScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { isScreeningBusy } from '../../lib/contentScreening';
 import { ApiError } from '../../lib/apiClient';
 import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
-import { documentManagementRefusal, emptyDocumentsDescription } from '../../lib/documentAccessCopy';
+import { documentUploadUnavailable, sharedOperationRefusal } from '../../lib/documentAccessCopy';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
     supportedDocumentQuery, type DocumentReadAdapter,
@@ -368,9 +368,9 @@ function ScopedDocumentExplorer({
         if (!canPerform(operation, targets)) {
             const current = operationContext.current;
             const { scope, supported, advertised } = current.operations;
-            const message = scope.kind !== 'personal' && supported.size === 0
-                ? documentManagementRefusal(scope.kind, { status: current.workspaceStatus, advertised })
-                : 'This operation is not currently permitted for every selected document. Refresh access or adjust the selection.';
+            const message = (scope.kind !== 'personal'
+                && sharedOperationRefusal(scope.kind, operation, supported, { status: current.workspaceStatus, advertised }))
+                || 'This operation is not currently permitted for every selected document. Refresh access or adjust the selection.';
             setDialogError(message);
             toast.error(message);
             return null;
@@ -1242,7 +1242,7 @@ function ScopedDocumentExplorer({
                             ? undefined
                             : availability.upload || reader.scope.kind === 'personal'
                                 ? 'Upload a file to make it available for grounded chat.'
-                                : emptyDocumentsDescription(reader.scope.kind, { status: workspaceStatus, advertised: operations.advertised })
+                                : documentUploadUnavailable(reader.scope.kind, { status: workspaceStatus, advertised: operations.advertised })
                     }
                     action={
                         filtered ? (

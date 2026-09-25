@@ -107,6 +107,9 @@ who can add documents to an empty workspace, or why no one can right now, in
 public-workspace terms rather than the group wording or a classic link it saw
 before. A change such a viewer tries is refused the same way, instead of with
 the generic per-document message. An unrecognized handshake asks for a refresh.
+From version **0.261.168**, a manager who can't upload, because uploads are
+disabled or the workspace is locked, is told the same reason when dropping
+files.
 
 ## File structure
 

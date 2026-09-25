@@ -194,6 +194,14 @@ refuses its conditional patch (412). Create, recolour and rename answer 409
 per document. Before, a lost patch answered the generic "The resource changed.
 Refresh and retry the operation." with no code.
 
+From version **0.261.168**, a metadata edit and bulk tagging write the new
+tags' definitions before any document. A vocabulary conflict therefore leaves
+every document untouched, and a document write that fails afterwards leaves at
+most an unused definition. Bulk tagging makes one vocabulary write for the
+batch's tags, so a conflict refuses the whole batch with the coded 409 above
+instead of listing per-document errors. Removing tags writes no definitions,
+and bulk tagging no longer defines tags a document already carried.
+
 ## Worker and download boundaries
 
 Jobs capture group, actor, document and revision; workers revalidate those
