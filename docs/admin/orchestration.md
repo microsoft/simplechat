@@ -192,10 +192,12 @@ every capability selected. Selecting the capability alone never opts a deploymen
 **Prepare content** (`compose`) controls reusable drafting, structured content,
 and the chat answer selected by `final_response`. **Create a file**
 (`render_file`) controls explicit exports. If a stored nonempty capability list
-still contains the removed `respond` capability, settings migration changes it
-to `compose` so narrowed deployments keep answering. The migration does not add
-`render_file` or `generate_image`; include those explicitly when restricted
-plans should create files or requested images.
+still contains the removed `respond` capability, it is read as `compose`, so
+narrowed deployments keep answering. The stored list is not rewritten, because
+runs saved before the upgrade are bound to the settings they ran under; both
+admin pages show **Prepare content** selected, and the next save of the list
+stores `compose`. Nothing adds `render_file` or `generate_image`; include those
+explicitly when restricted plans should create files or requested images.
 
 Since **0.261.138**, **Generate images** (`generate_image`) lets a plan generate
 the images a user asks for, one planned task per image and at most four per plan. The

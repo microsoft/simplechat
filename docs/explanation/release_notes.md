@@ -8,7 +8,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **Gather / Reason / Render Is The Only Orchestration Plan Contract**
     *   The **Gather / Reason / Render harness (preview)** admin setting (`enable_chat_orchestration_harness`) and its server-side admission check were removed. Every new plan uses Gather / Reason / Render whenever **Enable Chat Orchestration** is on. A stored value of the old setting is dropped when settings load or save.
-    *   The earlier phase-based contract (Knowledge / Reasoning / Output phases and a final **Answer** step) was deleted. A saved capability list that named its Answer capability (`respond`) now names **Prepare content** (`compose`) instead; the migration never adds **Create a file** or **Generate images** to a narrowed list.
+    *   The earlier phase-based contract (Knowledge / Reasoning / Output phases and a final **Answer** step) was deleted. A saved capability list that still names its Answer capability (`respond`) is read as **Prepare content** (`compose`). The stored list is not rewritten, so runs saved before the upgrade can still be continued or retried, and nothing adds **Create a file** or **Generate images** to a narrowed list.
     *   Plans saved by the earlier contract no longer open or rerun. Opening, editing, retrying, running or cancelling one shows "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request." Such runs are left out of the conversation's run list and the planner's history of earlier runs; deleting the conversation still removes their saved data.
     *   Orchestrated agent steps now always run under the acquisition checks that previously applied only to Gather / Reason / Render plans. They admit Azure AI Foundry (classic) agents without local actions, workspace knowledge or web sources; other agents, including local Semantic Kernel agents, are refused with a safe failure instead of running unchecked.
     *   **Migration**: Start a new request for any conversation whose earlier orchestration plan no longer opens. Administrators who narrowed the capability list and want files or images in plans should select **Create a file** and **Generate images**.
@@ -26,8 +26,9 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Plans Show Only What Runs**
     *   The plan card, plan panel and run view no longer group steps into Knowledge / Reasoning / Output phases or show an **Always runs** answer step. Steps appear in dependency order with their Gather, Reason or Render role.
     *   A finished run's steps show their real status, such as **Completed** or **Failed**, instead of **Will run**. Opening a plan saved by the earlier contract shows the message above instead of a spinner.
+    *   A run from the earlier contract that a tab was still following, including one restored after a reload, no longer stays **running** and blocks Stop and retries in its conversation. Its recovery notice shows the message above without offering to check or review it.
     *   Admin capability help now explains that plans need **Prepare content** to write an answer or a file's content and **Create a file** to deliver files.
-    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `orchestrationPlan.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
+    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`, `orchestrationResume.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
 
 ### **(v0.261.138)**
 

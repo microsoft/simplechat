@@ -409,9 +409,15 @@ Gather / Reason / Render whenever **Enable Chat Orchestration** is on.
   handling, the admin template, the checkpoint settings fingerprint and
   `docs/_data/features.yml`.
 - `functions_settings.normalize_retired_orchestration_settings` drops a stored toggle value when settings
-  load or save. A stored capability list that named the removed `respond` capability now
-  names `compose` (Prepare content) instead, so a narrowed list keeps producing answers.
-  The migration never adds Create a file or Generate images to a narrowed list.
+  load or save. Earlier releases already left the toggle out of a saved run's settings
+  fingerprint, so dropping it keeps that fingerprint unchanged.
+- A stored capability list that names the removed `respond` capability is read as `compose`
+  (Prepare content) by `functions_orchestration_registry.effective_capability_ids` and the
+  registry allowlist, so a narrowed list keeps producing answers. The stored list is not
+  rewritten: a saved run's execution binding hashes the whole settings document, so a
+  rewrite would have stopped waiting runs from continuing and failed runs from being
+  retried. Both admin pages display the list with the alias applied. Nothing adds Create a
+  file or Generate images to a narrowed list.
 - New turns always record `planner_contract_version: 2`. The marker stays in saved data
   for compatibility; the UI never shows it.
 
@@ -488,6 +494,59 @@ legacy-record message and stops loading.
 | When the answer message could not be saved, the earlier path still streamed the unsaved explanation with the step's failure | The run records `message_not_saved`, never streams an answer it could not save, and the browser shows the could-not-save notice. |
 | The admin could turn Gather / Reason / Render off for new plans | There is no switch; Chat Orchestration on means Gather / Reason / Render. |
 
+### Review follow-ups (0.261.139)
+
+- **A tab never keeps following a refused run.** A run from the earlier contract could stay
+  "running" in a tab that was following it when the server upgraded, or that restored it
+  from session storage after a reload, because the run list omits such runs and hydration
+  settled only listed runs. That blocked retries and Stop in the conversation. Now:
+  - A `legacy_plan` answer to a status check or to Stop releases the tracked run. When the
+    tab holds the run's plan, the run ends as failed so its card settles and shows the
+    message. A record restored from storage has no plan, so it is released without a
+    history entry, which matches the run list.
+  - Opening a conversation checks each restored run that the run list leaves out by its own
+    id, so the server's record or refusal settles it.
+  - The inline recovery notice and the recovery drawer show the server's message on first
+    load. They no longer show "Recovery details could not be loaded". They don't offer
+    **Check saved status** or **Review saved attempt**, and they don't fetch the run again.
+  - A `legacy_plan` refusal when a run starts puts the plan away and shows the message in
+    the thread.
+- **A saved capability list is read, not rewritten.** The first version of this layer
+  rewrote a stored `respond` to `compose` whenever settings loaded. A saved run's execution
+  binding hashes the whole settings document, so the rewrite would have stopped a waiting
+  run from continuing and a failed run from being retried. Both would end in
+  `recovery_changed`.
+  - `functions_orchestration_registry.effective_capability_ids` and the registry allowlist
+    now read `respond` as `compose` without changing the stored list.
+  - Both admin pages display the aliased list, so saving the form keeps Prepare content.
+  - `functional_tests/test_orchestration_settings_upgrade.py` proves that bindings and a
+    waiting run survive the upgrade. It also proves that real policy changes still
+    invalidate them.
+- **Settings test harnesses.** Two tests rebuild `update_settings` from source with a fixed
+  list of normalizer stubs. They now stub `normalize_retired_orchestration_settings` too.
+- **Recovery safety coverage.** `functional_tests/test_orchestration_recovery_safety.py`
+  moves the still-relevant recovery properties from the deleted checkpoint recovery test
+  onto real Gather / Reason / Render execution:
+  - retry idempotence, the two-tab race and a lost preparation response
+  - the external-effect confirmation gate, including inherited successes
+  - an expired or fenced worker that cannot publish
+  - inherited checkpoint integrity and checkpoint codec bounds and immutability
+  - ambiguous publication
+  - stop fencing
+  
+  Where the current contract behaves differently from the phase-based one, the tests assert
+  the current behavior. Each of these was already true of Gather / Reason / Render plans in
+  0.261.138:
+  - Every step keeps retained results, so Stop fences every planned step, not only analysis
+    steps.
+  - A producer whose completion was never confirmed is never retried automatically
+    (`result_commit_unconfirmed`).
+  - A producer that committed its result but lost its checkpoint is recovered from its
+    result receipt on a confirmed retry, instead of running again.
+  - A fenced worker saves no message, and tells its own stream `message_not_saved`.
+  - A step's message is not part of its checkpoint, so re-committing a result that differs
+    only in its message is an identical replay.
+
 ### Files modified (0.261.139)
 
 - `application/single_app/config.py` (version), `functions_settings.py`,
@@ -503,7 +562,8 @@ legacy-record message and stops loading.
 - V2 UI: `components/chat/Orchestration*.tsx`, `lib/orchestration*.ts`, `lib/types.ts`,
   `stores/orchestrationStore.ts`, new `lib/orchestrationErrors.ts`.
 - Tests: new `functional_tests/test_orchestration_single_contract.py`,
-  `test_orchestration_route_recovery.py` and `test_orchestration_elicitation_routes.py`;
+  `test_orchestration_route_recovery.py`, `test_orchestration_elicitation_routes.py`,
+  `test_orchestration_recovery_safety.py` and `test_orchestration_settings_upgrade.py`;
   deleted the admission, phase-ordering, v1-only checkpoint and admin toggle tests;
   migrated the remaining suites and UI tests to Gather / Reason / Render. The deleted
   `test_orchestration_analysis_checkpoint_access.py` checked saved Analyze descriptors in
@@ -517,32 +577,44 @@ legacy-record message and stops loading.
 
 ### Validation (0.261.139)
 
-- `functional_tests/test_orchestration_single_contract.py` (new, 53 tests): the toggle is gone
+- `functional_tests/test_orchestration_single_contract.py` (new, 54 tests): the toggle is gone
   from the settings defaults, sanitization, admin fields, admin route, template and docs
-  inventories; a stored toggle and `respond` capability are retired on load and save; one
+  inventories; a stored toggle is dropped on load and save while a stored `respond` capability
+  is read as `compose` without rewriting the saved list; one
   registry has no phases or `respond`; discovery and planning treat runtime services
   correctly; the one planner prompt keeps each piece of ported guidance; new plans always use
   the single contract; legacy plans are detected, while unknown markers are refused as changed
   plans; the executor, headless runtime, checkpoints, recovery, plan revisions and
   continuation refuse legacy runs; listings omit them; and every by-id route answers
-  `409 legacy_plan` without binding services or changing the saved record.
+  `409 legacy_plan` without binding services or changing the saved record. Both admin pages
+  show a stored `respond` as Prepare content.
+- `functional_tests/test_orchestration_recovery_safety.py` (new, 39 tests) and
+  `test_orchestration_settings_upgrade.py` (new, 8 tests) cover the review follow-ups above.
+  Mutation checks confirm them: narrowing stop fencing to analysis steps, skipping the
+  confirmation gate, accepting a differing checkpoint re-commit, rewriting the stored list or
+  keeping the toggle each makes the matching tests fail.
 - `functional_tests/test_orchestration_route_recovery.py` and
   `test_orchestration_elicitation_routes.py` (new), plus the migrated conversation context,
   plan revision, memory, elicitation, research selection, deep research, planner
   diagnostics, schema, registry, executor, adapter, citation, context picker, visual output
   and catalog execution suites, re-express the earlier behavior that still matters.
-- The full `functional_tests/test_orchestration*.py` suite passes: 115 files.
-  `test_orchestration_harness_execution.py` (649 tests) can time out only under the parallel
-  runner. The earlier baseline failures in the conversation context, conversation context
+- The full `functional_tests/test_orchestration*.py` suite passes: 117 files.
+  `test_orchestration_harness_execution.py` (649 tests) passes when run alone. Under the
+  parallel runner, its shared transport-type check can flake and the file can time out. The earlier baseline failures in the conversation context, conversation context
   routes, elicitation and memory suites no longer occur, because those suites now run on the
   current contract.
 - The three route policy tests and both docs checks pass.
 - V2 UI: `npm run typecheck`, the six `functional_tests/test_v2_orchestration*.mjs` files and
   all 20 `ui_tests/test_v2_orchestration_*.py` files pass. That includes the browser-to-Flask
-  recovery suite, which now runs against real Gather / Reason / Render execution. The admin
+  recovery suite, which now runs against real Gather / Reason / Render execution, and seven
+  browser tests for runs refused as an earlier version: the inline notice, a lost stream, Stop,
+  a run restored after a reload, a listed restored run and a refusal when a run starts. The admin
   actions, planner model, reasoning controls, model catalog, context selection, elicitation
   composer and prompt composer UI suites pass too.
-- Baselines are unchanged: `test_*image*.py` 22/31 and `test_*admin*.py` 58/74.
+- The six settings harness files pass, including `test_content_screening_settings_api.py`
+  (34/34) and `test_workflow_loop_limits.py` (10/10).
+- Baselines are unchanged: `test_*image*.py` 22/31 and `test_*admin*.py` 58/74, with the same
+  failing admin files as the base.
   `ui_tests/test_v2_orchestration_auto_open.py` run as a script and
   `ui_tests/test_chat_three_document_smoke.py` fail as they do on the base.
 - Key suites also pass under `python -O`, and the XSS and broken access control guardrails

@@ -164,7 +164,8 @@ and does not enable rollout. New plans use Gather / Reason / Render whenever
 removed.
 
 `test_orchestration_dependency_allowlist.py` and the single-contract coverage
-exercise saved allowlists, the `respond` to `compose` migration, intersecting
+exercise saved allowlists, a stored `respond` read as `compose` without rewriting
+the saved list, intersecting
 restrictions, malformed configuration, and actual rendering-service readiness.
 
 ### Explicit composition
