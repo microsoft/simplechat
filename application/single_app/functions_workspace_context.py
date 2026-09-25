@@ -375,16 +375,15 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
             "reason": None if available else (status_reason if not view_allowed else reason),
         }
 
-    # M3A delivers only read-only document browsing. Every other section is present
-    # for a stable shell shape but marked unavailable until M3B/M3C.
+    # Public workspaces offer read-only document browsing, and a manager of an active
+    # workspace manages the documents section. Tags, prompts, identities and sync are
+    # listed but not yet available (M9C/M10B). Sections public workspaces will never
+    # have -- agents, actions, endpoints and workflows -- are left out of the registry
+    # entirely rather than shown as "not available yet".
     sections = {
-        "documents": section(True),
+        "documents": section(True, manager),
         "tags": section(False),
         "prompts": section(False),
-        "agents": section(False),
-        "actions": section(False),
-        "endpoints": section(False),
-        "workflows": section(False),
         "identities": section(False),
         "sync": section(False),
     }

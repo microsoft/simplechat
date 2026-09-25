@@ -1,7 +1,7 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.168
+Version: 0.261.175
 Implemented in: 0.261.168
 
 Every public browser suite builds its selected-workspace context from
@@ -31,10 +31,11 @@ workspace answers with the builder's refusal branch, which today's role rules ne
 every authenticated caller reads a public workspace as at least a User; it stays as a robustness
 scenario for the client, and this test holds it to the builder's text.
 
-One product finding is pinned as a strict xfail: the builder never reports the documents section as
-manageable, even for a manager whose document_management grants every operation.
-
-This is the M9B re-verification of the public context at the M8 gate; M9A extends it.
+M9A resolves the read-only M3A leftover the M9B verification pinned as a strict xfail: the builder
+now opens the documents section with `section(True, manager)`, so a manager of an active workspace
+manages it, matching the group builder, and the registry drops the sections public workspaces will
+never have (agents, actions, endpoints and workflows). The fixture serves the server's value, and
+this test walks the union of both sides' keys, so a section only one side lists fails.
 """
 
 import ast
@@ -348,17 +349,9 @@ def test_the_denied_answer_is_the_builders_refusal(public, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Product findings, pinned against the real builder until they are decided.
+# The M3A leftover, now resolved: an active workspace's manager manages the documents section.
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding: build_public_workspace_context opens the documents section with section(True), "
-    "so its can_manage is false for an Owner, Admin or DocumentManager of an active workspace, while the "
-    "same viewer's document_management grants every operation and the group builder reports "
-    "section(True, manager). It is left over from read-only M3A. No V2 client reads it today (public "
-    "document management follows the hint), so nothing shows yet; a public shell that offers management "
-    "from the section would. The fixture serves the server's value."
-))
 @pytest.mark.parametrize("role", list(fixture_module.PUBLIC_MANAGER_ROLES))
 def test_an_active_public_manager_can_manage_the_documents_section(public, role):
     real = real_context(public, role, "active")

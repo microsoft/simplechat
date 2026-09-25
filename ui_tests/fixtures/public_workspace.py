@@ -39,8 +39,7 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = ("inspect", "approve_artifact", "reject_artifact", "cancel_artifact")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
-    "agents": "automation", "actions": "automation", "workflows": "automation",
-    "identities": "connections", "endpoints": "connections",
+    "identities": "connections",
 }
 # The texts build_public_workspace_context sends: a section public workspaces don't offer, and why a
 # workspace's status closes every section (check_public_workspace_status_allows_operation's "view").
@@ -98,10 +97,12 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
     status_reason = None if readable else PUBLIC_INACTIVE_REASON if status == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
     sections = {}
     for section, group in SECTION_GROUPS.items():
-        # Only documents open; no section is offered for management, since every write reauthorizes.
+        # Only documents open; a manager of an active workspace manages that section, and
+        # every other section is listed but not yet available. Every write reauthorizes.
         enabled = readable and section == "documents"
         sections[section] = {
-            "group": group, "enabled": enabled, "can_manage": False,
+            "group": group, "enabled": enabled,
+            "can_manage": bool(enabled and status == "active" and manager and section == "documents"),
             "reason": None if enabled else status_reason or PUBLIC_SECTION_UNAVAILABLE_REASON,
         }
     return {
