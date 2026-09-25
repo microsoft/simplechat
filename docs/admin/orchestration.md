@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.139"
+version: "0.261.140"
 ---
 
 
@@ -487,6 +487,13 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 
 ## Troubleshooting
 
+Since **0.261.140**, planner rejection events identify the specific validation rule,
+and execution failures include their preparation stage. Use the conversation or
+run ID to correlate its hashed identifier in
+[orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics).
+The HTTP status alone is insufficient: a planning stream can return HTTP 200 and
+then report a rejected proposal.
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No orchestration control appears in chat | The setting is off, or the user is in the classic interface. | Confirm Enable Chat Orchestration is on, and that the user is on a V2 chat page. |
@@ -507,6 +514,9 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
 | A step reports a timeout or failure | Execution hit a recorded time limit or an operation failed. | Read the conversation/Run explanation. Address the reported dependency or limit, then use Retry from failed step when recovery is available. |
 | A connection was interrupted | The browser cannot yet confirm the server's execution state. | Check the existing run. Do not resend the request while that attempt may still be active. |
+| Execution returns 503, run detail repeatedly returns 404, and every step remains pending | In affected versions, Cosmos SDK response objects were rejected as invalid dictionaries at execution and status-read boundaries. | Upgrade to 0.261.140 or later, then inspect the existing attempt. Do not reset its deadline or assume that resubmitting is safe. |
+| The plan could not account for everything requested | The proposal and its correction failed deliverables validation. Earlier guidance could lead the model to put file-only fields on an answer. | Upgrade to 0.261.140 for explicit kind-specific guidance. For a remaining rejection, inspect `sc_validation_rule` and `sc_attempt`; preserve selected sources and requested outputs rather than disabling validation. |
+| A PDF/CSV comparison tries to analyze the CSV as a narrative document | Earlier planning relied on display labels rather than current source-kind metadata. | Version 0.261.140 supplies authorized file types and rejects incompatible steps before execution. Native tabular work still requires its existing capability; inspect `source_kind_invalid` or `source_binding_required` if a correction cannot produce a valid plan. |
 | Retry requires confirmation | An agent/action may have performed external effects before it failed. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
 

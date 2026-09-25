@@ -281,3 +281,79 @@ Last inventoried: 2026-08-10
 - `[WORKSPACE_ACTIVITY]`
 - `[WORKSPACE_IDENTITY]`
 - `[WORKSPACE_ROUTE]`
+
+## Orchestration failure diagnostics
+
+Implemented in version **0.261.140**, recorded in
+`application/single_app/config.py`.
+
+The `[ORCHESTRATION_CONTEXT]`, `[ORCHESTRATION_PLANNER]`, `[ORCHESTRATION_RUNS]`, and `[ORCHESTRATION]`
+failure events distinguish planning validation, execution admission, saved-status
+projection, and scheduler recovery. Their safe properties appear in Application
+Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
+
+| Property | Meaning |
+| --- | --- |
+| `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. |
+| `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. |
+| `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, or `source_binding_required`. |
+| `sc_validation_rule` | Specific application-owned rejection, such as `invalid_quantity`, `non_file_format`, `answer_producer_mismatch`, `missing_final_response`, `file_format_mismatch`, `narrative_source_required`, or `document_sources_required`. |
+| `sc_response_failure` | A missing, incomplete, or refused planner completion, when applicable. |
+| `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single correction. Present on deliverables correction/failure events. |
+| `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
+| `sc_error_type`, `sc_response_type` | Exception class and, on runner admission/preparation failures, the record's Python type. |
+| `sc_durable_status` | The terminal status confirmed by execution preparation, if one was recorded. Absence is not proof that the run stopped. |
+
+These fields preserve categorical diagnostics, not raw exception text, model
+responses, prompts, document content, or user identity. Hash fields accept only
+64-character lowercase hexadecimal strings; diagnostic code fields accept bounded
+lowercase identifiers. Unrecognized strings are not retained as text.
+
+### Find a conversation's planning and execution failures
+
+Use the conversation ID from the chat URL. The query hashes it locally in KQL;
+there is no need to search for the prompt text or enable verbose debug logging.
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+traces
+| where timestamp > ago(2h)
+| where tostring(customDimensions.sc_conversation_id_hash) == conversationHash
+| project timestamp,
+    message = tostring(customDimensions.sc_message),
+    stage = tostring(customDimensions.sc_stage),
+    validationCode = tostring(customDimensions.sc_validation_code),
+    rule = tostring(customDimensions.sc_validation_rule),
+    attempt = toint(customDimensions.sc_attempt),
+    executionCode = tostring(customDimensions.sc_execution_code),
+    outputCode = tostring(customDimensions.sc_output_code),
+    errorType = tostring(customDimensions.sc_error_type),
+    responseType = tostring(customDimensions.sc_response_type),
+    durableStatus = tostring(customDimensions.sc_durable_status)
+| order by timestamp asc
+| take 200
+```
+
+For an individual saved run in Log Analytics:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| project TimeGenerated,
+    message = tostring(Properties.sc_message),
+    stage = tostring(Properties.sc_stage),
+    executionCode = tostring(Properties.sc_execution_code),
+    outputCode = tostring(Properties.sc_output_code),
+    errorType = tostring(Properties.sc_error_type),
+    durableStatus = tostring(Properties.sc_durable_status)
+| order by TimeGenerated asc
+| take 200
+```
+
+Planning may fail inside a successful HTTP streaming response. Correlate these
+events with request outcomes instead of interpreting HTTP 200 as a valid plan or
+HTTP 503 as proof that no execution claim exists. Historical events before this
+version may contain only string-length metadata and cannot be used to reconstruct
+the exact rejected proposal.

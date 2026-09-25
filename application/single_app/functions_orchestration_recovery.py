@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.139
+Version: 0.261.140
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -199,10 +199,13 @@ def _replace(record, updates):
     replacement = run_store._strip_cosmos_metadata(deepcopy(record))
     replacement.update(deepcopy(updates))
     replacement['updated_at'] = _now().isoformat()
-    return run_store.cosmos_orchestration_runs_container.replace_item(
+    saved = run_store.cosmos_orchestration_runs_container.replace_item(
         item=record['id'], body=replacement, etag=record['_etag'],
         match_condition=MatchConditions.IfNotModified,
     )
+    if not isinstance(saved, dict):
+        raise CheckpointError('checkpoint_invalid')
+    return dict(saved)
 
 
 def checkpoint_store(record, authorize, *, token=None, claim_id=None):

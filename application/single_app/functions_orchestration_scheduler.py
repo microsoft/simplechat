@@ -1,7 +1,7 @@
 # functions_orchestration_scheduler.py
 """One bounded scheduler tick over saved runs; no thread, admission gate or client startup.
 
-Version: 0.261.139
+Version: 0.261.140
 The application supplies initialized resources. Results contain private selectors
 and safe processing facts, never model output, credentials or artifact locators.
 Deletion enrollment has its own run budget and consumes only a persisted owner
@@ -223,12 +223,22 @@ class _Tick:
         }
 
     def failure(self, scope, error, selector=None):
+        # Keep telemetry dependencies below the initialized scheduler boundary.
+        from functions_appinsights import workflow_log_context
+
         facts = {"scope": scope, **(selector or {}), **_error_facts(error)}
         self.result["ok"] = False
         self.result["errors"].append(facts)
         self.resources.log(
             "[ORCHESTRATION_RUNS] Scheduler item could not be confirmed.",
-            level=logging.ERROR, extra=facts,
+            level=logging.ERROR, extra={
+                **workflow_log_context(
+                    conversation_id=facts.get("conversation_id"), run_id=facts.get("run_id"),
+                ),
+                "stage": "scheduler_item", "scope": scope,
+                "execution_code": facts["code"], "retryable": facts["retryable"],
+                "error_type": facts["error_type"],
+            },
         )
         return facts
 

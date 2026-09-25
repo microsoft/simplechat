@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.140)**
+
+#### Bug Fixes
+
+*   **Orchestration Execution And Saved Status Accept Cosmos SDK Responses**
+    *   Fixed valid plans failing before their first step with `context_unavailable`, followed by missing-run responses and repeated **Checking execution status** notices.
+    *   Storage boundaries now normalize Cosmos SDK dictionary responses while retaining ownership checks, conditional ETags, execution leases, and deletion guards. Scheduler recovery can read the saved attempt without resetting its original deadline or silently creating another execution.
+    *   (Ref: `functions_orchestration_bootstrap.py`, `functions_orchestration_plan_revisions.py`, `functions_orchestration_recovery.py`, `functions_orchestration_output_store.py`, `ORCHESTRATION_COSMOS_RESPONSE_COMPATIBILITY_FIX.md`)
+
+*   **Planner And Execution Failures Have Specific, Safe Diagnostics**
+    *   Planner rejection events now retain the exact deliverables rule and correction-attempt number. Admission and recovery events identify the failing stage, response type, and whether a durable outcome was recorded.
+    *   Application Insights preserves these diagnostic fields and hashed workflow identifiers without logging raw prompts, document content, or provider responses. Required source/output checks and the existing single repair budget remain in place.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_execution.py`, `functions_appinsights.py`, `docs/reference/logging-tags.md`)
+
+*   **Writing, Comparison, And File-Only Plans Match Their Deliverable Contract**
+    *   Fixed ambiguous planning guidance that produced answer declarations with both a file format and a quantity. One repair removed the format but then failed on the remaining quantity; the prompt now specifies fields by deliverable kind and asks corrections to check the whole declaration.
+    *   File-only plans can omit `final_response` or use null without inventing an extra answer step. Malformed bindings and declared answers without a valid text producer are still rejected.
+    *   Selected sources now carry server-resolved file types, so a PDF/CSV comparison can use compatible narrative and tabular steps rather than send the CSV to narrative-only comparison. Type mismatches and missing Analyze source bindings are caught during planning and share the existing single correction budget.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_plan_editing.py`, `ORCHESTRATION_PLANNER_DELIVERABLE_FIELDS_FIX.md`)
+
 ### **(v0.261.139)**
 
 #### Breaking Changes

@@ -33,7 +33,7 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import hashlib
@@ -182,8 +182,9 @@ PLAN_MAX_ASSUMPTIONS = 8
 class PlanValidationError(ValueError):
     """Raised when a plan cannot be repaired into something safe to run."""
 
-    def __init__(self, message, *, code='plan_invalid'):
+    def __init__(self, message, *, code='plan_invalid', rule=None):
         self.code = code
+        self.rule = rule
         super().__init__(message)
 
 
@@ -670,7 +671,11 @@ def validate_dependency_plan(
             }
             step_input_specs(step)
             if capability_id == 'document_analyze' and not arguments.get('document_ids') and 'sources' not in step['inputs']:
-                raise PlanValidationError('Analyze requires named sources or a source-set binding.')
+                raise PlanValidationError(
+                    'Analyze requires arguments.document_ids with the selected IDs, or an inputs.sources '
+                    'source-set binding. Mentioning a filename in analysis_prompt is not a source binding.',
+                    code='source_binding_required', rule='document_sources_required',
+                )
             if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
                 raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
             accepted.append(step)
@@ -680,7 +685,8 @@ def validate_dependency_plan(
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
-        if 'final_response' in plan:
+        final_binding = None
+        if plan.get('final_response') is not None:
             final_binding = InputBinding.from_dict(plan['final_response'])
             validate_input_bindings(
                 [*bindings, StepBindings(
@@ -695,7 +701,7 @@ def validate_dependency_plan(
         # A producer that only feeds optional inputs is not required work: its failure is
         # disclosed by the consumer instead of failing the whole plan. The final response and
         # any required binding keep it required.
-        final_producer = InputBinding.from_dict(plan['final_response']).step_id if 'final_response' in plan else None
+        final_producer = final_binding.step_id if final_binding is not None else None
         consumers = {}
         for step in accepted:
             for spec in step_input_specs(step):
@@ -712,8 +718,10 @@ def validate_dependency_plan(
     except ResultContractError as exc:
         raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
     except DeliverableError as exc:
-        raise PlanValidationError(exc.message, code=exc.code) from exc
+        raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
     compiled = deepcopy(plan)
+    if final_binding is None:
+        compiled.pop('final_response', None)
     compiled.update({
         'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         'deliverables': deliverables,
@@ -793,6 +801,27 @@ def effective_plan_document_ids(plan, seeds=None):
     ):
         document_ids.extend(_string_list((seeds or {}).get('document_ids')))
     return list(dict.fromkeys(document_ids))
+
+
+def validate_plan_document_source_kinds(plan, document_source_kinds):
+    """Check known source kinds without treating model-supplied labels as authority."""
+    if not isinstance(document_source_kinds, dict):
+        raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
+    for step in plan.get('steps') or []:
+        if not step.get('enabled', True) or step.get('capability_id') not in (
+            'document_analyze', 'document_compare',
+        ):
+            continue
+        if any(
+            document_source_kinds.get(document_id) in ('tabular', 'unsupported', 'unresolved')
+            for document_id in plan_document_ids({'steps': [step]})
+        ):
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" uses a source kind that narrative document analysis '
+                'cannot process. Use offered tabular_analyze work for tabular sources, then '
+                'compose across the prepared results. Keep every selected source.',
+                code='source_kind_invalid', rule='narrative_source_required',
+            )
 
 
 def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
@@ -1090,7 +1119,7 @@ def apply_plan_edits(
     except ResultContractError as exc:
         raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
     except DeliverableError as exc:
-        raise PlanValidationError(exc.message, code=exc.code) from exc
+        raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
     original.update(plan)
     return original
 

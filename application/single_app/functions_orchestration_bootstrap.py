@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.138
+Version: 0.261.140
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -51,6 +51,11 @@ from functions_simplechat_operations import (
 from functions_workflow_result_store import WorkflowResultStore, _quota_bytes
 
 
+def _document_response(value):
+    """Remove an SDK mapping wrapper; leave invalid types for the owning contract to reject."""
+    return dict(value) if isinstance(value, dict) else value
+
+
 def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
     options = {} if request_timeout is None else {
         "connection_timeout": request_timeout, "read_timeout": request_timeout, "retry_total": 0,
@@ -63,7 +68,7 @@ def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
         or conversation.get("orchestration_deleted") or conversation.get("deleted")
     ):
         raise OutputUnavailableError("output_conversation_unavailable")
-    return conversation
+    return dict(conversation)
 
 
 def private_external_configuration_digest(value):
@@ -103,10 +108,10 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
 
     def read_user_settings(user_id):
         authorize_conversation(user_id=user_id, conversation_id=actor_conversation_id)
-        return config.cosmos_user_settings_container.read_item(
+        return _document_response(config.cosmos_user_settings_container.read_item(
             item=user_id, partition_key=user_id,
             connection_timeout=timeout, read_timeout=timeout, retry_total=0,
-        )
+        ))
 
     def read_identity(*, user_id, conversation_id):
         nonlocal reader
@@ -407,12 +412,12 @@ def build_orchestration_cleanup_service(user_id, conversation_id):
     store = OrchestrationOutputStore(
         config.cosmos_orchestration_runs_container,
         user_id=user_id, conversation_id=conversation_id,
-        read_conversation=lambda cid: config.cosmos_conversations_container.read_item(
+        read_conversation=lambda cid: _document_response(config.cosmos_conversations_container.read_item(
             item=cid, partition_key=cid,
-        ),
-        read_run_tombstone=lambda rid: config.cosmos_orchestration_run_steps_container.read_item(
+        )),
+        read_run_tombstone=lambda rid: _document_response(config.cosmos_orchestration_run_steps_container.read_item(
             item="checkpoint:lifecycle", partition_key=rid,
-        ),
+        )),
     )
     return OrchestrationOutputCleanupService(
         store, config.cosmos_messages_container,

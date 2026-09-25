@@ -1,6 +1,6 @@
 # Gather / Reason / Render orchestration
 
-**Version: 0.261.139**
+**Version: 0.261.140**
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; application integration implemented in
@@ -32,6 +32,19 @@ Answer parity implemented in version **0.261.134**:
 - Read-only gathering retries once after a transient provider failure.
 
 See [the deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
+
+Cosmos SDK response compatibility and specific failure diagnostics implemented in
+version **0.261.140**, recorded in `application/single_app/config.py`. Storage
+owners normalize `CosmosDict` responses before strict execution, result, and
+output contracts while retaining ETags and authorization checks. This prevents
+a valid saved run from being rejected at admission or hidden during status
+recovery. See [the compatibility fix](../fixes/ORCHESTRATION_COSMOS_RESPONSE_COMPATIBILITY_FIX.md)
+and [the planner declaration fix](../fixes/ORCHESTRATION_PLANNER_DELIVERABLE_FIELDS_FIX.md).
+Answer declarations omit file-only fields, and an optional null `final_response`
+is canonicalized to absence for work without a selected chat-text output.
+Planning and editing use authorized source-kind metadata to keep native tabular
+inputs out of narrative-only Analyze/Compare steps. Mixed-source answers compose
+compatible prepared results without granting a new capability or source access.
 
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 This documents the retained-result contracts, shared ten-format exports,

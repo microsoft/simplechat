@@ -1,14 +1,16 @@
 # test_orchestration_dependency_planner.py
 """Real planner/compiler admission with an isolated model client.
 
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Provider I/O is replaced at client.chat.completions.create, not the compiler.
 """
 
 from copy import deepcopy
+import importlib
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -19,10 +21,16 @@ from test_support.app_stubs import stubbed_config
 
 @pytest.fixture
 def planner(runtime):
-    with stubbed_config(cognitive_services_scope='offline-scope'):
-        import functions_orchestration_planner
-
-        yield functions_orchestration_planner
+    name = "functions_orchestration_planner"
+    # Its imported logging callback must not outlive the stubbed import scope.
+    previous = sys.modules.pop(name, None)
+    try:
+        with stubbed_config(cognitive_services_scope='offline-scope'):
+            yield importlib.import_module(name)
+    finally:
+        sys.modules.pop(name, None)
+        if previous is not None:
+            sys.modules[name] = previous
 
 
 def invoke(planner, reply, *, contract_version=2, settings=None, edit_context=None):

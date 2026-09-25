@@ -1,7 +1,7 @@
 # test_orchestration_external_bootstrap.py
 """
 Application-owned current identity and acquisition wiring for retained results.
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 
@@ -424,6 +424,35 @@ def test_current_settings_are_point_read_without_repairs_or_request_cache(extern
     runtime.world.assignments = []
     with pytest.raises(ResultUnavailableError):
         read_identity(reader)
+
+
+def test_current_identity_accepts_sdk_conversation_and_settings_responses(external_root):
+    runtime = external_root
+    runtime.conversations.sdk_responses = True
+    runtime.settings.sdk_responses = True
+    reader = reader_for(runtime)
+    initial = read_identity(reader)
+    settings = runtime.settings.read_item(USER_ID, USER_ID)
+    settings["settings"]["enable_agents"] = False
+    runtime.settings.upsert_item(settings)
+    changed = read_identity(reader)
+    assert initial.user_id == changed.user_id == USER_ID
+    assert initial.roles == changed.roles == ("User",)
+    assert initial.user_enable_agents is True and changed.user_enable_agents is False
+    runtime.world.assignments = []
+    with pytest.raises(ResultUnavailableError):
+        read_identity(reader)
+
+
+def test_identity_does_not_coerce_non_mapping_settings_into_authority(external_root, monkeypatch):
+    runtime = external_root
+    read_settings = runtime.settings.read_item
+    monkeypatch.setattr(
+        runtime.settings, "read_item",
+        lambda *args, **kwargs: list(read_settings(*args, **kwargs).items()),
+    )
+    with pytest.raises(ResultUnavailableError):
+        read_identity(reader_for(runtime))
 
 
 @pytest.mark.parametrize("change", ["deleted", "foreign", "missing_settings", "denied"])

@@ -8,7 +8,7 @@ an editor lease nor a browser approval may bypass the run's ETag boundary.
 A run whose plan came from the removed legacy contract is refused with
 ``LEGACY_PLAN_MESSAGE`` wherever it would be opened, edited, restored or run.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import hashlib
@@ -277,7 +277,8 @@ def read_revision_run(run_id, user_id, conversation_id, *, follow_current=False,
         if not follow_current or 'superseded_by_run_id' not in record:
             if not allow_legacy and is_legacy_plan(record.get('plan')):
                 raise legacy_plan_error()
-            return record
+            # CosmosDict carries SDK metadata outside the JSON document. Keep the ETag.
+            return dict(record)
         target = record['superseded_by_run_id']
         if not _valid_id(target):
             raise _not_found()
@@ -430,7 +431,7 @@ def _replace(record, updates):
             raise _changed(latest) from exc
         raise
     if isinstance(result, dict) and result.get('_etag'):
-        return result
+        return dict(result)
     return read_revision_run(record['id'], record['user_id'], record['conversation_id'])
 
 

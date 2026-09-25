@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import json
@@ -47,6 +47,7 @@ from functions_orchestration_schema import (
     apply_plan_edits,
     normalize_plan,
     plan_document_ids,
+    validate_plan_document_source_kinds,
     validate_plan_requirements,
 )
 
@@ -146,6 +147,7 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
             'file_name': item.get('file_name') or item.get('display_name') or document_id,
             'title': item.get('display_name') or item.get('file_name') or document_id,
             'scope': item.get('scope'),
+            'source_kind': item.get('source_kind'),
             'selected_by_user': document_id in (seeds.get('document_ids') or []),
         }
         for document_id, item in available.items()
@@ -253,6 +255,10 @@ def validate_edited_plan(
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
+        validate_plan_document_source_kinds(checked, {
+            item['document_id']: item['source_kind']
+            for item in candidates if item.get('source_kind')
+        })
     except PlanValidationError as exc:
         raise PlanRevisionError(
             'That version cannot be used with the current capabilities. Your current plan is unchanged.',
