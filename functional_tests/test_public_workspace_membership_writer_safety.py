@@ -158,8 +158,9 @@ def _exec_nested_handlers(filename, container_func, names, namespace):
 
 
 class _Request:
-    def __init__(self, body):
+    def __init__(self, body, args=None):
         self._body = body
+        self.args = args or {}
 
     def get_json(self):
         return self._body
@@ -195,12 +196,14 @@ def _environment():
     )
     _exec_names(
         ROUTE_FILE,
-        {"is_user_in_admins", "remove_user_from_admins", "_PublicClassicResponse", "_guarded_public_write"},
+        {"is_user_in_admins", "remove_user_from_admins", "_member_user_id",
+         "_PublicClassicResponse", "_guarded_public_write"},
         namespace,
     )
     handlers = _exec_nested_handlers(
         ROUTE_FILE, REGISTER,
-        {"api_handle_public_request", "api_add_public_member",
+        {"api_request_public_workspace", "api_view_public_requests", "api_handle_public_request",
+         "api_list_public_members", "api_add_public_member", "api_remove_public_member",
          "api_update_public_member_role", "api_transfer_public_ownership"},
         namespace,
     )
@@ -371,6 +374,153 @@ def test_transfer_to_a_non_member_is_refused():
     stored = env.container.get(WS_ID, WS_ID)
     assert stored["owner"]["userId"] == "owner"
     assert env.bumps == []
+
+
+# --------------------------------------------------------------------------- #
+# R5.5 (second half): a legacy bare-string documentManagers/pendingDocumentManagers
+# entry, which the role helper already tolerates, must break no route.
+# --------------------------------------------------------------------------- #
+
+STRING_DM = "legacy-mgr"  # a document manager stored as a bare id, not a dict
+
+
+def test_no_document_manager_entry_is_read_by_a_userid_subscript():
+    """Every documentManagers/pendingDocumentManagers read goes through the tolerant
+    ``_member_user_id`` accessor, so a legacy bare-string entry never raises a
+    ``TypeError``/500. A restored ``dm["userId"]`` or ``p["userId"]`` fails here."""
+    tree = ast.parse((APP_DIR / ROUTE_FILE).read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in {"dm", "p"}
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == "userId"
+        ):
+            offenders.append((node.value.id, node.lineno))
+    assert offenders == [], f"bare-string-unsafe member reads remain: {offenders}"
+
+
+def test_a_user_matching_a_string_document_manager_is_told_already_a_manager():
+    """The request dedup compares a bare-string documentManagers entry correctly."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, STRING_DM)
+    _set_body(env, {})
+
+    payload, status = env.handlers["api_request_public_workspace"](WS_ID)
+
+    assert status == 400
+    assert payload == {"error": "Already a document manager"}
+    assert env.container.get(WS_ID, WS_ID)["pendingDocumentManagers"] == []
+
+
+def test_a_new_request_commits_with_a_string_document_manager_present():
+    """A different user still requests cleanly when a bare-string manager is present."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, "fresh-user")
+    _set_body(env, {})
+
+    payload, status = env.handlers["api_request_public_workspace"](WS_ID)
+
+    assert status == 201
+    stored = env.container.get(WS_ID, WS_ID)
+    assert [_id(p) for p in stored["pendingDocumentManagers"]] == ["fresh-user"]
+
+
+def test_the_request_list_returns_with_a_string_pending_entry():
+    """Listing requests does not read a bare-string pending entry by subscript."""
+    env = _environment()
+    env.container.seed(_workspace(
+        admins=[DICT_ADMIN], pendingDocumentManagers=["pending-str"],
+    ))
+    _as_actor(env, "admin")
+    _set_body(env, {})
+
+    payload, status = env.handlers["api_view_public_requests"](WS_ID)
+
+    assert status == 200
+    assert payload == ["pending-str"]
+
+
+def test_the_members_list_shows_a_string_document_manager_with_blank_name_and_email():
+    """A bare-string document manager appears as a member with a blank name and email."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, "owner")
+    _set_body(env, {})
+
+    payload, status = env.handlers["api_list_public_members"](WS_ID)
+
+    assert status == 200
+    dm_rows = [m for m in payload if m["role"] == "DocumentManager"]
+    assert dm_rows == [{"userId": STRING_DM, "displayName": "", "email": "", "role": "DocumentManager"}]
+
+
+def test_a_string_document_manager_can_be_removed():
+    """Removing a member drops a bare-string documentManagers entry."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, "owner")
+    _set_body(env, {})
+
+    payload, status = env.handlers["api_remove_public_member"](WS_ID, STRING_DM)
+
+    assert status == 200
+    assert env.container.get(WS_ID, WS_ID)["documentManagers"] == []
+
+
+def test_a_string_pending_entry_can_be_approved():
+    """Approving a bare-string pending request moves it into documentManagers."""
+    env = _environment()
+    env.container.seed(_workspace(admins=[DICT_ADMIN], pendingDocumentManagers=["pending-str"]))
+    _as_actor(env, "admin")
+    _set_body(env, {"action": "approve"})
+
+    payload, status = env.handlers["api_handle_public_request"](WS_ID, "pending-str")
+
+    assert status == 200
+    stored = env.container.get(WS_ID, WS_ID)
+    assert stored["pendingDocumentManagers"] == []
+    assert [_id(dm) for dm in stored["documentManagers"]] == ["pending-str"]
+
+
+def test_a_string_document_manager_can_be_promoted_to_admin():
+    """R5.7 fallback: promoting a bare-string manager keeps a blank name and email."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, "owner")
+    _set_body(env, {"role": "Admin"})
+
+    payload, status = env.handlers["api_update_public_member_role"](WS_ID, STRING_DM)
+
+    assert status == 200
+    stored = env.container.get(WS_ID, WS_ID)
+    assert stored["documentManagers"] == []
+    assert stored["admins"] == [{"userId": STRING_DM, "displayName": "", "email": ""}]
+
+
+def test_ownership_can_transfer_to_a_string_document_manager():
+    """A bare-string manager can receive ownership; the old owner is kept (decision 21)."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    _as_actor(env, "owner")
+    _set_body(env, {"newOwnerId": STRING_DM})
+
+    payload, status = env.handlers["api_transfer_public_ownership"](WS_ID)
+
+    assert status == 200
+    stored = env.container.get(WS_ID, WS_ID)
+    assert stored["owner"]["userId"] == STRING_DM
+    assert {"userId": "owner", "displayName": "Owner One", "email": "owner@example.test"} in stored["documentManagers"]
+    assert [_id(dm) for dm in stored["documentManagers"] if _id(dm) == STRING_DM] == []
+
+
+def _id(entry):
+    """The user id of a member entry stored as a dict or a bare string (test helper)."""
+    return entry["userId"] if isinstance(entry, dict) else entry
 
 
 if __name__ == "__main__":

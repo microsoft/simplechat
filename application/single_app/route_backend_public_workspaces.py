@@ -57,6 +57,17 @@ def remove_user_from_admins(user_id, admins_list):
             (isinstance(admin, str) and admin != user_id) or
             (isinstance(admin, dict) and admin.get("userId") != user_id)]
 
+def _member_user_id(entry):
+    """
+    Return the user id for an admin or document-manager entry stored either as a
+    dict ({userId, email, displayName}) or as a legacy bare-string id. A bare
+    string is its own id, so a legacy documentManagers entry no longer crashes a
+    route that reads ``entry["userId"]``.
+    """
+    if isinstance(entry, dict):
+        return entry.get("userId")
+    return entry
+
 def get_user_details_from_graph(user_id):
     """
     Get user details (displayName, email) from Microsoft Graph API by user ID.
@@ -526,10 +537,10 @@ def register_route_backend_public_workspaces(bp):
 
         def apply(ws):
             # already manager?
-            if any(dm["userId"] == user_id for dm in ws.get("documentManagers", [])):
+            if any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", [])):
                 raise _PublicClassicResponse({"error": "Already a document manager"}, 400)
             # already requested?
-            if any(p["userId"] == user_id for p in ws.get("pendingDocumentManagers", [])):
+            if any(_member_user_id(p) == user_id for p in ws.get("pendingDocumentManagers", [])):
                 raise _PublicClassicResponse({"error": "Already requested"}, 400)
             ws.setdefault("pendingDocumentManagers", []).append({
                 "userId": user_id,
@@ -567,7 +578,7 @@ def register_route_backend_public_workspaces(bp):
                 raise _PublicClassicResponse({"error": "Forbidden"}, 403)
 
             pend = ws.get("pendingDocumentManagers", [])
-            idx = next((i for i, p in enumerate(pend) if p["userId"] == req_id), None)
+            idx = next((i for i, p in enumerate(pend) if _member_user_id(p) == req_id), None)
             if idx is None:
                 raise _PublicClassicResponse({"error": "Request not found"}, 404)
 
@@ -577,7 +588,7 @@ def register_route_backend_public_workspaces(bp):
                     m.get("userId") if isinstance(m, dict) else m
                     for m in ws.get("documentManagers", [])
                 }
-                if dm["userId"] not in existing_manager_ids:
+                if _member_user_id(dm) not in existing_manager_ids:
                     ws.setdefault("documentManagers", []).append(dm)
                 outcome["message"] = "Approved"
             elif action == "reject":
@@ -621,7 +632,7 @@ def register_route_backend_public_workspaces(bp):
         is_member = (
             ws["owner"]["userId"] == user_id or
             is_user_in_admins(user_id, ws.get("admins", [])) or
-            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
+            any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", []))
         )
         if not is_member:
             return jsonify({"error": "Forbidden"}), 403
@@ -656,14 +667,23 @@ def register_route_backend_public_workspaces(bp):
                     "email": admin.get("email", ""),
                     "role": "Admin"
                 })
-        # doc managers
+        # doc managers (support both old bare-string format and new {userId, ...} format)
         for dm in ws.get("documentManagers", []):
-            results.append({
-                "userId": dm["userId"],
-                "displayName": dm.get("displayName", ""),
-                "email": dm.get("email", ""),
-                "role": "DocumentManager"
-            })
+            if isinstance(dm, dict):
+                results.append({
+                    "userId": dm.get("userId", ""),
+                    "displayName": dm.get("displayName", ""),
+                    "email": dm.get("email", ""),
+                    "role": "DocumentManager"
+                })
+            else:
+                # Legacy bare-string entry has no stored name or email.
+                results.append({
+                    "userId": dm,
+                    "displayName": "",
+                    "email": "",
+                    "role": "DocumentManager"
+                })
 
         # filter
         def keep(m):
@@ -701,7 +721,7 @@ def register_route_backend_public_workspaces(bp):
             if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
                 raise _PublicClassicResponse({"error": "Forbidden"}, 403)
             # prevent dup
-            if any(dm["userId"] == new_id for dm in ws.get("documentManagers", [])):
+            if any(_member_user_id(dm) == new_id for dm in ws.get("documentManagers", [])):
                 raise _PublicClassicResponse({"error": "Already a manager"}, 400)
             ws.setdefault("documentManagers", []).append({
                 "userId": new_id,
@@ -762,7 +782,7 @@ def register_route_backend_public_workspaces(bp):
             # remove from doc managers
             ws["documentManagers"] = [
                 dm for dm in ws.get("documentManagers", [])
-                if dm["userId"] != member_id
+                if _member_user_id(dm) != member_id
             ]
             ws["modifiedDate"] = datetime.utcnow().isoformat()
             return ws
@@ -829,7 +849,7 @@ def register_route_backend_public_workspaces(bp):
             ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
             ws["documentManagers"] = [
                 dm for dm in ws.get("documentManagers", [])
-                if dm["userId"] != member_id
+                if _member_user_id(dm) != member_id
             ]
             entry = {
                 "userId": member_id,
@@ -914,7 +934,7 @@ def register_route_backend_public_workspaces(bp):
 
             # R5.5: eligibility on the fresh copy, recognising both admin formats.
             is_member = (
-                any(dm["userId"] == new_owner for dm in ws.get("documentManagers", [])) or
+                any(_member_user_id(dm) == new_owner for dm in ws.get("documentManagers", [])) or
                 is_user_in_admins(new_owner, ws.get("admins", []))
             )
             if not is_member:
@@ -929,7 +949,7 @@ def register_route_backend_public_workspaces(bp):
                 "userId": new_owner, "displayName": "", "email": ""
             }
             # remove the new owner from docManagers/admins (R5.5: both formats)
-            ws["documentManagers"] = [dm for dm in ws.get("documentManagers", []) if dm["userId"] != new_owner]
+            ws["documentManagers"] = [dm for dm in ws.get("documentManagers", []) if _member_user_id(dm) != new_owner]
             ws["admins"] = remove_user_from_admins(new_owner, ws.get("admins", []))
 
             ws.setdefault("documentManagers", []).append({
@@ -1011,7 +1031,7 @@ def register_route_backend_public_workspaces(bp):
         is_member = (
             ws["owner"]["userId"] == user_id or
             is_user_in_admins(user_id, ws.get("admins", [])) or
-            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
+            any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", []))
         )
         if not is_member:
             return jsonify({"error": "Forbidden"}), 403
